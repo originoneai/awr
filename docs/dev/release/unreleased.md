@@ -6,6 +6,14 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
 
 ## Changed
 
+- **An intake scan names every file with a credential finding.** The scan of `awr init`,
+  `--write-draft` and `awr takeover` used to end at the first file the secret boundary refused, so a
+  project with findings in several documents was fixed one run at a time (a public project with
+  example credentials in its docs needed three rounds). The stop now lists every such file in
+  `details.findings` (category and location, 50 at most, never the content) with the exact count in
+  `details.finding_total`; the first finding keeps the existing fields, and one finding is reported
+  as before. See [secret boundaries](../reference/secret-boundaries.md) (#627).
+
 - **Local project registration is explicit.** Ordinary `awr` and `awr-mcp` calls no longer add the
   project they touch to the per-user local catalog; they only refresh the last-use time of a
   project that is already registered. Register a project with `awr overview register <dir>` or

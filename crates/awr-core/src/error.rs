@@ -167,6 +167,28 @@ pub fn render_diagnostic_details(details: Option<&serde_json::Value>) -> String 
             output.push_str(&format!("\n  Field: {pointer}"));
         }
     }
+    // A stop at the secret boundary can name every file with a finding; list them, bounded, never their content.
+    if let Some(findings) = details["findings"]
+        .as_array()
+        .filter(|items| items.len() > 1)
+    {
+        let total = details["finding_total"]
+            .as_u64()
+            .unwrap_or(findings.len() as u64);
+        output.push_str(&format!("\n  Files with findings: {total}"));
+        for finding in findings.iter().take(10) {
+            let locator = finding["location"]["locator"].as_str().unwrap_or("?");
+            let line = finding["location"]["line"]
+                .as_u64()
+                .map(|line| format!(":{line}"))
+                .unwrap_or_default();
+            let category = finding["category"].as_str().unwrap_or("?");
+            output.push_str(&format!("\n    {locator}{line} ({category})"));
+        }
+        if total > 10 {
+            output.push_str(&format!("\n    and {} more", total - 10));
+        }
+    }
     for (key, label) in [("rule", "Rule"), ("repair", "Repair")] {
         if let Some(value) = details[key].as_str() {
             output.push_str(&format!("\n  {label}: {value}"));
@@ -434,4 +456,50 @@ fn claim_details(message: &str) -> Option<serde_json::Value> {
     Some(
         serde_json::json!({"holding_session":session,"expires_at":holder["expires_at"],"claims":claims,"next_action":next}),
     )
+}
+
+#[cfg(test)]
+mod findings_rendering {
+    use super::render_diagnostic_details;
+    use serde_json::json;
+
+    fn finding(path: &str, line: u64, category: &str) -> serde_json::Value {
+        json!({ "category": category, "location": { "locator": path, "line": line } })
+    }
+
+    #[test]
+    fn several_findings_are_listed_without_content_and_bounded() {
+        let listed: Vec<_> = (1..=12)
+            .map(|n| finding(&format!("docs/{n}.md"), n, "credential"))
+            .collect();
+        let details = json!({
+            "category": "credential",
+            "location": { "locator": "docs/1.md", "line": 1 },
+            "findings": listed,
+            "finding_total": 60,
+        });
+        let text = render_diagnostic_details(Some(&details));
+        assert!(text.contains("Files with findings: 60"), "{text}");
+        assert!(
+            text.contains("docs/1.md:1 (credential)")
+                && text.contains("docs/10.md:10 (credential)"),
+            "{text}"
+        );
+        assert!(!text.contains("docs/11.md"), "only ten are listed: {text}");
+        assert!(text.contains("and 50 more"), "{text}");
+    }
+
+    #[test]
+    fn a_single_finding_renders_as_before() {
+        let one = json!({
+            "category": "credential",
+            "location": { "locator": "README.md", "line": 4 },
+            "findings": [finding("README.md", 4, "credential")],
+            "finding_total": 1,
+        });
+        assert!(!render_diagnostic_details(Some(&one)).contains("Files with findings"));
+        let plain =
+            json!({ "category": "credential", "location": { "locator": "README.md", "line": 4 } });
+        assert!(render_diagnostic_details(Some(&plain)).contains("Source: README.md:4"));
+    }
 }
