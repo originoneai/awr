@@ -91,6 +91,21 @@ impl Project {
         out
     }
 
+    /// A manifest file (outside the project) that lists `paths` as plan sources.
+    fn manifest(&self, name: &str, paths: &[&str]) -> PathBuf {
+        let mut toml = String::from("[project]\nname = \"p\"\nauthority_mode = \"source_first\"\n");
+        for path in paths {
+            toml.push_str(&format!(
+                "\n[[sources]]\ndomain = \"plan\"\nrole = \"{}\"\npath = \"{path}\"\nadapter = \"markdown-heading-v1\"\n",
+                if toml.contains("[[sources]]") { "supporting" } else { "primary" }
+            ));
+        }
+        fs::create_dir_all(&self.state).unwrap();
+        let file = self.state.join(format!("{name}.toml"));
+        fs::write(&file, toml).unwrap();
+        file
+    }
+
     fn ledger_text(&self) -> String {
         fs::read_to_string(self.root.join(".awr/intake/work-ledger.yaml")).unwrap()
     }
@@ -524,5 +539,152 @@ fn status_without_a_recorded_run_is_an_error() {
         text(&out.stderr).contains("no takeover run recorded"),
         "{}",
         text(&out.stderr)
+    );
+}
+
+#[test]
+fn a_manifest_lets_the_takeover_pass_a_project_with_a_credential_file() {
+    let p = Project::new("manifest");
+    p.write(
+        "README.md",
+        "# Demo\n\nsetup\npassword: hunter2hunter2hunter2\n",
+    );
+    p.write("docs/PLAN.md", "# Plan\n\n## Goals\n\n- Ship it\n");
+    let before = p.snapshot(&[]);
+
+    // Without a manifest the run stops at the credential and says how to go on.
+    let out = p.takeover(&[]);
+    assert!(!out.status.success());
+    let stopped = outcome(&out);
+    assert_eq!(stopped["record"]["stop"]["reason"], "secret_boundary");
+    assert!(
+        stopped["record"]["stop"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("--manifest"),
+        "{stopped}"
+    );
+    assert_eq!(p.snapshot(&[]), before);
+
+    // With the owner's list of sources the same run continues and completes.
+    let manifest = p.manifest("sources", &["docs/PLAN.md"]);
+    let out = p.takeover(&["--manifest", &manifest.to_string_lossy()]);
+    assert!(
+        out.status.success(),
+        "{}\n{}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    let done = outcome(&out);
+    assert_eq!(done["outcome"], "completed");
+    assert_eq!(
+        done["record"]["id"], stopped["record"]["id"],
+        "the same run continued"
+    );
+    let receipt = p.receipt();
+    let sources: Vec<&str> = receipt["mapped"]["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["path"].as_str().unwrap())
+        .collect();
+    assert!(
+        sources.contains(&"docs/PLAN.md") && !sources.contains(&"README.md"),
+        "{sources:?}"
+    );
+    assert!(!p.state_text().contains("hunter2") && !text(&out.stdout).contains("hunter2"));
+    for (path, bytes) in &before {
+        assert_eq!(
+            fs::read(p.root.join(path)).unwrap(),
+            *bytes,
+            "{path} changed"
+        );
+    }
+    assert!(p.ok(&["status"])["project_revision"].is_number());
+}
+
+#[test]
+fn a_credential_in_a_listed_source_still_stops_the_takeover_and_the_hint_changes() {
+    let p = Project::new("listed");
+    p.write(
+        "README.md",
+        "# Demo\n\nsetup\npassword: hunter2hunter2hunter2\n",
+    );
+    let manifest = p.manifest("sources", &["README.md"]);
+    let out = p.takeover(&["--manifest", &manifest.to_string_lossy()]);
+    assert!(!out.status.success());
+    let stop = &outcome(&out)["record"]["stop"];
+    assert_eq!(
+        (stop["reason"].as_str(), stop["detail"]["path"].as_str()),
+        (Some("secret_boundary"), Some("README.md"))
+    );
+    let message = stop["message"].as_str().unwrap();
+    assert!(
+        message.contains("The manifest lists this file"),
+        "{message}"
+    );
+    assert!(!text(&out.stdout).contains("hunter2") && !p.root.join(".awr").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn another_manifest_starts_the_run_again_from_the_preview() {
+    let p = Project::new("switch");
+    p.write("README.md", README);
+    p.write("docs/PLAN.md", "# Plan\n\n## Goals\n\n- First\n");
+    p.write("docs/OTHER.md", "# Other\n\n## Goals\n\n- Second\n");
+    let failing = reviewer::script(&p, "failing.sh", "exit 3");
+    let first = p.manifest("first", &["docs/PLAN.md"]);
+    let second = p.manifest("second", &["docs/OTHER.md"]);
+
+    let out = p.takeover(&[
+        "--manifest",
+        &first.to_string_lossy(),
+        "--reviewer",
+        &failing.to_string_lossy(),
+    ]);
+    assert!(!out.status.success());
+    let one = outcome(&out);
+    assert_eq!(one["record"]["stop"]["reason"], "review_failed");
+    let sources_of = |outcome: &Value| -> Vec<String> {
+        outcome["record"]["steps"]["preview"]["result"]["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["path"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert!(sources_of(&one).contains(&"docs/PLAN.md".to_string()));
+
+    // The same manifest resumes after the finished preview; another one redoes it.
+    let same = outcome(&p.takeover(&[
+        "--manifest",
+        &first.to_string_lossy(),
+        "--reviewer",
+        &failing.to_string_lossy(),
+    ]));
+    assert_eq!(
+        same["record"]["steps"]["preview"]["finished_at"],
+        one["record"]["steps"]["preview"]["finished_at"]
+    );
+    let other = outcome(&p.takeover(&[
+        "--manifest",
+        &second.to_string_lossy(),
+        "--reviewer",
+        &failing.to_string_lossy(),
+    ]));
+    let redone = sources_of(&other);
+    assert!(
+        redone.contains(&"docs/OTHER.md".to_string())
+            && !redone.contains(&"docs/PLAN.md".to_string()),
+        "{redone:?}"
+    );
+    assert_ne!(
+        other["record"]["steps"]["preview"]["finished_at"],
+        one["record"]["steps"]["preview"]["finished_at"]
+    );
+    assert_eq!(
+        other["record"]["id"], one["record"]["id"],
+        "it is still the same run"
     );
 }

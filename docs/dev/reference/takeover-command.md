@@ -27,6 +27,7 @@ Without a reviewer the draft AWR generated is applied as it is. A run that stops
 | --- | --- |
 | `--reviewer <PROGRAM>` | Command that reviews the draft; `--reviewer-arg <ARG>` adds one argument per use |
 | `--review-timeout-secs <N>` | Seconds the reviewer may run; default 900 |
+| `--manifest <FILE>` | The sources the owner chose; the draft maps and reads exactly these and lists every other file by path and size |
 | `--adopt` | Organize an initialized project that has no active session; `preview`, `review` and `accept` are skipped |
 | `--max-rounds <N>` | Preview, review and accept rounds when the sources change meanwhile; default 3 |
 | `--state-dir <DIR>` | Run records and drafts, outside the project; default `$AWR_TAKEOVER_STATE`, else `$XDG_STATE_HOME/awr/takeovers`, else `~/.local/state/awr/takeovers` |
@@ -60,7 +61,7 @@ A stopped run records `step`, `reason` and a message in `takeover.json`, prints 
 
 | Reason | Meaning | Next action |
 | --- | --- | --- |
-| `secret_boundary` | A source holds content that looks like a credential | Redact the line, or pass `awr init --manifest` listing the sources AWR can read |
+| `secret_boundary` | A source holds content that looks like a credential | Redact the line, or run again with `--manifest <file>` listing the sources AWR may read |
 | `source_unreadable` | AWR cannot read a source | Fix the file named in `detail`, then run again |
 | `ambiguous_authority` | Several candidates own one domain | Name the authoritative source in the reviewed draft; the next run reviews again |
 | `inventory_changed` | The sources changed during review for more than `--max-rounds` rounds | Run again once the project is quiet |
@@ -78,7 +79,7 @@ A stopped run records `step`, `reason` and a message in `takeover.json`, prints 
 - AWR ships no reviewer; any command that follows the contract works.
 - Organization is one `intake inspect`; goals stay candidates until the owner confirms them.
 - A lock from a stopped process is replaced, and any lock expires after two hours.
-- Resuming reuses the saved draft; a source that changed since the preview starts a new round, up to `--max-rounds`.
+- Resuming reuses the saved draft; a source that changed since the preview starts a new round, up to `--max-rounds`, and another `--manifest` starts again from the preview.
 
 ## Code and tests
 
