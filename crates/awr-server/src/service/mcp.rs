@@ -1687,6 +1687,17 @@ fn catalog_for(profile: CatalogProfile) -> Vec<Tool> {
     tools
 }
 
+/// Protocol 2026-07-28 (SEP-2549) requires cache metadata on list results and the
+/// SDK leaves it unset. Match `server/discover`: not cacheable, and private because
+/// the catalog depends on the request's catalog profile.
+fn tool_list_result(tools: Vec<Tool>) -> ListToolsResult {
+    let mut result = ListToolsResult::default()
+        .with_ttl_ms(0)
+        .with_cache_scope(CacheScope::Private);
+    result.tools = tools;
+    result
+}
+
 impl ServerHandler for Endpoint {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
@@ -1719,9 +1730,7 @@ impl ServerHandler for Endpoint {
                 None,
             )
         })?;
-        let mut result = ListToolsResult::default();
-        result.tools = catalog_for(profile);
-        Ok(result)
+        Ok(tool_list_result(catalog_for(profile)))
     }
 
     async fn call_tool(
@@ -2019,6 +2028,18 @@ impl ServerHandler for Endpoint {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn tool_list_results_carry_the_cache_metadata_protocol_2026_07_28_requires() {
+        for profile in [CatalogProfile::Full, CatalogProfile::Compact] {
+            let tools = catalog_for(profile);
+            assert!(!tools.is_empty());
+            let wire = serde_json::to_value(tool_list_result(tools)).unwrap();
+            assert_eq!(wire["ttlMs"], json!(0), "{profile:?}");
+            assert_eq!(wire["cacheScope"], json!("private"), "{profile:?}");
+            assert!(wire["tools"].as_array().is_some_and(|t| !t.is_empty()));
+        }
+    }
 
     #[test]
     fn planning_activation_confirmation_is_structural_and_has_bounded_input_guidance() {
