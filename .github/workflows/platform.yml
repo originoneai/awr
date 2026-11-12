@@ -49,8 +49,8 @@ jobs:
           - platform: windows-x64
             runner: windows-2025
     runs-on: ${{ matrix.runner }}
-    # Include Intel's separate workspace budget, build, cleanup and all other gates.
-    timeout-minutes: ${{ matrix.platform == 'macos-x64' && 90 || 45 }}
+    # Include the separate workspace budget of Intel and Windows, build, cleanup and all other gates.
+    timeout-minutes: ${{ (matrix.platform == 'macos-x64' || matrix.platform == 'windows-x64') && 90 || 45 }}
     defaults:
       run:
         shell: bash
