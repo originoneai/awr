@@ -51,7 +51,7 @@ class ProcessRunnerTests(unittest.TestCase):
             self.assertEqual(self.log.stat().st_size, 0)
 
     def test_timeout_reaps_the_launcher_and_retains_partial_output(self):
-        result = self.run_python("import time; print('started', flush=True); time.sleep(20)", timeout=0.5)
+        result = self.run_python("import time; print('started', flush=True); time.sleep(20)", timeout=2)
         self.assertFalse(result['passed'])
         self.assertTrue(result['timed_out'])
         self.assertIsNotNone(result['exit_code'])
@@ -59,11 +59,11 @@ class ProcessRunnerTests(unittest.TestCase):
         self.assertTrue(result['log_finalized'])
         self.assertIn(b'started', self.log.read_bytes())
 
-    def family_code(self, parent_exits):
+    def family_code(self, parent_exits, leaf_seconds=2):
         marker = self.root / 'late-write'
         ready = self.root / 'ready'
         leaf = ("import pathlib,time; print('leaf-ready',flush=True); pathlib.Path(" + repr(str(ready))
-                + ").write_text('ready'); time.sleep(2); pathlib.Path("
+                + ").write_text('ready'); time.sleep(" + str(leaf_seconds) + "); pathlib.Path("
                 + repr(str(marker)) + ").write_text('escaped'); print('late-output',flush=True)")
         middle = "import subprocess,sys,time; subprocess.Popen([sys.executable,'-u','-c'," + repr(leaf) + "]); time.sleep(20)"
         parent = ("import pathlib,subprocess,sys,time; ready=pathlib.Path(" + repr(str(ready))
@@ -84,8 +84,10 @@ class ProcessRunnerTests(unittest.TestCase):
         self.assertNotIn(b'late-output', self.log.read_bytes())
 
     def test_timeout_terminates_grandchildren_before_final_log_hash(self):
-        code, marker = self.family_code(parent_exits=False)
-        result = self.run_python(code, timeout=1)
+        # Two nested interpreters must start before the leaf prints: give the family room on a slow runner, and let the leaf
+        # write its marker one second after the timeout so a survivor of the cleanup is still caught by the 2.2 s window.
+        code, marker = self.family_code(parent_exits=False, leaf_seconds=5)
+        result = self.run_python(code, timeout=4)
         self.assertFalse(result['passed'])
         self.assertTrue(result['timed_out'])
         self.assert_family_stopped_and_log_stable(result, marker)
