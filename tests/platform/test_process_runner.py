@@ -124,12 +124,12 @@ class ProcessRunnerTests(unittest.TestCase):
             self.run_python("print('replacement')")
         self.assertEqual(self.log.read_bytes(), b'original evidence')
 
-    def test_contract_keeps_routes_and_gives_only_intel_workspace_extra_time(self):
+    def test_contract_keeps_routes_and_gives_only_intel_and_windows_workspace_extra_time(self):
         contract = json.loads((Path(__file__).parent / 'contract.json').read_text())
         self.assertEqual(contract['command_timeout_seconds'], 1800)
         self.assertEqual(contract['cleanup_timeout_seconds'], 10)
         for selected in contract['platforms']:
-            expected = {'workspace': 3600} if selected['id'] == 'macos-x64' else {}
+            expected = {'workspace': 3600} if selected['id'] in ('macos-x64', 'windows-x64') else {}
             self.assertEqual(selected.get('gate_timeout_seconds', {}), expected)
         self.assertIn('runner_tests', contract['required_gates'])
         self.assertIn('workspace', contract['required_gates'])
