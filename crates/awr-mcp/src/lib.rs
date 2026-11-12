@@ -125,7 +125,11 @@ impl ServerHandler for AwrServer {
                 None,
             ));
         }
-        let mut result = ListToolsResult::default();
+        // Protocol 2026-07-28 (SEP-2549) requires cache metadata on list results and
+        // the SDK leaves it unset. Match `server/discover`: not cacheable, private.
+        let mut result = ListToolsResult::default()
+            .with_ttl_ms(0)
+            .with_cache_scope(CacheScope::Private);
         result.tools = self.catalog();
         Ok(result)
     }
