@@ -15,6 +15,17 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   Entries registered by earlier versions stay in the catalog until they are removed. See
   [Local Project Hub](../reference/local-project-hub.md#register-projects).
 
+## Fixed
+
+- **`awr init --manifest` works with `--write-draft`.** A project with a credential in one file could
+  not use the draft and review flow: the flag pair was refused, and the draft read every document of
+  the project, so the credential stopped it even when the owner had listed only readable sources. The
+  draft now maps exactly the manifest's sources, reads only those documents, and lists every other
+  file by path and size, so a change to any file still asks for a new review. The draft records the
+  readable paths in `inventory_scope`; drafts without a manifest are unchanged. A manifest with
+  `--write-draft` never replaces an existing mapping. See
+  [project intake](../TAKEOVER.md) (#622).
+
 ## Added
 
 - **`awr-mcp --catalog`**, a local catalog mode for the stdio server. One process serves the

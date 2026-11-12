@@ -84,6 +84,17 @@ pub(crate) fn runtime_dir(root: &Path, create: bool) -> Result<PathBuf> {
     Ok(actual)
 }
 
+/// Read and parse an explicit source manifest; a relative path is taken from the project root.
+pub fn read_manifest(root: &Path, path: &Path) -> Result<Manifest> {
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
+    };
+    let bytes = awr_source::read_capped(&path, 64 * 1024)?;
+    Manifest::parse(std::str::from_utf8(&bytes).map_err(|e| Error::InvalidInput(e.to_string()))?)
+}
+
 pub fn initialize(
     root: &Path,
     manifest_path: Option<&Path>,
@@ -104,16 +115,7 @@ pub fn initialize(
         None
     };
     let (candidate, candidates, ambiguous) = if let Some(path) = manifest_path {
-        let path = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            root.join(path)
-        };
-        let bytes = awr_source::read_capped(&path, 64 * 1024)?;
-        let candidate = Manifest::parse(
-            std::str::from_utf8(&bytes).map_err(|e| Error::InvalidInput(e.to_string()))?,
-        )?;
-        (Some(candidate), vec![], vec![])
+        (Some(read_manifest(&root, path)?), vec![], vec![])
     } else if let Some(existing) = &existing {
         (Some(existing.clone()), vec![], vec![])
     } else {
