@@ -11,6 +11,7 @@ Commands:
   document      Edit registered Markdown documents or create source-backed drafts
   capabilities  Negotiate host capabilities without opening a project or its database
   init          Preview source authority mapping; --accept initializes using the reviewed mapping
+  takeover      Take over an existing project in resumable steps
   intake        Diagnose project organization and recheck readiness after source edits
   client        Bind client conversations and persist lifecycle checkpoints
   execution     Register, run and inspect executions that can outlive the calling session
