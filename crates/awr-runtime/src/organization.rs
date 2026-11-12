@@ -431,6 +431,92 @@ fn finished_goal(goal: &Goal) -> bool {
     )
 }
 
+/// The structural gaps that keep each unfinished work from being admitted to a claim, by work key: the codes
+/// `inspect_organization` records for it (`work_status_unmapped`, `work_structure_incomplete`, `work_goal_missing`,
+/// `work_goal_unresolved`, `intake_work_only`, `plan_reference_unresolved`) and, for a project whose sources are not
+/// current or that lacks a rules source, the project-wide code that makes no work executable. An empty list means the
+/// structure is complete; readiness (dependencies, claims) is a separate question. Finished, cancelled and archived work
+/// is not in the answer. Nothing is written, and the sources are not refreshed: freshness is what is recorded.
+pub(crate) fn work_structure(
+    store: &Store,
+    project: &Project,
+    works: &[Projected<WorkItem>],
+) -> Result<BTreeMap<String, Vec<&'static str>>> {
+    let sources = store.sources(project.id)?;
+    let minimal = awr_source::minimal_context(&sources);
+    let rules_defined = minimal || sources.iter().any(|s| s.domain == "rules");
+    let sources_ok = sources.iter().all(|s| s.freshness == Freshness::Fresh);
+    let goals = store.goals(project.id)?;
+    let goals: BTreeMap<_, _> = goals
+        .iter()
+        .filter(|g| g.source.role == "primary")
+        .map(|g| (g.item.meta.external_key.clone(), g))
+        .collect();
+    let links = store.work_goal_links(project.id)?;
+    let mut by_work: BTreeMap<&str, Vec<&Edge>> = BTreeMap::new();
+    for link in &links {
+        by_work.entry(&link.from_key).or_default().push(link);
+    }
+    let mut out = BTreeMap::new();
+    for projected in works {
+        let work = &projected.item;
+        if work.archived || matches!(work.status, WorkStatus::Cancelled | WorkStatus::Completed) {
+            continue;
+        }
+        let key = &work.meta.external_key;
+        let mut codes: Vec<&'static str> = vec![];
+        if !sources_ok || projected.source.freshness != Freshness::Fresh {
+            codes.push("source_unreadable");
+        }
+        if !rules_defined {
+            codes.push("rules_source_missing");
+        }
+        if work.status == WorkStatus::Unknown {
+            codes.push("work_status_unmapped");
+        }
+        let missing_milestone = !minimal
+            && work
+                .milestone
+                .as_deref()
+                .is_none_or(|s| s.trim().is_empty());
+        if missing_milestone
+            || work.title.trim().is_empty()
+            || work.status == WorkStatus::Unknown
+            || validate_criteria(&work.acceptance).is_err()
+            || work.next_action.trim().is_empty()
+        {
+            codes.push("work_structure_incomplete");
+        }
+        match by_work.get(key.as_str()) {
+            None => codes.push("work_goal_missing"),
+            Some(v) if v.is_empty() => codes.push("work_goal_missing"),
+            Some(work_links) => {
+                let resolved_all = work_links.iter().all(|link| {
+                    goals
+                        .get(&link.to_key)
+                        .is_some_and(|g| declared_goal(g) && !finished_goal(&g.item))
+                });
+                if !resolved_all {
+                    codes.push("work_goal_unresolved");
+                }
+            }
+        }
+        if work.kind.as_deref() == Some("intake") {
+            codes.push("intake_work_only");
+        }
+        if let Some(milestone) = &work.milestone {
+            match store.plan(project.id, milestone) {
+                Ok(plan) if plan.source.freshness == Freshness::Fresh => (),
+                Ok(_) | Err(Error::NotFound(_)) => codes.push("plan_reference_unresolved"),
+                Err(error) => return Err(error),
+            }
+        }
+        codes.dedup();
+        out.insert(key.clone(), codes);
+    }
+    Ok(out)
+}
+
 /// Call after source refresh/verification. No authoritative files or runtime state are changed.
 pub fn inspect_organization(
     store: &Store,

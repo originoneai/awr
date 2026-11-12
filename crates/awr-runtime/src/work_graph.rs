@@ -284,10 +284,34 @@ pub fn work_graph(store: &Store, root: &Path, request: &WorkGraphRequest) -> Res
         .filter(|key| works.contains_key(*key))
         .cloned()
         .collect();
+    // `ready` is the readiness of the dependency graph. Whether a claim would be admitted also needs the work's structure
+    // (goal, acceptance, next step): the same answer `status` and `ready` give, so a host does not show as ready what they
+    // refuse. `held_by` lists what holds the work back, structure first, then the diagnostics of readiness.
+    let structure = crate::organization::work_structure(store, &project, &projected)?;
     let nodes = store.map_work_readiness(project.id, &keys, branch, at, |r| {
         let key = &r.work.item.meta.external_key;
         let last_event_at = last_events.get(&r.work.item.meta.id).copied();
-        Ok(json!({"key":key,"id":r.work.item.meta.id,"title":r.work.item.title,"status":r.work.item.status,"archived":r.work.item.archived,"ready":r.ready,"paths":r.work.item.paths,"diagnostics":r.diagnostics,"active_claims":r.active_claims,"last_event_at":last_event_at,"source_ref":r.work.item.meta.source_ref}))
+        let own_status = matches!(
+            r.work.item.status,
+            WorkStatus::Planned | WorkStatus::Ready | WorkStatus::Claimed | WorkStatus::InProgress
+        );
+        // Finished, cancelled and archived work is nothing to claim, so nothing is said to hold it back.
+        let unfinished = structure.contains_key(key);
+        let mut held_by: Vec<String> = structure
+            .get(key)
+            .map(|codes| codes.iter().map(|c| (*c).to_owned()).collect())
+            .unwrap_or_default();
+        for diagnostic in r.diagnostics.iter().filter(|_| unfinished) {
+            // A work's own claim and a status that merely says it is open do not hold it back.
+            if own_status && matches!(diagnostic.code.as_str(), "active_claim" | "status_not_selectable") {
+                continue;
+            }
+            if !held_by.contains(&diagnostic.code) {
+                held_by.push(diagnostic.code.clone());
+            }
+        }
+        let executable = unfinished && held_by.is_empty();
+        Ok(json!({"key":key,"id":r.work.item.meta.id,"title":r.work.item.title,"status":r.work.item.status,"archived":r.work.item.archived,"ready":r.ready,"executable":executable,"held_by":held_by,"paths":r.work.item.paths,"diagnostics":r.diagnostics,"active_claims":r.active_claims,"last_event_at":last_event_at,"source_ref":r.work.item.meta.source_ref}))
     })?;
     let selected_edges: Vec<_> = edges.iter().filter(|e| selected.contains(&e.from_key)).map(|e| json!({"from":e.from_key,"to":e.to_key,"required":e.required,"source_ref":e.source_ref})).collect();
     let missing: BTreeSet<_> = edges

@@ -194,6 +194,16 @@ branch and session, or null when the work has no event. It dates activity withou
 through the event history; it is neither a progress nor a completion signal, and it does
 not enter the graph fingerprint.
 
+`work graph` nodes, and the `work_graph` of `awr overview snapshot`, answer two questions about
+readiness. `ready` is the answer of the dependency graph: nothing the work requires is open. `executable`
+is the answer `awr status` and `awr ready` give: the work is unfinished, `ready` holds, and the
+project's structure holds nothing back. A work with no goal, acceptance criteria or next step, a project
+whose sources are not current, or a ledger without a rules source is not executable, whatever
+`ready` says. `held_by` lists what holds the work back, as the codes `status` uses (structure first, then
+the diagnostics of readiness), and is empty when `executable` is true or the work is finished.
+A client that offers to start work reads `executable`; one that draws dependencies reads `ready`.
+Both fields describe the recorded state and, like `last_event_at`, stay out of the graph fingerprint.
+
 ## Verification boundary
 
 ### Team source projection in the development branch
