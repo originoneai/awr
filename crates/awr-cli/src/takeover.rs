@@ -72,6 +72,9 @@ pub struct TakeoverArgs {
     /// Seconds the reviewer may take before the run stops.
     #[arg(long, default_value_t = 900, requires = "reviewer")]
     pub review_timeout_secs: u64,
+    /// Source list the owner chose (a manifest); the takeover maps and reads exactly these sources.
+    #[arg(long)]
+    pub manifest: Option<PathBuf>,
     /// Continue organizing an already initialized project that has no active session.
     #[arg(long)]
     pub adopt: bool,
@@ -774,8 +777,39 @@ impl Run<'_> {
         )
     }
 
+    /// A stop of the preview step; a credential stop says how to go on with a manifest.
+    fn preview_stop(&self, failure: &Failure) -> StepEnd {
+        let mut stop = classify(failure, &self.root);
+        if stop.reason == "secret_boundary" {
+            stop.message.push_str(if self.args.manifest.is_some() {
+                " The manifest lists this file: redact the value, or leave the file out of the manifest."
+            } else {
+                " Redact the value, or list the sources AWR may read in a manifest and run the takeover again with --manifest <file>."
+            });
+        }
+        StepEnd::Stop(stop)
+    }
+
     fn preview(&mut self) -> std::result::Result<Value, StepEnd> {
-        let shown = self.awr.run(&["init"]).map_err(|failure| {
+        let draft_path = self.run_dir.join("draft.json");
+        // awr will not overwrite a draft file, and a draft left by an interrupted attempt is this run's own.
+        let _ = fs::remove_file(&draft_path);
+        let draft_arg = draft_path.to_string_lossy().into_owned();
+        let manifest = self
+            .args
+            .manifest
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned());
+        // With a manifest the draft is written by the first command: it maps and reads exactly the listed sources,
+        // and its preview is the one to judge. Without one the preview comes first and the draft after it.
+        let shown = match &manifest {
+            Some(manifest) => {
+                self.awr
+                    .run(&["init", "--manifest", manifest, "--write-draft", &draft_arg])
+            }
+            None => self.awr.run(&["init"]),
+        }
+        .map_err(|failure| {
             // AWR could not make sense of a source it found (for example a ledger that is not valid YAML).
             if failure.code == "InvalidInput" {
                 return StepEnd::Stop(
@@ -786,7 +820,7 @@ impl Run<'_> {
                     .with(json!({ "code": "InvalidInput" })),
                 );
             }
-            StepEnd::Stop(classify(&failure, &self.root))
+            self.preview_stop(&failure)
         })?;
         let issues = shown["preview"]["source_issues"]
             .as_array()
@@ -823,13 +857,11 @@ impl Run<'_> {
             .with(json!({ "status": shown["status"] }))
             .into());
         }
-        let draft_path = self.run_dir.join("draft.json");
-        // awr will not overwrite a draft file, and a draft left by an interrupted attempt is this run's own.
-        let _ = fs::remove_file(&draft_path);
-        let draft_arg = draft_path.to_string_lossy().into_owned();
-        self.awr
-            .run(&["init", "--write-draft", &draft_arg])
-            .map_err(|failure| StepEnd::Stop(classify(&failure, &self.root)))?;
+        if manifest.is_none() {
+            self.awr
+                .run(&["init", "--write-draft", &draft_arg])
+                .map_err(|failure| self.preview_stop(&failure))?;
+        }
         let draft = read_json(&draft_path).unwrap_or(Value::Null);
         if !draft["inventory_fingerprint"].is_string() || !draft["generated_files"].is_object() {
             return Err(Stop::new(
@@ -840,6 +872,7 @@ impl Run<'_> {
         }
         Ok(json!({
             "draft_path": draft_path,
+            "manifest": manifest,
             "inventory_fingerprint": draft["inventory_fingerprint"],
             "inventory": draft["inventory"].as_array().map_or(0, Vec::len),
             "sources": summarize_sources(&draft["authority_mapping"]),
@@ -1354,6 +1387,18 @@ fn run_takeover(root: &Path, args: &TakeoverArgs, json_output: bool) -> Result<V
         record,
         args,
     };
+    // A saved preview belongs to the manifest it was made with; another one starts again from the preview, unless
+    // accept already began (then the project is initialized and the run goes on from there).
+    if let Some(wanted) = &args.manifest
+        && run.step("preview")["status"] == "done"
+        && run.step("preview")["result"]["manifest"] != json!(wanted.to_string_lossy())
+        && run.step("accept")["attempted"] != true
+        && let Some(steps) = run.record["steps"].as_object_mut()
+    {
+        for step in ["preview", "review", "accept"] {
+            steps.remove(step);
+        }
+    }
     run.save()?;
 
     let mut receipt_body = None;

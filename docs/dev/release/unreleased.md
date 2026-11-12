@@ -43,7 +43,9 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   lists are written, and nothing is committed. A reviewer cannot raise a goal above `candidate`
   or leave the ledger without work items, a secret source stops the run naming its category, path
   and line, and a stop exits 1 with the step and reason. The orchestration moved here from the
-  DeepSeek Harness plugin, where it ran against real projects with a real model. See
+  DeepSeek Harness plugin, where it ran against real projects with a real model.
+  `--manifest <file>` takes a project with a credential file through by listing the sources AWR
+  may read (needs the `init --manifest --write-draft` fix, #622). See
   [Take over a project](../reference/takeover-command.md) (#620).
 
 - **`awr-mcp --catalog`**, a local catalog mode for the stdio server. One process serves the
