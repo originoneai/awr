@@ -184,7 +184,18 @@ pub(crate) fn is_domain(name: &str) -> bool {
     DOMAINS.iter().any(|d| d.name == name)
 }
 
-fn input_schema(shared: bool) -> Value {
+/// How a server picks the project a call is for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Scope {
+    /// One project bound when the server started.
+    Bound,
+    /// A shared HTTP endpoint: every call names a registered project key.
+    Shared,
+    /// The local catalog: a call may name a project, else the default one is used.
+    Catalog,
+}
+
+fn input_schema(scope: Scope) -> Value {
     let mut schema = json!({
         "type": "object",
         "properties": {
@@ -194,22 +205,31 @@ fn input_schema(shared: bool) -> Value {
         },
         "additionalProperties": false,
     });
-    if shared {
-        schema["properties"]["project"] = json!({
-            "type": "string",
-            "description": "Registered project key from awr_projects_list. Required on every call; never a filesystem path."
-        });
-        schema["required"] = json!(["project"]);
+    match scope {
+        Scope::Bound => {}
+        Scope::Shared => {
+            schema["properties"]["project"] = json!({
+                "type": "string",
+                "description": "Registered project key from awr_projects_list. Required on every call; never a filesystem path."
+            });
+            schema["required"] = json!(["project"]);
+        }
+        Scope::Catalog => {
+            schema["properties"]["project"] = json!({
+                "type": "string",
+                "description": "Project key, unique name or root path from awr_projects_list. Optional when the server has a default project."
+            });
+        }
     }
     schema
 }
 
 /// Level-1 catalog: one bounded entry per problem domain.
-pub(crate) fn domain_tools(shared: bool) -> Vec<Tool> {
+pub(crate) fn domain_tools(scope: Scope) -> Vec<Tool> {
     DOMAINS
         .iter()
         .map(|d| {
-            let schema = input_schema(shared);
+            let schema = input_schema(scope);
             let mut tool = Tool::new(
                 d.name,
                 format!("{}{}", d.description, DISCOVERY_SUFFIX),
@@ -229,7 +249,7 @@ pub(crate) fn domain_tools(shared: bool) -> Vec<Tool> {
 
 /// Level-2 manifest: exact child names and their real schemas, returned only
 /// when a caller explicitly discovers one domain.
-pub(crate) fn manifest(domain: &str, flat_tools: &[Tool], shared: bool) -> Value {
+pub(crate) fn manifest(domain: &str, flat_tools: &[Tool], scope: Scope) -> Value {
     let def = DOMAINS
         .iter()
         .find(|d| d.name == domain)
@@ -259,10 +279,10 @@ pub(crate) fn manifest(domain: &str, flat_tools: &[Tool], shared: bool) -> Value
         "child_total": children.len(),
         "children": children,
         "limits": def.limits,
-        "usage": if shared {
-            "Call this domain again with project, child_tool, and arguments."
-        } else {
-            "Call this domain again with child_tool and arguments."
+        "usage": match scope {
+            Scope::Shared => "Call this domain again with project, child_tool, and arguments.",
+            Scope::Catalog => "Call this domain again with child_tool and arguments, plus project to choose a project or nothing to use the default.",
+            Scope::Bound => "Call this domain again with child_tool and arguments.",
         },
     })
 }

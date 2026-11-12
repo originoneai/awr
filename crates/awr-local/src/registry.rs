@@ -40,10 +40,19 @@ pub struct LocalProject {
     pub intake_requested: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issue: Option<String>,
+    /// Set when someone chose this project: `register`, or auto-registration when it is on.
+    /// A project that was only found by discovery, or registered by an earlier version that
+    /// registered on use, does not have it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub registered: bool,
 }
 
 fn available() -> bool {
     true
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 pub(crate) fn is_temporary_session_directory(root: &Path) -> bool {
@@ -267,6 +276,7 @@ pub fn inspect(root: &Path) -> Result<LocalProject> {
         last_seen_at: now,
         intake_requested: false,
         issue: None,
+        registered: false,
     };
     if entry.root.join(".awr").exists() {
         match Store::open_readonly(&entry.root.join(".awr/state.db"))
@@ -302,6 +312,7 @@ fn merge(catalog: &mut Catalog, mut entry: LocalProject, used: bool) -> Result<L
         // A bound identity also survives missing/corrupt runtime files until explicit repair.
         old.last_seen_at = old.last_seen_at.max(entry.last_seen_at);
         old.intake_requested |= entry.intake_requested;
+        old.registered |= entry.registered;
         old.available = validate(old).is_ok();
         if !old.available {
             old.state = ProjectState::Attention;
@@ -320,6 +331,7 @@ fn merge(catalog: &mut Catalog, mut entry: LocalProject, used: bool) -> Result<L
     });
     if let Some(old) = old {
         entry.intake_requested |= old.intake_requested;
+        entry.registered |= old.registered;
         entry.key = old.key.clone();
         entry.registered_at = old.registered_at;
         entry.last_used_at = if used {
@@ -368,7 +380,8 @@ pub(crate) fn record(
 }
 
 pub fn observe(dir: &Path, root: &Path) -> Result<LocalProject> {
-    let entry = inspect(root)?;
+    let mut entry = inspect(root)?;
+    entry.registered = true;
     if entry.state == ProjectState::Discovered
         && !catalog(dir)?
             .projects
@@ -440,7 +453,8 @@ pub(crate) fn retire_candidates(
 }
 
 pub fn register(dir: &Path, root: &Path) -> Result<LocalProject> {
-    let entry = inspect(root)?;
+    let mut entry = inspect(root)?;
+    entry.registered = true;
     if entry.state != ProjectState::Connected {
         return Err(Error::NotFound(
             "initialized AWR project; use overview inspect for intake guidance".into(),
@@ -471,6 +485,95 @@ pub(crate) fn validate(entry: &LocalProject) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// Whether an agent connection may be served this entry: someone registered it, it holds a
+/// bound AWR identity, and it is neither hidden nor a temporary session directory. When
+/// `allow_roots` is not empty the project must also live under one of those directories.
+fn servable(entry: &LocalProject, hidden: &BTreeSet<String>, allow_roots: &[PathBuf]) -> bool {
+    (entry.registered || entry.intake_requested)
+        && entry.project_id.is_some()
+        && entry.state == ProjectState::Connected
+        && !hidden.contains(&entry.key)
+        && !is_temporary_session_directory(&entry.root)
+        && (allow_roots.is_empty() || allow_roots.iter().any(|root| entry.root.starts_with(root)))
+}
+
+/// The registered projects a local agent connection may use, most recently used first.
+///
+/// This only reads the catalog; no project database is opened, so it stays cheap when the
+/// catalog is large. `resolve` checks the identity of the one project that is selected.
+pub fn served(dir: &Path, allow_roots: &[PathBuf]) -> Result<Vec<LocalProject>> {
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let (entries, hidden) = {
+        let _lock = lock(dir, "projects.lock", Duration::from_secs(2))?;
+        (catalog(dir)?.projects, hidden_projects(dir)?)
+    };
+    let mut entries: Vec<_> = entries
+        .into_iter()
+        .filter(|entry| servable(entry, &hidden.keys, allow_roots))
+        .collect();
+    entries.sort_by(|a, b| {
+        b.last_used_at
+            .cmp(&a.last_used_at)
+            .then(b.registered_at.cmp(&a.registered_at))
+            .then(a.root.cmp(&b.root))
+    });
+    Ok(entries)
+}
+
+/// Resolve what a client typed to one served project: an absolute root path, a catalog key (or
+/// a unique prefix of at least 8 hex digits), or a unique project name. A project outside the
+/// served set is reported exactly like an unknown one. The selected project's recorded
+/// identity is checked against its database before it is returned.
+pub fn resolve(dir: &Path, selector: &str, allow_roots: &[PathBuf]) -> Result<LocalProject> {
+    let selector = selector.trim();
+    if selector.is_empty() {
+        return Err(Error::InvalidInput("project selector is empty".into()));
+    }
+    let entries = served(dir, allow_roots)?;
+    let matches: Vec<&LocalProject> = if Path::new(selector).is_absolute() {
+        let wanted = Path::new(selector)
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(selector));
+        entries
+            .iter()
+            .filter(|entry| entry.root == wanted)
+            .collect()
+    } else if let Some(exact) = entries.iter().find(|entry| entry.key == selector) {
+        vec![exact]
+    } else if selector.len() >= 8 && selector.bytes().all(|b| b.is_ascii_hexdigit()) {
+        let prefix = selector.to_ascii_lowercase();
+        entries
+            .iter()
+            .filter(|entry| entry.key.starts_with(&prefix))
+            .collect()
+    } else {
+        entries
+            .iter()
+            .filter(|entry| entry.name == selector)
+            .collect()
+    };
+    match matches.as_slice() {
+        [] => Err(Error::NotFound(
+            "no registered local project matches; list them, and register one with `awr overview register`".into(),
+        )),
+        [entry] => {
+            validate(entry)?;
+            Ok((*entry).clone())
+        }
+        many => Err(Error::InvalidInput(format!(
+            "{} registered projects match; use the key or the root path instead: {}",
+            many.len(),
+            many.iter()
+                .take(5)
+                .map(|entry| format!("{} ({})", entry.key, entry.root.display()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))),
+    }
 }
 
 pub fn list(dir: &Path) -> Result<Vec<LocalProject>> {
@@ -579,6 +682,114 @@ mod tests {
         assert_eq!(entries[0].key, first.key);
         assert_eq!(used.registered_at, first.registered_at);
         assert!(entries.iter().all(|p| p.available));
+    }
+
+    #[test]
+    fn only_registered_projects_are_served_and_discovery_alone_does_not_count() {
+        let fixture = Fixture::new();
+        let chosen = fixture.project("chosen");
+        let found = fixture.project("found");
+        let hidden = fixture.project("hidden");
+        register(&fixture.dir(), &chosen).unwrap();
+        // What discovery or an earlier version that registered on use leaves behind.
+        record(&fixture.dir(), vec![inspect(&found).unwrap()], false).unwrap();
+        let hidden_key = register(&fixture.dir(), &hidden).unwrap().key;
+        super::hide(&fixture.dir(), &hidden_key).unwrap();
+        assert_eq!(
+            list(&fixture.dir()).unwrap().len(),
+            2,
+            "the hub still lists the found one"
+        );
+        let served = served(&fixture.dir(), &[]).unwrap();
+        assert_eq!(served.len(), 1);
+        assert_eq!(served[0].name, "chosen");
+        assert!(served[0].registered);
+    }
+
+    #[test]
+    fn resolve_selects_by_root_key_prefix_or_unique_name_and_refuses_the_rest() {
+        let fixture = Fixture::new();
+        let a = fixture.project("alpha");
+        let b = fixture.project("beta");
+        let entry_a = register(&fixture.dir(), &a).unwrap();
+        register(&fixture.dir(), &b).unwrap();
+        let dir = fixture.dir();
+        for selector in [
+            a.to_str().unwrap(),
+            &a.join(".").to_string_lossy(),
+            entry_a.key.as_str(),
+            &entry_a.key[..8],
+            "alpha",
+        ] {
+            assert_eq!(
+                resolve(&dir, selector, &[]).unwrap().key,
+                entry_a.key,
+                "{selector}"
+            );
+        }
+        for selector in ["", "gamma", "/no/such/project", "deadbeef"] {
+            assert!(resolve(&dir, selector, &[]).is_err(), "{selector:?}");
+        }
+        // Two projects with one name cannot be selected by that name.
+        let twin = fixture.project("alpha-twin");
+        Store::open(&twin.join(".awr/state.db")).unwrap();
+        let other = fixture.0.join("elsewhere");
+        std::fs::create_dir_all(other.join(".awr")).unwrap();
+        Store::open(&other.join(".awr/state.db"))
+            .unwrap()
+            .register_project(&other.canonicalize().unwrap(), "alpha-2", "alpha")
+            .unwrap();
+        register(&dir, &other).unwrap();
+        let error = resolve(&dir, "alpha", &[]).unwrap_err().to_string();
+        assert!(error.contains("2 registered projects match"), "{error}");
+        assert!(
+            resolve(&dir, a.to_str().unwrap(), &[]).is_ok(),
+            "a root path stays unambiguous"
+        );
+    }
+
+    #[test]
+    fn allow_roots_hide_other_projects_exactly_like_unknown_ones() {
+        let fixture = Fixture::new();
+        let inside = fixture.project("inside");
+        let outside_root =
+            std::env::temp_dir().join(format!("awr-local-out-{}", awr_core::Id::new()));
+        std::fs::create_dir_all(outside_root.join(".awr")).unwrap();
+        let outside_root = outside_root.canonicalize().unwrap();
+        Store::open(&outside_root.join(".awr/state.db"))
+            .unwrap()
+            .register_project(&outside_root, "outside", "outside")
+            .unwrap();
+        register(&fixture.dir(), &inside).unwrap();
+        register(&fixture.dir(), &outside_root).unwrap();
+        let allow = [fixture.0.canonicalize().unwrap()];
+        assert_eq!(served(&fixture.dir(), &allow).unwrap().len(), 1);
+        assert!(resolve(&fixture.dir(), "inside", &allow).is_ok());
+        let refused = resolve(&fixture.dir(), "outside", &allow)
+            .unwrap_err()
+            .to_string();
+        let unknown = resolve(&fixture.dir(), "no-such-project", &allow)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(refused, unknown);
+        let _ = std::fs::remove_dir_all(&outside_root);
+    }
+
+    #[test]
+    fn resolve_refuses_a_project_whose_identity_was_replaced() {
+        let fixture = Fixture::new();
+        let root = fixture.project("alpha");
+        register(&fixture.dir(), &root).unwrap();
+        std::fs::remove_dir_all(root.join(".awr")).unwrap();
+        std::fs::create_dir_all(root.join(".awr")).unwrap();
+        Store::open(&root.join(".awr/state.db"))
+            .unwrap()
+            .register_project(&root, "alpha", "replacement")
+            .unwrap();
+        let error = resolve(&fixture.dir(), "alpha", &[])
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("identity changed"), "{error}");
     }
 
     #[test]

@@ -11,7 +11,7 @@ pub use intake::project_intake;
 pub use lifecycle::{ServiceStatus, detach_background, ensure, running, stop};
 pub use registry::{
     LocalProject, ProjectState, default_state_dir, get, inspect, is_default_state_dir, list,
-    observe, register, state_dir, touch,
+    observe, register, resolve, served, state_dir, touch,
 };
 
 use std::path::{Path, PathBuf};

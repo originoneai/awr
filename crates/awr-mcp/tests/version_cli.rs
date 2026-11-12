@@ -47,14 +47,16 @@ fn version_identity_ac5_mcp_help_keeps_its_existing_content() {
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
     let expected = concat!(
-        "Serve AWR through single-project stdio or a shared multi-project HTTP endpoint\n\n",
+        "Serve AWR through single-project stdio, the local project catalog over stdio, or a shared multi-project HTTP endpoint\n\n",
         "Usage: awr-mcp [OPTIONS]\n\n",
         "Options:\n",
-        "      --project <PROJECT>    \n",
-        "      --registry <REGISTRY>  Operator-owned multi-project registry; enables Streamable HTTP at /mcp\n",
-        "      --listen <LISTEN>      [default: 127.0.0.1:8080]\n",
-        "  -h, --help                 Print help\n",
-        "  -V, --version              Print version\n",
+        "      --project <PROJECT>        With --catalog, the default project; otherwise the one project served\n",
+        "      --catalog                  Serve the registered projects in the per-user local catalog over stdio\n",
+        "      --allow-root <ALLOW_ROOT>  With --catalog, serve only projects under this directory; repeatable\n",
+        "      --registry <REGISTRY>      Operator-owned multi-project registry; enables Streamable HTTP at /mcp\n",
+        "      --listen <LISTEN>          [default: 127.0.0.1:8080]\n",
+        "  -h, --help                     Print help\n",
+        "  -V, --version                  Print version\n",
     )
     .replacen(
         "Usage: awr-mcp ",

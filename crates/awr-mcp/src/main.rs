@@ -6,11 +6,18 @@ use std::{net::SocketAddr, path::PathBuf};
 #[command(
     name = "awr-mcp",
     version = env!("AWR_BUILD_VERSION"),
-    about = "Serve AWR through single-project stdio or a shared multi-project HTTP endpoint"
+    about = "Serve AWR through single-project stdio, the local project catalog over stdio, or a shared multi-project HTTP endpoint"
 )]
 struct Args {
+    /// With --catalog, the default project; otherwise the one project served.
     #[arg(long, conflicts_with = "registry")]
     project: Option<PathBuf>,
+    /// Serve the registered projects in the per-user local catalog over stdio.
+    #[arg(long, conflicts_with = "registry")]
+    catalog: bool,
+    /// With --catalog, serve only projects under this directory; repeatable.
+    #[arg(long = "allow-root", requires = "catalog")]
+    allow_root: Vec<PathBuf>,
     /// Operator-owned multi-project registry; enables Streamable HTTP at /mcp.
     #[arg(long)]
     registry: Option<PathBuf>,
@@ -30,8 +37,17 @@ async fn main() -> std::process::ExitCode {
             }
         };
     }
-    let server = match awr_mcp::AwrServer::open(&args.project.unwrap_or_else(|| PathBuf::from(".")))
-    {
+    let opened = if args.catalog {
+        // The default project is --project, else the starting directory when it is one.
+        let default = args.project.or_else(|| {
+            let here = PathBuf::from(".");
+            here.join(".awr/project.toml").is_file().then_some(here)
+        });
+        awr_mcp::AwrServer::open_catalog(&args.allow_root, default.as_deref())
+    } else {
+        awr_mcp::AwrServer::open(&args.project.unwrap_or_else(|| PathBuf::from(".")))
+    };
+    let server = match opened {
         Ok(server) => server.with_local_overview(),
         Err(error) => {
             eprintln!(
