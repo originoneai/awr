@@ -293,7 +293,15 @@ fn inventory_with_skips(
                 continue;
             }
             if kind.is_dir() {
-                walk(root, &entry.path(), depth + 1, out, skipped, findings, scope)?;
+                walk(
+                    root,
+                    &entry.path(),
+                    depth + 1,
+                    out,
+                    skipped,
+                    findings,
+                    scope,
+                )?;
             } else if kind.is_file() {
                 if out.len() >= 20000 {
                     return Err(Error::InvalidInput(
