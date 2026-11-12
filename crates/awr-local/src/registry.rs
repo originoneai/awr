@@ -382,6 +382,26 @@ pub fn observe(dir: &Path, root: &Path) -> Result<LocalProject> {
     Ok(record(dir, vec![entry], true)?.remove(0))
 }
 
+/// Refresh the usage time of a project that is already in the catalog.
+///
+/// A project that is not registered is left alone and `None` is returned: ordinary commands
+/// must not grow the catalog, because a machine that runs throwaway fixtures, copies and agent
+/// scratch directories would collect all of them. Registration is explicit (`register`).
+pub fn touch(dir: &Path, root: &Path) -> Result<Option<LocalProject>> {
+    if !dir.exists() {
+        return Ok(None);
+    }
+    let entry = inspect(root)?;
+    let _lock = lock(dir, "projects.lock", Duration::from_secs(2))?;
+    let mut catalog = catalog(dir)?;
+    if !catalog.projects.iter().any(|old| old.root == entry.root) {
+        return Ok(None);
+    }
+    let project = merge(&mut catalog, entry, true)?;
+    write_json(&dir.join("projects.json"), &catalog)?;
+    Ok(Some(project))
+}
+
 pub(crate) fn request_intake(dir: &Path, root: &Path) -> Result<LocalProject> {
     if !root.is_absolute() {
         return Err(Error::InvalidInput(
@@ -559,6 +579,27 @@ mod tests {
         assert_eq!(entries[0].key, first.key);
         assert_eq!(used.registered_at, first.registered_at);
         assert!(entries.iter().all(|p| p.available));
+    }
+
+    #[test]
+    fn touch_refreshes_a_registered_project_and_never_adds_one() {
+        let fixture = Fixture::new();
+        let registered = fixture.project("alpha");
+        let stranger = fixture.project("beta");
+        assert!(
+            touch(&fixture.dir(), &registered).unwrap().is_none(),
+            "no catalog yet: nothing to refresh, and no directory is created"
+        );
+        assert!(!fixture.dir().exists());
+        let first = register(&fixture.dir(), &registered).unwrap();
+        std::thread::sleep(Duration::from_millis(3));
+        assert!(touch(&fixture.dir(), &stranger).unwrap().is_none());
+        assert_eq!(list(&fixture.dir()).unwrap().len(), 1);
+        let touched = touch(&fixture.dir(), &registered).unwrap().unwrap();
+        assert_eq!(touched.key, first.key);
+        assert_eq!(touched.registered_at, first.registered_at);
+        assert!(touched.last_used_at > first.last_used_at);
+        assert_eq!(list(&fixture.dir()).unwrap().len(), 1);
     }
 
     #[test]

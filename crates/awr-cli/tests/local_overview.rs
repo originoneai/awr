@@ -128,7 +128,7 @@ fn set_prior_service_address(fixture: &Fixture, mut status: Value, address: &str
 }
 
 #[test]
-fn ordinary_calls_register_projects_and_concurrent_startup_reuses_one_service() {
+fn ordinary_calls_do_not_register_projects_and_concurrent_startup_reuses_one_service() {
     let f = Fixture::new();
     let a = f.project("alpha");
     let jobs: Vec<_> = (0..12)
@@ -157,12 +157,9 @@ fn ordinary_calls_register_projects_and_concurrent_startup_reuses_one_service() 
         .output()
         .unwrap();
     success(&output);
+    // Registration is explicit: an ordinary call must not add the project it touched.
     let entries = f.run(&["overview", "projects", "--json"]);
-    assert_eq!(entries["projects"].as_array().unwrap().len(), 1);
-    assert_eq!(
-        entries["projects"][0]["root"],
-        a.canonicalize().unwrap().to_str().unwrap()
-    );
+    assert!(entries["projects"].as_array().unwrap().is_empty());
     let second = f.run(&["overview", "start", "--json"])["service"].clone();
     assert_eq!(first["pid"], second["pid"]);
     assert_eq!(first["instance"], second["instance"]);
@@ -395,6 +392,67 @@ fn explicit_enrollment_creates_a_pending_card_and_initialization_promotes_the_sa
     assert_eq!(
         connected["data"]["guidance"]["next_action"]["argv"][3],
         "status"
+    );
+}
+
+#[test]
+fn explicit_registration_adds_a_project_and_later_ordinary_calls_only_refresh_its_usage_time() {
+    let f = Fixture::new();
+    let registered = f.project("alpha");
+    let other = f.project("beta");
+    f.register(&registered);
+    let status = |path: &Path| {
+        let output = f
+            .command()
+            .env("AWR_LOCAL_WEB", "1")
+            .arg("--project")
+            .arg(path)
+            .args(["status", "--cached", "--json"])
+            .output()
+            .unwrap();
+        success(&output);
+    };
+    let before = f.run(&["overview", "projects", "--json"]);
+    let used_before = before["projects"][0]["last_used_at"].as_i64().unwrap();
+    std::thread::sleep(Duration::from_millis(20));
+    status(&registered);
+    status(&other);
+    let after = f.run(&["overview", "projects", "--json"]);
+    let projects = after["projects"].as_array().unwrap();
+    assert_eq!(
+        projects.len(),
+        1,
+        "an unregistered project stays out of the catalog"
+    );
+    assert_eq!(
+        projects[0]["root"],
+        registered.canonicalize().unwrap().to_str().unwrap()
+    );
+    assert!(
+        projects[0]["last_used_at"].as_i64().unwrap() > used_before,
+        "an ordinary call refreshes the usage time of a registered project"
+    );
+}
+
+#[test]
+fn the_auto_register_variable_restores_registration_on_ordinary_calls() {
+    let f = Fixture::new();
+    let a = f.project("alpha");
+    let output = f
+        .command()
+        .env("AWR_LOCAL_WEB", "1")
+        .env("AWR_LOCAL_AUTO_REGISTER", "1")
+        .arg("--project")
+        .arg(&a)
+        .args(["status", "--cached", "--json"])
+        .output()
+        .unwrap();
+    success(&output);
+    let entries = f.run(&["overview", "projects", "--json"]);
+    assert_eq!(entries["projects"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        entries["projects"][0]["root"],
+        a.canonicalize().unwrap().to_str().unwrap()
     );
 }
 
