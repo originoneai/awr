@@ -66,6 +66,10 @@ static COMMAND_GROUPS: &[Group] = &[
         commands: &[
             ("init", "Set up source mappings for a project"),
             ("intake", "Inspect project organization and readiness"),
+            (
+                "takeover",
+                "Take over an existing project in resumable steps",
+            ),
             ("source", "List, scan and index authoritative sources"),
             ("batch", "Preview and apply a batch of source edits"),
             (

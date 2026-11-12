@@ -15,6 +15,7 @@ use std::{
 
 #[derive(Debug, Args)]
 pub struct InitArgs {
+    /// Explicit source mapping; with --write-draft the draft maps exactly the listed sources.
     #[arg(long)]
     pub manifest: Option<PathBuf>,
     #[arg(long)]
@@ -32,7 +33,7 @@ pub struct InitArgs {
     #[arg(long, conflicts_with_all=["manifest","from_draft"])]
     pub field_map: Vec<String>,
     /// Save a reviewable JSON draft without initializing the project.
-    #[arg(long, conflicts_with_all=["manifest","accept","from_draft"])]
+    #[arg(long, conflicts_with_all=["accept","from_draft"])]
     pub write_draft: Option<PathBuf>,
     /// Apply a reviewed draft whose inventory fingerprint still matches this directory.
     #[arg(long, conflicts_with_all=["manifest","goal"])]
@@ -138,6 +139,10 @@ struct IntakeDraft {
     project_root: String,
     inventory_fingerprint: String,
     inventory: Vec<FileFact>,
+    /// Source paths whose documents were read for the inventory. Absent when the whole project was read; present
+    /// when the owner's manifest chose the sources, so a file left out of it is listed but never read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    inventory_scope: Option<Vec<String>>,
     git: Value,
     authority_mapping: Manifest,
     generated_files: BTreeMap<String, String>,
@@ -186,9 +191,17 @@ fn document(path: &Path) -> bool {
         Some("md" | "yaml" | "yml" | "toml" | "json")
     )
 }
-fn inventory(root: &Path) -> Result<Vec<FileFact>> {
-    let mut skipped = vec![];
-    inventory_with_skips(root, &mut skipped)
+/// Whether the documents at `relative` are read for the inventory: always when no scope is set, otherwise when the
+/// path is a scope entry or lies under one.
+fn in_scope(relative: &str, scope: Option<&[String]>) -> bool {
+    scope.is_none_or(|paths| {
+        paths.iter().any(|path| {
+            relative == path
+                || relative
+                    .strip_prefix(path.as_str())
+                    .is_some_and(|rest| rest.starts_with('/'))
+        })
+    })
 }
 /// Findings listed in the details of a stop at the secret boundary; the total is always reported.
 const MAX_LISTED_FINDINGS: usize = 50;
@@ -217,7 +230,33 @@ fn all_findings(mut findings: Vec<Error>) -> Error {
     }
 }
 
-fn inventory_with_skips(root: &Path, skipped: &mut Vec<String>) -> Result<Vec<FileFact>> {
+/// The paths of a manifest's file sources, normalized, sorted and without repeats.
+fn manifest_scope(manifest: &Manifest) -> Vec<String> {
+    let mut paths: Vec<String> = manifest
+        .sources
+        .iter()
+        .filter_map(|source| source.path.as_ref())
+        .map(|path| {
+            path.to_string_lossy()
+                .replace('\\', "/")
+                .trim_start_matches("./")
+                .trim_end_matches('/')
+                .to_owned()
+        })
+        .collect();
+    paths.sort();
+    paths.dedup();
+    paths
+}
+fn inventory(root: &Path, scope: Option<&[String]>) -> Result<Vec<FileFact>> {
+    let mut skipped = vec![];
+    inventory_with_skips(root, &mut skipped, scope)
+}
+fn inventory_with_skips(
+    root: &Path,
+    skipped: &mut Vec<String>,
+    scope: Option<&[String]>,
+) -> Result<Vec<FileFact>> {
     fn walk(
         root: &Path,
         dir: &Path,
@@ -225,6 +264,7 @@ fn inventory_with_skips(root: &Path, skipped: &mut Vec<String>) -> Result<Vec<Fi
         out: &mut Vec<FileFact>,
         skipped: &mut Vec<String>,
         findings: &mut Vec<Error>,
+        scope: Option<&[String]>,
     ) -> Result<()> {
         if depth > DEPTH_LIMIT {
             skipped.push(
@@ -253,7 +293,7 @@ fn inventory_with_skips(root: &Path, skipped: &mut Vec<String>) -> Result<Vec<Fi
                 continue;
             }
             if kind.is_dir() {
-                walk(root, &entry.path(), depth + 1, out, skipped, findings)?;
+                walk(root, &entry.path(), depth + 1, out, skipped, findings, scope)?;
             } else if kind.is_file() {
                 if out.len() >= 20000 {
                     return Err(Error::InvalidInput(
@@ -262,9 +302,18 @@ fn inventory_with_skips(root: &Path, skipped: &mut Vec<String>) -> Result<Vec<Fi
                 }
                 let path = entry.path();
                 let bytes = entry.metadata()?.len();
-                // A file the secret boundary refuses is noted and the walk goes on, so that every such file is
-                // reported at once. Any other error ends the walk as before.
-                let hash = if document(&path) && bytes <= awr_source::YAML_READ_CAP {
+                let relative = path
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                // A document outside the scope is listed with its size and never read. A file the secret boundary
+                // refuses is noted and the walk goes on, so that every such file is reported at once. Any other
+                // error ends the walk as before.
+                let hash = if document(&path)
+                    && bytes <= awr_source::YAML_READ_CAP
+                    && in_scope(&relative, scope)
+                {
                     match awr_source::read_project_document(root, &path, awr_source::YAML_READ_CAP)
                     {
                         Ok(content) => Some(format!("{:x}", Sha256::digest(content))),
@@ -278,11 +327,7 @@ fn inventory_with_skips(root: &Path, skipped: &mut Vec<String>) -> Result<Vec<Fi
                     None
                 };
                 out.push(FileFact {
-                    path: path
-                        .strip_prefix(root)
-                        .unwrap()
-                        .to_string_lossy()
-                        .replace('\\', "/"),
+                    path: relative,
                     bytes,
                     sha256: hash,
                 });
@@ -292,7 +337,7 @@ fn inventory_with_skips(root: &Path, skipped: &mut Vec<String>) -> Result<Vec<Fi
     }
     let mut files = vec![];
     let mut findings = vec![];
-    walk(root, root, 0, &mut files, skipped, &mut findings)?;
+    walk(root, root, 0, &mut files, skipped, &mut findings, scope)?;
     if !findings.is_empty() {
         return Err(all_findings(findings));
     }
@@ -366,11 +411,20 @@ fn intake_goal_markdown(goal: Option<&str>) -> String {
         intake_goal_provenance(goal)
     )
 }
-fn draft(root: &Path, goal: Option<&str>) -> Result<IntakeDraft> {
+/// Build the intake draft. With `explicit` (a manifest the owner wrote) the draft maps exactly its sources: nothing
+/// is discovered, no conventional file names are added and README.md/AGENTS.md are not mapped on their own, so a
+/// file the owner left out is not read again. Missing goal and ledger sources are still proposed under
+/// `.awr/intake/`, as for any other draft.
+fn draft(root: &Path, goal: Option<&str>, explicit: Option<Manifest>) -> Result<IntakeDraft> {
     let mut skipped = vec![];
-    let files = inventory_with_skips(root, &mut skipped)?;
+    let scope = explicit.as_ref().map(manifest_scope);
+    let files = inventory_with_skips(root, &mut skipped, scope.as_deref())?;
     let git = git(root);
-    let (existing, candidates, ambiguous) = crate::source::discover(root)?;
+    let owner_chose = explicit.is_some();
+    let (existing, candidates, ambiguous) = match explicit {
+        Some(manifest) => (Some(manifest), vec![], vec![]),
+        None => crate::source::discover(root)?,
+    };
     let mut mapping = existing.unwrap_or(Manifest {
         team: Default::default(),
         project: ProjectConfig {
@@ -396,7 +450,7 @@ fn draft(root: &Path, goal: Option<&str>) -> Result<IntakeDraft> {
             })
             .collect(),
     });
-    if !root.join(".awr/project.toml").exists() {
+    if !owner_chose && !root.join(".awr/project.toml").exists() {
         // New intake records this choice in the reviewable manifest; existing profiles are preserved.
         mapping.project.context_profile = awr_source::ContextProfile::Minimal;
     }
@@ -448,7 +502,8 @@ fn draft(root: &Path, goal: Option<&str>) -> Result<IntakeDraft> {
             "markdown-heading-v1",
         ),
     ] {
-        if mapping.sources.iter().any(|s| s.domain == domain)
+        if owner_chose
+            || mapping.sources.iter().any(|s| s.domain == domain)
             || ambiguous_domains.iter().any(|d| d == domain)
         {
             continue;
@@ -546,7 +601,8 @@ fn draft(root: &Path, goal: Option<&str>) -> Result<IntakeDraft> {
             .push(source("goal", &path, "markdown-heading-v1", true));
     }
     for name in ["README.md", "AGENTS.md"] {
-        if files.iter().any(|f| f.path == name)
+        if !owner_chose
+            && files.iter().any(|f| f.path == name)
             && !mapping
                 .sources
                 .iter()
@@ -557,6 +613,9 @@ fn draft(root: &Path, goal: Option<&str>) -> Result<IntakeDraft> {
                 .sources
                 .push(source("plan", name, "markdown-heading-v1", false));
         }
+    }
+    if owner_chose {
+        observations.push("The source list is the supplied manifest; other project files were not mapped or read as sources.".into());
     }
     if mapping
         .sources
@@ -570,6 +629,7 @@ fn draft(root: &Path, goal: Option<&str>) -> Result<IntakeDraft> {
         project_root: root.to_string_lossy().into_owned(),
         inventory_fingerprint: fingerprint(&files, &git)?,
         inventory: files,
+        inventory_scope: scope,
         git,
         authority_mapping: mapping,
         generated_files: generated,
@@ -586,7 +646,22 @@ pub fn run(root: &Path, args: &InitArgs, json_output: bool) -> Result<()> {
     {
         return Err(Error::InvalidInput("project already has a manifest; edit its source options and run source reindex to update mappings".into()));
     }
-    if args.manifest.is_some()
+    // A manifest with --write-draft maps exactly the listed sources into a reviewable draft; it never replaces
+    // an existing mapping, as the manifest path of init never does.
+    let manifest = match (&args.manifest, &args.write_draft) {
+        (Some(path), Some(_)) => {
+            if root.join(".awr/project.toml").exists() {
+                return Err(Error::SourceConflict(
+                    "project.toml already exists; initialization never overwrites it".into(),
+                ));
+            }
+            let manifest = crate::source::read_manifest(&root, path)?;
+            manifest.validate()?;
+            Some(manifest)
+        }
+        _ => None,
+    };
+    if (args.manifest.is_some() && args.write_draft.is_none())
         || (root.join(".awr/project.toml").exists()
             && args.from_draft.is_none()
             && args.goal.is_none()
@@ -606,13 +681,17 @@ pub fn run(root: &Path, args: &InitArgs, json_output: bool) -> Result<()> {
             .map_err(|_| Error::InvalidInput("invalid intake draft JSON".into()))?;
         if value.schema_version != 1
             || value.project_root != root.to_string_lossy()
-            || value.inventory_fingerprint != fingerprint(&inventory(&root)?, &git(&root))?
+            || value.inventory_fingerprint
+                != fingerprint(
+                    &inventory(&root, value.inventory_scope.as_deref())?,
+                    &git(&root),
+                )?
         {
             return Err(Error::SourceConflict("project inventory changed or draft belongs to another directory; regenerate and review the intake draft".into()));
         }
         value
     } else {
-        match draft(&root, args.goal.as_deref()) {
+        match draft(&root, args.goal.as_deref(), manifest) {
             Ok(draft) => draft,
             Err(error) => {
                 if let Some(path) = &args.write_draft {
@@ -789,7 +868,12 @@ pub fn run(root: &Path, args: &InitArgs, json_output: bool) -> Result<()> {
             .map_err(|e| Error::InvalidInput(e.to_string()))?,
     )?;
     // Recheck after staging, before making the intake authoritative.
-    if candidate.inventory_fingerprint != fingerprint(&inventory(&root)?, &git(&root))? {
+    if candidate.inventory_fingerprint
+        != fingerprint(
+            &inventory(&root, candidate.inventory_scope.as_deref())?,
+            &git(&root),
+        )?
+    {
         return Err(Error::SourceConflict(
             "project changed during intake; staged draft retained for inspection".into(),
         ));
