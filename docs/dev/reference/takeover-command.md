@@ -28,6 +28,8 @@ Without a reviewer the draft AWR generated is applied as it is. A run that stops
 | `--reviewer <PROGRAM>` | Command that reviews the draft; `--reviewer-arg <ARG>` adds one argument per use |
 | `--review-timeout-secs <N>` | Seconds the reviewer may run; default 900 |
 | `--manifest <FILE>` | The sources the owner chose; the draft maps and reads exactly these and lists every other file by path and size |
+| `--await-review` | Stop after the preview with the draft and the review request for the host (see Host-driven review) |
+| `--reviewed <FILE>` | The host's answer to that request, in the reviewer's answer format |
 | `--adopt` | Organize an initialized project that has no active session; `preview`, `review` and `accept` are skipped |
 | `--max-rounds <N>` | Preview, review and accept rounds when the sources change meanwhile; default 3 |
 | `--state-dir <DIR>` | Run records and drafts, outside the project; default `$AWR_TAKEOVER_STATE`, else `$XDG_STATE_HOME/awr/takeovers`, else `~/.local/state/awr/takeovers` |
@@ -43,6 +45,20 @@ The reviewer is any command; AWR starts it without a shell and sends one JSON ob
 | stdout | `generated_files`: object of path to text under `.awr/intake/`; `notes`: short text; optional `authority_mapping` and `ambiguous_domains` to settle an ambiguity |
 
 AWR reads the answer from plain JSON, from the last fenced `json` block, or from the outermost braces. The receipt keeps the notes and the files the reviewer changed.
+
+### Host-driven review
+
+A host that cannot be started as a reviewer command, such as an agent running inside an app, reviews the draft itself in two runs.
+
+```sh
+awr --project /absolute/project --json takeover --await-review
+# outcome "awaiting_review": record.stop.detail has draft_path and request_path
+awr --project /absolute/project --json takeover --reviewed /absolute/answer.json
+```
+
+The request file holds what a reviewer command gets on stdin. The answer has the reviewer's format, and the same guards apply to it, so a reviewer command and a host cannot differ. `awaiting_review` exits 0 because nothing failed. The run keeps waiting until a review is applied: a later command without `--reviewed`, or with an answer the guards refuse, leaves the draft unapplied. `--await-review`, `--reviewer` and `--reviewed` exclude each other.
+
+A host checks for the command before it calls it: `awr capabilities` lists `intake.takeover` with the commands and flags of this build, and `awr capabilities --require intake.takeover` fails on a build that lacks them.
 
 ### Guards on a reviewed draft
 
@@ -79,6 +95,7 @@ A stopped run records `step`, `reason` and a message in `takeover.json`, prints 
 - AWR ships no reviewer; any command that follows the contract works.
 - Organization is one `intake inspect`; goals stay candidates until the owner confirms them.
 - A lock from a stopped process is replaced, and any lock expires after two hours.
+- An answer given with `--reviewed` is read only while the review step is unfinished; after it finished, the answer is ignored.
 - Resuming reuses the saved draft; a source that changed since the preview starts a new round, up to `--max-rounds`, and another `--manifest` starts again from the preview.
 
 ## Code and tests

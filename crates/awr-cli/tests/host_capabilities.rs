@@ -70,6 +70,44 @@ fn check_capabilities_negotiate_together_and_unknown_checks_are_unavailable() {
 }
 
 #[test]
+fn the_takeover_capability_names_commands_that_exist() {
+    let host = Host::new();
+    let result = host.ok(&["--json", "capabilities", "--require", "intake.takeover"]);
+    let capability = result["capabilities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == "intake.takeover")
+        .expect("the takeover capability is listed");
+    assert_eq!(capability["available"], true);
+    let commands: Vec<&str> = capability["commands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_str().unwrap())
+        .collect();
+    for needed in ["takeover", "takeover --await-review", "takeover --reviewed"] {
+        assert!(commands.contains(&needed), "{needed} in {commands:?}");
+    }
+    // What is advertised exists: every flag named in the capability is in the command's own help.
+    let help = host.run(&["takeover", "--help"]);
+    assert!(help.status.success());
+    let help = String::from_utf8_lossy(&help.stdout).into_owned();
+    for command in &commands {
+        for flag in command
+            .split_whitespace()
+            .filter(|word| word.starts_with("--"))
+        {
+            assert!(
+                help.contains(flag),
+                "{flag} is advertised but not in `takeover --help`:\n{help}"
+            );
+        }
+    }
+    assert_eq!(fs::read_dir(&host.0).unwrap().count(), 0);
+}
+
+#[test]
 fn trust_capability_is_negotiable_without_a_project() {
     let host = Host::new();
     let result = host.ok(&["--json", "capabilities", "--require", "output.trust_field"]);

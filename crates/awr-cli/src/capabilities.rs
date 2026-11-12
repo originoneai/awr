@@ -183,6 +183,25 @@ fn catalog() -> Vec<Capability> {
             &["requires_expected_preview", "individual_files_only"],
         ),
         (
+            "intake.takeover",
+            true,
+            &[
+                "takeover",
+                "takeover status",
+                "takeover --await-review",
+                "takeover --reviewed",
+                "takeover --manifest",
+            ],
+            &[
+                "resumable_persisted_steps",
+                "project_files_unchanged_before_accept",
+                "no_commit_no_push",
+                "reviewer_command_or_host_review",
+                "goals_capped_at_candidate",
+                "explicit_manifest_limits_sources_read",
+            ],
+        ),
+        (
             "intake.semantic_preflight",
             true,
             &["init", "source configure"],
