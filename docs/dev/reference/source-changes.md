@@ -18,7 +18,7 @@ add `--cached` to read the last recorded projection without opening business fil
 writing project files, see [host contract](host-contract.md)).
 MCP queries never persist a refresh; explicitly reindex stale sources first.
 
-The result includes source refs/fingerprints, project revision, graph fingerprint, diagnostics and active claims. Nodes carry `last_event_at`, the newest event time in milliseconds across branches and sessions, or null. `affected` selects roots/dependents; `nodes` also includes prerequisites. Missing required refs and cycles are explicit. Oversized closures return `BudgetExceeded`; default limit is 100 nodes, maximum 1000.
+The result includes source refs/fingerprints, project revision, graph fingerprint, diagnostics and active claims. Nodes carry `last_event_at`, the newest event time in milliseconds across branches and sessions, or null. Nodes also carry `executable` and `held_by`: `ready` is the dependency graph's answer, `executable` is the answer `status` gives once the work's goal, acceptance criteria and next step are counted, and `held_by` names what holds it back (see [workstreams](workstreams.md)). `affected` selects roots/dependents; `nodes` also includes prerequisites. Missing required refs and cycles are explicit. Oversized closures return `BudgetExceeded`; default limit is 100 nodes, maximum 1000.
 
 Consume task context and acquire a claim before dispatch. Review source/revision state after incremental plan changes. Completed dependencies release successors through readiness rules.
 
@@ -260,7 +260,7 @@ The regression exercises native CLI claims/context/evidence/completion, separate
 ## Limits
 
 - Models and shells are launched by the host rather than AWR.
-- `last_event_at` is observation metadata outside the graph fingerprint. Optional edges remain visible and are excluded from required readiness/cycle gates.
+- `last_event_at`, `executable` and `held_by` are observation metadata outside the graph fingerprint. Optional edges remain visible and are excluded from required readiness/cycle gates.
 - Graph closure limits reject oversized plans instead of returning a truncated plan labeled complete.
 - `ready` is a scheduling observation; graph fingerprints grant no execution lease, and readiness/claims can change independently of source edits.
 - Executor termination alone leaves task completion and successor readiness to AWR’s completion gates.

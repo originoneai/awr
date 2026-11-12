@@ -432,3 +432,73 @@ fn hosts_can_discover_the_recorded_graph_read_under_the_snapshot_capability() {
             .any(|l| l == "cached_mode_does_not_verify_current_sources")
     );
 }
+
+/// `ready` on a node is the readiness of the dependency graph; `executable` is the answer `ready` and `status` give.
+#[test]
+fn nodes_say_whether_a_claim_would_be_admitted_as_ready_does() {
+    let f = Fixture::uninitialized();
+    fs::write(
+        f.0.join("work-ledger.yaml"),
+        concat!(
+            "goals:\n- id: G\n  title: Ship the feature\n  status: active\n  summary: Deliver the feature\n",
+            "work_items:\n",
+            "- id: OK\n  title: Structured work\n  status: planned\n  goal: [G]\n  acceptance: [It works]\n  next_action: Start\n",
+            "- id: BARE\n  title: Only a title\n  status: planned\n",
+            "- id: WAIT\n  title: Waits for OK\n  status: planned\n  goal: [G]\n  acceptance: [Done]\n  next_action: Later\n  depends_on: [OK]\n",
+            "- id: DONE\n  title: Finished\n  status: completed\n",
+        ),
+    )
+    .unwrap();
+    f.ok(&["init", "--accept"]);
+    let graph = f.ok(&["work", "graph"]);
+    let node = |key: &str| {
+        graph["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|n| n["key"] == key)
+            .unwrap_or_else(|| panic!("no node {key}"))
+            .clone()
+    };
+    assert_eq!(node("OK")["executable"], true);
+    assert_eq!(node("OK")["held_by"], serde_json::json!([]));
+    // Nothing the graph depends on is open, yet the work has no goal, acceptance or next step: `ready` says so, `executable` does not.
+    assert_eq!(
+        node("BARE")["ready"],
+        true,
+        "the dependency graph holds nothing back"
+    );
+    assert_eq!(node("BARE")["executable"], false);
+    assert_eq!(
+        node("BARE")["held_by"],
+        serde_json::json!(["work_structure_incomplete", "work_goal_missing"])
+    );
+    assert_eq!(node("WAIT")["executable"], false);
+    assert_eq!(
+        node("WAIT")["held_by"],
+        serde_json::json!(["dependency_not_completed"])
+    );
+    assert_eq!(
+        node("DONE")["executable"],
+        false,
+        "finished work is nothing to claim"
+    );
+    assert_eq!(node("DONE")["held_by"], serde_json::json!([]));
+    // `ready` names the same work.
+    let ready = f.ok(&["ready"]);
+    assert_eq!(
+        ready["organization"]["executable_work"],
+        serde_json::json!(["OK"])
+    );
+    let from_graph: Vec<_> = graph["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|n| n["executable"] == true)
+        .map(|n| n["key"].clone())
+        .collect();
+    assert_eq!(
+        serde_json::Value::Array(from_graph),
+        ready["organization"]["executable_work"]
+    );
+}

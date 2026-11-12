@@ -25,6 +25,13 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
 
 ## Fixed
 
+- **Graph nodes say whether a claim would be admitted.** `ready` on a `work graph` node, and in the
+  `work_graph` of `awr overview snapshot`, is the dependency graph's answer, so a project whose work
+  has no goal, acceptance criteria or next step showed every task as ready while `awr status`
+  counted the same tasks as blocked. Nodes now also carry `executable`, the answer `status` and
+  `ready` give, and `held_by`, the codes that hold the work back. `ready` keeps its meaning. See
+  [workstreams](../reference/workstreams.md) (#631).
+
 - **`awr init --manifest` works with `--write-draft`.** A project with a credential in one file could
   not use the draft and review flow: the flag pair was refused, and the draft read every document of
   the project, so the credential stopped it even when the owner had listed only readable sources. The
