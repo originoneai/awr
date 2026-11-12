@@ -39,6 +39,7 @@ mod source;
 mod source_changes;
 mod source_relocation;
 mod specification;
+mod takeover;
 mod team;
 mod verify;
 mod work_action;
@@ -97,6 +98,8 @@ enum Command {
     Capabilities(capabilities::CapabilitiesArgs),
     /// Preview source authority mapping; --accept initializes using the reviewed mapping.
     Init(onboarding::InitArgs),
+    /// Take over an existing project in resumable steps.
+    Takeover(takeover::TakeoverArgs),
     /// Diagnose project organization and recheck readiness after source edits.
     Intake {
         #[command(subcommand)]
@@ -259,6 +262,7 @@ fn run(cli: &Cli) -> cli_failure::CliResult<()> {
         Some(Command::Document { command }) => document::run(&cli.project, command, cli.json),
         Some(Command::Capabilities(args)) => capabilities::run(args, cli.json),
         Some(Command::Init(args)) => onboarding::run(&cli.project, args, cli.json),
+        Some(Command::Takeover(args)) => takeover::run(&cli.project, args, cli.json),
         Some(Command::Intake { command }) => onboarding::inspect(&cli.project, command, cli.json),
         Some(Command::Client { command }) => client::run(&cli.project, command, cli.json),
         Some(Command::Execution { command }) => execution::run(&cli.project, command, cli.json),
