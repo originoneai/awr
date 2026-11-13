@@ -29,7 +29,7 @@ class ReleaseChecks(unittest.TestCase):
             for name, source in [("awr-cli", None), ("awr-mcp", None), ("awr-core", None),
                                  ("vendored-parser", None), ("build-helper", None),
                                  ("registry-dep", "registry+example"), ("dev-only", None),
-                                 ("unused-vendor", None)]:
+                                 ("unused-vendor", None), ("awr-server", None), ("server-tls", "registry+example")]:
                 base = root / name
                 base.mkdir()
                 (base / "LICENSE").write_text(f"Synthetic license for {name}\n")
@@ -42,8 +42,11 @@ class ReleaseChecks(unittest.TestCase):
             nodes[0]["deps"] = [dependency("awr-core"), dependency("vendored-parser"),
                                 dependency("build-helper", "build"), dependency("dev-only", "dev")]
             nodes[1]["deps"] = [dependency("awr-core"), dependency("registry-dep")]
+            server = next(node for node in nodes if node["id"] == "awr-server")
+            server["deps"] = [dependency("awr-core"), dependency("server-tls"),
+                              dependency("dev-only", "dev")]
             metadata = {"packages": packages, "resolve": {"nodes": nodes},
-                        "workspace_members": ["awr-cli", "awr-mcp", "awr-core"]}
+                        "workspace_members": ["awr-cli", "awr-mcp", "awr-core", "awr-server"]}
             with patch.object(build_packages, "run", return_value=json.dumps(metadata)):
                 notices, inventory = build_packages.license_bundle("synthetic-target")
                 self.assertEqual({p["name"] for p in inventory},
@@ -55,6 +58,17 @@ class ReleaseChecks(unittest.TestCase):
                                      hashlib.sha256(license_file.read_bytes()).hexdigest())
                 for name in ["awr-cli", "awr-mcp", "awr-core", "dev-only", "unused-vendor"]:
                     self.assertNotIn(f"Synthetic license for {name}\n", notices)
+                notices, inventory = build_packages.license_bundle(
+                    "synthetic-target", package_names=("awr-server",), features=("awr-server/tls",))
+                self.assertEqual({package["name"] for package in inventory}, {"server-tls"})
+                self.assertIn("Synthetic license for server-tls", notices)
+                self.assertNotIn("Synthetic license for registry-dep", notices)
+                self.assertNotIn("Synthetic license for dev-only", notices)
+                build_packages.run.assert_called_with([
+                    "cargo", "metadata", "--locked", "--format-version=1", "--filter-platform",
+                    "synthetic-target", "--features", "awr-server/tls"])
+                with self.assertRaises(KeyError):
+                    build_packages.license_bundle("synthetic-target", package_names=("missing-package",))
                 (root / "vendored-parser" / "LICENSE").unlink()
                 with self.assertRaisesRegex(ValueError, "license text missing: vendored-parser"):
                     build_packages.license_bundle("synthetic-target")
