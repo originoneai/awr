@@ -211,6 +211,18 @@ fn number(
     Ok(number.to_string())
 }
 
+fn bounded_key(value: &str, what: &str) -> Result<String> {
+    if value.is_empty()
+        || value.len() > 200
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_.:#/-".contains(&b))
+    {
+        return Err(Error::InvalidInput(format!("invalid {what}")));
+    }
+    Ok(value.to_owned())
+}
+
 fn argv(route: &str, query: &HashMap<String, String>) -> Result<Vec<String>> {
     let mut args: Vec<String> = match route {
         "map/work-graph" => vec![
@@ -242,6 +254,16 @@ fn argv(route: &str, query: &HashMap<String, String>) -> Result<Vec<String>> {
             "100".into(),
         ],
         "map/doctor" => vec!["doctor".into()],
+        "map/prepare" => vec![
+            "work".into(),
+            "prepare".into(),
+            bounded_key(
+                query.get("key").map(String::as_str).unwrap_or(""),
+                "work key",
+            )?,
+            "--response-view".into(),
+            "action".into(),
+        ],
         _ => return Err(Error::NotFound("progress route".into())),
     };
     if route == "map/work-graph" && query.get("cached").is_some_and(|v| v == "1") {
@@ -250,15 +272,10 @@ fn argv(route: &str, query: &HashMap<String, String>) -> Result<Vec<String>> {
     if route == "map/nav"
         && let Some(milestone) = query.get("milestone")
     {
-        if milestone.is_empty()
-            || milestone.len() > 200
-            || !milestone
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"_.:#/-".contains(&b))
-        {
-            return Err(Error::InvalidInput("invalid milestone key".into()));
-        }
-        args.extend(["--milestone".into(), milestone.clone()]);
+        args.extend([
+            "--milestone".into(),
+            bounded_key(milestone, "milestone key")?,
+        ]);
     }
     if route == "map/events" {
         if query.contains_key("through") {
@@ -553,6 +570,36 @@ mod tests {
             )
             .is_err()
         );
+        assert_eq!(
+            argv(
+                "map/prepare",
+                &HashMap::from([("key".into(), "WORK".into())])
+            )
+            .unwrap(),
+            ["work", "prepare", "WORK", "--response-view", "action"]
+        );
+        assert_eq!(
+            argv(
+                "map/prepare",
+                &HashMap::from([
+                    ("key".into(), "WORK".into()),
+                    ("explain".into(), "1".into()),
+                    ("session".into(), "s1".into()),
+                ])
+            )
+            .unwrap(),
+            ["work", "prepare", "WORK", "--response-view", "action"]
+        );
+        assert!(argv("map/prepare", &empty).is_err());
+        for invalid in ["", "W1;rm", "not a key", &"x".repeat(201)] {
+            assert!(
+                argv(
+                    "map/prepare",
+                    &HashMap::from([("key".into(), invalid.into())])
+                )
+                .is_err()
+            );
+        }
     }
 
     #[test]

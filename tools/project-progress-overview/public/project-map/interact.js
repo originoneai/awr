@@ -148,10 +148,12 @@
    * Options: snapshot and config (or an existing `model`), `t` (language function), `restore` (the `state` of an earlier
    * mount, so a refresh keeps the folds, zoom and search), `offsetTop()` (pixels of a host bar the details panel must start
    * below; default none), `copy(text)` (clipboard; injectable), `timers` and `win` (the window: resize, scrollBy and the
-   * clipboard; injectable for tests).
+   * clipboard; injectable for tests). `prepare(key)` is the optional live `work prepare --response-view action`
+   * read; exported HTML omits it and keeps the snapshot panel only.
    */
   function mount({
     container, snapshot, config, t, model: given, restore, offsetTop, copy, win = root, timers = { set: (fn, ms) => setTimeout(fn, ms), clear: (id) => clearTimeout(id) },
+    prepare,
   }) {
     const model = given || modelLib.loadModel(snapshot, config);
     const views = viewsLib.createViews(t);
@@ -169,6 +171,8 @@
     const listeners = [];
     const pulses = new Set();
     let returnTo = null; // where the keyboard goes back to when the panel closes: the element and its key (it may be drawn again meanwhile)
+    let prepareSeq = 0;
+    let prepareWait = Promise.resolve();
     let matchCursor = -1;
     let pan = null;
     let suppressClick = false;
@@ -666,7 +670,29 @@
       applyEmphasis();
       const close = box.querySelector('.pm-drawer-close');
       if (close && close.focus) close.focus();
+      prepareWait = loadPrepare(key);
       return true;
+    }
+
+    async function loadPrepare(key) {
+      if (typeof prepare !== 'function') return;
+      const seq = ++prepareSeq;
+      const host = drawer() && drawer().querySelector('.pm-drawer-body');
+      if (!host) return;
+      const slot = host.ownerDocument.createElement('div');
+      slot.setAttribute('data-pm-prepare', '');
+      slot.innerHTML = `<section class="pm-d-sec" data-pm-prepare-card><h3>${esc(t('map.prepare.title'))}</h3><p class="pm-d-none">${esc(t('map.prepare.loading'))}</p></section>`;
+      const footer = host.querySelector('.pm-d-actions');
+      if (footer) host.insertBefore(slot, footer);
+      else host.appendChild(slot);
+      let envelope;
+      try {
+        envelope = await prepare(key);
+      } catch (error) {
+        envelope = { ok: false, error: { code: 'BridgeError', message: String(error && error.message || error) } };
+      }
+      if (seq !== prepareSeq || state.drawer !== key) return;
+      slot.innerHTML = detailLib.renderPrepare(envelope, t);
     }
 
     function closeDetails() {
@@ -911,6 +937,7 @@
       state, model, targets, destroy, draw, setView, openDetails, closeDetails, reveal, runAction,
       select: (key) => { state.selected = key; applyEmphasis(); },
       matching: (text) => matching(model, text, t),
+      get prepareWait() { return prepareWait; },
     };
   }
 

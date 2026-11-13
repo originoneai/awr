@@ -25,6 +25,11 @@ function mount(load, locale = 'en', options = {}) {
   return { doc, app, el: (id) => doc.getElementById(id) };
 }
 
+test('argv quoting keeps ordinary tokens and quotes unsafe paths', () => {
+  assert.equal(hub.formatArgv(['awr', '--project', '/work/alpha', 'init', '--json']), 'awr --project /work/alpha init --json');
+  assert.equal(hub.formatArgv(['awr', '--project', '/work/my project', 'init', '--json']), "awr --project '/work/my project' init --json");
+});
+
 test('project search matches names and directories and keeps reverse chronology without mutating inputs', () => {
   assert.deepEqual(hub.visibleProjects(projects).map((p) => p.name), ['Beta', 'Missing', 'Alpha']);
   assert.deepEqual(hub.visibleProjects(projects, '  ALPHA  ').map((p) => p.name), ['Alpha']);
@@ -169,12 +174,53 @@ test('intake promotes the same card to connected with language-preserving progre
     assert.equal(ctx.el('hubIntakeOpen').hidden, true);
     assert.equal(ctx.el('hubIntakeBack').getAttribute('href'), `/?lang=${locale}`);
     assert.ok(ctx.el('hubIntakePrompt').textContent.includes(project.root));
+    assert.equal(ctx.el('hubIntakeGuidance').hidden, true);
     project.state = 'connected';
     await ctx.app.refresh({ quiet: true });
     assert.equal(ctx.el('hubIntakeState').textContent, h.tFor(locale)('hub.connected'));
     assert.equal(ctx.el('hubIntakeOpen').hidden, false);
     assert.equal(ctx.el('hubIntakeOpen').getAttribute('href'), `/?project=${project.key}&lang=${locale}`);
   }
+});
+
+test('intake shows the inspect next command and copies it with the agent prompt', async () => {
+  const project = { ...projects[0], state: 'discovered', name: '<b>Alpha</b>' };
+  const copied = [];
+  const hostile = '/work/<script>unsafe</script>';
+  const ctx = mount(async () => ({ ok: true, data: { projects: [project] } }), 'en', {
+    selectedKey: project.key,
+    copy: async (text) => { copied.push(text); },
+    loadIntake: async (key) => ({
+      ok: true,
+      data: {
+        project: { ...project, key },
+        guidance: {
+          condition: 'project_has_no_awr_runtime',
+          next_action: {
+            argv: ['awr', '--project', hostile, 'init', '--json'],
+            instruction: 'Preview existing sources.',
+          },
+          recheck: { trigger: 'after initialization', argv: ['awr', '--project', '/work/alpha', 'overview', 'inspect', '--json'] },
+        },
+      },
+    }),
+  });
+  await ctx.app.refresh();
+  const command = `awr --project '${hostile}' init --json`;
+  assert.equal(ctx.el('hubIntakeGuidance').hidden, false);
+  assert.equal(ctx.el('hubIntakeCommandLabel').textContent, h.tFor('en')('hub.intake_next'));
+  assert.equal(ctx.el('hubIntakeCommand').textContent, command);
+  assert.equal(ctx.el('hubIntakeInstruction').textContent, 'Preview existing sources.');
+  assert.equal(ctx.el('hubIntakeRecheck').textContent, h.tFor('en')('hub.intake_recheck', { trigger: 'after initialization' }));
+  assert.equal(ctx.el('hubIntakeTitle').querySelector('b'), null);
+  assert.equal(ctx.el('hubIntakeCommand').querySelector('script'), null);
+  ctx.el('hubIntakeCopy').click();
+  await Promise.resolve();
+  assert.equal(copied.length, 1);
+  assert.match(copied[0], /Use AWR to take over the project at \/work\/alpha/);
+  assert.ok(copied[0].includes(command));
+  assert.match(copied[0], /Preview existing sources/);
+  assert.match(copied[0], /after initialization/);
 });
 
 test('intake rejects cross-project replies and removes stale details after disconnection', async () => {

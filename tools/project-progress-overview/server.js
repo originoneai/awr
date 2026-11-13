@@ -125,6 +125,7 @@ const COMMANDS = {
   mapEvents: ['event', 'history'],
   mapSessions: ['session', 'list', '--active', '--limit', '100'],
   mapDoctor: ['doctor'],
+  workPrepare: ['work', 'prepare'],
 };
 
 function asKey(value) {
@@ -325,6 +326,12 @@ const routes = {
   'GET /api/map/sessions': async () => runCommand('mapSessions', []),
 
   'GET /api/map/doctor': async () => runCommand('mapDoctor', []),
+
+  'GET /api/map/prepare': async (url) => {
+    const key = asKey(url.searchParams.get('key'));
+    if (!key) return { ok: false, error: { code: 'BadRequest', message: 'key must be a valid work key' } };
+    return runCommand('workPrepare', [key, '--response-view', 'action']);
+  },
 
 };
 

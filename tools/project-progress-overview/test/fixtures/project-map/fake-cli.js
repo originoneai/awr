@@ -103,6 +103,25 @@ function createFakeCli(snapshot, options = {}) {
     if (a === 'doctor') {
       return ok({ project_revision: revision, ok: snapshot.doctor.ok, findings: snapshot.doctor.findings }, snapshot.doctor.findings.length ? 1 : 0);
     }
+    if (a === 'work' && b === 'prepare') {
+      if (flag(args, '--explain') || flag(args, '--session')) {
+        return error('InvalidInput', 'work prepare does not accept --explain or --session here');
+      }
+      if (option(args, '--response-view') !== 'action') {
+        return error('InvalidInput', 'work prepare needs --response-view action');
+      }
+      const key = args[2];
+      return ok({
+        version: 1, stage: 'prepared', work: { external_key: key }, ready: true, ok: true,
+        guidance: {
+          when: 'Required context is complete and no higher-priority blocker is present',
+          basis: 'Current work, claims and management requirements',
+          next_action: 'Consume the rendered context and follow this work next_action using the existing session/claim rules',
+          recheck: 'Scope change, wait, uncertain result, completed compaction or handoff',
+        },
+        response_view: { version: 1, view: 'action' },
+      });
+    }
     return error('InvalidInput', `unrecognized subcommand: ${args.join(' ')}`);
   }
 

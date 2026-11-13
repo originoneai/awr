@@ -139,7 +139,14 @@
         if (mounted) mounted.destroy();
         mounted = null;
         stage.innerHTML = result.body;
-        if (interact) mounted = interact.mount({ container: stage, snapshot, config, t, model: result.model, restore: previous, offsetTop });
+        if (interact) {
+          mounted = interact.mount({
+            container: stage, snapshot, config, t, model: result.model, restore: previous, offsetTop,
+            prepare: state.demo
+              ? (key) => L.demo.workPrepare(key, t)
+              : (key) => callApi(`/api/map/prepare?key=${encodeURIComponent(key)}`),
+          });
+        }
       }
       const body = el('mapBody');
       if (body) body.hidden = false;
