@@ -333,6 +333,44 @@ impl Store {
         self.project(project)?;
         goal_links(&self.conn, project)
     }
+    /// Reject completion or reopening when a supported goal section changed after
+    /// the work was last claimed. Works without a recorded claim snapshot (never
+    /// claimed, or claimed before the snapshot existed) and works with no goal
+    /// references are never blocked. Re-claiming the work refreshes the snapshot,
+    /// which is the lightweight re-confirmation path.
+    pub fn check_goal_currency(&self, project: Id, key: &str, branch: Option<Id>) -> Result<()> {
+        self.project(project)?;
+        let work = self.work_item(project, key)?.item;
+        let Some(claimed) =
+            latest_claimed_goal_fingerprints(&self.conn, project, work.meta.id, branch)?
+        else {
+            return Ok(());
+        };
+        if claimed.is_empty() {
+            return Ok(());
+        }
+        let current = goal_fingerprints(&self.conn, project, key)?;
+        let keys: BTreeSet<&String> = claimed.keys().chain(current.keys()).collect();
+        let mut drifts = Vec::new();
+        for goal in keys {
+            let expected = claimed.get(goal).cloned().flatten();
+            let actual = current.get(goal).cloned().flatten();
+            if expected != actual {
+                drifts.push((
+                    goal.clone(),
+                    expected.unwrap_or_else(|| "unknown".into()),
+                    actual.unwrap_or_else(|| "unknown".into()),
+                ));
+            }
+        }
+        if !drifts.is_empty() {
+            return Err(Error::GoalDrift {
+                work: key.to_string(),
+                drifts,
+            });
+        }
+        Ok(())
+    }
     /// Source state is shared across branches: archive changes require no active executor.
     pub fn ensure_work_unoccupied(&self, project: Id, work: Id) -> Result<()> {
         self.project(project)?;
@@ -585,4 +623,53 @@ pub(crate) fn goal_links(conn: &Connection, project: Id) -> Result<Vec<Edge>> {
                 let source_ref = serde_json::from_str(&row.get::<_, String>(5)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(5,rusqlite::types::Type::Text,Box::new(e)))?;
                 Ok(Edge { id:id_at(row,0)?, project_id:project, from_kind:EntityKind::WorkItem, from_key:row.get(1)?, relation:"supports".into(), to_kind:EntityKind::Goal, to_key:row.get(2)?, required:row.get(3)?, revision:revision_at(row,4)?, source_ref })
             }).map_err(db_error)?.collect::<rusqlite::Result<Vec<_>>>().map_err(db_error)
+}
+
+/// Current goal section fingerprints for one work item's declared `supports` edges,
+/// keyed by goal external key. A goal with no projection or no section fingerprint
+/// maps to `None`; the map reuses the existing section fingerprint algorithm.
+pub(crate) fn goal_fingerprints(
+    conn: &Connection,
+    project: Id,
+    work_key: &str,
+) -> Result<BTreeMap<String, Option<String>>> {
+    let mut map = BTreeMap::new();
+    for edge in goal_links(conn, project)? {
+        if edge.from_key != work_key || map.contains_key(&edge.to_key) {
+            continue;
+        }
+        let fingerprint = projection::<Goal>(conn, project, EntityKind::Goal, &edge.to_key)
+            .ok()
+            .and_then(|goal| goal.item.meta.source_ref.section_fingerprint);
+        map.insert(edge.to_key, fingerprint);
+    }
+    Ok(map)
+}
+
+/// The goal fingerprint map recorded by the latest claim of the work on the
+/// branch, if any. A claim rides either a `work.claimed` event (explicit claim
+/// command) or a `session.started` event (claim on session start). Older events
+/// without the payload key read as `None`, so pre-existing works are never
+/// blocked by the drift check.
+pub(crate) fn latest_claimed_goal_fingerprints(
+    conn: &Connection,
+    project: Id,
+    work_id: Id,
+    branch: Option<Id>,
+) -> Result<Option<BTreeMap<String, Option<String>>>> {
+    let payload: Option<String> = conn.query_row(
+        "SELECT payload_json FROM events WHERE project_id=?1 AND work_item_id=?2 AND branch_id IS ?3 AND event_type IN ('work.claimed','session.started') ORDER BY project_revision DESC,id DESC LIMIT 1",
+        params![project.to_string(), work_id.to_string(), branch.map(|id| id.to_string())],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(db_error)?;
+    let Some(payload) = payload else {
+        return Ok(None);
+    };
+    let value: serde_json::Value = serde_json::from_str(&payload)?;
+    match value.get("goal_fingerprints") {
+        Some(map) => Ok(Some(serde_json::from_value(map.clone())?)),
+        None => Ok(None),
+    }
 }

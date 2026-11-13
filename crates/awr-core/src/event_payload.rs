@@ -187,9 +187,9 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
             | "execution.finished" => "execution",
             "execution.external_reported" => "execution_id report",
             "session.started" => {
-                "agent_id provider model start_project_revision claim_id expired_claim_ids expires_at mcp_binding workstream_binding"
+                "agent_id provider model start_project_revision claim_id expired_claim_ids expires_at mcp_binding workstream_binding goal_fingerprints"
             }
-            "work.claimed" => "claim_id expired_claim_ids agent_id expires_at",
+            "work.claimed" => "claim_id expired_claim_ids agent_id expires_at goal_fingerprints",
             "session.resumed" | "session.resumed_from" => {
                 "from_session_id to_session_id checkpoint_id recovery_after_revision prepared_context_hash prepared_project_revision claim_mode claim_id closed_claim_ids expired_claim_ids context_requires_refresh mcp_binding workstream_binding"
             }
@@ -271,7 +271,7 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
         | "execution.finished" => "execution",
         "execution.external_reported" => "execution_id report",
         "session.started" => "agent_id provider model start_project_revision",
-        "work.claimed" => "claim_id agent_id expired_claim_ids",
+        "work.claimed" => "claim_id agent_id expired_claim_ids goal_fingerprints",
         "session.resumed" | "session.resumed_from" | "session.handoff_received" => {
             "from_session_id to_session_id closed_claim_ids context_requires_refresh"
         }
@@ -502,6 +502,16 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
                         .is_some_and(|ids| ids.iter().all(id))
             }
             "agent_id" => value.is_string(),
+            "goal_fingerprints" if kind == "work.claimed" || kind == "session.started" => {
+                value.as_object().is_some_and(|m| {
+                    m.len() <= 64
+                        && m.iter().all(|(k, v)| {
+                            !k.is_empty()
+                                && k.len() <= 256
+                                && (v.is_null() || v.as_str().is_some_and(|s| s.len() <= 128))
+                        })
+                })
+            }
             key if key.ends_with("_id") => id(value),
             key if key.ends_with("_ids") => value.as_array().is_some_and(|v| v.iter().all(id)),
             key if key.ends_with("_revision") => value.as_u64().is_some(),
