@@ -1,6 +1,7 @@
 # Unreleased
 
-Personal CLI/MCP changes shipped in 0.8.0 are listed in [0.8.0](0.8.0.md), and those of 0.7.0 in [0.7.0](0.7.0.md).
+Personal CLI/MCP release changes are listed in [0.8.1](0.8.1.md),
+[0.8.0](0.8.0.md) and [0.7.0](0.7.0.md).
 The Team/Observer changes and standalone library work below remain outside the packaged releases.
 
 ## Added

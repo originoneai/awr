@@ -2,7 +2,7 @@
 
 The open-source project delivery platform for people and AI.
 
-AWR 0.8.0 installs the native Rust `awr` CLI and `awr-mcp` server for stdio and shared Streamable HTTP.
+AWR 0.8.1 installs the native Rust `awr` CLI and `awr-mcp` server for stdio and shared Streamable HTTP.
 Context compilation runs locally without an AI model call.
 
 Project Hub and Project Progress Overview are bundled with the native payload.
@@ -12,10 +12,10 @@ service automatically. After that, open **http://127.0.0.1:7381** directly; runn
 `awr overview` first is optional. Installation alone does not start a process.
 If the port is occupied, `awr overview status --json` reports the actual URL.
 The next CLI/MCP use recovers a terminated service without duplicate instances.
-See the [local hub guide](https://github.com/originoneai/awr/blob/v0.8.0/docs/dev/reference/local-project-hub.md).
+See the [local hub guide](https://github.com/originoneai/awr/blob/v0.8.1/docs/dev/reference/local-project-hub.md).
 
 ```sh
-npm install -g @originoneai/awr@0.8.0
+npm install -g @originoneai/awr@0.8.1
 awr --version
 awr --help
 awr-mcp --help
@@ -25,13 +25,13 @@ Upgrading an existing installation? Run
 `npm uninstall -g @originoneai/agent-work-runtime` before installing
 `@originoneai/awr`. Commands and project state keep their existing names.
 Update absolute paths into the old npm package directory in Agent configurations.
-See the [migration guide](https://github.com/originoneai/awr/blob/v0.8.0/docs/dev/release/DISTRIBUTIONS.md#migrate-from-the-previous-package-names).
+See the [migration guide](https://github.com/originoneai/awr/blob/v0.8.1/docs/dev/release/DISTRIBUTIONS.md#migrate-from-the-previous-package-names).
 
 Without a global installation, select the command explicitly:
 
 ```sh
-npx --package=@originoneai/awr@0.8.0 awr --help
-npx --package=@originoneai/awr@0.8.0 awr-mcp --project /absolute/project
+npx --package=@originoneai/awr@0.8.1 awr --help
+npx --package=@originoneai/awr@0.8.1 awr-mcp --project /absolute/project
 ```
 
 The project must be initialized before starting its MCP server. Follow the
