@@ -126,3 +126,31 @@ fn unavailable_sources_remain_readable_as_recorded_facts_and_failed_sync_is_expl
     assert_eq!(recorded["basis"]["source_refresh_performed"], false);
     assert!(progress_snapshot(&fixture.0, true).is_err());
 }
+
+#[test]
+fn a_recorded_snapshot_includes_just_over_a_thousand_work_items() {
+    let root = std::env::temp_dir().join(format!("awr-progress-snapshot-1002-{}", Id::new()));
+    fs::create_dir_all(root.join(".awr")).unwrap();
+    let mut yaml = String::from("goals:\n- id: G\n  title: Many\n  status: active\nwork_items:\n");
+    for i in 0..1002 {
+        yaml.push_str(&format!(
+            "- id: W{i}\n  title: Item {i}\n  status: ready\n  goal: G\n  acceptance: [Done]\n"
+        ));
+    }
+    fs::write(root.join("work.yaml"), yaml).unwrap();
+    fs::write(
+        root.join(".awr/project.toml"),
+        "[project]\nname='Many'\ncontext_profile='minimal'\n[[sources]]\ndomain='ledger'\nrole='primary'\npath='work.yaml'\nadapter='yaml-ledger-v1'\n",
+    )
+    .unwrap();
+    let mut store = Store::open(&root.join(".awr/state.db")).unwrap();
+    let indexed = index_project(&mut store, &root, &Manifest::load(&root).unwrap(), false).unwrap();
+    assert!(indexed.ok, "{indexed:?}");
+    drop(store);
+    let snapshot = progress_snapshot(&root, false).unwrap();
+    assert_eq!(
+        snapshot["work_graph"]["nodes"].as_array().unwrap().len(),
+        1002
+    );
+    let _ = fs::remove_dir_all(&root);
+}

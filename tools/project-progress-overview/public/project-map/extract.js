@@ -20,7 +20,8 @@
   const snapshotLib = commonJS ? require('./snapshot.js') : root.AWR_PROJECT_MAP.snapshot;
   const modelLib = commonJS ? require('./model.js') : root.AWR_PROJECT_MAP.model;
 
-  const GRAPH_CAP = 1000; // work graph refuses --limit above this
+  // Must equal awr-core::MAX_WORKSTREAM_GRAPH_NODES (crates/awr-core/src/workstream_graph.rs); the frontend cannot import that Rust constant.
+  const GRAPH_CAP = 16384;
   const TRANSIENT = new Set(['RevisionConflict', 'MutationConflict', 'SourceConflict', 'SourceStale', 'BridgeBusy', 'NoOutput']);
   const MAX_EVENT_PAGES = 500;
 

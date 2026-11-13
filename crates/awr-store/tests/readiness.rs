@@ -248,3 +248,53 @@ fn active_and_expired_claims_block_the_same_work_across_branches() {
     assert_batch_matches_individual_reads(&f, Some(bid), 100);
     assert_batch_matches_individual_reads(&f, None, 200);
 }
+
+#[test]
+fn map_work_readiness_accepts_a_1002_node_closure_up_to_the_core_graph_cap() {
+    let mut f = Fixture::new();
+    let mut batch = ProjectionBatch::default();
+    // 1002 is the size that used to fail in the wild (required 1002, budget 1000).
+    for i in 0..1002 {
+        batch.work_items.push(work(&f, &format!("W{i}"), "ready"));
+        if i > 0 {
+            batch
+                .edges
+                .push(edge(&f, &format!("W{i}"), &format!("W{}", i - 1), true));
+        }
+    }
+    f.commit(batch);
+    let at = 100;
+    let all: Vec<_> = (0..1002).map(|i| format!("W{i}")).collect();
+    assert_eq!(
+        f.store
+            .map_work_readiness(f.project.id, &all, None, at, Ok)
+            .unwrap()
+            .len(),
+        1002
+    );
+    // Expansion from the tip walks the 1002-node ancestor chain through the
+    // second budget guard. The mapper returns one report whose closure is the
+    // full chain; a 1000 cap would have returned BudgetExceeded.
+    let from_tip = f
+        .store
+        .map_work_readiness(f.project.id, &["W1001".into()], None, at, Ok)
+        .unwrap();
+    assert_eq!(from_tip.len(), 1);
+    assert_eq!(from_tip[0].dependencies.dependencies.len(), 1001);
+    assert_eq!(from_tip[0].dependencies.edges.len(), 1001);
+
+    let too_many: Vec<String> = (0..=MAX_WORKSTREAM_GRAPH_NODES)
+        .map(|i| format!("X{i}"))
+        .collect();
+    match f
+        .store
+        .map_work_readiness(f.project.id, &too_many, None, at, Ok)
+        .unwrap_err()
+    {
+        Error::BudgetExceeded { required, budget } => {
+            assert_eq!(required, MAX_WORKSTREAM_GRAPH_NODES + 1);
+            assert_eq!(budget, MAX_WORKSTREAM_GRAPH_NODES);
+        }
+        other => panic!("unexpected {other}"),
+    }
+}

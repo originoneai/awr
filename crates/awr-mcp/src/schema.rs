@@ -305,7 +305,7 @@ fn change_tools() -> Vec<Tool> {
             "awr_work_graph",
             "Read a task’s dependency impact. Returns required ancestors, dependents, readiness, claims and graph bindings.",
             object(
-                json!({"roots":strings(),"branch":branch(),"limit":{"type":"integer","minimum":1,"maximum":1000,"default":100}}),
+                json!({"roots":strings(),"branch":branch(),"limit":{"type":"integer","minimum":1,"maximum":16384,"default":100}}),
                 &[],
             ),
             true,

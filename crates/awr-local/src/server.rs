@@ -1,5 +1,5 @@
 use crate::{ServiceStatus, lifecycle, registry};
-use awr_core::{Error, Result};
+use awr_core::{Error, MAX_WORKSTREAM_GRAPH_NODES, Result};
 use axum::{
     Router,
     body::Body,
@@ -229,7 +229,7 @@ fn argv(route: &str, query: &HashMap<String, String>) -> Result<Vec<String>> {
             "work".into(),
             "graph".into(),
             "--limit".into(),
-            number(query, "limit", 100, 1, 1000)?,
+            number(query, "limit", 100, 1, MAX_WORKSTREAM_GRAPH_NODES as u64)?,
         ],
         "map/nav" => vec!["nav".into(), "--cached".into()],
         "map/goals" => vec![
@@ -547,7 +547,25 @@ mod tests {
         );
         assert_eq!(argv("map/nav", &empty).unwrap(), ["nav", "--cached"]);
         assert!(argv("work/complete", &empty).is_err());
-        for invalid in ["0", "1001", "-1", "2.5", "; shell"] {
+        let cap = MAX_WORKSTREAM_GRAPH_NODES.to_string();
+        let over_cap = (MAX_WORKSTREAM_GRAPH_NODES + 1).to_string();
+        assert_eq!(
+            argv(
+                "map/work-graph",
+                &HashMap::from([("limit".into(), "1002".into())])
+            )
+            .unwrap(),
+            ["work", "graph", "--limit", "1002"]
+        );
+        assert_eq!(
+            argv(
+                "map/work-graph",
+                &HashMap::from([("limit".into(), cap.clone())])
+            )
+            .unwrap(),
+            ["work", "graph", "--limit", cap.as_str()]
+        );
+        for invalid in ["0", over_cap.as_str(), "-1", "2.5", "; shell"] {
             assert!(
                 argv(
                     "map/work-graph",

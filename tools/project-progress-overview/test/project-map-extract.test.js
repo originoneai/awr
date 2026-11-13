@@ -107,12 +107,43 @@ test('the work graph limit follows BudgetExceeded and stops at the service cap',
   assert.equal(snapshot.nodes.length, 250);
   assert.deepEqual(bigCli.calls.filter((c) => c[0] === 'work').map((c) => c[c.indexOf('--limit') + 1]), ['100', '250']);
 
+  // the failure seen in the wild: required 1002 used to be unreadable (GRAPH_CAP and the store both capped at 1000),
+  // which made the adaptive retry end at LimitNotConverging. The exact count must succeed on the second try.
+  const over = source();
+  const overTemplate = over.nodes[0];
+  over.nodes = Array.from({ length: 1002 }, (_, i) => ({ ...overTemplate, key: `N-${i}`, id: `id-n-${i}`, claims: [], diagnostics: [], last_event_at: null }));
+  over.edges = [];
+  over.sessions = [];
+  over.basis.work_graph.node_count = 1002;
+  over.basis.work_graph.edge_count = 0;
+  const overCli = createFakeCli(over);
+  const overSnap = await extractSnapshot({ call: overCli.call, config: {}, now: NOW, wait: noWait });
+  assert.equal(overSnap.nodes.length, 1002);
+  assert.deepEqual(overCli.calls.filter((c) => c[0] === 'work').map((c) => c[c.indexOf('--limit') + 1]), ['100', '1002']);
+
+  // a project of 1500 items is over the old 1000 cap but under the service cap: one retry with the exact count
+  const bigger = createFakeCli(big);
+  let biggerFirst = true;
+  const biggerLimits = [];
+  const fifteenHundred = async (name, params) => {
+    if (name === 'workGraph') {
+      biggerLimits.push(String(params.limit));
+      if (biggerFirst) {
+        biggerFirst = false;
+        throw new AwrCallError('BudgetExceeded', 'context budget exceeded', { required: 1500, budget: params.limit });
+      }
+    }
+    return bigger.call(name, params);
+  };
+  await extractSnapshot({ call: fifteenHundred, config: {}, now: NOW, wait: noWait });
+  assert.deepEqual(biggerLimits, ['100', '1500']);
+
   const huge = createFakeCli(big);
   const tooBig = async (name, params) => {
-    if (name === 'workGraph') throw new AwrCallError('BudgetExceeded', 'context budget exceeded', { required: 1500, budget: params.limit });
+    if (name === 'workGraph') throw new AwrCallError('BudgetExceeded', 'context budget exceeded', { required: 20000, budget: params.limit });
     return huge.call(name, params);
   };
-  await assert.rejects(extractSnapshot({ call: tooBig, config: {}, now: NOW, wait: noWait }), (e) => e.code === 'ProjectTooLarge' && /1500/.test(e.detail));
+  await assert.rejects(extractSnapshot({ call: tooBig, config: {}, now: NOW, wait: noWait }), (e) => e.code === 'ProjectTooLarge' && /20000/.test(e.detail));
 });
 
 test('default swimlanes use already-read groups without plan enumeration or per-work reads', async () => {
@@ -153,7 +184,7 @@ test('only official read commands are used, each exactly as the shared definitio
   assert.deepEqual(commands.argvFor('events', { limit: 1000, through: 7, cursor: { event_id: 'E' } }), ['event', 'history', '--limit', '1000', '--through-revision', '7', '--cursor', '{"event_id":"E"}']);
   assert.deepEqual(commands.argvFor('workPrepare', { key: 'W1' }), ['work', 'prepare', 'W1', '--response-view', 'action']);
   assert.throws(() => commands.argvFor('workPrepare', { key: 'W1;rm' }), /key/);
-  assert.throws(() => commands.argvFor('workGraph', { limit: 1001 }), /limit/);
+  assert.throws(() => commands.argvFor('workGraph', { limit: 16385 }), /limit/);
   assert.throws(() => commands.argvFor('reindex', {}), /unknown project-map command/);
 });
 

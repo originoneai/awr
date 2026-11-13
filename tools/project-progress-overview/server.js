@@ -280,8 +280,8 @@ const routes = {
   'GET /api/map/work-graph': async (url) => {
     const limit = url.searchParams.get('limit');
     const n = limit == null || limit === '' ? 100 : Number(limit);
-    if (!Number.isInteger(n) || n < 1 || n > 1000) {
-      return { ok: false, error: { code: 'BadRequest', message: 'limit must be an integer from 1 to 1000' } };
+    if (!Number.isInteger(n) || n < 1 || n > 16384) {
+      return { ok: false, error: { code: 'BadRequest', message: 'limit must be an integer from 1 to 16384' } };
     }
     const extra = ['--limit', String(n)];
     if (url.searchParams.get('cached') === '1') extra.push('--cached');
