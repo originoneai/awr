@@ -14,7 +14,7 @@
   };
 
   const BUILDERS = {
-    workGraph: (p) => ['work', 'graph', '--limit', integer(p.limit === undefined ? 100 : p.limit, 'limit', 1, 1000), ...(p.cached ? ['--cached'] : [])],
+    workGraph: (p) => ['work', 'graph', '--limit', integer(p.limit === undefined ? 100 : p.limit, 'limit', 1, 16384), ...(p.cached ? ['--cached'] : [])],
     nav: (p) => ['nav', '--cached', ...(p.milestone ? ['--milestone', String(p.milestone)] : [])],
     goals: () => ['search', '--type', 'goal', '--limit', '100', '--cached'],
     events: (p) => ['event', 'history', '--limit', integer(p.limit === undefined ? 1000 : p.limit, 'limit', 1, 1000),

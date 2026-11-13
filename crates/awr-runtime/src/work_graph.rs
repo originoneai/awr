@@ -221,10 +221,10 @@ fn default_limit() -> usize {
 }
 
 pub fn work_graph(store: &Store, root: &Path, request: &WorkGraphRequest) -> Result<Value> {
-    if !(1..=1000).contains(&request.limit) || request.roots.len() > 100 {
-        return Err(Error::InvalidInput(
-            "graph limit must be 1..1000 and roots at most 100".into(),
-        ));
+    if !(1..=MAX_WORKSTREAM_GRAPH_NODES).contains(&request.limit) || request.roots.len() > 100 {
+        return Err(Error::InvalidInput(format!(
+            "graph limit must be 1..{MAX_WORKSTREAM_GRAPH_NODES} and roots at most 100"
+        )));
     }
     let project = store.project_by_root(root)?;
     let branch = match &request.branch {

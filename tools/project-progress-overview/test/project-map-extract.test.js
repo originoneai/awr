@@ -107,12 +107,29 @@ test('the work graph limit follows BudgetExceeded and stops at the service cap',
   assert.equal(snapshot.nodes.length, 250);
   assert.deepEqual(bigCli.calls.filter((c) => c[0] === 'work').map((c) => c[c.indexOf('--limit') + 1]), ['100', '250']);
 
+  // a project of 1500 items is over the old 1000 cap but under the service cap: one retry with the exact count
+  const bigger = createFakeCli(big);
+  let biggerFirst = true;
+  const biggerLimits = [];
+  const fifteenHundred = async (name, params) => {
+    if (name === 'workGraph') {
+      biggerLimits.push(String(params.limit));
+      if (biggerFirst) {
+        biggerFirst = false;
+        throw new AwrCallError('BudgetExceeded', 'context budget exceeded', { required: 1500, budget: params.limit });
+      }
+    }
+    return bigger.call(name, params);
+  };
+  await extractSnapshot({ call: fifteenHundred, config: {}, now: NOW, wait: noWait });
+  assert.deepEqual(biggerLimits, ['100', '1500']);
+
   const huge = createFakeCli(big);
   const tooBig = async (name, params) => {
-    if (name === 'workGraph') throw new AwrCallError('BudgetExceeded', 'context budget exceeded', { required: 1500, budget: params.limit });
+    if (name === 'workGraph') throw new AwrCallError('BudgetExceeded', 'context budget exceeded', { required: 20000, budget: params.limit });
     return huge.call(name, params);
   };
-  await assert.rejects(extractSnapshot({ call: tooBig, config: {}, now: NOW, wait: noWait }), (e) => e.code === 'ProjectTooLarge' && /1500/.test(e.detail));
+  await assert.rejects(extractSnapshot({ call: tooBig, config: {}, now: NOW, wait: noWait }), (e) => e.code === 'ProjectTooLarge' && /20000/.test(e.detail));
 });
 
 test('default swimlanes use already-read groups without plan enumeration or per-work reads', async () => {
@@ -151,7 +168,7 @@ test('only official read commands are used, each exactly as the shared definitio
   assert.deepEqual(commands.argvFor('workGraph', { limit: 10, cached: true }), ['work', 'graph', '--limit', '10', '--cached']);
   assert.deepEqual(commands.argvFor('nav', { milestone: 'M1' }), ['nav', '--cached', '--milestone', 'M1']);
   assert.deepEqual(commands.argvFor('events', { limit: 1000, through: 7, cursor: { event_id: 'E' } }), ['event', 'history', '--limit', '1000', '--through-revision', '7', '--cursor', '{"event_id":"E"}']);
-  assert.throws(() => commands.argvFor('workGraph', { limit: 1001 }), /limit/);
+  assert.throws(() => commands.argvFor('workGraph', { limit: 16385 }), /limit/);
   assert.throws(() => commands.argvFor('reindex', {}), /unknown project-map command/);
 });
 

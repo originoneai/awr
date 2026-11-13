@@ -87,7 +87,7 @@ test('every command is read-only: none of the map routes can start, claim, appen
 
 test('bad parameters are rejected before awr is started', async () => {
   const bad = [
-    '/api/map/work-graph?limit=0', '/api/map/work-graph?limit=1001', '/api/map/work-graph?limit=abc', '/api/map/work-graph?limit=1.5',
+    '/api/map/work-graph?limit=0', '/api/map/work-graph?limit=16385', '/api/map/work-graph?limit=abc', '/api/map/work-graph?limit=1.5',
     '/api/map/nav?milestone=not%20a%20key', `/api/map/nav?milestone=${'x'.repeat(201)}`, '/api/map/nav?milestone=M1;rm',
     '/api/map/events?limit=0', '/api/map/events?limit=1001', '/api/map/events?through=-1', '/api/map/events?through=x',
     '/api/map/events?cursor=not-json', `/api/map/events?cursor=${encodeURIComponent('{"event_id":"E"}')}`,
