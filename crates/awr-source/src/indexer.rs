@@ -43,6 +43,11 @@ pub struct IndexReport {
     pub pending: usize,
     pub sources: Vec<IndexedSource>,
     pub issues: Vec<IndexIssue>,
+    /// Sensitive findings admitted under a project's warn-mode policy; each
+    /// carries locator, line/column and category — never content. Empty in the
+    /// default strict mode, which rejects the source instead.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sensitive_warnings: Vec<awr_core::SensitiveWarning>,
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct SourceChangeWindow {
@@ -187,6 +192,9 @@ fn process_project(
     captured: Option<&PreviewSources>,
 ) -> Result<IndexReport> {
     manifest.validate()?;
+    // Invalid or absent policy is strict for this project, never inherited from
+    // a preceding request on the same worker thread.
+    let _secrets_scope = crate::SecretsPolicy::load(root).unwrap_or_default().enter();
     let project = store.register_project(
         root,
         manifest
@@ -212,6 +220,7 @@ fn process_project(
         pending: 0,
         sources: vec![],
         issues: vec![],
+        sensitive_warnings: vec![],
     };
     let mut desired = BTreeSet::new();
     let mut owners = BTreeMap::new();
@@ -374,6 +383,25 @@ fn process_project(
             report.issue("workstream_catalog", None, &error);
         }
     }
+    // Warn mode admitted sources that strict mode rejects; persist one receipt
+    // per refresh naming each finding's position and category, plus who enabled
+    // the mode. Content is never recorded.
+    let admitted = awr_core::take_sensitive_warnings();
+    if !admitted.is_empty() {
+        let provenance = awr_core::secrets_mode_provenance();
+        let revision = store.project(project.id)?.project_revision;
+        if let Err(error) = store.record_secrets_warned(
+            project.id,
+            revision,
+            "warn",
+            admitted.clone(),
+            provenance.as_ref().map(|p| p.enabled_by.clone()),
+            provenance.as_ref().map(|p| p.enabled_at),
+        ) {
+            report.issue("secrets.warned", None, &error);
+        }
+        report.sensitive_warnings = admitted;
+    }
     report.project_revision = store.project(project.id)?.project_revision;
     report.change_window.through_revision = report.project_revision;
     report.projection_complete = report.ok && report.pending == 0;
@@ -461,7 +489,18 @@ fn index_one(
         source: &source,
         existing_ids: store.projection_ids(&source)?,
     };
-    let batch = adapter.parse(&snapshot, &context, spec)?;
+    let mut batch = adapter.parse(&snapshot, &context, spec)?;
+    if awr_core::secrets_mode() == awr_core::SecretsMode::Warn {
+        let payload = serde_json::to_value(&batch)?;
+        let sanitized = awr_core::redact_sensitive_value(payload.clone());
+        if sanitized != payload {
+            batch = serde_json::from_value(sanitized).map_err(|_| Error::RuleViolation(
+                "source identities or structure contain sensitive data; redact the source before indexing".into()))?;
+            batch.warnings.push(
+                "Sensitive source fields were redacted; original files were not changed.".into(),
+            );
+        }
+    }
     let warnings = batch.warnings.clone();
     if captured.is_none()
         && matches!(locator, Locator::File(_))

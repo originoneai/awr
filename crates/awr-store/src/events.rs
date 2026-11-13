@@ -8,6 +8,8 @@ use crate::{
 use awr_core::*;
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use serde_json::json;
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 #[serde(tag = "scope", content = "id", rename_all = "snake_case")]
@@ -204,6 +206,57 @@ impl Store {
     }
     pub fn event(&self, project: Id, id: Id) -> Result<Event> {
         self.conn.query_row("SELECT id,project_id,work_item_id,session_id,branch_id,event_type,importance,summary,payload_json,project_revision,created_at FROM events WHERE project_id=?1 AND id=?2",params![project.to_string(),id.to_string()],event_row).optional().map_err(db_error)?.ok_or_else(||Error::NotFound(format!("event {id}")))
+    }
+    /// Record one warn-mode admission receipt: the domain operation behind the
+    /// `secrets.warned` event. Findings carry position and category only.
+    pub fn record_secrets_warned(
+        &mut self,
+        project: Id,
+        expected_revision: Revision,
+        mode: &str,
+        findings: Vec<awr_core::SensitiveWarning>,
+        enabled_by: Option<String>,
+        enabled_at: Option<i64>,
+    ) -> Result<Event> {
+        let mut event = EventDraft::new(
+            "secrets.warned",
+            format!("warn mode admitted {} sensitive finding(s)", findings.len()),
+        );
+        event.payload = json!({
+            "mode": mode,
+            "findings": findings,
+            "enabled_by": enabled_by,
+            "enabled_at": enabled_at,
+        });
+        self.runtime_transaction(project, expected_revision, event, |_, _| Ok(()))
+            .map(|(_, event)| event)
+    }
+
+    /// Receipts of warn-mode sensitive admissions, most recent first. Payloads
+    /// carry position and category only; content is never recorded.
+    pub fn secrets_warned_events(&self, project: Id, limit: usize) -> Result<Vec<Value>> {
+        let mut query = self
+            .conn
+            .prepare(
+                "SELECT payload_json, created_at FROM events
+             WHERE project_id=?1 AND event_type='secrets.warned'
+             ORDER BY created_at DESC, id DESC LIMIT ?2",
+            )
+            .map_err(db_error)?;
+        let rows = query
+            .query_map(params![project.to_string(), (limit as i64).max(1)], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(db_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(db_error)?;
+        rows.into_iter()
+            .map(|(payload, created_at)| {
+                let mut value: Value = serde_json::from_str(&payload)?;
+                value["created_at"] = json!(created_at);
+                Ok(value)
+            })
+            .collect()
     }
     pub fn query_events(&self, project: Id, query: &EventQuery) -> Result<EventPage> {
         self.query_events_filtered(project, query, false, false)

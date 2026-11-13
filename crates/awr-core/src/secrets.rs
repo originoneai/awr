@@ -162,7 +162,7 @@ impl SensitiveCategory {
     fn rejection(self) -> String {
         format!("{REJECTION}; category={}", self.name())
     }
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Self::Credential => "credential",
             Self::LabelledValue => "labelled_value",
@@ -1061,11 +1061,24 @@ pub fn ensure_public_source(bytes: &[u8], locator: &str) -> Result<()> {
                     }
                 }
             }
+            if secrets_mode() == SecretsMode::Warn {
+                // Non-strict projects admit the source and keep a queryable receipt;
+                // the warning still names the position and category, never the content.
+                record_sensitive_warning(&message, &location);
+                return Ok(());
+            }
             Err(Error::SensitiveSource { message, location })
         }
         result => result,
     }
 }
+/// Strict validation for request/configuration and write-side reads, retaining
+/// positioned diagnostics even inside a warn-mode project operation.
+pub fn ensure_public_source_strict(bytes: &[u8], locator: &str) -> Result<()> {
+    let _scope = enter_secrets_mode(SecretsMode::Strict, None);
+    ensure_public_source(bytes, locator)
+}
+
 pub fn ensure_public_value(value: &Value) -> Result<()> {
     if let Some(category) = sensitive_value_category(value) {
         Err(Error::RuleViolation(category.rejection()))
@@ -2233,4 +2246,270 @@ mod tests {
         assert_eq!(value["proposal_id"], "fixture-id");
         assert!(!value.to_string().contains("fixture-value-only"));
     }
+}
+
+// ---------------------------------------------------------------------------
+// Tiered admission: strict (default) and warn (opt-in per project policy)
+// ---------------------------------------------------------------------------
+
+/// How this process admits project sources that trip the sensitive-content
+/// detector. `Strict` is the behaviour AWR always had: reject the read.
+/// `Warn` is an explicit per-project opt-in: the source is admitted, the
+/// downgrade is recorded as a queryable receipt, and AWR's own writes stay
+/// strict in both modes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SecretsMode {
+    Strict,
+    Warn,
+}
+impl Default for SecretsMode {
+    fn default() -> Self {
+        Self::Strict
+    }
+}
+
+/// Who enabled warn mode and when; every downgrade receipt carries it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretsModeProvenance {
+    pub enabled_by: String,
+    pub enabled_at: i64,
+}
+
+/// One admitted sensitive finding: position and category only, never content.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SensitiveWarning {
+    pub locator: String,
+    pub line: Option<usize>,
+    pub column: Option<usize>,
+    pub category: String,
+}
+
+struct SecretsState {
+    mode: SecretsMode,
+    provenance: Option<SecretsModeProvenance>,
+    warnings: Vec<SensitiveWarning>,
+}
+thread_local! {
+    static SECRETS_STATE: std::cell::RefCell<SecretsState> =
+        const { std::cell::RefCell::new(SecretsState { mode: SecretsMode::Strict, provenance: None, warnings: Vec::new() }) };
+}
+
+/// Install a fresh thread-local admission state. Prefer `enter_secrets_mode`
+/// for a bounded command or synchronous project operation.
+pub fn set_secrets_mode(mode: SecretsMode, provenance: Option<SecretsModeProvenance>) {
+    SECRETS_STATE.with(|state| {
+        *state.borrow_mut() = SecretsState {
+            mode,
+            provenance,
+            warnings: Vec::new(),
+        };
+    });
+}
+
+/// Restores the caller's state on success, error or unwind. This guard must not
+/// cross an await point or move to another thread.
+#[must_use]
+pub struct SecretsScope {
+    previous: Option<SecretsState>,
+    _thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+pub fn enter_secrets_mode(
+    mode: SecretsMode,
+    provenance: Option<SecretsModeProvenance>,
+) -> SecretsScope {
+    let previous = SECRETS_STATE.with(|state| {
+        std::mem::replace(
+            &mut *state.borrow_mut(),
+            SecretsState {
+                mode,
+                provenance,
+                warnings: Vec::new(),
+            },
+        )
+    });
+    SecretsScope {
+        previous: Some(previous),
+        _thread_bound: std::marker::PhantomData,
+    }
+}
+
+impl Drop for SecretsScope {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.take() {
+            SECRETS_STATE.with(|state| *state.borrow_mut() = previous);
+        }
+    }
+}
+
+pub fn secrets_mode() -> SecretsMode {
+    SECRETS_STATE.with(|state| state.borrow().mode)
+}
+
+/// The provenance of the active mode, for receipts. `None` in strict mode
+/// unless a policy file named an operator for the strict switch itself.
+pub fn secrets_mode_provenance() -> Option<SecretsModeProvenance> {
+    SECRETS_STATE.with(|state| state.borrow().provenance.clone())
+}
+
+/// Drain the warnings recorded since the last take; callers persist them as
+/// the receipt of every downgrade.
+pub fn take_sensitive_warnings() -> Vec<SensitiveWarning> {
+    SECRETS_STATE.with(|state| std::mem::take(&mut state.borrow_mut().warnings))
+}
+
+fn record_sensitive_warning(message: &str, location: &crate::DiagnosticLocation) {
+    let category = sensitive_category_for_message(message)
+        .map(SensitiveCategory::name)
+        .unwrap_or("unknown");
+    SECRETS_STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        // One receipt per locator and category: a refresh re-validates the same
+        // content at several layers (raw read, parsed value, section reads);
+        // the first finding usually carries the exact position, later ones none.
+        if state.warnings.iter().any(|warning| {
+            warning.locator == location.locator.clone().unwrap_or_default()
+                && warning.category == category
+        }) {
+            return;
+        }
+        state.warnings.push(SensitiveWarning {
+            locator: location.locator.clone().unwrap_or_default(),
+            line: location.line,
+            column: location.column,
+            category: category.into(),
+        });
+    });
+}
+
+#[cfg(test)]
+mod tiered_mode_tests {
+    use super::*;
+
+    fn credential_source() -> Vec<u8> {
+        b"work_items:\n- id: W\n  status: ready\n  api_key: sk-ant-abcdefghijklmnopqrstuvwxyz012345\n".to_vec()
+    }
+
+    #[test]
+    fn strict_mode_rejects_and_warn_mode_records_a_positioned_receipt() {
+        // Default is strict: the read is refused exactly as before.
+        set_secrets_mode(SecretsMode::Strict, None);
+        assert!(matches!(
+            ensure_public_source(&credential_source(), "ledger.yaml"),
+            Err(Error::SensitiveSource { .. })
+        ));
+        assert!(take_sensitive_warnings().is_empty());
+
+        // Warn mode admits the source; the receipt names locator, line and
+        // category, never the content.
+        set_secrets_mode(
+            SecretsMode::Warn,
+            Some(SecretsModeProvenance {
+                enabled_by: "operator-a".into(),
+                enabled_at: 1_794_000_000_000,
+            }),
+        );
+        assert!(ensure_public_source(&credential_source(), "ledger.yaml").is_ok());
+        let warnings = take_sensitive_warnings();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].locator, "ledger.yaml");
+        assert_eq!(warnings[0].line, Some(4));
+        assert_eq!(warnings[0].category, "credential");
+        assert!(secrets_mode_provenance().is_some_and(|p| p.enabled_by == "operator-a"));
+
+        // Switching back to strict restores the refusal and drops pending receipts.
+        set_secrets_mode(SecretsMode::Strict, None);
+        assert!(matches!(
+            ensure_public_source(&credential_source(), "ledger.yaml"),
+            Err(Error::SensitiveSource { .. })
+        ));
+        assert!(take_sensitive_warnings().is_empty());
+    }
+
+    #[test]
+    fn placeholders_and_examples_stay_admitted_in_both_modes() {
+        let placeholder_source =
+            b"work_items:\n- id: W\n  status: ready\n  api_key: ${API_KEY}\n  note: [redacted]\n"
+                .to_vec();
+        for mode in [SecretsMode::Strict, SecretsMode::Warn] {
+            set_secrets_mode(mode, None);
+            assert!(
+                ensure_public_source(&placeholder_source, "ledger.yaml").is_ok(),
+                "placeholders must never block in {mode:?}"
+            );
+            assert!(take_sensitive_warnings().is_empty());
+        }
+        set_secrets_mode(SecretsMode::Strict, None);
+    }
+
+    #[test]
+    fn scoped_mode_restores_pending_state_after_unwind() {
+        set_secrets_mode(SecretsMode::Strict, None);
+        let _outer = enter_secrets_mode(
+            SecretsMode::Warn,
+            Some(SecretsModeProvenance {
+                enabled_by: "outer".into(),
+                enabled_at: 1,
+            }),
+        );
+        ensure_public_source(&credential_source(), "outer.yaml").unwrap();
+        let failed = std::panic::catch_unwind(|| {
+            let _inner = enter_secrets_mode(SecretsMode::Strict, None);
+            assert!(ensure_public_source(&credential_source(), "inner.yaml").is_err());
+            panic!("synthetic interrupted request");
+        });
+        assert!(failed.is_err());
+        assert_eq!(secrets_mode(), SecretsMode::Warn);
+        assert_eq!(secrets_mode_provenance().unwrap().enabled_by, "outer");
+        let warnings = take_sensitive_warnings();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].locator, "outer.yaml");
+    }
+
+    #[test]
+    fn awr_writes_stay_strict_in_warn_mode() {
+        set_secrets_mode(
+            SecretsMode::Warn,
+            Some(SecretsModeProvenance {
+                enabled_by: "operator-a".into(),
+                enabled_at: 1,
+            }),
+        );
+        // The write-side gate is not policy-aware by design: AWR never stores
+        // sensitive content, whatever a project admits into its own sources.
+        assert!(ensure_public_text("token: sk-ant-abcdefghijklmnopqrstuvwxyz012345").is_err());
+        set_secrets_mode(SecretsMode::Strict, None);
+    }
+}
+
+/// Parsed-source admission, mirroring `ensure_public_source` for values the
+/// adapters decode: strict rejects, warn records a receipt without a line and
+/// admits. AWR's own writes keep calling `ensure_public_value` directly.
+pub fn admit_public_value(value: &Value, locator: &str) -> Result<()> {
+    if let Some(category) = sensitive_value_category(value) {
+        if secrets_mode() == SecretsMode::Warn {
+            SECRETS_STATE.with(|state| {
+                let mut state = state.borrow_mut();
+                // The raw-text gate runs first and carries the exact position;
+                // the parsed view only adds a receipt when the raw scan saw
+                // nothing for this locator at all.
+                if state
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.locator == locator)
+                {
+                    return;
+                }
+                state.warnings.push(SensitiveWarning {
+                    locator: locator.to_owned(),
+                    line: None,
+                    column: None,
+                    category: category.name().into(),
+                });
+            });
+            return Ok(());
+        }
+        return Err(Error::RuleViolation(category.rejection()));
+    }
+    Ok(())
 }

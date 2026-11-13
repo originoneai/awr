@@ -352,6 +352,13 @@ impl YamlLedgerAdapter {
         document: Value,
     ) -> Result<ProjectionBatch> {
         snapshot.ensure_value(&document)?;
+        // Decode the domain from redacted values, retaining the original source
+        // fingerprint and section provenance. Raw credentials never reach rows.
+        let document = if awr_core::secrets_mode() == awr_core::SecretsMode::Warn {
+            awr_core::redact_sensitive_value(document)
+        } else {
+            document
+        };
         let document = mapping.document(document)?;
         if !scoped && document.get("workstreams").is_some() {
             return Err(Error::Unsupported(

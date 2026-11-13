@@ -76,6 +76,7 @@ pub fn recorded_snapshot(root: &Path) -> Result<QuerySnapshot> {
         unchanged: sources.len(),
         retired: 0,
         pending,
+        sensitive_warnings: vec![],
         sources: sources
             .into_iter()
             .map(|s| {

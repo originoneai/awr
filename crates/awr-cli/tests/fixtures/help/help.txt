@@ -36,6 +36,7 @@ Commands:
   branch        Create, inspect or select an Agent Work Branch without changing Git checkout
   doctor        Diagnose project/database state; apply only explicitly selected runtime repairs
   workspace     Share tracked project files between machines through an object store
+  policy        Read or switch project policy (sensitive-content admission mode)
   team          Inspect Team protocol capabilities or submit a remote Team envelope
   remote        Store Team remote endpoint and credential environment references
   help          Print this message or the help of the given subcommand(s)

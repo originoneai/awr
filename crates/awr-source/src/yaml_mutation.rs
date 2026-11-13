@@ -19,7 +19,8 @@ fn unsupported(message: &str) -> Error {
     Error::MutationUnsupported(message.into())
 }
 fn document(snapshot: &SourceSnapshot) -> Result<Value> {
-    crate::limits::check_source_size(&snapshot.bytes, crate::YAML_READ_CAP)?;
+    crate::limits::check_source_size_only(&snapshot.bytes, crate::YAML_READ_CAP)?;
+    awr_core::ensure_public_source(&snapshot.bytes, &snapshot.locator)?;
     let yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(snapshot.text()?)
         .map_err(|e| Error::InvalidInput(format!("YAML mutation: {e}")))?;
     Ok(serde_json::to_value(yaml)?)
