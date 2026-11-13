@@ -121,5 +121,11 @@ pub fn inspect_registered_source(
     }
     let (locator, spec) = matches.pop().unwrap();
     let snapshot = locator.read(&root, crate::source_read_cap(&spec.adapter)?)?;
+    // Mutation recovery archives exact before/after bytes. Warn admission must
+    // not copy an unredacted source into that archive or a proposed patch.
+    if awr_core::secrets_mode() == awr_core::SecretsMode::Warn && snapshot.content_review.is_none()
+    {
+        awr_core::ensure_public_bytes(&snapshot.bytes)?;
+    }
     Ok((locator, spec, snapshot))
 }

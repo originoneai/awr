@@ -1072,6 +1072,13 @@ pub fn ensure_public_source(bytes: &[u8], locator: &str) -> Result<()> {
         result => result,
     }
 }
+/// Strict validation for request/configuration and write-side reads, retaining
+/// positioned diagnostics even inside a warn-mode project operation.
+pub fn ensure_public_source_strict(bytes: &[u8], locator: &str) -> Result<()> {
+    let _scope = enter_secrets_mode(SecretsMode::Strict, None);
+    ensure_public_source(bytes, locator)
+}
+
 pub fn ensure_public_value(value: &Value) -> Result<()> {
     if let Some(category) = sensitive_value_category(value) {
         Err(Error::RuleViolation(category.rejection()))
@@ -2287,18 +2294,52 @@ thread_local! {
         const { std::cell::RefCell::new(SecretsState { mode: SecretsMode::Strict, provenance: None, warnings: Vec::new() }) };
 }
 
-/// Install the process-wide admission mode. Hosts call this once per command
-/// from the project's policy file before any source is read.
+/// Install a fresh thread-local admission state. Prefer `enter_secrets_mode`
+/// for a bounded command or synchronous project operation.
 pub fn set_secrets_mode(mode: SecretsMode, provenance: Option<SecretsModeProvenance>) {
     SECRETS_STATE.with(|state| {
-        let mut state = state.borrow_mut();
-        if mode == SecretsMode::Strict {
-            // Switching back to strict clears pending receipts; strict is the default.
-            state.warnings.clear();
-        }
-        state.mode = mode;
-        state.provenance = provenance;
+        *state.borrow_mut() = SecretsState {
+            mode,
+            provenance,
+            warnings: Vec::new(),
+        };
     });
+}
+
+/// Restores the caller's state on success, error or unwind. This guard must not
+/// cross an await point or move to another thread.
+#[must_use]
+pub struct SecretsScope {
+    previous: Option<SecretsState>,
+    _thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+pub fn enter_secrets_mode(
+    mode: SecretsMode,
+    provenance: Option<SecretsModeProvenance>,
+) -> SecretsScope {
+    let previous = SECRETS_STATE.with(|state| {
+        std::mem::replace(
+            &mut *state.borrow_mut(),
+            SecretsState {
+                mode,
+                provenance,
+                warnings: Vec::new(),
+            },
+        )
+    });
+    SecretsScope {
+        previous: Some(previous),
+        _thread_bound: std::marker::PhantomData,
+    }
+}
+
+impl Drop for SecretsScope {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.take() {
+            SECRETS_STATE.with(|state| *state.borrow_mut() = previous);
+        }
+    }
 }
 
 pub fn secrets_mode() -> SecretsMode {
@@ -2399,6 +2440,30 @@ mod tiered_mode_tests {
             assert!(take_sensitive_warnings().is_empty());
         }
         set_secrets_mode(SecretsMode::Strict, None);
+    }
+
+    #[test]
+    fn scoped_mode_restores_pending_state_after_unwind() {
+        set_secrets_mode(SecretsMode::Strict, None);
+        let _outer = enter_secrets_mode(
+            SecretsMode::Warn,
+            Some(SecretsModeProvenance {
+                enabled_by: "outer".into(),
+                enabled_at: 1,
+            }),
+        );
+        ensure_public_source(&credential_source(), "outer.yaml").unwrap();
+        let failed = std::panic::catch_unwind(|| {
+            let _inner = enter_secrets_mode(SecretsMode::Strict, None);
+            assert!(ensure_public_source(&credential_source(), "inner.yaml").is_err());
+            panic!("synthetic interrupted request");
+        });
+        assert!(failed.is_err());
+        assert_eq!(secrets_mode(), SecretsMode::Warn);
+        assert_eq!(secrets_mode_provenance().unwrap().enabled_by, "outer");
+        let warnings = take_sensitive_warnings();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].locator, "outer.yaml");
     }
 
     #[test]

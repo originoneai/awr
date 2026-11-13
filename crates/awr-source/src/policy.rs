@@ -173,9 +173,9 @@ impl SecretsPolicy {
                 let mode = match file.secrets.mode.as_deref() {
                     None | Some("strict") => awr_core::SecretsMode::Strict,
                     Some("warn") => awr_core::SecretsMode::Warn,
-                    Some(other) => {
+                    Some(_) => {
                         return Err(Error::InvalidInput(format!(
-                            "{POLICY_FILE}: secrets.mode must be strict or warn, not {other}"
+                            "{POLICY_FILE}: secrets.mode must be strict or warn"
                         )));
                     }
                 };
@@ -188,7 +188,20 @@ impl SecretsPolicy {
             }
         })
     }
-    /// Install this policy for the process before any source is read.
+    /// Bind policy and warning provenance to this synchronous operation only.
+    pub fn enter(&self) -> awr_core::SecretsScope {
+        let provenance = self
+            .enabled_by
+            .as_ref()
+            .zip(self.enabled_at)
+            .map(|(by, at)| awr_core::SecretsModeProvenance {
+                enabled_by: by.clone(),
+                enabled_at: at,
+            });
+        awr_core::enter_secrets_mode(self.mode, provenance)
+    }
+
+    /// Install this policy in the current thread-local command scope.
     pub fn apply(&self) {
         let provenance = match (&self.enabled_by, self.enabled_at) {
             (Some(enabled_by), Some(enabled_at)) => Some(awr_core::SecretsModeProvenance {

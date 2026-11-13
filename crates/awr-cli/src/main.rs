@@ -254,16 +254,13 @@ enum Command {
 }
 
 fn run(cli: &Cli) -> cli_failure::CliResult<()> {
-    // One place, before dispatch: the project's sensitive-admission policy
-    // governs every source read this process performs, including takeover's
-    // child commands. Best effort, like the claims policy: a file this build
-    // cannot read must not stop unrelated commands — strict stays the default
-    // and the read or policy command that needs the file reports the problem.
-    if let Ok(root) = cli.project.canonicalize()
-        && let Ok(policy) = awr_source::SecretsPolicy::load(&root)
-    {
-        policy.apply();
-    }
+    let policy = cli
+        .project
+        .canonicalize()
+        .ok()
+        .and_then(|root| awr_source::SecretsPolicy::load(&root).ok())
+        .unwrap_or_default();
+    let _secrets_scope = policy.enter();
     let result = match &cli.command {
         Some(Command::Verify(args)) => verify::run(&cli.project, args, cli.json),
         Some(Command::Overview(args)) => overview::run(&cli.project, args, cli.json),

@@ -279,7 +279,8 @@ fn semantic_preview(
     let work = organization["executable_work"].clone();
     Ok(
         json!({"version":1,"can_apply":report.ok,"can_execute":organization["business_execution_ready"],
-        "source_basis":basis,"issues":issues,"organization_state":organization["state"],
+        "source_basis":basis,"issues":issues,"sensitive_warnings":report.sensitive_warnings,
+        "organization_state":organization["state"],
         "gap_total":organization["gap_total"],"gaps":gaps,"truncated":organization["truncated"],
         "executable_work":work,"executable_work_total":organization["executable_work_total"],
         "source_write_performed":false,"runtime_write_performed":false,"storage":"private_memory"}),

@@ -7,7 +7,7 @@
 //! instead of stopping the takeover.
 use awr_core::{Error, Result};
 use clap::{Args, Subcommand};
-use std::path::Path;
+use std::{io::Write, path::Path};
 
 #[derive(Debug, Args)]
 pub struct PolicyArgs {
@@ -60,17 +60,38 @@ pub fn run(project: &Path, command: &PolicyCommand, json: bool) -> Result<()> {
 }
 
 fn switch(root: &Path, mode: &str, actor: Option<String>, json: bool) -> Result<()> {
-    let policy_path = root.join(awr_source::POLICY_FILE);
-    let text = match std::fs::read_to_string(&policy_path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            format!("version = {}\n", awr_source::POLICY_VERSION)
+    let runtime = crate::source::runtime_dir(root, true)?;
+    let directory = awr_source::open_dir_exact(&runtime)?;
+    let lock_path = runtime.join("policy.lock");
+    let lock = match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock_path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            awr_source::open_file_exact(&lock_path)?
         }
-        Err(error) => return Err(Error::Io(error)),
+        Err(error) => return Err(error.into()),
     };
-    if let Err(error) = awr_source::SecretsPolicy::load(root) {
-        return Err(error);
-    }
+    lock.try_lock().map_err(|_| {
+        Error::SourceConflict(
+            "another policy switch is in progress; retry after it finishes".into(),
+        )
+    })?;
+    awr_source::SecretsPolicy::load(root)?;
+    let previous = match directory.read("policy.toml") {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    let text = previous
+        .as_deref()
+        .map(std::str::from_utf8)
+        .transpose()
+        .map_err(|_| Error::InvalidInput("policy must be UTF-8".into()))?
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("version = {}\n", awr_source::POLICY_VERSION));
     let enabled_by = actor
         .or_else(|| {
             std::env::var("USER")
@@ -78,12 +99,46 @@ fn switch(root: &Path, mode: &str, actor: Option<String>, json: bool) -> Result<
                 .or_else(|| std::env::var("USERNAME").ok())
         })
         .unwrap_or_else(|| "unknown".into());
+    if enabled_by.trim().is_empty() || enabled_by.len() > 128 {
+        return Err(Error::InvalidInput(
+            "policy actor must contain 1..128 bytes".into(),
+        ));
+    }
+    awr_core::ensure_public_text(&enabled_by)?;
     let enabled_at = awr_core::now_millis()?;
     let text = write_secrets_table(&text, mode, &enabled_by, enabled_at)?;
-    if let Some(parent) = policy_path.parent() {
-        std::fs::create_dir_all(parent)?;
+    let stage = format!("policy-{}.tmp", awr_core::Id::new());
+    let mut options = cap_std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    let result: Result<()> = (|| {
+        let mut file = directory.open_with(&stage, &options)?.into_std();
+        if previous.is_some() {
+            let current = awr_source::open_file_exact(&runtime.join("policy.toml"))?;
+            let permissions = current.metadata()?.permissions();
+            if permissions.readonly() {
+                return Err(Error::RuleViolation("policy file is read-only".into()));
+            }
+            file.set_permissions(permissions)?;
+        }
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
+        let current = match directory.read("policy.toml") {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        if current != previous {
+            return Err(Error::SourceConflict(
+                "policy changed during the switch; read it again".into(),
+            ));
+        }
+        directory.rename(&stage, &directory, "policy.toml")?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = directory.remove_file(&stage);
     }
-    std::fs::write(&policy_path, text)?;
+    result?;
     awr_source::SecretsPolicy::load(root)?.apply();
     let summary = serde_json::json!({
         "mode": mode,
@@ -108,47 +163,21 @@ fn write_secrets_table(
     enabled_by: &str,
     enabled_at: i64,
 ) -> Result<String> {
-    let table = format!(
-        "\n[secrets]\nmode = \"{mode}\"\nenabled_by = \"{enabled_by}\"\nenabled_at = {enabled_at}\n"
+    let mut value: toml::Value = toml::from_str(text)
+        .map_err(|_| Error::InvalidInput("policy must be valid TOML".into()))?;
+    let table = value
+        .as_table_mut()
+        .ok_or_else(|| Error::InvalidInput("policy must be a TOML table".into()))?;
+    table.insert(
+        "secrets".into(),
+        toml::Value::Table(toml::Table::from_iter([
+            ("mode".into(), toml::Value::String(mode.into())),
+            ("enabled_by".into(), toml::Value::String(enabled_by.into())),
+            ("enabled_at".into(), toml::Value::Integer(enabled_at)),
+        ])),
     );
-    let mut lines: Vec<String> = Vec::new();
-    let mut in_secrets = false;
-    let mut replaced = false;
-    for line in text.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with('[') {
-            if in_secrets {
-                // Closing the existing table: the replacement is inserted before it.
-                if !replaced {
-                    lines.push(table.trim_end().to_owned());
-                    replaced = true;
-                }
-                in_secrets = false;
-            }
-            if trimmed == "[secrets]" {
-                in_secrets = true;
-                continue;
-            }
-        }
-        if !in_secrets {
-            lines.push(line.to_owned());
-        }
-    }
-    if in_secrets && !replaced {
-        // The table was the last one in the file.
-        lines.push(table.trim_end().to_owned());
-        replaced = true;
-    }
-    let mut text = lines.join("\n");
-    if !replaced {
-        if !text.ends_with('\n') && !text.is_empty() {
-            text.push('\n');
-        }
-        text.push_str(&table);
-    } else if !text.ends_with('\n') {
-        text.push('\n');
-    }
-    Ok(text)
+    toml::to_string_pretty(&value)
+        .map_err(|_| Error::InvalidInput("could not serialize project policy".into()))
 }
 
 fn show(root: &Path, json: bool) -> Result<()> {
@@ -185,7 +214,7 @@ fn show(root: &Path, json: bool) -> Result<()> {
 
 fn log(root: &Path, limit: usize, json: bool) -> Result<()> {
     let database = crate::source::runtime_dir(root, false)?.join("state.db");
-    let mut store = awr_store::Store::open_existing(&database)?;
+    let store = awr_store::Store::open_existing(&database)?;
     let project = store.project_by_root(root)?;
     let events = store.secrets_warned_events(project.id, limit)?;
     if json {

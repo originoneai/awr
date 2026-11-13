@@ -39,11 +39,7 @@ fn snapshot(path: &Path, text: String) -> Result<SourceSnapshot> {
     let bytes = text.into_bytes();
     let locator = Locator::File(path.into()).identity()?;
     crate::limits::check_source_size_only(&bytes, MARKDOWN_READ_CAP)?;
-    // The read gate is the policy-aware one: strict rejects with the exact
-    // position, a project's warn mode admits and records a receipt.
-    if std::str::from_utf8(&bytes).is_ok() {
-        awr_core::ensure_public_source(&bytes, &locator)?;
-    }
+    awr_core::ensure_public_bytes(&bytes)?;
     Ok(SourceSnapshot {
         content_review: None,
         locator,

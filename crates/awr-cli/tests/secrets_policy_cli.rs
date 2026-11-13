@@ -154,3 +154,123 @@ fn placeholders_never_block_in_either_mode() {
             .unwrap_or(true)
     );
 }
+
+#[test]
+fn policy_switch_serializes_quoted_actors_and_preserves_other_tables() {
+    let f = Fixture::new(WORK);
+    let path = f.root.join(".awr/policy.toml");
+    fs::write(&path, "version=1\n[claims]\ndefault_ttl='2h'\nrenew_on_activity=false\n[secrets] # existing policy\nmode='strict'\n").unwrap();
+    let actor = "reviewer \"quoted\" \\ name";
+    f.ok(&["policy", "secrets", "warn", "--actor", actor]);
+    let show = f.ok(&["policy", "secrets", "show"]);
+    assert_eq!(show["enabled_by"], actor);
+    let value: toml::Value = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(value["claims"]["default_ttl"].as_str(), Some("2h"));
+    assert_eq!(value["claims"]["renew_on_activity"].as_bool(), Some(false));
+    let before = fs::read(&path).unwrap();
+    let refused = f.run_with(&["policy", "secrets", "strict", "--actor", ""], &[]);
+    assert!(!refused.status.success());
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert!(
+        !fs::read_dir(f.root.join(".awr")).unwrap().any(|e| e
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .ends_with(".tmp"))
+    );
+}
+
+#[test]
+fn first_init_redacts_markdown_storage_and_content_reads_without_modifying_source() {
+    let f = Fixture {
+        root: std::env::temp_dir().join(format!("awr-warn-first-init-{}", Id::new())),
+    };
+    fs::create_dir(&f.root).unwrap();
+    let original = "# Public documentation\n\nPurpose: maintain a documentation site.\napi_key: sk-ant-abcdefghijklmnopqrstuvwxyz012345\n-----BEGIN PRIVATE KEY-----\nSYNTHETIC-KEY-BODY-DO-NOT-DISCLOSE\n-----END PRIVATE KEY-----\n";
+    fs::write(f.root.join("README.md"), original).unwrap();
+    f.ok(&["policy", "secrets", "warn", "--actor", "reviewer"]);
+    let preview = f.ok(&["init", "--goal", "Maintain a documentation site"]);
+    assert!(preview.to_string().contains("sensitive_warnings"));
+    assert!(!preview.to_string().contains("sk-ant"));
+    let draft_path = f.root.with_extension("draft.json");
+    f.ok(&[
+        "init",
+        "--goal",
+        "Maintain a documentation site",
+        "--write-draft",
+        draft_path.to_str().unwrap(),
+    ]);
+    assert!(!fs::read_to_string(&draft_path).unwrap().contains("sk-ant"));
+    let accepted = f.ok(&[
+        "init",
+        "--from-draft",
+        draft_path.to_str().unwrap(),
+        "--accept",
+    ]);
+    fs::remove_file(draft_path).unwrap();
+    assert!(!accepted.to_string().contains("sk-ant"));
+    let receipts = f.ok(&["policy", "secrets", "log"]);
+    assert!(!receipts.as_array().unwrap().is_empty());
+    assert!(!receipts.to_string().contains("sk-ant"));
+    let view = f.ok(&["source", "show", "plan", "--content"]);
+    assert_eq!(view["content_redacted"], true);
+    assert!(!view.to_string().contains("sk-ant"));
+    let partial = f.ok(&[
+        "source",
+        "show",
+        "plan",
+        "--content",
+        "--start-line",
+        "6",
+        "--end-line",
+        "6",
+    ]);
+    assert_eq!(partial["content_redacted"], true);
+    assert!(!partial.to_string().contains("sk-ant"));
+    assert!(!partial.to_string().contains("SYNTHETIC-KEY-BODY"));
+    assert_eq!(
+        fs::read_to_string(f.root.join("README.md")).unwrap(),
+        original
+    );
+    // Check retained runtime bytes too, including SQLite journals and receipts.
+    fn no_secret(path: &std::path::Path) {
+        for entry in fs::read_dir(path).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                no_secret(&path);
+            } else {
+                let bytes = fs::read(&path).unwrap();
+                assert!(
+                    !bytes
+                        .windows(b"sk-ant-abcde".len())
+                        .any(|w| w == b"sk-ant-abcde"),
+                    "sensitive bytes in {}",
+                    path.display()
+                );
+            }
+        }
+    }
+    no_secret(&f.root.join(".awr"));
+    f.ok(&["policy", "secrets", "strict", "--actor", "reviewer"]);
+    assert_eq!(f.reindex()["ok"], false);
+}
+
+#[test]
+fn concurrent_policy_switch_refuses_without_changing_the_file_then_recovers() {
+    let f = Fixture::new(WORK);
+    f.ok(&["policy", "secrets", "warn", "--actor", "first"]);
+    let path = f.root.join(".awr/policy.toml");
+    let before = fs::read(&path).unwrap();
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(f.root.join(".awr/policy.lock"))
+        .unwrap();
+    lock.try_lock().unwrap();
+    let refused = f.run_with(&["policy", "secrets", "strict", "--actor", "second"], &[]);
+    assert!(!refused.status.success());
+    assert_eq!(fs::read(&path).unwrap(), before);
+    drop(lock);
+    f.ok(&["policy", "secrets", "strict", "--actor", "second"]);
+    assert_eq!(f.ok(&["policy", "secrets", "show"])["enabled_by"], "second");
+}

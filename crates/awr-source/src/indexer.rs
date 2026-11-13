@@ -192,14 +192,9 @@ fn process_project(
     captured: Option<&PreviewSources>,
 ) -> Result<IndexReport> {
     manifest.validate()?;
-    // Honor the project's sensitive-admission policy even when a library caller
-    // never installed it. Best effort, matching the claims-policy contract: a
-    // file this build cannot read must not fail an operation that only happens
-    // to refresh — strict stays the default, and `awr policy secrets show` or
-    // doctor names the unreadable file.
-    if let Ok(policy) = crate::SecretsPolicy::load(root) {
-        policy.apply();
-    }
+    // Invalid or absent policy is strict for this project, never inherited from
+    // a preceding request on the same worker thread.
+    let _secrets_scope = crate::SecretsPolicy::load(root).unwrap_or_default().enter();
     let project = store.register_project(
         root,
         manifest
@@ -494,7 +489,18 @@ fn index_one(
         source: &source,
         existing_ids: store.projection_ids(&source)?,
     };
-    let batch = adapter.parse(&snapshot, &context, spec)?;
+    let mut batch = adapter.parse(&snapshot, &context, spec)?;
+    if awr_core::secrets_mode() == awr_core::SecretsMode::Warn {
+        let payload = serde_json::to_value(&batch)?;
+        let sanitized = awr_core::redact_sensitive_value(payload.clone());
+        if sanitized != payload {
+            batch = serde_json::from_value(sanitized).map_err(|_| Error::RuleViolation(
+                "source identities or structure contain sensitive data; redact the source before indexing".into()))?;
+            batch.warnings.push(
+                "Sensitive source fields were redacted; original files were not changed.".into(),
+            );
+        }
+    }
     let warnings = batch.warnings.clone();
     if captured.is_none()
         && matches!(locator, Locator::File(_))

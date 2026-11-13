@@ -2,7 +2,7 @@
 //! a project's warn policy admits the source with a queryable receipt, and
 //! placeholders never block in either mode.
 use awr_core::*;
-use awr_source::{Manifest, SecretsPolicy, index_project};
+use awr_source::{Manifest, index_project};
 use awr_store::Store;
 use std::{fs, path::PathBuf};
 
@@ -35,7 +35,6 @@ impl Fixture {
         })
     }
     fn index(&mut self) -> Result<awr_source::IndexReport> {
-        SecretsPolicy::load(&self.root)?.apply();
         let manifest = self.manifest();
         index_project(&mut self.store, &self.root, &manifest, false)
     }
@@ -109,4 +108,80 @@ fn strict_switch_restores_the_refusal() {
     );
     let report = f.index().unwrap();
     assert!(!report.ok && report.sensitive_warnings.is_empty());
+}
+
+#[test]
+fn project_policy_and_warning_provenance_never_leak_between_calls() {
+    set_secrets_mode(SecretsMode::Strict, None);
+    let mut first = Fixture::new(
+        CREDENTIAL_LEDGER,
+        Some("version=1\n[secrets]\nmode='warn'\nenabled_by='first'\nenabled_at=1\n"),
+    );
+    let first_report = first.index().unwrap();
+    assert!(first_report.ok);
+    assert_eq!(secrets_mode(), SecretsMode::Strict);
+    assert!(take_sensitive_warnings().is_empty());
+    let mut invalid = Fixture::new(CREDENTIAL_LEDGER, Some("version=2\n"));
+    let refused = invalid.index().unwrap();
+    assert!(!refused.ok);
+    assert!(refused.sensitive_warnings.is_empty());
+    let mut second = Fixture::new(
+        CREDENTIAL_LEDGER,
+        Some("version=1\n[secrets]\nmode='warn'\nenabled_by='second'\nenabled_at=2\n"),
+    );
+    let second_report = second.index().unwrap();
+    assert!(second_report.ok);
+    let events = second
+        .store
+        .secrets_warned_events(second_report.project_id, 10)
+        .unwrap();
+    assert_eq!(events[0]["enabled_by"], "second");
+    assert!(events[0]["findings"].as_array().unwrap().iter().all(|f| {
+        f["locator"]
+            .as_str()
+            .unwrap()
+            .contains(second.root.file_name().unwrap().to_str().unwrap())
+    }));
+    assert_eq!(secrets_mode(), SecretsMode::Strict);
+    assert!(take_sensitive_warnings().is_empty());
+}
+
+#[test]
+fn warn_redacts_projected_fields_and_preserves_original_source_bytes() {
+    let ledger = CREDENTIAL_LEDGER.replace(
+        "  next_action: Start",
+        "  summary: 'api_key: sk-ant-abcdefghijklmnopqrstuvwxyz012345'\n  next_action: Start",
+    );
+    let mut f = Fixture::new(
+        &ledger,
+        Some("version=1\n[secrets]\nmode='warn'\nenabled_by='reviewer'\nenabled_at=1\n"),
+    );
+    let report = f.index().unwrap();
+    assert!(report.ok, "{:?}", report.issues);
+    let rows = f.store.work_items(report.project_id).unwrap();
+    let json = serde_json::to_string(&rows).unwrap();
+    assert!(!json.contains("sk-ant"));
+    assert!(json.contains(SENSITIVE_CONTENT_WITHHELD));
+    assert_eq!(
+        fs::read_to_string(f.root.join("ledger.yaml")).unwrap(),
+        ledger
+    );
+}
+
+#[test]
+fn warn_mode_does_not_admit_raw_source_bytes_to_mutation_archives() {
+    let mut f = Fixture::new(
+        CREDENTIAL_LEDGER,
+        Some("version=1\n[secrets]\nmode='warn'\nenabled_by='reviewer'\nenabled_at=1\n"),
+    );
+    let report = f.index().unwrap();
+    assert!(report.ok);
+    let source = f.store.sources(report.project_id).unwrap().remove(0);
+    let _scope = awr_source::SecretsPolicy::load(&f.root).unwrap().enter();
+    assert!(awr_source::inspect_registered_source(&f.root, &source).is_err());
+    assert_eq!(
+        fs::read_to_string(f.root.join("ledger.yaml")).unwrap(),
+        CREDENTIAL_LEDGER
+    );
+    assert!(!f.root.join(".awr/mutations").exists());
 }

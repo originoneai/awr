@@ -116,7 +116,8 @@ pub fn read_capped(path: &Path, cap: u64) -> Result<Vec<u8>> {
     let file = File::open(path)
         .map_err(|e| Error::SourceUnavailable(format!("{}: {e}", path.display())))?;
     let bytes = read_file_capped(file, path, cap)?;
-    awr_core::ensure_public_source(&bytes, &path.to_string_lossy())?;
+    // Caller-supplied requests/reports are not registered source reads.
+    awr_core::ensure_public_source_strict(&bytes, &path.to_string_lossy())?;
     Ok(bytes)
 }
 
@@ -124,7 +125,7 @@ pub fn read_capped(path: &Path, cap: u64) -> Result<Vec<u8>> {
 /// Unlike caller-supplied input files, it must not be redirected by a replacement link.
 pub fn read_source_capped(path: &Path, cap: u64) -> Result<Vec<u8>> {
     let bytes = read_source_for_review(path, cap)?;
-    awr_core::ensure_public_source(&bytes, &path.to_string_lossy())?;
+    awr_core::ensure_public_source_strict(&bytes, &path.to_string_lossy())?;
     Ok(bytes)
 }
 

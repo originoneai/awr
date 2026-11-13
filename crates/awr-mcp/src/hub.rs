@@ -108,6 +108,11 @@ impl ProjectService {
         args: rmcp::model::JsonObject,
         principal: Option<&Principal>,
     ) -> Result<rmcp::model::CallToolResult> {
+        // call() is synchronous inside the blocking worker; no thread-local
+        // policy survives this request or crosses an async suspension.
+        let _secrets_scope = awr_source::SecretsPolicy::load(&self.root)
+            .unwrap_or_default()
+            .enter();
         if operations::is_read_only(name) {
             let _guard = self.operation.read().map_err(|_| {
                 Error::Storage("MCP project operation lock is poisoned; restart the server".into())
