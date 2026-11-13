@@ -103,6 +103,335 @@ async fn grant_scope(db: &str, id: &str, scope: AuthorizationScope, actions: &[A
 }
 
 #[tokio::test]
+async fn session_reads_select_the_covering_stream_independently_of_grant_order() {
+    let (_g, admin, db, store) = setup().await;
+    agent_identity(&admin).await;
+    grant(
+        &db,
+        AuthorizationScope::Workstream {
+            project_id: PROJECT.into(),
+            workstream_id: Id::from(1).to_string(),
+        },
+    )
+    .await;
+    grant_stream(&db, "beta-read", 2, &[AuthorizedAction::Inspect]).await;
+
+    fn stable_data(mut data: serde_json::Value) -> serde_json::Value {
+        data.as_object_mut().unwrap().remove("observed_at_unix_ms");
+        if let Some(observation) = data.get_mut("observation") {
+            observation
+                .as_object_mut()
+                .unwrap()
+                .remove("observed_at_unix_ms");
+        }
+        if let Some(snapshot) = data.get_mut("snapshot") {
+            snapshot
+                .as_object_mut()
+                .unwrap()
+                .remove("queried_at_unix_ms");
+        }
+        data
+    }
+
+    for alpha_created_at_ms in [1000_i64, 1002] {
+        admin.execute(
+            "UPDATE awr_team.agent_authorizations SET created_at_ms=$1 WHERE id='read-authorization'",
+            &[&alpha_created_at_ms],
+        ).await.unwrap();
+        for op in [
+            "work.prepare",
+            "work.snapshot",
+            "work.observe",
+            "session.inspect",
+        ] {
+            let mut explicit = query(op);
+            explicit.work_id = Some("b-private".into());
+            explicit.session_id = Some("session-b".into());
+            let baseline = store
+                .query(TENANT, PROJECT, A, explicit.clone())
+                .await
+                .unwrap();
+            assert_eq!(baseline["selection_basis"], "session", "{op}");
+            assert_eq!(baseline["workstream_id"], Id::from(2).to_string(), "{op}");
+            if op == "session.inspect" {
+                assert_eq!(baseline["data"]["items"][0]["session_id"], "session-b");
+            } else {
+                assert_eq!(baseline["data"]["work_id"], "b-private", "{op}");
+            }
+            for stream in [None, Some(Id::from(2))] {
+                let mut session_only = explicit.clone();
+                session_only.work_id = None;
+                session_only.workstream_id = stream;
+                let got = store.query(TENANT, PROJECT, A, session_only).await
+                    .unwrap_or_else(|error| panic!("{op}, alpha created at {alpha_created_at_ms}, stream {stream:?}: {error:?}"));
+                assert_eq!(got["selection_basis"], "session", "{op}");
+                assert_eq!(got["workstream_id"], baseline["workstream_id"], "{op}");
+                assert_eq!(
+                    got["project_revision"], baseline["project_revision"],
+                    "{op}"
+                );
+                assert_eq!(
+                    stable_data(got["data"].clone()),
+                    stable_data(baseline["data"].clone()),
+                    "{op}"
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn session_reads_preserve_explicit_work_requirements_for_task_and_pool_grants() {
+    for scope in [
+        AuthorizationScope::Task {
+            project_id: PROJECT.into(),
+            work_item_id: "b-private".into(),
+        },
+        AuthorizationScope::TaskPool {
+            project_id: PROJECT.into(),
+            pool_id: "b-private".into(),
+        },
+    ] {
+        let (_g, admin, db, store) = setup().await;
+        agent_identity(&admin).await;
+        grant(&db, scope).await;
+        for op in [
+            "work.prepare",
+            "work.snapshot",
+            "work.observe",
+            "session.inspect",
+        ] {
+            let mut q = query(op);
+            q.session_id = Some("session-b".into());
+            for stream in [None, Some(Id::from(2))] {
+                q.workstream_id = stream;
+                assert!(
+                    matches!(
+                        store.query(TENANT, PROJECT, A, q.clone()).await,
+                        Err(PgError::Forbidden)
+                    ),
+                    "{op}, {stream:?}"
+                );
+            }
+            q.work_id = Some("b-private".into());
+            store.query(TENANT, PROJECT, A, q).await.unwrap();
+        }
+        // An independent task grant cannot mask a later usable stream grant.
+        grant_stream(&db, "beta-read", 2, &[AuthorizedAction::Inspect]).await;
+        let mut q = query("work.prepare");
+        q.session_id = Some("session-b".into());
+        assert_eq!(
+            store.query(TENANT, PROJECT, A, q).await.unwrap()["data"]["work_id"],
+            "b-private"
+        );
+    }
+}
+
+#[tokio::test]
+async fn session_reads_can_select_a_later_covering_project_grant() {
+    let (_g, admin, db, store) = setup().await;
+    agent_identity(&admin).await;
+    grant(
+        &db,
+        AuthorizationScope::Workstream {
+            project_id: PROJECT.into(),
+            workstream_id: Id::from(1).to_string(),
+        },
+    )
+    .await;
+    grant_scope(
+        &db,
+        "project-read",
+        AuthorizationScope::Project {
+            project_id: PROJECT.into(),
+        },
+        &[AuthorizedAction::Inspect],
+    )
+    .await;
+    for op in [
+        "work.prepare",
+        "work.snapshot",
+        "work.observe",
+        "session.inspect",
+    ] {
+        let mut q = query(op);
+        q.session_id = Some("session-b".into());
+        let got = store.query(TENANT, PROJECT, A, q).await.unwrap();
+        assert_eq!(got["selection_basis"], "session");
+        assert_eq!(got["workstream_id"], Id::from(2).to_string());
+    }
+}
+
+#[tokio::test]
+async fn session_reads_reject_missing_hidden_stale_and_inconsistent_targets() {
+    let (_g, admin, db, store) = setup_with_three_streams().await;
+    agent_identity(&admin).await;
+    grant(
+        &db,
+        AuthorizationScope::Workstream {
+            project_id: PROJECT.into(),
+            workstream_id: Id::from(1).to_string(),
+        },
+    )
+    .await;
+    grant_stream(&db, "beta-read", 2, &[AuthorizedAction::Inspect]).await;
+    admin.execute("INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state,workstream_id,ownership_version)
+        VALUES($1,$2,'session-hidden','main','d-hidden','agent','cli-a','hidden-conversation','ended',$3,1)",
+        &[&TENANT,&PROJECT,&Id::from(3).to_string()]).await.unwrap();
+    for op in [
+        "work.prepare",
+        "work.snapshot",
+        "work.observe",
+        "session.inspect",
+    ] {
+        let mut q = query(op);
+        for session in ["missing", "session-hidden"] {
+            q.session_id = Some(session.into());
+            assert!(
+                matches!(
+                    store.query(TENANT, PROJECT, A, q.clone()).await,
+                    Err(PgError::Forbidden)
+                ),
+                "{op}/{session}"
+            );
+        }
+        q.session_id = Some("session-b".into());
+        q.workstream_id = Some(Id::from(1));
+        assert!(
+            matches!(
+                store.query(TENANT, PROJECT, A, q.clone()).await,
+                Err(PgError::Workstream(WorkstreamError::BindingMismatch))
+            ),
+            "{op}/stream mismatch"
+        );
+        q.workstream_id = None;
+        q.work_id = Some("a".into());
+        assert!(
+            matches!(
+                store.query(TENANT, PROJECT, A, q.clone()).await,
+                Err(PgError::Forbidden)
+            ),
+            "{op}/work mismatch"
+        );
+        q.work_id = None;
+        assert!(matches!(
+            store.query("other-tenant", PROJECT, A, q.clone()).await,
+            Err(PgError::Forbidden)
+        ));
+        assert!(matches!(
+            store.query(TENANT, "other-project", A, q.clone()).await,
+            Err(PgError::Forbidden)
+        ));
+        for change in [
+            "session-version",
+            "session-stream",
+            "snapshot-owner",
+            "credential-access",
+        ] {
+            match change {
+                "session-version" => {
+                    admin
+                        .batch_execute(
+                            "UPDATE awr_team.sessions SET ownership_version=2 WHERE id='session-b'",
+                        )
+                        .await
+                        .unwrap();
+                }
+                "session-stream" => {
+                    admin
+                        .execute(
+                            "UPDATE awr_team.sessions SET workstream_id=$1 WHERE id='session-b'",
+                            &[&Id::from(1).to_string()],
+                        )
+                        .await
+                        .unwrap();
+                }
+                "snapshot-owner" => {
+                    admin.execute("UPDATE awr_team.workstream_snapshot_ownership SET workstream_id=$1 WHERE work_id='b-private'", &[&Id::from(1).to_string()]).await.unwrap();
+                }
+                "credential-access" => {
+                    admin.execute("UPDATE awr_team.workstream_grants SET can_read=false WHERE client_id='cli-a' AND workstream_id=$1", &[&Id::from(2).to_string()]).await.unwrap();
+                }
+                _ => unreachable!(),
+            }
+            assert!(
+                matches!(
+                    store.query(TENANT, PROJECT, A, q.clone()).await,
+                    Err(PgError::Forbidden)
+                ),
+                "{op}/{change}"
+            );
+            admin.execute("UPDATE awr_team.sessions SET ownership_version=1,workstream_id=$1 WHERE id='session-b'", &[&Id::from(2).to_string()]).await.unwrap();
+            admin.execute("UPDATE awr_team.workstream_snapshot_ownership SET workstream_id=$1 WHERE work_id='b-private'", &[&Id::from(2).to_string()]).await.unwrap();
+            admin.execute("UPDATE awr_team.workstream_grants SET can_read=true WHERE client_id='cli-a' AND workstream_id=$1", &[&Id::from(2).to_string()]).await.unwrap();
+        }
+        store.query(TENANT, PROJECT, A, q).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn ended_session_reads_keep_internal_work_identity_and_business_state() {
+    let (_g, admin, db, store) = setup_with_work_external_key("b-private", "DISPLAY-B").await;
+    agent_identity(&admin).await;
+    grant(
+        &db,
+        AuthorizationScope::Workstream {
+            project_id: PROJECT.into(),
+            workstream_id: Id::from(2).to_string(),
+        },
+    )
+    .await;
+    admin
+        .batch_execute("UPDATE awr_team.sessions SET state='ended' WHERE id='session-b'")
+        .await
+        .unwrap();
+
+    async fn business_state(admin: &tokio_postgres::Client) -> Vec<serde_json::Value> {
+        let mut state = Vec::new();
+        for table in [
+            "sessions",
+            "claims",
+            "executions",
+            "work_runtime",
+            "events",
+            "projects",
+        ] {
+            state.push(admin.query_one(&format!(
+                "SELECT COALESCE(jsonb_agg(to_jsonb(r) ORDER BY to_jsonb(r)::text),'[]'::jsonb) FROM awr_team.{table} r"
+            ), &[]).await.unwrap().get(0));
+        }
+        state
+    }
+
+    let before = business_state(&admin).await;
+    for op in [
+        "work.prepare",
+        "work.snapshot",
+        "work.observe",
+        "session.inspect",
+    ] {
+        let mut q = query(op);
+        q.session_id = Some("session-b".into());
+        let got = store.query(TENANT, PROJECT, A, q).await.unwrap();
+        assert_eq!(got["selection_basis"], "session");
+        if op == "session.inspect" {
+            assert_eq!(got["data"]["items"][0]["session_id"], "session-b");
+            assert_eq!(got["data"]["items"][0]["state"], "ended");
+        } else {
+            assert_eq!(got["data"]["work_id"], "b-private");
+        }
+        if op == "work.observe" {
+            assert_eq!(got["data"]["session"]["state"], "ended");
+            assert_eq!(got["data"]["execution_authorized"], false);
+        }
+        if op == "work.prepare" {
+            assert_eq!(got["data"]["visible_contract"]["external_key"], "DISPLAY-B");
+        }
+    }
+    assert_eq!(business_state(&admin).await, before);
+}
+
+#[tokio::test]
 async fn multiple_scopes_are_discoverable_without_sharing_actions_or_hidden_work() {
     let (_g, admin, db, store) = setup_with_three_streams().await;
     agent_identity(&admin).await;
@@ -550,6 +879,12 @@ async fn unusable_additional_delegations_do_not_reveal_their_scope() {
     )
     .await;
     grant_stream(&db, "beta-read", 2, &[AuthorizedAction::Inspect]).await;
+    let mut session_read = query("work.observe");
+    session_read.session_id = Some("session-b".into());
+    store
+        .query(TENANT, PROJECT, A, session_read.clone())
+        .await
+        .unwrap();
     let original: serde_json::Value = admin
         .query_one(
             "SELECT body_json FROM awr_team.agent_authorizations WHERE id='beta-read'",
@@ -562,6 +897,9 @@ async fn unusable_additional_delegations_do_not_reveal_their_scope() {
         ("expires_at_ms", json!(1)),
         ("client_id", json!("cli-b")),
         ("status", json!("revoked")),
+        ("session_id", json!("session-a")),
+        ("binding_id", json!("missing-binding")),
+        ("actions", json!(["start_work"])),
     ] {
         let mut invalid = original.clone();
         invalid[field] = value;
@@ -582,7 +920,37 @@ async fn unusable_additional_delegations_do_not_reveal_their_scope() {
             .await
             .unwrap();
         assert!(!next.to_string().contains("b-private"), "{field}");
+        assert!(
+            matches!(
+                store.query(TENANT, PROJECT, A, session_read.clone()).await,
+                Err(PgError::Forbidden)
+            ),
+            "{field}"
+        );
     }
+    let mut session_bound = original.clone();
+    session_bound["session_id"] = json!("session-b");
+    admin
+        .execute(
+            "UPDATE awr_team.agent_authorizations SET body_json=$1 WHERE id='beta-read'",
+            &[&session_bound],
+        )
+        .await
+        .unwrap();
+    store
+        .query(TENANT, PROJECT, A, session_read.clone())
+        .await
+        .unwrap();
+    admin
+        .batch_execute(
+            "UPDATE awr_team.person_agent_bindings SET status='disabled' WHERE id='bind-agent'",
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, session_read).await,
+        Err(PgError::Forbidden)
+    ));
 }
 
 #[tokio::test]
@@ -932,6 +1300,17 @@ async fn task_child_limits_navigation_and_prevents_parent_fallback_on_sibling() 
         Err(PgError::Forbidden)
     ));
     assert_eq!(prepare(&store, A, "a").await["data"]["work_id"], "a");
+    let mut session_read = query("work.prepare");
+    session_read.session_id = Some("session-a".into());
+    for stream in [None, Some(Id::from(1))] {
+        session_read.workstream_id = stream;
+        assert!(matches!(
+            store.query(TENANT, PROJECT, A, session_read.clone()).await,
+            Err(PgError::Forbidden)
+        ));
+    }
+    session_read.work_id = Some("a".into());
+    store.query(TENANT, PROJECT, A, session_read).await.unwrap();
 }
 
 #[tokio::test]
