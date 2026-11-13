@@ -66,6 +66,8 @@ test('each map route runs exactly the command the export would run', async () =>
     ['/api/map/sessions', 'sessions', {}],
     ['/api/map/doctor', 'doctor', {}],
     ['/api/map/prepare?key=WORK', 'workPrepare', { key: 'WORK' }],
+    ['/api/map/show?key=WORK', 'workShow', { key: 'WORK' }],
+    ['/api/map/show?key=WORK&cached=1&source_sha=abc&branch=main', 'workShow', { key: 'WORK' }],
   ];
   for (const [route, name, params] of cases) {
     const { envelope, argvs } = await ran(bridge, route);
@@ -75,7 +77,7 @@ test('each map route runs exactly the command the export would run', async () =>
 });
 
 test('every command is read-only: none of the map routes can start, claim, append, reindex or complete anything', async () => {
-  for (const route of ['/api/map/work-graph?limit=5', '/api/map/nav?milestone=M1', '/api/map/goals', '/api/map/events', '/api/map/sessions', '/api/map/doctor', '/api/map/prepare?key=W1']) {
+  for (const route of ['/api/map/work-graph?limit=5', '/api/map/nav?milestone=M1', '/api/map/goals', '/api/map/events', '/api/map/sessions', '/api/map/doctor', '/api/map/prepare?key=W1', '/api/map/show?key=W1']) {
     const { argvs } = await ran(bridge, route);
     for (const argv of argvs) assert.ok(!argv.some((a) => ['reindex', 'complete', 'claim', 'append', 'start', 'end', 'progress', 'block', 'cancel', 'create'].includes(a)), argv.join(' '));
   }
@@ -97,6 +99,8 @@ test('bad parameters are rejected before awr is started', async () => {
     `/api/map/events?cursor=${encodeURIComponent(JSON.stringify({ project_id: 'P', project_revision: -1, created_at: 1, event_id: 'E' }))}`,
     '/api/map/prepare', '/api/map/prepare?key=', '/api/map/prepare?key=not%20a%20key',
     `/api/map/prepare?key=${'x'.repeat(201)}`, '/api/map/prepare?key=W1;rm',
+    '/api/map/show', '/api/map/show?key=', '/api/map/show?key=not%20a%20key',
+    `/api/map/show?key=${'x'.repeat(201)}`, '/api/map/show?key=W1;rm',
   ];
   for (const route of bad) {
     const { envelope, argvs } = await ran(bridge, route);

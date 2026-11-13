@@ -201,7 +201,32 @@
     return `<section class="pm-d-sec" data-pm-prepare-card>${parts.join('')}</section>`;
   }
 
-  const api = { dependencyIndex, neighborhood, detailData, renderDetail, renderPrepare, commandFor };
+  /**
+   * Live `work show` priority. Snapshot facts stay in `renderDetail` and
+   * `node.priority` remains a bulk gap. This overlay does not write the snapshot.
+   * Query parameters cannot add `--cached`, `--source-sha` or `--branch`.
+   */
+  function renderPriority(envelope, t) {
+    const data = envelope && envelope.data && typeof envelope.data === 'object' && !Array.isArray(envelope.data)
+      ? envelope.data : null;
+    const work = data && data.work && typeof data.work === 'object' && !Array.isArray(data.work)
+      ? data.work : null;
+    const parts = [
+      `<h3>${esc(t('map.show.title'))}</h3>`,
+      `<p class="pm-d-note">${esc(t('map.show.note'))}</p>`,
+    ];
+    if (work && Object.prototype.hasOwnProperty.call(work, 'priority')) {
+      const text = work.priority == null || work.priority === '' ? '' : String(work.priority);
+      parts.push(`<dl class="pm-d-grid"><dt>${esc(t('map.show.value'))}</dt><dd>${text ? esc(text) : `<span class="pm-d-none">${esc(t('map.detail.unset'))}</span>`}</dd></dl>`);
+    } else if (envelope && envelope.error && envelope.error.code) {
+      parts.push(`<p class="pm-d-none">${esc(String(envelope.error.code))}</p>`);
+    } else {
+      parts.push(`<p class="pm-d-none">${esc(t('map.show.missing'))}</p>`);
+    }
+    return `<section class="pm-d-sec" data-pm-priority-card>${parts.join('')}</section>`;
+  }
+
+  const api = { dependencyIndex, neighborhood, detailData, renderDetail, renderPrepare, renderPriority, commandFor };
   if (commonJS) module.exports = api;
   else {
     root.AWR_PROJECT_MAP = root.AWR_PROJECT_MAP || {};
