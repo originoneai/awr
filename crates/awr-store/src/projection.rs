@@ -6,7 +6,7 @@ use crate::{
 };
 use awr_core::{
     EntityKind, Error, EventDraft, Evidence, Freshness, Id, ProjectionBatch, Result, Source,
-    SourceRef, now_millis, verification_rank,
+    SourceRef, now_millis,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
@@ -487,7 +487,7 @@ impl Store {
 
 /// A ledger evidence reference is a bare locator until AWR registers a verified
 /// record for it. When a registered record (runtime-owned, `source_id IS NULL`)
-/// already covers the same work item and locator, the projected reference
+/// already covers the same work item, branch and locator, the projected reference
 /// inherits its verification bindings — sha256, source_sha, command,
 /// verified_at, level, type and summary — so one completed source reference and
 /// its registered proof present identical facts instead of a shadow row that
@@ -504,42 +504,69 @@ fn inherit_registered_evidence_bindings(
     let mut statement = conn
         .prepare(
             "SELECT payload_json FROM evidence
-             WHERE project_id=?1 AND source_id IS NULL AND work_item_id=?2 AND locator=?3",
+             WHERE project_id=?1 AND source_id IS NULL AND active=1
+               AND work_item_id=?2 AND locator=?3 AND branch_id IS ?4
+             ORDER BY id",
         )
         .map_err(db_error)?;
     for row in projected.iter_mut() {
+        // Structured source evidence owns its declared bindings. This join only
+        // resolves the bare references emitted by the ledger adapter.
+        if row.evidence_type != "source_reference"
+            || row.sha256.is_some()
+            || row.source_sha.is_some()
+            || row.command.is_some()
+            || row.verified_at.is_some()
+        {
+            continue;
+        }
         let Some(work_item_id) = row.work_item_id else {
             continue;
         };
         let candidates = statement
             .query_map(
-                params![project.to_string(), work_item_id.to_string(), row.locator],
+                params![
+                    project.to_string(),
+                    work_item_id.to_string(),
+                    row.locator,
+                    row.branch_id.map(|id| id.to_string())
+                ],
                 |r| r.get::<_, String>(0),
             )
             .map_err(db_error)?
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(db_error)?;
-        let best = candidates
+        let candidates = candidates
             .iter()
-            .filter_map(|payload| serde_json::from_str::<Evidence>(payload).ok())
-            .max_by_key(|candidate| {
-                (
-                    verification_rank(candidate.level).unwrap_or(0),
-                    candidate.verified_at.unwrap_or(0),
-                    candidate.revision,
-                )
-            });
-        if let Some(registered) = best {
-            row.sha256 = registered.sha256.clone();
-            row.source_sha = registered.source_sha.clone();
-            row.command = registered.command.clone();
-            row.verified_at = registered.verified_at;
-            row.level = registered.level;
-            row.evidence_type = registered.evidence_type.clone();
-            row.section_fingerprint = registered.section_fingerprint.clone();
-            if !registered.summary.trim().is_empty() {
-                row.summary = registered.summary.clone();
-            }
+            .map(|payload| serde_json::from_str::<Evidence>(payload))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let Some(registered) = candidates.first() else {
+            continue;
+        };
+        // A locator is reusable. Conflicting registrations cannot identify the
+        // intended version; never pick an old, stronger result by rank or time.
+        // Keep the reference unresolved and expose the original records instead.
+        if candidates.iter().any(|candidate| {
+            candidate.branch_id != row.branch_id
+                || candidate.sha256 != registered.sha256
+                || candidate.source_sha != registered.source_sha
+                || candidate.command != registered.command
+                || candidate.verified_at != registered.verified_at
+                || candidate.level != registered.level
+                || candidate.evidence_type != registered.evidence_type
+                || candidate.section_fingerprint != registered.section_fingerprint
+        }) {
+            continue;
+        }
+        row.sha256 = registered.sha256.clone();
+        row.source_sha = registered.source_sha.clone();
+        row.command = registered.command.clone();
+        row.verified_at = registered.verified_at;
+        row.level = registered.level;
+        row.evidence_type = registered.evidence_type.clone();
+        row.section_fingerprint = registered.section_fingerprint.clone();
+        if !registered.summary.trim().is_empty() {
+            row.summary = registered.summary.clone();
         }
     }
     Ok(())
