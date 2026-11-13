@@ -52,6 +52,8 @@
   "hub.intake_description": "把下面的指令交给你的 Agent，它会查看现有资料并接入项目。缺少的目标会保留为待澄清事项。",
   "hub.intake_repair": "这个项目需要先检查再继续。Agent 可以根据诊断信息处理修复或升级，并保留已有工作。",
   "hub.intake_prompt": "请使用 AWR 接管项目 {root}。先检查已有资料与运行记录，保留项目身份，按当前接入或修复指引处理。使用我实际提出的需求规划任务，目标不明确时先记录待澄清事项，再开始实现。",
+  "hub.intake_next": "下一步命令",
+  "hub.intake_recheck": "复核：{trigger}",
   "hub.intake_copy": "复制给 Agent",
   "hub.intake_copied": "已复制",
   "hub.intake_copy_failed": "请选中并复制上方指令",
