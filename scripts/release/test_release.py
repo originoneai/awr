@@ -15,12 +15,50 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import assemble_release
+import build_packages
 from build_packages import ROOT, copy_contract_docs, python_version
 from mcp_catalog import DOMAIN_TOOLS, validate_stdio_tools
 import publish_npm
 
 
 class ReleaseChecks(unittest.TestCase):
+    def test_license_bundle_includes_vendored_runtime_and_build_dependencies(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packages = []
+            for name, source in [("awr-cli", None), ("awr-mcp", None), ("awr-core", None),
+                                 ("vendored-parser", None), ("build-helper", None),
+                                 ("registry-dep", "registry+example"), ("dev-only", None),
+                                 ("unused-vendor", None)]:
+                base = root / name
+                base.mkdir()
+                (base / "LICENSE").write_text(f"Synthetic license for {name}\n")
+                packages.append({"id": name, "name": name, "version": "1.0.0",
+                                 "source": source, "manifest_path": str(base / "Cargo.toml"),
+                                 "license": "MIT", "repository": f"https://example.org/{name}"})
+            def dependency(name, kind=None):
+                return {"pkg": name, "dep_kinds": [{"kind": kind}]}
+            nodes = [{"id": p["id"], "deps": []} for p in packages]
+            nodes[0]["deps"] = [dependency("awr-core"), dependency("vendored-parser"),
+                                dependency("build-helper", "build"), dependency("dev-only", "dev")]
+            nodes[1]["deps"] = [dependency("awr-core"), dependency("registry-dep")]
+            metadata = {"packages": packages, "resolve": {"nodes": nodes},
+                        "workspace_members": ["awr-cli", "awr-mcp", "awr-core"]}
+            with patch.object(build_packages, "run", return_value=json.dumps(metadata)):
+                notices, inventory = build_packages.license_bundle("synthetic-target")
+                self.assertEqual({p["name"] for p in inventory},
+                                 {"vendored-parser", "build-helper", "registry-dep"})
+                for package in inventory:
+                    license_file = root / package["name"] / "LICENSE"
+                    self.assertIn(license_file.read_text(), notices)
+                    self.assertEqual(package["notices"][0]["sha256"],
+                                     hashlib.sha256(license_file.read_bytes()).hexdigest())
+                for name in ["awr-cli", "awr-mcp", "awr-core", "dev-only", "unused-vendor"]:
+                    self.assertNotIn(f"Synthetic license for {name}\n", notices)
+                (root / "vendored-parser" / "LICENSE").unlink()
+                with self.assertRaisesRegex(ValueError, "license text missing: vendored-parser"):
+                    build_packages.license_bundle("synthetic-target")
+
     def version_reader_check(self, script, function, output):
         tree = ast.parse((ROOT / "scripts/release" / script).read_text())
         body = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == function)

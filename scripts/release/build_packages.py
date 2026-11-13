@@ -59,10 +59,13 @@ def license_bundle(target):
             if any(kind["kind"] != "dev" for kind in dep["dep_kinds"]):
                 pending.append(dep["pkg"])
     overrides = {(x["crate"], x["version"]): x for x in json.loads((ROOT / "packaging/licenses/sources.json").read_text())}
+    workspace_members = set(metadata["workspace_members"])
     parts = ["AWR dependency license notices\nIncludes the selected platform's runtime and build dependencies.\n"]
     inventory = []
     for package in sorted(metadata["packages"], key=lambda p: (p["name"], p["version"])):
-        if package["id"] not in selected or not package["source"]:
+        # Path dependencies can be vendored third-party code. Only the workspace's
+        # own packages are covered by the root license instead of this bundle.
+        if package["id"] not in selected or package["id"] in workspace_members:
             continue
         base = Path(package["manifest_path"]).parent
         files = sorted(f for f in base.iterdir() if f.is_file() and any(token in f.name.upper() for token in ("LICENSE", "LICENCE", "COPYING", "NOTICE", "UNLICENSE")))
