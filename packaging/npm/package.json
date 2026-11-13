@@ -1,7 +1,7 @@
 {
   "name": "@originoneai/awr",
-  "version": "0.8.0",
-  "description": "AWR — the project delivery platform for people and AI",
+  "version": "0.8.1",
+  "description": "AWR \u2014 the project delivery platform for people and AI",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -25,10 +25,10 @@
     "tag": "latest"
   },
   "optionalDependencies": {
-    "@originoneai/awr-darwin-arm64": "0.8.0",
-    "@originoneai/awr-darwin-x64": "0.8.0",
-    "@originoneai/awr-linux-x64-gnu": "0.8.0",
-    "@originoneai/awr-linux-arm64-gnu": "0.8.0",
-    "@originoneai/awr-win32-x64": "0.8.0"
+    "@originoneai/awr-darwin-arm64": "0.8.1",
+    "@originoneai/awr-darwin-x64": "0.8.1",
+    "@originoneai/awr-linux-x64-gnu": "0.8.1",
+    "@originoneai/awr-linux-arm64-gnu": "0.8.1",
+    "@originoneai/awr-win32-x64": "0.8.1"
   }
 }

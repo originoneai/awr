@@ -11,9 +11,9 @@ The `awr` CLI manages project setup, work, context and evidence from the termina
 Both package channels install the same native Rust CLI and MCP server:
 
 ```sh
-npm install -g @originoneai/awr@0.8.0
+npm install -g @originoneai/awr@0.8.1
 # or, in a Python virtual environment
-python -m pip install originoneai-awr==0.8.0
+python -m pip install originoneai-awr==0.8.1
 ```
 
 Verify with `awr --version` and `awr-mcp --version`.
