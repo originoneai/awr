@@ -107,6 +107,20 @@ test('the work graph limit follows BudgetExceeded and stops at the service cap',
   assert.equal(snapshot.nodes.length, 250);
   assert.deepEqual(bigCli.calls.filter((c) => c[0] === 'work').map((c) => c[c.indexOf('--limit') + 1]), ['100', '250']);
 
+  // the failure seen in the wild: required 1002 used to be unreadable (GRAPH_CAP and the store both capped at 1000),
+  // which made the adaptive retry end at LimitNotConverging. The exact count must succeed on the second try.
+  const over = source();
+  const overTemplate = over.nodes[0];
+  over.nodes = Array.from({ length: 1002 }, (_, i) => ({ ...overTemplate, key: `N-${i}`, id: `id-n-${i}`, claims: [], diagnostics: [], last_event_at: null }));
+  over.edges = [];
+  over.sessions = [];
+  over.basis.work_graph.node_count = 1002;
+  over.basis.work_graph.edge_count = 0;
+  const overCli = createFakeCli(over);
+  const overSnap = await extractSnapshot({ call: overCli.call, config: {}, now: NOW, wait: noWait });
+  assert.equal(overSnap.nodes.length, 1002);
+  assert.deepEqual(overCli.calls.filter((c) => c[0] === 'work').map((c) => c[c.indexOf('--limit') + 1]), ['100', '1002']);
+
   // a project of 1500 items is over the old 1000 cap but under the service cap: one retry with the exact count
   const bigger = createFakeCli(big);
   let biggerFirst = true;

@@ -502,3 +502,34 @@ fn nodes_say_whether_a_claim_would_be_admitted_as_ready_does() {
         ready["organization"]["executable_work"]
     );
 }
+
+#[test]
+fn a_project_of_1002_items_is_readable_once_the_limit_matches() {
+    let f = Fixture::uninitialized();
+    let mut ledger = String::from("work_items:\n");
+    for i in 0..1002 {
+        ledger.push_str(&format!("- id: W{i}\n  title: Item {i}\n  status: ready\n"));
+    }
+    fs::write(f.0.join("work-ledger.yaml"), ledger).unwrap();
+    f.ok(&["init", "--accept"]);
+
+    let too_small = f.error(&["work", "graph", "--limit", "1000"]);
+    assert_eq!(too_small["code"], "BudgetExceeded");
+    assert_eq!(too_small["details"]["required"], 1002);
+    assert_eq!(too_small["details"]["budget"], 1000);
+
+    let full = f.ok(&["work", "graph", "--limit", "1002"]);
+    assert_eq!(full["nodes"].as_array().unwrap().len(), 1002);
+
+    // 1001 used to be rejected as InvalidInput; it is now a legal limit, and
+    // a 1002-node closure still reports BudgetExceeded against that budget.
+    let just_under = f.error(&["work", "graph", "--limit", "1001"]);
+    assert_eq!(just_under["code"], "BudgetExceeded");
+    assert_eq!(just_under["details"]["required"], 1002);
+    assert_eq!(just_under["details"]["budget"], 1001);
+
+    assert_eq!(
+        f.error(&["work", "graph", "--limit", "16385"])["code"],
+        "InvalidInput"
+    );
+}
