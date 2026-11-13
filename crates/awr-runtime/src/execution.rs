@@ -372,6 +372,8 @@ mod tests {
                 command: vec!["true".into()],
                 cwd: root.display().to_string(),
                 external_reference: None,
+                inputs: Vec::new(),
+                input_binding: awr_core::InputBinding::None,
             },
             state: ExecutionState::Running,
             worker: Some(WorkerIdentity {
