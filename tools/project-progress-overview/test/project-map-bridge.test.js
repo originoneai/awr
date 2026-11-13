@@ -65,6 +65,7 @@ test('each map route runs exactly the command the export would run', async () =>
     [`/api/map/events?limit=500&through=100&cursor=${encodeURIComponent(JSON.stringify(cursor))}`, 'events', { limit: 500, through: 100, cursor }],
     ['/api/map/sessions', 'sessions', {}],
     ['/api/map/doctor', 'doctor', {}],
+    ['/api/map/prepare?key=WORK', 'workPrepare', { key: 'WORK' }],
   ];
   for (const [route, name, params] of cases) {
     const { envelope, argvs } = await ran(bridge, route);
@@ -74,7 +75,7 @@ test('each map route runs exactly the command the export would run', async () =>
 });
 
 test('every command is read-only: none of the map routes can start, claim, append, reindex or complete anything', async () => {
-  for (const route of ['/api/map/work-graph?limit=5', '/api/map/nav?milestone=M1', '/api/map/goals', '/api/map/events', '/api/map/sessions', '/api/map/doctor']) {
+  for (const route of ['/api/map/work-graph?limit=5', '/api/map/nav?milestone=M1', '/api/map/goals', '/api/map/events', '/api/map/sessions', '/api/map/doctor', '/api/map/prepare?key=W1']) {
     const { argvs } = await ran(bridge, route);
     for (const argv of argvs) assert.ok(!argv.some((a) => ['reindex', 'complete', 'claim', 'append', 'start', 'end', 'progress', 'block', 'cancel', 'create'].includes(a)), argv.join(' '));
   }
@@ -94,6 +95,8 @@ test('bad parameters are rejected before awr is started', async () => {
     `/api/map/events?cursor=${encodeURIComponent(JSON.stringify({ project_id: 'P', project_revision: 1, created_at: 1, event_id: 'E', extra: 1 }))}`,
     `/api/map/events?cursor=${encodeURIComponent(JSON.stringify({ project_id: 'P;x', project_revision: 1, created_at: 1, event_id: 'E' }))}`,
     `/api/map/events?cursor=${encodeURIComponent(JSON.stringify({ project_id: 'P', project_revision: -1, created_at: 1, event_id: 'E' }))}`,
+    '/api/map/prepare', '/api/map/prepare?key=', '/api/map/prepare?key=not%20a%20key',
+    `/api/map/prepare?key=${'x'.repeat(201)}`, '/api/map/prepare?key=W1;rm',
   ];
   for (const route of bad) {
     const { envelope, argvs } = await ran(bridge, route);
@@ -168,7 +171,7 @@ test('the request-origin boundary covers the map routes', async () => {
 
 test('retired diagnostic and Team routes are absent and never launch awr', async () => {
   const before = recorded().length;
-  for (const route of ['/api/status', '/api/ready', '/api/work?id=WORK', '/api/assess?id=WORK', '/api/search?q=test', '/api/sources', '/api/sessions', '/api/session', '/api/recovery', '/api/events', '/api/event', '/api/compaction', '/api/execution', '/api/mainline-nav', '/api/team/projects', '/api/team/overview']) {
+  for (const route of ['/api/status', '/api/ready', '/api/work?id=WORK', '/api/assess?id=WORK', '/api/prepare?key=WORK', '/api/search?q=test', '/api/sources', '/api/sessions', '/api/session', '/api/recovery', '/api/events', '/api/event', '/api/compaction', '/api/execution', '/api/mainline-nav', '/api/team/projects', '/api/team/overview']) {
     const response = await fetch(bridge.base + route, { headers: GUARD });
     assert.equal(response.status, 404, route);
     assert.equal((await response.json()).error.code, 'NoRoute', route);

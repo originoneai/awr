@@ -92,7 +92,28 @@
     return { snapshot: snapshotLib.seal(content, GENERATED_AT), config };
   }
 
-  const api = { buildDemo, GENERATED_AT };
+  /** Demo action card: the live viewer does not call the CLI in demonstration mode. */
+  function workPrepare(key, t) {
+    return {
+      ok: false,
+      command: `awr work prepare ${key} --response-view action`,
+      error: { code: 'ContextIncomplete', message: 'resolve required context gaps before execution' },
+      data: {
+        version: 1,
+        ok: false,
+        work: { external_key: key },
+        guidance: {
+          when: t('map.prepare.demo_when'),
+          basis: t('map.prepare.demo_basis'),
+          next_action: t('map.prepare.demo_next'),
+          recheck: t('map.prepare.demo_recheck'),
+        },
+        response_view: { version: 1, view: 'action' },
+      },
+    };
+  }
+
+  const api = { buildDemo, workPrepare, GENERATED_AT };
   if (commonJS) module.exports = api;
   else {
     root.AWR_PROJECT_MAP = root.AWR_PROJECT_MAP || {};

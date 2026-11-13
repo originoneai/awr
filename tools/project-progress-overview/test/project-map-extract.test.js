@@ -151,6 +151,8 @@ test('only official read commands are used, each exactly as the shared definitio
   assert.deepEqual(commands.argvFor('workGraph', { limit: 10, cached: true }), ['work', 'graph', '--limit', '10', '--cached']);
   assert.deepEqual(commands.argvFor('nav', { milestone: 'M1' }), ['nav', '--cached', '--milestone', 'M1']);
   assert.deepEqual(commands.argvFor('events', { limit: 1000, through: 7, cursor: { event_id: 'E' } }), ['event', 'history', '--limit', '1000', '--through-revision', '7', '--cursor', '{"event_id":"E"}']);
+  assert.deepEqual(commands.argvFor('workPrepare', { key: 'W1' }), ['work', 'prepare', 'W1', '--response-view', 'action']);
+  assert.throws(() => commands.argvFor('workPrepare', { key: 'W1;rm' }), /key/);
   assert.throws(() => commands.argvFor('workGraph', { limit: 1001 }), /limit/);
   assert.throws(() => commands.argvFor('reindex', {}), /unknown project-map command/);
 });
