@@ -29,6 +29,7 @@
     sessions: () => ['session', 'list', '--active', '--limit', '100'],
     doctor: () => ['doctor'],
     workPrepare: (p) => ['work', 'prepare', workKey(p && p.key), '--response-view', 'action'],
+    workAssess: (p) => ['work', 'assess', workKey(p && p.key)],
   };
 
   /** Argument list of one extractor command; throws RangeError / Error for bad parameters or unknown names. */

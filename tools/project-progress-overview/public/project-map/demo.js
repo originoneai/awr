@@ -113,7 +113,33 @@
     };
   }
 
-  const api = { buildDemo, workPrepare, GENERATED_AT };
+  /** Demo assess card: the live viewer does not call the CLI in demonstration mode. */
+  function workAssess(key) {
+    return {
+      ok: true,
+      command: `awr work assess ${key}`,
+      data: {
+        version: 1,
+        work: key,
+        decision: {
+          version: 1,
+          mode: 'undetermined',
+          reasons: [{ code: 'unresolved_dependencies', basis: 'source_projection', reference: key }],
+          unknown_observations: ['single_outcome', 'bounded_scope'],
+          reevaluation_signals: [],
+          required_actions: ['preserve_identity_intent_scope_and_current_state', 'assess_unknown_management_facts'],
+          completion_policy: 'unchanged_source_policy',
+          execution_admission: 'not_granted_by_management_classification',
+        },
+        observation_basis: 'host_assertion_not_independently_verified',
+        admission_gaps: ['goal_context_missing'],
+        record_required: true,
+        next_action: 'repair_required_context_before_execution',
+      },
+    };
+  }
+
+  const api = { buildDemo, workPrepare, workAssess, GENERATED_AT };
   if (commonJS) module.exports = api;
   else {
     root.AWR_PROJECT_MAP = root.AWR_PROJECT_MAP || {};
