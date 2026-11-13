@@ -453,3 +453,52 @@ fn a_plain_scalar_with_a_trailing_comment_keeps_the_comment_on_rewrite() {
         "work_items:\n- id: W\n  status: ready\n  title: Keep\n  next_action: After #322 review tail\n"
     );
 }
+
+#[test]
+fn multibyte_block_scalar_positions_stay_exact_for_later_field_edits() {
+    // Upstream yaml-rust2 advanced mark.index by BYTES inside the block-scalar
+    // content fast path while every other path counts CHARACTERS, so markers
+    // after a multi-byte block scalar drifted and byte-level edits were refused
+    // with "missing YAML mapping colon" (or would mislocate fields). The
+    // vendored copy restores character accounting; these ledgers must edit
+    // exactly the target field and leave every other byte intact.
+    for text in [
+        "work_items:\n- id: W\n  status: ready\n  summary: |\n    第一行说明\n    第二行说明\n  next_action: Before\n- id: AFTER\n  status: ready\n",
+        "work_items:\n- id: W\n  status: ready\n  summary: >\n    中文备注 🐾 带上 emoji\n    第二行也在块标量里\n  owner: alice\n  next_action: Before\n",
+        "work_items:\r\n- id: W\r\n  status: ready\r\n  summary: |\r\n    中文内容\r\n    第二行\r\n  next_action: Before\r\n- id: AFTER\r\n  status: ready\r\n",
+    ] {
+        let f = Fixture::new(text);
+        let plan = f
+            .plan(EntityKind::WorkItem, "W", json!({"next_action":"After"}))
+            .unwrap();
+        let after = plan.after.text().unwrap();
+        assert_eq!(
+            parsed(after).pointer("/work_items/0/next_action"),
+            Some(&json!("After")),
+            "target field must change: {text}"
+        );
+        let mut expected = parsed(text);
+        expected["work_items"][0]["next_action"] = json!("After");
+        assert_eq!(parsed(after), expected, "unrelated records must survive");
+        assert!(
+            after.contains("第一行说明")
+                || after.contains("中文备注")
+                || after.contains("中文内容"),
+            "block scalar content bytes must survive verbatim"
+        );
+        assert_ne!(plan.plan.before_fingerprint, plan.plan.after_fingerprint);
+        plan.plan.validate().unwrap();
+    }
+    // Editing a field BEFORE the block scalar must keep working too, and the
+    // block scalar bytes must be preserved exactly.
+    let text = "work_items:\n- id: W\n  status: ready\n  next_action: Before\n  summary: |\n    第一行说明\n    第二行说明\n";
+    let f = Fixture::new(text);
+    let plan = f
+        .plan(EntityKind::WorkItem, "W", json!({"next_action":"After"}))
+        .unwrap();
+    assert_eq!(
+        plan.after.text().unwrap(),
+        text.replace("next_action: Before", "next_action: After")
+    );
+    plan.plan.validate().unwrap();
+}

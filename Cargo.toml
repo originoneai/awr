@@ -41,3 +41,8 @@ cap-std = "4.0.3"
 cap-fs-ext = "4.0.3"
 regex = "1.13.1"
 base64 = "0.22.1"
+
+# Vendored upstream fix: keep Marker::index() character-consistent inside block
+# scalars; see vendor/yaml-rust2/PATCH.md before touching or removing this.
+[patch.crates-io]
+yaml-rust2 = { path = "vendor/yaml-rust2" }
