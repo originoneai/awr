@@ -1,6 +1,7 @@
 mod finished_work;
 mod organization;
 mod overview;
+mod policy;
 mod runtime_snapshot;
 use awr_core::{Error, Result};
 use clap::{Parser, Subcommand};
@@ -233,6 +234,11 @@ enum Command {
     Doctor(doctor::DoctorArgs),
     /// Share tracked project files between machines through an object store.
     Workspace(workspace::WorkspaceArgs),
+    /// Read or switch project policy (sensitive-content admission mode).
+    Policy {
+        #[command(subcommand)]
+        command: policy::PolicyCommand,
+    },
     /// Inspect Team protocol capabilities or submit a remote Team envelope.
     Team {
         #[command(subcommand)]
@@ -248,6 +254,13 @@ enum Command {
 }
 
 fn run(cli: &Cli) -> cli_failure::CliResult<()> {
+    let policy = cli
+        .project
+        .canonicalize()
+        .ok()
+        .and_then(|root| awr_source::SecretsPolicy::load(&root).ok())
+        .unwrap_or_default();
+    let _secrets_scope = policy.enter();
     let result = match &cli.command {
         Some(Command::Verify(args)) => verify::run(&cli.project, args, cli.json),
         Some(Command::Overview(args)) => overview::run(&cli.project, args, cli.json),
@@ -261,6 +274,7 @@ fn run(cli: &Cli) -> cli_failure::CliResult<()> {
         Some(Command::Batch { command }) => batch::run(&cli.project, command, cli.json),
         Some(Command::Document { command }) => document::run(&cli.project, command, cli.json),
         Some(Command::Capabilities(args)) => capabilities::run(args, cli.json),
+        Some(Command::Policy { command }) => policy::run(&cli.project, command, cli.json),
         Some(Command::Init(args)) => onboarding::run(&cli.project, args, cli.json),
         Some(Command::Takeover(args)) => takeover::run(&cli.project, args, cli.json),
         Some(Command::Intake { command }) => onboarding::inspect(&cli.project, command, cli.json),

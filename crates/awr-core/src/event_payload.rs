@@ -40,7 +40,8 @@ pub fn is_domain_event_type(kind: &str) -> bool {
     .any(|prefix| kind.starts_with(prefix))
         || matches!(
             kind,
-            "session.started"
+            "secrets.warned"
+                | "session.started"
                 | "session.resumed"
                 | "session.resumed_from"
                 | "session.ended"
@@ -159,6 +160,7 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
     } else {
         match kind {
             "workstream.conversation_selected" => "binding workstream_id",
+            "secrets.warned" => "mode findings enabled_by enabled_at",
             "client.compaction_observed" => "observation policy",
             "client.compaction_deferred" => "observation_event_id",
             "management.assessed" => "version request_key input observer assessment",
@@ -233,6 +235,7 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
     // Optional fields and nested snapshots still come from the typed domain constructors.
     let required = match kind {
         "workstream.conversation_selected" => "binding workstream_id",
+        "secrets.warned" => "mode findings",
         "client.compaction_observed" => "observation policy",
         "client.compaction_deferred" => "observation_event_id",
         "management.assessed" => "version request_key input observer assessment",
@@ -326,6 +329,21 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
             continue;
         }
         let valid = match key.as_str() {
+            "mode" if kind == "secrets.warned" => matches!(value.as_str(), Some("warn")),
+            "findings" if kind == "secrets.warned" => value.as_array().is_some_and(|v| {
+                !v.is_empty()
+                    && v.len() <= 256
+                    && v.iter().all(|f| {
+                        serde_json::from_value::<crate::SensitiveWarning>(f.clone()).is_ok()
+                    })
+            }),
+            "enabled_by" if kind == "secrets.warned" => {
+                value.is_null()
+                    || value
+                        .as_str()
+                        .is_some_and(|s| !s.trim().is_empty() && s.len() <= 256)
+            }
+            "enabled_at" if kind == "secrets.warned" => value.is_null() || value.as_i64().is_some(),
             "check_events" if kind == "evidence.recorded" => value
                 .as_array()
                 .is_some_and(|v| !v.is_empty() && v.len() <= 64 && v.iter().all(id)),

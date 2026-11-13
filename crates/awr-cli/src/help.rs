@@ -79,6 +79,10 @@ static COMMAND_GROUPS: &[Group] = &[
             ("document", "Edit documents and create source-backed drafts"),
             ("proposal", "Create and review source mutation proposals"),
             ("organization", "Maintain project phase, scope and focus"),
+            (
+                "policy",
+                "Read or switch the sensitive-source admission policy",
+            ),
         ],
     },
     Group {

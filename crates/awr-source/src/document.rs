@@ -37,13 +37,12 @@ pub struct PreparedDocument {
 }
 fn snapshot(path: &Path, text: String) -> Result<SourceSnapshot> {
     let bytes = text.into_bytes();
-    crate::limits::check_source_size(&bytes, MARKDOWN_READ_CAP)?;
-    awr_core::ensure_public_text(
-        std::str::from_utf8(&bytes).map_err(|e| Error::InvalidInput(e.to_string()))?,
-    )?;
+    let locator = Locator::File(path.into()).identity()?;
+    crate::limits::check_source_size_only(&bytes, MARKDOWN_READ_CAP)?;
+    awr_core::ensure_public_bytes(&bytes)?;
     Ok(SourceSnapshot {
         content_review: None,
-        locator: Locator::File(path.into()).identity()?,
+        locator,
         fingerprint: fingerprint(&bytes),
         bytes,
     })

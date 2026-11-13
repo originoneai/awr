@@ -449,7 +449,21 @@ pub fn source_show(root: &Path, request: &SourceRead, json_output: bool) -> Resu
                 ));
             }
         };
-        value["content"] = json!(content);
+        // Decide on the full original bytes before selecting a range: a request
+        // for the middle of a private-key block must not disclose its body.
+        let redacted = awr_core::secrets_mode() == awr_core::SecretsMode::Warn
+            && !awr_core::ContentAssessment::scan(&snapshot.bytes, &snapshot.locator)?
+                .findings
+                .is_empty();
+        value["content"] = if redacted {
+            json!(awr_core::SENSITIVE_CONTENT_WITHHELD)
+        } else {
+            json!(content)
+        };
+        if redacted {
+            value["content_redacted"] = json!(true);
+            value["content_fingerprint_basis"] = json!("original_source_bytes");
+        }
         value["content_locator"] = json!(snapshot.locator);
         value["content_fingerprint_verified"] = json!(true);
         value["lines"] = json!(request.start_line.zip(request.end_line));

@@ -135,3 +135,37 @@ python3 tests/security/payloads/verify_secrets.py --report .local/secret-boundar
 
 - [Secret classifier](../../../crates/awr-core/src/secrets.rs)
 - [Component security contract](../../../tests/security/payloads/contract.json)
+
+## Project source admission modes
+
+The default is `strict`: detected sensitive content stops a source read with
+its location and repair guidance. A project can opt into `warn` before its
+first initialization, or switch an existing project:
+
+```sh
+awr policy secrets warn --actor project-owner
+awr policy secrets show
+awr init --goal "Maintain the project" --accept
+awr policy secrets log
+awr policy secrets strict --actor project-owner
+```
+
+Warn mode reads flagged project sources in memory and automatically redacts
+sensitive projected fields before storing or returning them. It leaves the
+original files unchanged. It may withhold an entire field or source-content
+response when a safe smaller boundary cannot be established; partial source
+reads cannot bypass that protection. Redacted output is not the original
+content, even though its source reference retains the original byte fingerprint.
+Initialization previews expose warnings; accepted refreshes retain queryable
+`secrets.warned` receipts with file position, category and policy provenance,
+never the matched value. Receipts describe detector findings, not a semantic
+review or proof that a document contains no other sensitive information.
+
+Request arguments, configuration, report uploads and AWR-authored writes remain
+strict. Editing a flagged source through AWR requires cleaning it first, because
+mutation recovery must not archive its original sensitive bytes. Use explicit
+placeholders in authoritative ledgers when those fields must remain actionable.
+An unreadable or unsupported policy falls back to strict for that project; use
+`awr policy secrets show` to inspect the policy error. Returning to strict makes
+the next refresh reject still-flagged sources again. Mode and pending warnings
+are scoped to each synchronous project operation, including shared MCP workers.

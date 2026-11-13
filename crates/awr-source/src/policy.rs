@@ -23,6 +23,8 @@ struct PolicyFile {
     version: u64,
     #[serde(default)]
     claims: ClaimsTable,
+    #[serde(default)]
+    secrets: SecretsTable,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -30,6 +32,17 @@ struct PolicyFile {
 struct ClaimsTable {
     default_ttl: Option<String>,
     renew_on_activity: Option<bool>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SecretsTable {
+    /// `strict` (default) or `warn`.
+    mode: Option<String>,
+    /// Who last switched the mode; every downgrade receipt carries it.
+    enabled_by: Option<String>,
+    /// Unix milliseconds of the last mode switch.
+    enabled_at: Option<i64>,
 }
 
 /// A duration setting: `none` turns the default off, whatever a lower layer says.
@@ -136,6 +149,80 @@ fn millis(ttl: DefaultTtl) -> Option<u64> {
     match ttl {
         DefaultTtl::Off => None,
         DefaultTtl::Millis(millis) => Some(millis),
+    }
+}
+
+/// What the project declares about sensitive-source admission.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecretsPolicy {
+    pub mode: awr_core::SecretsMode,
+    pub enabled_by: Option<String>,
+    pub enabled_at: Option<i64>,
+    /// True when the policy file exists and declares a `[secrets]` table.
+    pub declared: bool,
+}
+impl SecretsPolicy {
+    /// Strict unless the policy file opts the project into warn mode.
+    pub fn load(root: &Path) -> Result<Self> {
+        Ok(match read_policy_file(root)? {
+            None => Self::default(),
+            Some(file) => {
+                let declared = file.secrets.mode.is_some()
+                    || file.secrets.enabled_by.is_some()
+                    || file.secrets.enabled_at.is_some();
+                let mode = match file.secrets.mode.as_deref() {
+                    None | Some("strict") => awr_core::SecretsMode::Strict,
+                    Some("warn") => awr_core::SecretsMode::Warn,
+                    Some(_) => {
+                        return Err(Error::InvalidInput(format!(
+                            "{POLICY_FILE}: secrets.mode must be strict or warn"
+                        )));
+                    }
+                };
+                Self {
+                    mode,
+                    enabled_by: file.secrets.enabled_by,
+                    enabled_at: file.secrets.enabled_at,
+                    declared,
+                }
+            }
+        })
+    }
+    /// Bind policy and warning provenance to this synchronous operation only.
+    pub fn enter(&self) -> awr_core::SecretsScope {
+        let provenance = self
+            .enabled_by
+            .as_ref()
+            .zip(self.enabled_at)
+            .map(|(by, at)| awr_core::SecretsModeProvenance {
+                enabled_by: by.clone(),
+                enabled_at: at,
+            });
+        awr_core::enter_secrets_mode(self.mode, provenance)
+    }
+
+    /// Install this policy in the current thread-local command scope.
+    pub fn apply(&self) {
+        let provenance = match (&self.enabled_by, self.enabled_at) {
+            (Some(enabled_by), Some(enabled_at)) => Some(awr_core::SecretsModeProvenance {
+                enabled_by: enabled_by.clone(),
+                enabled_at,
+            }),
+            // Warn mode without provenance is still accepted; receipts then name
+            // the mode only. The switching command always writes provenance.
+            _ => None,
+        };
+        awr_core::set_secrets_mode(self.mode, provenance);
+    }
+}
+impl Default for SecretsPolicy {
+    fn default() -> Self {
+        Self {
+            mode: awr_core::SecretsMode::Strict,
+            enabled_by: None,
+            enabled_at: None,
+            declared: false,
+        }
     }
 }
 
