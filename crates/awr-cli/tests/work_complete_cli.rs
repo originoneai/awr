@@ -285,6 +285,36 @@ impl Fixture {
 }
 
 #[test]
+fn completing_work_keeps_report_locators_and_bindings_after_reindex() {
+    let f = Fixture::new();
+    f.organize();
+    let registered = f.evidence("E", &f.report(), |_| {});
+    Fixture::success(&f.complete(&f.input()));
+    f.ok(&["source", "reindex"]);
+    let (store, project) = f.store();
+    let key = format!("W/evidence/{}", registered.locator);
+    let projected = store.evidence(project, &key).unwrap().item;
+    assert_eq!(projected.locator, registered.locator);
+    assert!(f.root.join(&projected.locator).is_file());
+    assert_eq!(projected.sha256, registered.sha256);
+    assert_eq!(projected.source_sha, registered.source_sha);
+    assert_eq!(projected.command, registered.command);
+    assert_eq!(projected.verified_at, registered.verified_at);
+    assert_eq!(projected.level, EvidenceLevel::LocallyVerified);
+    assert_eq!(
+        projected.section_fingerprint,
+        registered.section_fingerprint
+    );
+    assert_eq!(projected.branch_id, registered.branch_id);
+    drop(store);
+    assert_eq!(f.verified_completed(), 1);
+
+    // Inherited metadata is not a substitute for checking the selected bytes.
+    fs::write(f.root.join(&registered.locator), b"changed report").unwrap();
+    assert_eq!(f.verified_completed(), 0);
+}
+
+#[test]
 fn shared_ledger_completion_preserves_stamped_evidence_and_selected_reports() {
     let f = Fixture::new();
     f.organize();

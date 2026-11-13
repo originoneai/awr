@@ -286,3 +286,209 @@ fn completeness_rule_annotation_in_the_body_does_not_classify_the_heading() {
     assert!(reason.contains("severity unresolved"), "{reason}");
     assert!(reason.contains("end of the heading line"), "{reason}");
 }
+
+#[test]
+fn ledger_evidence_reference_inherits_registered_verification_bindings() {
+    // work complete writes bound report locators into the work record's
+    // evidence list. Projecting that reference must not mint a second, unbound
+    // shadow row: it inherits the registered record's bindings, so completeness
+    // diagnostics show neither missing_evidence_bindings nor
+    // evidence_level_unverified for the completed work.
+    let mut f = Fixture::new();
+    let refresh = index_project(
+        &mut f.store,
+        &f.root,
+        &Manifest::load(&f.root).unwrap(),
+        false,
+    )
+    .unwrap();
+    let report_bytes = br#"{"version":1,"work_item":"W","checks":[]}"#;
+    fs::write(f.root.join("report.json"), report_bytes).unwrap();
+    use sha2::{Digest, Sha256};
+    let sha256 = Sha256::digest(report_bytes);
+    let sha256 = hex(&sha256);
+    let source_sha = "1".repeat(40);
+    f.store
+        .record_evidence(
+            refresh.project_id,
+            refresh.project_revision,
+            EvidenceDraft {
+                external_key: "W-REPORT".into(),
+                work_item_key: Some("W".into()),
+                evidence_type: "verification_report".into(),
+                level: EvidenceLevel::LocallyVerified,
+                summary: "Registered verification of report.json".into(),
+                locator: "report.json".into(),
+                sha256: Some(sha256.clone()),
+                source_sha: Some(source_sha.clone()),
+                command: Some("cargo test verification".into()),
+                scope: vec!["W".into()],
+                branch_id: None,
+                verified_at: Some(1_794_000_000_000),
+            },
+        )
+        .unwrap();
+    // The completed record references the same locator the caller registered.
+    fs::write(
+        f.root.join("work.yaml"),
+        "work_items:\n- id: W\n  title: Implement feature\n  status: completed\n  next_action: Done\n  acceptance: [Deliver the feature]\n  evidence: [report.json]\n- id: DEP\n  title: Required input\n  status: ready\n  next_action: Continue\n  acceptance: [Source is provided]\n",
+    )
+    .unwrap();
+    let report = f.check();
+    for code in ["missing_evidence_bindings", "evidence_level_unverified"] {
+        assert!(
+            !report.evidence_gaps.iter().any(|g| g.code == code),
+            "unexpected {code}: {:?}",
+            report.evidence_gaps
+        );
+    }
+    let projected = f
+        .store
+        .evidence(refresh.project_id, "W/evidence/report.json")
+        .unwrap();
+    assert_eq!(projected.item.locator, "report.json");
+    assert!(f.root.join("report.json").is_file());
+    assert_eq!(projected.item.sha256.as_deref(), Some(sha256.as_str()));
+    assert_eq!(
+        projected.item.source_sha.as_deref(),
+        Some(source_sha.as_str())
+    );
+    assert_eq!(
+        projected.item.command.as_deref(),
+        Some("cargo test verification")
+    );
+    assert_eq!(projected.item.verified_at, Some(1_794_000_000_000));
+    assert_eq!(projected.item.level, EvidenceLevel::LocallyVerified);
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn registered_report(key: &str, branch: Option<Id>, source_sha: &str) -> EvidenceDraft {
+    EvidenceDraft {
+        external_key: key.into(),
+        work_item_key: Some("W".into()),
+        evidence_type: "verification_report".into(),
+        level: EvidenceLevel::LocallyVerified,
+        summary: "Registered report binding".into(),
+        locator: "report.json".into(),
+        sha256: Some("a".repeat(64)),
+        source_sha: Some(source_sha.into()),
+        command: Some("verify feature".into()),
+        scope: vec!["W".into()],
+        branch_id: branch,
+        verified_at: Some(1),
+    }
+}
+
+fn add_ledger_report(f: &Fixture) {
+    fs::write(
+        f.root.join("work.yaml"),
+        WORK.replace(
+            "  depends_on: [DEP]",
+            "  depends_on: [DEP]\n  evidence: [report.json]",
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn ledger_evidence_reference_does_not_inherit_a_sibling_branch_record() {
+    let mut f = Fixture::new();
+    let refresh = index_project(
+        &mut f.store,
+        &f.root,
+        &Manifest::load(&f.root).unwrap(),
+        false,
+    )
+    .unwrap();
+    let (branch, event) = f
+        .store
+        .create_branch(
+            refresh.project_id,
+            refresh.project_revision,
+            BranchDraft {
+                name: "sibling".into(),
+                parent_branch_id: None,
+                git_binding: None,
+                actor: "reviewer".into(),
+                reason: "Keep verification on its owning branch".into(),
+            },
+        )
+        .unwrap();
+    f.store
+        .record_evidence(
+            refresh.project_id,
+            event.project_revision,
+            registered_report("SIBLING", Some(branch.id), &"1".repeat(40)),
+        )
+        .unwrap();
+    add_ledger_report(&f);
+    let report = f.check();
+    let projected = f
+        .store
+        .evidence(refresh.project_id, "W/evidence/report.json")
+        .unwrap();
+    assert_eq!(projected.item.branch_id, None);
+    assert_eq!(projected.item.level, EvidenceLevel::Unknown);
+    assert!(projected.item.sha256.is_none());
+    assert!(
+        report
+            .evidence_gaps
+            .iter()
+            .any(|g| g.code == "missing_evidence_bindings")
+    );
+}
+
+#[test]
+fn ledger_evidence_reference_requires_unambiguous_registered_bindings() {
+    for same_bindings in [true, false] {
+        let mut f = Fixture::new();
+        let refresh = index_project(
+            &mut f.store,
+            &f.root,
+            &Manifest::load(&f.root).unwrap(),
+            false,
+        )
+        .unwrap();
+        let source = "1".repeat(40);
+        let (_, event) = f
+            .store
+            .record_evidence(
+                refresh.project_id,
+                refresh.project_revision,
+                registered_report("FIRST", None, &source),
+            )
+            .unwrap();
+        let second_source = if same_bindings {
+            source.clone()
+        } else {
+            "2".repeat(40)
+        };
+        let mut second = registered_report("SECOND", None, &second_source);
+        if !same_bindings {
+            second.level = EvidenceLevel::Implemented;
+            second.verified_at = Some(2);
+        }
+        f.store
+            .record_evidence(refresh.project_id, event.project_revision, second)
+            .unwrap();
+        add_ledger_report(&f);
+        f.check();
+        let projected = f
+            .store
+            .evidence(refresh.project_id, "W/evidence/report.json")
+            .unwrap();
+        if same_bindings {
+            assert_eq!(projected.item.level, EvidenceLevel::LocallyVerified);
+            assert_eq!(projected.item.source_sha.as_deref(), Some(source.as_str()));
+        } else {
+            assert_eq!(projected.item.level, EvidenceLevel::Unknown);
+            assert!(
+                projected.item.source_sha.is_none(),
+                "An older stronger result must not win over conflicting current evidence"
+            );
+        }
+    }
+}
