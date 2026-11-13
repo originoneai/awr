@@ -45,10 +45,17 @@ def python_version(version):
     return base + ({"dev": ".dev", "alpha": "a", "beta": "b", "rc": "rc"}[channel] + (number or "0") if channel else "")
 
 
-def license_bundle(target):
-    metadata = json.loads(run(["cargo", "metadata", "--locked", "--format-version=1", "--filter-platform", target]))
+def license_bundle(target, package_names=("awr-cli", "awr-mcp"), features=()):
+    """Collect runtime and build notices for the selected workspace packages."""
+    command = ["cargo", "metadata", "--locked", "--format-version=1", "--filter-platform", target]
+    if features:
+        command.extend(["--features", ",".join(features)])
+    metadata = json.loads(run(command))
     nodes = {n["id"]: n for n in metadata["resolve"]["nodes"]}
-    pending = [p["id"] for p in metadata["packages"] if p["name"] in ("awr-cli", "awr-mcp")]
+    workspace_members = set(metadata["workspace_members"])
+    package_ids = {package["name"]: package["id"] for package in metadata["packages"]
+                   if package["id"] in workspace_members}
+    pending = [package_ids[name] for name in package_names]
     selected = set()
     while pending:
         key = pending.pop()
@@ -59,7 +66,6 @@ def license_bundle(target):
             if any(kind["kind"] != "dev" for kind in dep["dep_kinds"]):
                 pending.append(dep["pkg"])
     overrides = {(x["crate"], x["version"]): x for x in json.loads((ROOT / "packaging/licenses/sources.json").read_text())}
-    workspace_members = set(metadata["workspace_members"])
     parts = ["AWR dependency license notices\nIncludes the selected platform's runtime and build dependencies.\n"]
     inventory = []
     for package in sorted(metadata["packages"], key=lambda p: (p["name"], p["version"])):

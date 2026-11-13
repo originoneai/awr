@@ -31,8 +31,9 @@ not those placeholders.
 ## Fixed version pin
 
 1. Choose a reviewed Git tag or commit of this repository (or a release artifact
-   built from it). Record `git describe --always --dirty` and Cargo
-   `workspace.package.version` (currently `0.4.0` on develop tips).
+   built from it). Record the full source SHA and Cargo
+   `workspace.package.version` from the selected checkout. A Team bundle records
+   its release version together with each component's actual version in its manifest.
 2. Build the server with PostgreSQL TLS support when the DB URL will use
    `sslmode=require`:
 
@@ -41,7 +42,8 @@ cargo build --locked -p awr-server --release --features tls
 ```
 
 3. Record the binary digest and the expected Team schema version
-   (`awr_team_pg::EXPECTED_SCHEMA_VERSION`, currently **31** on this tip).
+   (`awr_team_pg::EXPECTED_SCHEMA_VERSION` in the selected source). Verify the
+   actual database with the matching server's `check` command.
 4. Deploy **that** binary. Do not hot-swap an unreviewed develop checkout onto
    the runtime host. Candidate updates are verified first, then
    [directed-replaced](team-publish-entrypoint.md#runtime-vs-develop-versions) with a
@@ -66,6 +68,21 @@ cargo build --locked -p awr-server --release --features tls
   `127.0.0.1` only and is a local verification aid, not production.
 - Members never receive the database URL, owner role, or ledger-directory write
   access. See [member handoff](team-member-handoff.md).
+
+## Observer deployment
+
+Observer requires Node.js 24 or later. Build its production assets from the same
+reviewed source as the Team service and retain its package lockfile and dependency
+licenses. Start `tools/observer/server.js` with `--team-url`, `--team-public-url`
+and an explicit loopback `--port`. Configure the Team service's
+`allowed_web_origins` with that Observer loopback origin.
+
+A public reverse proxy must validate the exact public Origin and
+`Sec-Fetch-Site` before translating the upstream Host and Origin to the loopback
+Observer address. Preserve the Observer mutation header and mark the session
+cookie Secure, HttpOnly and SameSite=Strict at the HTTPS boundary. Verify the
+production HTML, JavaScript, CSS and authenticated reads through the public URL.
+See the [Observer guide](../../../tools/observer/README.md).
 
 ## Connection identities
 
