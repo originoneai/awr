@@ -11,6 +11,15 @@ fn unsupported(message: &str) -> Error {
     Error::MutationUnsupported(message.into())
 }
 
+/// Refusal that names the exact source position so callers can inspect the record
+/// instead of guessing which line tripped the byte-level editor.
+fn unsupported_at(text: &str, byte: usize, message: &str) -> Error {
+    let prefix = text.get(..byte).unwrap_or(text);
+    let line = prefix.bytes().filter(|b| *b == b'\n').count() + 1;
+    let column = prefix.rsplit('\n').next().map_or(0, |s| s.chars().count()) + 1;
+    Error::MutationUnsupported(format!("{message} at line {line}, column {column}"))
+}
+
 struct Node {
     range: Range<usize>,
     kind: Kind,
@@ -70,6 +79,19 @@ impl<'a> Reader<'a> {
                             "merge or duplicate mapping keys require manual editing",
                         ));
                     }
+                    // A plain key has no escapes and one line, so the scanned value must
+                    // match the source bytes at its marker. A mismatch means the scanner's
+                    // marker positions drifted (upstream block-scalar accounting) and every
+                    // computed range would silently point at the wrong bytes.
+                    if style == TScalarStyle::Plain
+                        && !self.text[key_start..].starts_with(key.as_str())
+                    {
+                        return Err(unsupported_at(
+                            self.text,
+                            key_start,
+                            "YAML scanner position does not match the mapping key; refusing byte-level edit on drifted positions",
+                        ));
+                    }
                     if fields.is_empty() {
                         indent = column(self.text, key_start);
                         if !flow {
@@ -81,7 +103,9 @@ impl<'a> Reader<'a> {
                     let colon = self.text[key_end..]
                         .find(':')
                         .map(|n| key_end + n)
-                        .ok_or_else(|| unsupported("missing YAML mapping colon"))?;
+                        .ok_or_else(|| {
+                            unsupported_at(self.text, key_end, "missing YAML mapping colon")
+                        })?;
                     if matches!(
                         value.0,
                         Event::Scalar(_, TScalarStyle::Literal | TScalarStyle::Folded, _, _)

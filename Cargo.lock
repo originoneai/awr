@@ -3425,8 +3425,6 @@ dependencies = [
 [[package]]
 name = "yaml-rust2"
 version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6edb26322e610d4f04b7cd34478317685d24d0999437e551fb97c5441151041"
 dependencies = [
  "arraydeque",
  "hashlink",
