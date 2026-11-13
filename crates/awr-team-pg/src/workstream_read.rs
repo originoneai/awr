@@ -16,6 +16,7 @@ mod artifact_segments;
 mod assignees;
 mod delivery;
 mod guidance;
+pub(crate) use guidance::inspect_only;
 mod inbox;
 mod navigation;
 mod observation;
