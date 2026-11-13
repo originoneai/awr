@@ -5,8 +5,8 @@ use crate::{
     source_changes::{self, SourceState, projection_versions},
 };
 use awr_core::{
-    EntityKind, Error, EventDraft, Freshness, Id, ProjectionBatch, Result, Source, SourceRef,
-    now_millis,
+    EntityKind, Error, EventDraft, Evidence, Freshness, Id, ProjectionBatch, Result, Source,
+    SourceRef, now_millis, verification_rank,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
@@ -404,13 +404,14 @@ impl Store {
         &mut self,
         expected: &Source,
         fingerprint: &str,
-        batch: ProjectionBatch,
+        mut batch: ProjectionBatch,
         expected_revision: Option<awr_core::Revision>,
         moves: &[awr_core::WorkstreamMove],
         review: Option<&awr_core::VerifiedSourceContentReview>,
     ) -> Result<Source> {
         awr_core::ensure_public_text(fingerprint)?;
         awr_core::ensure_public_data(&moves)?;
+        inherit_registered_evidence_bindings(&self.conn, expected.project_id, &mut batch.evidence)?;
         let workstreams = batch.workstream_projection.clone();
         let payload = serde_json::to_value(batch)?;
         if let Some(review) = review {
@@ -482,6 +483,66 @@ impl Store {
         })?;
         Ok(source)
     }
+}
+
+/// A ledger evidence reference is a bare locator until AWR registers a verified
+/// record for it. When a registered record (runtime-owned, `source_id IS NULL`)
+/// already covers the same work item and locator, the projected reference
+/// inherits its verification bindings — sha256, source_sha, command,
+/// verified_at, level, type and summary — so one completed source reference and
+/// its registered proof present identical facts instead of a shadow row that
+/// reads as unbound and unverified. Identity, scope and source_ref stay
+/// projection-owned; only verification metadata is joined.
+fn inherit_registered_evidence_bindings(
+    conn: &Connection,
+    project: Id,
+    projected: &mut [Evidence],
+) -> Result<()> {
+    if projected.is_empty() {
+        return Ok(());
+    }
+    let mut statement = conn
+        .prepare(
+            "SELECT payload_json FROM evidence
+             WHERE project_id=?1 AND source_id IS NULL AND work_item_id=?2 AND locator=?3",
+        )
+        .map_err(db_error)?;
+    for row in projected.iter_mut() {
+        let Some(work_item_id) = row.work_item_id else {
+            continue;
+        };
+        let candidates = statement
+            .query_map(
+                params![project.to_string(), work_item_id.to_string(), row.locator],
+                |r| r.get::<_, String>(0),
+            )
+            .map_err(db_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(db_error)?;
+        let best = candidates
+            .iter()
+            .filter_map(|payload| serde_json::from_str::<Evidence>(payload).ok())
+            .max_by_key(|candidate| {
+                (
+                    verification_rank(candidate.level).unwrap_or(0),
+                    candidate.verified_at.unwrap_or(0),
+                    candidate.revision,
+                )
+            });
+        if let Some(registered) = best {
+            row.sha256 = registered.sha256.clone();
+            row.source_sha = registered.source_sha.clone();
+            row.command = registered.command.clone();
+            row.verified_at = registered.verified_at;
+            row.level = registered.level;
+            row.evidence_type = registered.evidence_type.clone();
+            row.section_fingerprint = registered.section_fingerprint.clone();
+            if !registered.summary.trim().is_empty() {
+                row.summary = registered.summary.clone();
+            }
+        }
+    }
+    Ok(())
 }
 
 fn upsert_projection(
