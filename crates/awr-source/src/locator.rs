@@ -89,7 +89,7 @@ impl SourceSnapshot {
         self.validate_content()?;
         match &self.content_review {
             Some(review) => review.ensure_value(value),
-            None => awr_core::ensure_public_value(value),
+            None => awr_core::admit_public_value(value, &self.locator),
         }
     }
 

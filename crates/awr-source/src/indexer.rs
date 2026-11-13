@@ -43,6 +43,11 @@ pub struct IndexReport {
     pub pending: usize,
     pub sources: Vec<IndexedSource>,
     pub issues: Vec<IndexIssue>,
+    /// Sensitive findings admitted under a project's warn-mode policy; each
+    /// carries locator, line/column and category — never content. Empty in the
+    /// default strict mode, which rejects the source instead.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sensitive_warnings: Vec<awr_core::SensitiveWarning>,
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct SourceChangeWindow {
@@ -187,6 +192,14 @@ fn process_project(
     captured: Option<&PreviewSources>,
 ) -> Result<IndexReport> {
     manifest.validate()?;
+    // Honor the project's sensitive-admission policy even when a library caller
+    // never installed it. Best effort, matching the claims-policy contract: a
+    // file this build cannot read must not fail an operation that only happens
+    // to refresh — strict stays the default, and `awr policy secrets show` or
+    // doctor names the unreadable file.
+    if let Ok(policy) = crate::SecretsPolicy::load(root) {
+        policy.apply();
+    }
     let project = store.register_project(
         root,
         manifest
@@ -212,6 +225,7 @@ fn process_project(
         pending: 0,
         sources: vec![],
         issues: vec![],
+        sensitive_warnings: vec![],
     };
     let mut desired = BTreeSet::new();
     let mut owners = BTreeMap::new();
@@ -373,6 +387,25 @@ fn process_project(
         if let Err(error) = store.workstream_catalog(project.id) {
             report.issue("workstream_catalog", None, &error);
         }
+    }
+    // Warn mode admitted sources that strict mode rejects; persist one receipt
+    // per refresh naming each finding's position and category, plus who enabled
+    // the mode. Content is never recorded.
+    let admitted = awr_core::take_sensitive_warnings();
+    if !admitted.is_empty() {
+        let provenance = awr_core::secrets_mode_provenance();
+        let revision = store.project(project.id)?.project_revision;
+        if let Err(error) = store.record_secrets_warned(
+            project.id,
+            revision,
+            "warn",
+            admitted.clone(),
+            provenance.as_ref().map(|p| p.enabled_by.clone()),
+            provenance.as_ref().map(|p| p.enabled_at),
+        ) {
+            report.issue("secrets.warned", None, &error);
+        }
+        report.sensitive_warnings = admitted;
     }
     report.project_revision = store.project(project.id)?.project_revision;
     report.change_window.through_revision = report.project_revision;

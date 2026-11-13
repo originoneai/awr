@@ -60,7 +60,7 @@ pub use limits::{MARKDOWN_READ_CAP, YAML_READ_CAP, source_read_cap};
 pub use locator::{Locator, SourceSnapshot, fingerprint, read_capped, read_source_capped};
 pub use policy::{
     ClaimPolicy, DEFAULT_CLAIM_TTL_ENV, DefaultTtl, MAX_CLAIM_TTL_MS, MIN_CLAIM_TTL_MS,
-    POLICY_FILE, POLICY_VERSION, parse_default_ttl,
+    POLICY_FILE, POLICY_VERSION, SecretsPolicy, parse_default_ttl,
 };
 pub use publish_prep::{
     DEFAULT_COMPLETION_POLICY, FieldDiff, PARSER_VERSION, PublishPackageFile, PublishPrepOptions,
