@@ -138,6 +138,21 @@ function teamRead<T>(project: string, query: TeamReadQuery, signal?: AbortSignal
   return apiPost<TeamReadResponse<T>>('/api/team/read', { project, query }, signal);
 }
 
+function validPlanRecord(record: unknown, kind: 'approval' | 'publication' | 'activation'): boolean {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return false;
+  const wrapper = record as Record<string, unknown>;
+  if (wrapper.value === null) return typeof wrapper.reason === 'string' && wrapper.reason.length > 0;
+  if (!wrapper.value || typeof wrapper.value !== 'object' || Array.isArray(wrapper.value) || wrapper.reason !== null) return false;
+  const value = wrapper.value as Record<string, unknown>;
+  if (typeof value.actor_id !== 'string' || !value.actor_id
+    || typeof value.at_unix_ms !== 'number' || !Number.isFinite(value.at_unix_ms) || value.at_unix_ms < 0) return false;
+  if (kind === 'approval') return typeof value.self_approved === 'boolean'
+    && (value.display_name === null || typeof value.display_name === 'string');
+  if (kind === 'publication') return typeof value.source_writeback_pending === 'boolean';
+  return typeof value.matches_current_snapshot === 'boolean'
+    && typeof value.activated_snapshot_id === 'string' && value.activated_snapshot_id.length > 0;
+}
+
 export function planningCandidatesQueryOptions(project: string, stream: string | null, cursor: string | null, revoked: boolean) {
   return {
     queryKey: ['team', 'planning.candidates', project, stream, cursor],
@@ -153,7 +168,10 @@ export function planningCandidatesQueryOptions(project: string, stream: string |
           && typeof item.state === 'string' && Number.isSafeInteger(item.draft_revision)
           && item.author && Number.isFinite(item.updated_at_unix_ms)
           && typeof item.baseline?.matches_current === 'boolean'
-          && item.approval && item.publication && item.activation
+          && validPlanRecord(item.approval, 'approval') && validPlanRecord(item.publication, 'publication')
+          && validPlanRecord(item.activation, 'activation')
+          && (!item.publication.value || Boolean(item.approval.value))
+          && (!item.activation.value || item.publication.value?.source_writeback_pending === false)
           && Array.isArray(item.current_diff?.items) && item.current_diff.items.every((change) =>
             change && typeof change.title === 'string' && typeof change.work_id === 'string'
             && (change.fields == null || Array.isArray(change.fields) && change.fields.every((field) =>
@@ -181,10 +199,16 @@ export function requiredSourcesQueryOptions(project: string, stream: string | nu
       const data = response.result?.data;
       if (!Array.isArray(data?.items) || typeof data.collection?.complete !== 'boolean'
         || !Number.isSafeInteger(data.collection.required_total) || data.collection.required_total < data.items.length
+        || data.total !== data.collection.required_total || !Number.isFinite(data.as_of?.at_unix_ms)
         || !Number.isFinite(data.collection.checked_at_unix_ms)
         || !(data.next_cursor === null || typeof data.next_cursor === 'string')
         || !data.items.every((item) => item && Number.isSafeInteger(item.source_position)
-          && (item.path === null || typeof item.path === 'string') && typeof item.status === 'string')) {
+          && item.source_position > 0 && item.source_position <= data.total
+          && (item.path === null || typeof item.path === 'string')
+          && ['consistent', 'changed', 'missing', 'forbidden', 'unverified'].includes(item.status)
+          && (!data.collection.complete || item.status === 'consistent')
+          && (item.status !== 'forbidden' || item.path === null))
+        || new Set(data.items.map((item) => item.source_position)).size !== data.items.length) {
         throw new ApiError('InvalidResponse', 'Required document observations are incomplete');
       }
       return response;

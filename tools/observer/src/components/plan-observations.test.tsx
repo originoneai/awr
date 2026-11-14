@@ -11,6 +11,14 @@ const AT = 1793534400000;
 const INTERNAL = '01J000000000000000000000001';
 const DIGEST = 'a'.repeat(64);
 
+function recorded(value: Record<string, unknown>) {
+  return { value: { actor_id: 'reviewer', at_unix_ms: AT, ...value }, reason: null };
+}
+
+function absent(reason: string) {
+  return { value: null, reason };
+}
+
 function candidate(overrides = {}) {
   return {
     candidate_id: INTERNAL, candidate_digest: DIGEST, state: 'published', draft_revision: 2,
@@ -20,9 +28,9 @@ function candidate(overrides = {}) {
       items: [{ work_id: INTERNAL, title: 'Clarify sign-in requirements', kind: 'changed',
         fields: [{ field: 'scope_paths', before: { value: '/private/original' }, after: { value: '/private/implementation' } },
           { field: 'acceptance', before: { value: ['Password sign-in'] }, after: { value: ['Password and passkey sign-in'] } }] }] },
-    approval: { value: { display_name: 'Kai' } },
-    publication: { value: { source_writeback_pending: true } },
-    activation: { value: null }, ...overrides,
+    approval: recorded({ display_name: 'Kai', self_approved: false }),
+    publication: recorded({ source_writeback_pending: true }),
+    activation: absent('not_applied'), ...overrides,
   };
 }
 
@@ -99,10 +107,10 @@ describe('plan observation product views', () => {
 
   it('keeps applied, previously applied, approved and unreviewed changes distinct', async () => {
     const statuses = [
-      { state: 'published', activation: { value: { matches_current_snapshot: true } } },
-      { state: 'published', activation: { value: { matches_current_snapshot: false } } },
-      { state: 'approved', activation: { value: null }, publication: { value: null } },
-      { state: 'drafting', activation: { value: null }, publication: { value: null }, approval: { value: null }, baseline: { matches_current: false } },
+      { state: 'published', activation: recorded({ activated_snapshot_id: INTERNAL, matches_current_snapshot: true }), publication: recorded({ source_writeback_pending: false }) },
+      { state: 'published', activation: recorded({ activated_snapshot_id: INTERNAL, matches_current_snapshot: false }), publication: recorded({ source_writeback_pending: false }) },
+      { state: 'approved', activation: absent('not_applied'), publication: absent('not_published') },
+      { state: 'drafting', activation: absent('not_applied'), publication: absent('not_published'), approval: absent('not_approved'), baseline: { matches_current: false } },
     ];
     mount((q) => response(q.op === 'sources.inspect' ? documents() : {
       items: statuses.map((s, index) => candidate({ ...s, candidate_id: `proposal-${index}` })),
@@ -112,7 +120,7 @@ describe('plan observation product views', () => {
     expect(screen.getByText('提出此调整后，项目计划已有变化，需要 Agent 重新核对')).toBeTruthy();
   });
 
-  it.each(['changed', 'missing', 'forbidden', 'future_condition'])('explains %s documents without exposing raw reasons or metadata', async (status) => {
+  it.each(['changed', 'missing', 'forbidden', 'unverified'])('explains %s documents without exposing raw reasons or metadata', async (status) => {
     const { container } = mount((q) => response(q.op === 'sources.inspect' ? documents({
       items: [{ source_position: 1, path: null, status, reason: 'sensitive_backend_reason', current_sha256: DIGEST }],
       collection: { complete: false, required_total: 1, checked_at_unix_ms: AT },
@@ -121,6 +129,50 @@ describe('plan observation product views', () => {
     expect(container.textContent).not.toContain('sensitive_backend_reason');
     expect(container.textContent).not.toContain(DIGEST);
     expect(screen.getByTestId('plan-materials').textContent).toMatch(/请让 Agent|请联系项目负责人/);
+  });
+
+  it.each([
+    { approval: { value: {} } },
+    { publication: recorded({}) },
+    { activation: recorded({ activated_snapshot_id: INTERNAL }) },
+    { activation: recorded({ activated_snapshot_id: INTERNAL, matches_current_snapshot: true }) },
+  ])('refuses incomplete or contradictory recorded plan events', async (overrides) => {
+    mount((q) => response(q.op === 'sources.inspect' ? documents() : {
+      items: [candidate(overrides)], total: 1, next_cursor: null, as_of: { at_unix_ms: AT },
+    }));
+    await screen.findByText('暂时无法读取计划变更', {}, { timeout: 4000 });
+    expect(screen.queryByText('已生效', { exact: true })).toBeNull();
+    expect(screen.queryByText('此前已生效', { exact: true })).toBeNull();
+    expect(document.body.textContent).not.toContain(INTERNAL);
+  });
+
+  it.each(['missing', 'changed', 'forbidden', 'unverified', 'future_condition'])('does not show ready for a contradictory or unknown %s document', async (status) => {
+    mount((q) => response(q.op === 'sources.inspect' ? documents({
+      items: [{ source_position: 1, path: null, status, reason: 'backend_detail' }],
+    }) : { items: [], total: 0, next_cursor: null, as_of: { at_unix_ms: AT } }));
+    await screen.findByText('暂时无法核对项目资料', {}, { timeout: 4000 });
+    expect(screen.queryByText('所需资料已齐备')).toBeNull();
+    expect(document.body.textContent).not.toContain('backend_detail');
+  });
+
+  it.each(['zh-CN', 'en-US'])('describes policy and restricted dependency changes in product language in %s', async (language) => {
+    await i18n.changeLanguage(language);
+    mount((q) => response(q.op === 'sources.inspect' ? documents() : {
+      items: [candidate({ current_diff: { counts: { added: 0, removed: 0, changed: 1, unchanged: 0 }, items: [{
+        work_id: INTERNAL, title: 'Clarify collaboration requirements', kind: 'changed', fields: [
+          { field: 'dependency_acceptance', before: { value: null }, after: { value: { [INTERNAL]: 'agent_reviewed_caller_asserted_reconciled' } } },
+          { field: 'execution_settlement', before: { value: { mode: 'independent_workspace_v1', workspace_id: INTERNAL } }, after: { value: { mode: 'independent_workspace_v2', workspace_id: INTERNAL } } },
+          { field: 'required_dependencies', before: { value: null, reason: 'permission_restricted' }, after: { value: [INTERNAL] } },
+        ],
+      }] } })], total: 1, next_cursor: null, as_of: { at_unix_ms: AT },
+    }));
+    const panel = within(screen.getByTestId('plan-changes'));
+    await panel.findByText(language === 'zh-CN' ? '上游成果的复核要求' : 'Upstream result review requirements');
+    expect(panel.getByText(language === 'zh-CN' ? '工作结束时的确认要求' : 'End-of-work confirmation requirements')).toBeTruthy();
+    expect(panel.getByText(language === 'zh-CN' ? '调整为：授权到期后，仍可核对原次执行已停止的结果' : 'Proposed: The original execution can be confirmed as stopped after its access expires')).toBeTruthy();
+    expect(panel.getByText(language === 'zh-CN' ? '原先：需要访问权限' : 'Previously: Access restricted')).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/dependency_acceptance|execution_settlement|workspace_id|independent_workspace|permission_restricted|agent_reviewed_caller_asserted_reconciled/);
+    expect(document.body.textContent).not.toContain(INTERNAL);
   });
 
   it('does not call an empty required set ready', async () => {
@@ -149,6 +201,7 @@ describe('plan observation product views', () => {
     await user.click(within(screen.getByTestId('plan-materials')).getByRole('button', { name: '刷新' }));
     await screen.findByText('暂时无法核对项目资料', {}, { timeout: 4000 });
     expect(screen.getByText('以下是上次已确认的信息，最新更新暂未成功')).toBeTruthy();
+    expect(screen.queryByText('所需资料已齐备')).toBeNull();
     expect(document.body.textContent).not.toMatch(/internal_debug|BridgeError/);
     expect(document.body.textContent).not.toContain(INTERNAL);
   });

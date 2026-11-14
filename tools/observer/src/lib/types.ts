@@ -142,9 +142,9 @@ export interface PlanningCandidatesData {
         field: string; before: { value: unknown; reason?: string | null }; after: { value: unknown; reason?: string | null };
       }> }>;
     };
-    approval: { value: { display_name: string | null } | null };
-    publication: { value: { source_writeback_pending: boolean } | null };
-    activation: { value: { matches_current_snapshot: boolean } | null };
+    approval: { value: { actor_id: string; display_name: string | null; at_unix_ms: number; self_approved: boolean } | null; reason: string | null };
+    publication: { value: { actor_id: string; at_unix_ms: number; source_writeback_pending: boolean } | null; reason: string | null };
+    activation: { value: { actor_id: string; at_unix_ms: number; activated_snapshot_id: string; matches_current_snapshot: boolean } | null; reason: string | null };
   }>;
   total: number;
   next_cursor: string | null;

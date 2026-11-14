@@ -30,9 +30,29 @@ function proposalStatus(item: PlanningCandidatesData['items'][number]) {
 function ChangeDetails({ fields }: { fields: NonNullable<PlanningCandidatesData['items'][number]['current_diff']['items'][number]['fields']> }) {
   const { t, i18n } = useTranslation();
   const labels = { title: 'name', acceptance: 'acceptance', hard_rules: 'rules', verification_requirements: 'checks',
-    goals: 'goals', required_dependencies: 'dependencies', scope_paths: 'scope', completion_policy: 'review', definition_state: 'availability' } as const;
-  function content(item: { value: unknown; reason?: string | null }) {
+    goals: 'goals', required_dependencies: 'dependencies', dependency_acceptance: 'upstreamReview',
+    execution_settlement: 'resultConfirmation', scope_paths: 'scope', completion_policy: 'review', definition_state: 'availability' } as const;
+  function content(item: { value: unknown; reason?: string | null }, field: string, prose: boolean) {
     if (item.reason === 'permission_restricted') return t('plan.changes.restricted');
+    if (item.value == null) return t('plan.changes.notSet');
+    if (field === 'dependency_acceptance' && typeof item.value === 'object' && !Array.isArray(item.value)) {
+      const descriptions = new Set<string>();
+      for (const policy of Object.values(item.value)) {
+        if (policy === 'agent_reviewed_caller_asserted_reconciled') descriptions.add(t('plan.changes.policy.agentReviewed'));
+        else if (policy === 'simulated_member_independent') descriptions.add(t('plan.changes.policy.collaboratorReviewed'));
+        else if (policy?.cross_workstream?.version_policy === 'fixed_delivery') descriptions.add(t('plan.changes.policy.fixedResults'));
+        else if (policy?.cross_workstream?.version_policy === 'current_contract') descriptions.add(t('plan.changes.policy.currentResults'));
+        else descriptions.add(t('plan.changes.policy.needsCheck'));
+      }
+      return [...descriptions].join(' · ') || t('plan.changes.notSet');
+    }
+    if (field === 'execution_settlement' && typeof item.value === 'object' && !Array.isArray(item.value)) {
+      const mode = (item.value as Record<string, unknown>).mode;
+      if (mode === 'independent_workspace_v1') return t('plan.changes.policy.confirmWhileAuthorized');
+      if (mode === 'independent_workspace_v2') return t('plan.changes.policy.confirmAfterExpiry');
+      return t('plan.changes.policy.needsCheck');
+    }
+    if (!prose) return t('plan.changes.policy.availableToAgent');
     const text = typeof item.value === 'string' ? item.value : Array.isArray(item.value)
       ? item.value.filter((v): v is string => typeof v === 'string').join(' · ') : '';
     return text ? readableSentence(text, i18n.language) : t('plan.changes.notSet');
@@ -40,11 +60,13 @@ function ChangeDetails({ fields }: { fields: NonNullable<PlanningCandidatesData[
   return <>{fields.map((field, index) => {
     const label = Object.hasOwn(labels, field.field) ? labels[field.field as keyof typeof labels] : 'other';
     const prose = ['title', 'acceptance', 'hard_rules', 'verification_requirements'].includes(field.field);
+    const describe = prose || ['dependency_acceptance', 'execution_settlement'].includes(field.field)
+      || field.before.reason === 'permission_restricted' || field.after.reason === 'permission_restricted';
     return <div key={index}>
       <Typography.Text type="secondary">{t(`plan.changes.fields.${label}`)}</Typography.Text>
-      {prose ? <Flex vertical gap={4}>
-        <Typography.Text type="secondary">{t('plan.changes.before', { text: content(field.before) })}</Typography.Text>
-        <Typography.Text>{t('plan.changes.after', { text: content(field.after) })}</Typography.Text>
+      {describe ? <Flex vertical gap={4}>
+        <Typography.Text type="secondary">{t('plan.changes.before', { text: content(field.before, field.field, prose) })}</Typography.Text>
+        <Typography.Text>{t('plan.changes.after', { text: content(field.after, field.field, prose) })}</Typography.Text>
       </Flex> : null}
     </div>;
   })}</>;
@@ -109,8 +131,8 @@ export function SourceReadiness({ project, stream, workId }: { project: string; 
       {data ? <>
         {query.error ? <Typography.Text type="secondary">{t('plan.observation.lastConfirmed')}</Typography.Text> : null}
         {data.collection.required_total === 0 ? <Empty description={t('plan.materials.empty')} /> : <>
-          <Alert type={data.collection.complete ? 'success' : 'warning'} showIcon
-            message={t(data.collection.complete ? 'plan.materials.ready' : 'plan.materials.incomplete')} />
+          {!query.error ? <Alert type={data.collection.complete ? 'success' : 'warning'} showIcon
+            message={t(data.collection.complete ? 'plan.materials.ready' : 'plan.materials.incomplete')} /> : null}
           <List dataSource={data.items} rowKey="source_position" renderItem={(source) => {
             const status = source.status === 'consistent' || source.status === 'changed' || source.status === 'missing' || source.status === 'forbidden' ? source.status : 'unverified';
             return <List.Item><Flex vertical gap={4}>

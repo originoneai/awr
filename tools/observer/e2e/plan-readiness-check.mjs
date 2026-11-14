@@ -19,8 +19,8 @@ const overview = { ok: true, project: 'demo', works: [],
     streams: [], works_enumerated: 0, works_total: 0, succeeded: 0, failed: 0, truncated: false }, freshness };
 const planning = { items: [{ candidate_id: internal, candidate_digest: digest, draft_revision: 2,
   state: 'approved', author: { display_name: 'Maya' }, updated_at_unix_ms: at,
-  baseline: { matches_current: true }, approval: { value: { display_name: 'Kai' } },
-  publication: { value: null }, activation: { value: null },
+  baseline: { matches_current: true }, approval: { value: { actor_id: 'reviewer', display_name: 'Kai', at_unix_ms: at, self_approved: false }, reason: null },
+  publication: { value: null, reason: 'not_published' }, activation: { value: null, reason: 'not_applied' },
   current_diff: { counts: { added: 0, changed: 1, removed: 0, unchanged: 0 }, items: [{
     work_id: internal, title: 'Clarify customer sign-in requirements', kind: 'changed',
     fields: [{ field: 'scope_paths', before: { value: '/private/original' }, after: { value: '/private/implementation' } }],
@@ -78,6 +78,18 @@ try {
       const metrics = await page.evaluate(() => ({ width: window.innerWidth, document: document.documentElement.scrollWidth,
         text: document.body.innerText + Array.from(document.querySelectorAll('[aria-label], [title]')).map((el) => el.getAttribute('aria-label') || el.getAttribute('title')).join(' ') }));
       assert.ok(metrics.document <= width, `Horizontal overflow at ${width}: ${metrics.document}`);
+      const title = await page.getByTestId('project-title').evaluate((element) => {
+        const style = getComputedStyle(element);
+        const context = document.createElement('canvas').getContext('2d');
+        context.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+        const naturalWidth = context.measureText(element.textContent).width;
+        const bounds = element.getBoundingClientRect();
+        return { width: bounds.width, height: bounds.height,
+          minimumWidth: Math.min(naturalWidth, window.innerWidth - 96),
+          lineHeight: parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.5 };
+      });
+      assert.ok(title.width >= title.minimumWidth - 1, `Project name is squeezed at ${width}: ${JSON.stringify(title)}`);
+      assert.ok(title.height <= title.lineHeight * 2, `Project name wraps excessively at ${width}: ${JSON.stringify(title)}`);
       assert.ok(!metrics.text.includes(digest) && !metrics.text.includes(internal));
       assert.doesNotMatch(metrics.text, /scope_paths|source_snapshot_id|required_spec_forbidden|\/private\/implementation|技术细节|Technical details/);
       assert.equal(await page.getByRole('button', { name: /Approve|Publish|Claim|批准|认领|发布/ }).count(), 0);
@@ -86,7 +98,7 @@ try {
       await page.waitForFunction(() => window.scrollY === 0);
       const screenshot = path.join(evidence, `obs004-${language}-${width}.png`);
       await page.screenshot({ path: screenshot, fullPage: true });
-      results.push({ language, viewport: width, document: metrics.document, screenshot });
+      results.push({ language, viewport: width, document: metrics.document, title, screenshot });
       await context.close();
     }
   }

@@ -327,7 +327,16 @@ const zhCN = {
       before: '原先：{{text}}', after: '调整为：{{text}}', notSet: '尚未约定', restricted: '需要访问权限',
       fields: { name: '任务名称', acceptance: '验收要求', rules: '项目约定', checks: '检查要求',
         goals: '目标关联已调整', dependencies: '协作依赖已调整', scope: '工作范围已调整', review: '复核要求已调整',
+        upstreamReview: '上游成果的复核要求', resultConfirmation: '工作结束时的确认要求',
         availability: '工作开放情况已调整', other: '其他项目要求已调整' },
+      policy: {
+        agentReviewed: '上游成果须经过 Agent 复核，并确认执行结果',
+        collaboratorReviewed: '上游成果须由另一名协作 Agent 复核',
+        fixedResults: '使用已约定版本的上游成果', currentResults: '上游要求变化后，需要重新核对已采用的成果',
+        confirmWhileAuthorized: '须在执行授权有效期内确认工作已停止',
+        confirmAfterExpiry: '授权到期后，仍可核对原次执行已停止的结果',
+        needsCheck: '具体要求需要 Agent 核对', availableToAgent: '你的 Agent 可以读取有权查看的具体内容',
+      },
       summary: '新增 {{added}} 项 · 调整 {{changed}} 项 · 移出 {{removed}} 项 · 未变 {{unchanged}} 项',
       planChanged: '提出此调整后，项目计划已有变化，需要 Agent 重新核对',
       status: {

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Button, Card, Space, Tabs, Tag, Tooltip, Typography } from 'antd';
+import { Button, Card, Flex, Space, Tabs, Tag, Tooltip, Typography } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { useParams, useSearchParams } from 'react-router';
 import { ObservationForbidden } from '../components/states';
@@ -36,19 +36,17 @@ export function ProjectShell() {
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }} data-testid="page-project">
       <Card data-testid="project-header">
-        <Space align="start" style={{ width: '100%', justifyContent: 'space-between' }}>
-          <div>
-            <Space size={8} align="center">
-              <Typography.Title level={4} style={{ margin: 0 }}>
+        <Flex align="start" justify="space-between" gap={12} wrap>
+          <Flex align="center" gap={8} wrap style={{ flex: '1 1 240px', minWidth: 0 }}>
+              <Typography.Title level={4} style={{ margin: 0 }} data-testid="project-title">
                 {meta?.title ?? project}
               </Typography.Title>
               {meta?.role ? <Tag><ObservationValue value={meta.role} field="role" /></Tag> : null}
-            </Space>
-          </div>
+          </Flex>
           <Tooltip title={t('shell.later')}>
             <Button disabled>{t('project.settings')}</Button>
           </Tooltip>
-        </Space>
+        </Flex>
       </Card>
       <Card>
         <Tabs

@@ -331,7 +331,16 @@ const enUS: Messages = {
       before: 'Previously: {{text}}', after: 'Proposed: {{text}}', notSet: 'Not specified', restricted: 'Access restricted',
       fields: { name: 'Task name', acceptance: 'Acceptance criteria', rules: 'Project rules', checks: 'Required checks',
         goals: 'Goal alignment updated', dependencies: 'Dependencies updated', scope: 'Work scope updated', review: 'Review requirements updated',
+        upstreamReview: 'Upstream result review requirements', resultConfirmation: 'End-of-work confirmation requirements',
         availability: 'Work availability updated', other: 'Other project requirements updated' },
+      policy: {
+        agentReviewed: 'Use upstream results after Agent review and confirmation of the execution outcome',
+        collaboratorReviewed: 'Use upstream results reviewed by another collaborating Agent',
+        fixedResults: 'Use the agreed version of upstream results', currentResults: 'Recheck adopted results when upstream requirements change',
+        confirmWhileAuthorized: 'Confirm that work has stopped while execution access is valid',
+        confirmAfterExpiry: 'The original execution can be confirmed as stopped after its access expires',
+        needsCheck: 'Your Agent needs to check the applicable requirements', availableToAgent: 'Your Agent can read the available details',
+      },
       summary: '{{added}} added · {{changed}} changed · {{removed}} removed · {{unchanged}} unchanged',
       planChanged: 'The project plan has changed since this proposal was prepared. Your Agent needs to check it again',
       status: {
