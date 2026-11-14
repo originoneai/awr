@@ -50,6 +50,7 @@ const zhCN = {
     closeNav: '关闭导航',
   },
   projectMaps: {
+    search: '搜索工作',
     title: '项目进度图',
     refresh: '刷新图表',
     readFailed: '图表读取未完成，请刷新重试',

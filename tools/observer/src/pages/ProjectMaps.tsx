@@ -25,6 +25,7 @@ function MapDrawing({ snapshot }: { snapshot: ReturnType<typeof teamProjectSnaps
     if (!container) return;
     const messages = page.makeT({ en, 'zh-CN': zh }, language);
     const labels = {
+      'map.ui.search_placeholder': 'projectMaps.search',
       'map.overview.note': 'projectMaps.readOnly',
       'map.project.source': 'projectMaps.source',
       'map.project.revision': 'projectMaps.currentRead',

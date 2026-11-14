@@ -54,6 +54,7 @@ const enUS: Messages = {
     closeNav: 'Close navigation',
   },
   projectMaps: {
+    search: 'Search work',
     title: 'Project progress maps',
     refresh: 'Refresh maps',
     readFailed: 'The graph could not be fully read. Refresh to retry.',
