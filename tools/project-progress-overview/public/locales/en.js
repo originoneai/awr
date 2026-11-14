@@ -95,6 +95,7 @@
   "map.defect.line": "AWR counts the dependency as unmet: {count} downstream cannot become ready",
   "map.done.title": "{count} done",
   "map.done.accepted": "Accepted, not expanded",
+  "map.group.numbered": "Work group {count}",
   "map.group.developing": "In progress",
   "map.group.stalled": "Stalled · no activity for ≥{days} days",
   "map.group.blocked": "Blocked",

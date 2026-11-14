@@ -1,7 +1,7 @@
 /** Human-language vocabulary and forbidden visible-text patterns (no UI imports). */
 export const HUMAN_VOCABULARY = {
   'zh-CN': {
-    technicalDetails: '技术细节',
+    contentUnavailable: '详细内容暂时无法显示',
     copy: '复制',
     copied: '已复制',
     notMeasured: '尚未读取',
@@ -59,7 +59,7 @@ export const HUMAN_VOCABULARY = {
     troubleExecutionUnknown: '上一次尝试的结果不明，需要核对',
   },
   'en-US': {
-    technicalDetails: 'Technical details',
+    contentUnavailable: 'Details are currently unavailable',
     copy: 'Copy',
     copied: 'Copied',
     notMeasured: 'Not read yet',

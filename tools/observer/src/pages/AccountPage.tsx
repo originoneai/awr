@@ -3,23 +3,16 @@ import { Alert, App, Button, Card, Col, Descriptions, Input, Row, Space, Typogra
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
-import { apiPost, ApiError } from '../lib/api';
+import { apiPost } from '../lib/api';
 import { formatUnixMs } from '../lib/format';
 import { projectsQueryOptions } from '../lib/queries';
 import { ObservationForbidden } from '../components/states';
-import { TechnicalDetails } from '../components/TechnicalDetails';
 import { humanText } from '../i18n/human-language';
 import { useRevocation } from '../lib/revocation';
 
-function ActionError({ error }: { error: unknown }) {
+function ActionError() {
   const { t } = useTranslation();
-  const raw = error instanceof ApiError ? `${error.code}: ${error.message}` : String(error);
-  return (
-    <Space direction="vertical" size={4}>
-      <Typography.Text>{t('account.failed')}</Typography.Text>
-      <TechnicalDetails items={[{ label: 'Error', value: raw }]} />
-    </Space>
-  );
+  return <Typography.Text>{t('account.failed')}</Typography.Text>;
 }
 
 /** Read-only observation cards for the account area (AWR-OBS-008). */
@@ -73,10 +66,7 @@ function AccountObservationCards() {
             <RevokeAllMineButton />
             <Alert type="info" showIcon title={humanText('revokeLocal', i18n.language)} />
             <div data-testid="independent-revoke-unavailable">
-              <TechnicalDetails items={[
-                { label: 'Independent revocation', value: t('account.independentUnavailable') },
-                { label: 'Revocation boundary', value: t('account.boundary') },
-              ]} />
+              <Typography.Text type="secondary">{t('account.independentUnavailable')}</Typography.Text>
             </div>
           </Space>
         </Card>
@@ -103,8 +93,8 @@ function RevokeAllMineButton() {
       revoke();
       message.success(t('account.done'));
     },
-    onError: (error: unknown) => {
-      message.error({ content: <ActionError error={error} /> });
+    onError: () => {
+      message.error({ content: <ActionError /> });
     },
   });
   return (
@@ -122,8 +112,8 @@ export function AccountPage() {
   const { revoke, resume } = useRevocation();
   const [bearer, setBearer] = useState('');
 
-  function showError(error: unknown) {
-    message.error({ content: <ActionError error={error} /> });
+  function showError() {
+    message.error({ content: <ActionError /> });
   }
 
   const login = useMutation({
@@ -186,7 +176,6 @@ export function AccountPage() {
           </Space>
         </Col>
       </Row>
-
     </Space>
   );
 }

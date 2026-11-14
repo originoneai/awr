@@ -12,7 +12,7 @@ function shorten(id: string): string {
 /**
  * A sentence a reporter wrote, with its long machine identifiers (UUIDs, git object ids and digests,
  * ULIDs) cut to their first eight characters so they stop drowning the words around them. Nothing
- * else changes, and the original sentence stays in the technical details.
+ * else changes. Original reports remain in retained service history.
  */
 export function abbreviateIds(text: string): string {
   return text.replace(UUID, shorten).replace(LONG_HEX, shorten).replace(ULID, shorten);
@@ -31,12 +31,18 @@ function knownName(name: string, zh: boolean): string | null {
 }
 
 /**
- * A sentence a reporter wrote, made readable: the machine names the shared vocabularies know are said in
- * their plain words ("delivery.finalize" as "Finalize delivery"), long ids are cut as `abbreviateIds`
- * does, and everything else, machine names nobody has a word for included, stays as written. The
- * original sentence stays in the technical details.
+ * Present the business sentence without protocol names or machine identifiers.
+ * The original report remains in the service's retained project history.
  */
 export function readableSentence(text: string, language: string): string {
   const zh = language.toLowerCase().startsWith('zh');
-  return abbreviateIds(text.replace(MACHINE_NAME, (name) => knownName(name, zh) ?? name));
+  const reference = zh ? '相关记录' : 'the related record';
+  return text
+    .replace(UUID, reference)
+    .replace(LONG_HEX, reference)
+    .replace(ULID, reference)
+    .replace(/\bAWR-[A-Z0-9]+(?:-[A-Z0-9]+)+\b/g, reference)
+    .replace(/\bsha256:[a-f0-9]+/gi, reference)
+    .replace(MACHINE_NAME, (name) => knownName(name, zh) ?? (zh ? '相关操作' : 'the related operation'))
+    .replace(/\b[A-Z][A-Za-z]*(?:Error|Exception)\b/g, zh ? '执行问题' : 'an execution problem');
 }

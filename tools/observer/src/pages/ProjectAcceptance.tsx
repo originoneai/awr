@@ -8,8 +8,7 @@ import { DeliverySteps, type DeliveryStep } from '../components/DeliverySteps';
 import { FreshnessBadge } from '../components/FreshnessBadge';
 import { RecordedTime } from '../components/RecordedTime';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
-import { TechnicalDetails } from '../components/TechnicalDetails';
-import { checkLabel } from '../core/observation';
+import { checkLabel, deriveOwner, ownerCellText } from '../core/observation';
 import { ApiError, isAuthError } from '../lib/api';
 import { formatObservationValue, notProvided } from '../i18n/craft';
 import { craftSelectionStyle } from '../theme';
@@ -31,7 +30,7 @@ function errorCode(error: unknown) {
   return error instanceof ApiError ? error.code : 'UnknownError';
 }
 
-/** Prototype's master/detail outcome view; exact evidence stays in disclosure groups. */
+/** Outcomes and their review basis, expressed as product facts. */
 export function ProjectAcceptance({ project }: { project: string }) {
   const { t, i18n } = useTranslation();
   const { token } = theme.useToken();
@@ -96,10 +95,9 @@ export function ProjectAcceptance({ project }: { project: string }) {
 
   const missing = notProvided(i18n.language);
   const value = (input: unknown, field?: string) => formatObservationValue(input, i18n.language, field);
-  const readError = (query: { error: unknown }, testId: string) => (
+  const readError = (testId: string) => (
     <Typography.Text type="warning" data-testid={testId}>
       {t('acceptance.readFailed')}
-      <TechnicalDetails items={[{ label: 'Error', value: errorCode(query.error) }]} />
     </Typography.Text>
   );
   const loading = <Typography.Text type="secondary">{t('common.loading')}</Typography.Text>;
@@ -118,8 +116,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
   const completionReceipt = asText(completionObject?.receipt_id);
   const completionSelected = asText(completionData?.selected_completion_id);
   const completionReviewRound = asText(at(completionObject, ['approved_by', 'review_round_id']));
-  const completionReviewDecision = asText(at(completionObject, ['approved_by', 'review_decision_id']));
-  const completionIndependence = asText(at(completionObject, ['approved_by', 'independence_kind']));
+
   const deliveryObject = asObject(at(delivery.data?.result.data, ['delivery']));
   const deliverySelected = asText(at(deliveryObject, ['awr_acceptance', 'selected_completion_id']));
   const completionConflict = Boolean(completionData && (
@@ -134,10 +131,9 @@ export function ProjectAcceptance({ project }: { project: string }) {
   const integrationData = integration.data?.result.data;
   const observedAt = at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'provenance', 'observed_at_unix_ms']);
   const recordedAt = at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'provenance', 'recorded_at_unix_ms']);
+
   const artifacts = asArray(at(reviewObject, ['submission', 'artifacts']));
-  const connectors = asArray(at(neutral.data?.result.data, ['connectors']));
-  const exportData = exports.data?.result.data;
-  const exportItems = asArray(exportData?.items);
+
   const verification = asArray(collaboration?.verification);
   const reviewDecisions = asArray(reviewObject?.decisions);
   const reviewFindings = asArray(at(reviewObject, ['findings', 'findings']));
@@ -164,7 +160,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
 
   function versionOf(data: typeof snapshotData) {
     const selection = data?.observation?.collaboration?.candidate?.selection_version;
-    return selection == null ? null : `v${selection}`;
+    return selection == null ? null : t(data?.observation?.collaboration?.candidate?.current === true ? 'acceptance.currentVersion' : 'acceptance.historical');
   }
 
   function isCurrentVersion(key: string) {
@@ -290,7 +286,6 @@ export function ProjectAcceptance({ project }: { project: string }) {
     check: checkLabel(at(entry, ['check']), { language: i18n.language, position: index + 1 }).text,
     outcome: at(entry, ['outcome']) === 'passed' ? t('acceptance.statusPassed') : at(entry, ['outcome']) === 'failed' ? t('acceptance.statusFailed') : t('acceptance.statusUnknown'),
     version: currentVersionText,
-    raw: entry,
   }));
 
   return (
@@ -329,10 +324,11 @@ export function ProjectAcceptance({ project }: { project: string }) {
                   const observation = data?.observation;
                   const state = observation?.collaboration?.review?.state;
                   const version = versionOf(data);
-                  const author = asText(observation?.responsibility?.owner_name)
-                    ?? asText(observation?.collaboration?.review?.author_actor_id)
-                    ?? asText(observation?.responsibility?.owner)
-                    ?? missing;
+                  const author = ownerCellText(deriveOwner({
+                    rowOwner: work.owner_person,
+                    snapshot: data,
+                    readState: data ? 'ready' : 'loading',
+                  }), { language: i18n.language });
                   const reportedAt = observation?.last_activity_at_unix_ms
                     ?? at(observation, ['progress', 'reported_at_unix_ms'])
                     ?? observation?.reporting?.client_reported_at_unix_ms;
@@ -383,6 +379,12 @@ export function ProjectAcceptance({ project }: { project: string }) {
           <Space direction="vertical" size={16} style={{ width: '100%' }}>
             <Card size="small" title={selectedWork?.title ?? t('acceptance.title')}>
               <DeliverySteps steps={steps} testId="acceptance-evidence-chain" />
+              {integrationId ? (
+                <Space wrap data-testid="acceptance-times">
+                  <Typography.Text type="secondary">{t('acceptance.externalObserved')} <RecordedTime value={observedAt} /></Typography.Text>
+                  <Typography.Text type="secondary">{t('acceptance.awrRecorded')} <RecordedTime value={recordedAt} /></Typography.Text>
+                </Space>
+              ) : null}
               {integrationIsHistorical ? (
                 <Typography.Text type="secondary" data-testid="acceptance-integration-history">{t('acceptance.integrationHistorical')}</Typography.Text>
               ) : null}
@@ -416,15 +418,27 @@ export function ProjectAcceptance({ project }: { project: string }) {
                 ) : null}
                 {reviewIsHistorical ? <Tag color="warning">{t('acceptance.historical')}</Tag> : null}
                 <Typography.Text type="secondary">{t('acceptance.reviewChangeNote')}</Typography.Text>
-                {review.isError ? readError(review, 'acceptance-review-explanation-error')
+                {selectedCompletionId && !completionConflict && at(completionObject, ['approved_by', 'independence_kind']) ? (
+                  <Typography.Text type="secondary" data-testid="completion-independence">
+                    {value(at(completionObject, ['approved_by', 'independence_kind']), 'independence_kind')}
+                  </Typography.Text>
+                ) : null}
+                {at(reviewObject, ['evidence_provenance', 'author_self_report']) === true ? <Typography.Text type="secondary">{t('acceptance.selfReport')}</Typography.Text> : null}
+                {at(reviewObject, ['evidence_provenance', 'execution_consistency', 'independent_verification']) === false ? <Typography.Text type="secondary">{t('acceptance.nonIndependent')}</Typography.Text> : null}
+                {review.isError ? readError('acceptance-review-explanation-error')
                   : selectedRound && review.isPending ? loading
                     : reviewObject ? (
                       <>
                         {reviewDecisions.map((decision, index) => (
                           <div key={asText(at(decision, ['decision_id'])) ?? index} data-testid="review-explanation" style={{ width: '100%' }}>
+                            {typeof at(decision, ['human_approval']) === 'boolean' ? (
+                              <Typography.Text type="secondary" data-testid="decision-human-approval">
+                                {t(at(decision, ['human_approval']) === true ? 'acceptance.humanApproved' : 'acceptance.noHumanApproval')}
+                              </Typography.Text>
+                            ) : null}
                             <Typography.Text strong>{t('acceptance.reviewReason')}</Typography.Text>
                             <Typography.Paragraph ellipsis={{ rows: 4, expandable: true, symbol: t('acceptance.readMore') }} style={{ marginBottom: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-                              {asText(at(decision, ['reason']))?.trim() || missing}
+                              {value(at(decision, ['reason']))}
                             </Typography.Paragraph>
                           </div>
                         ))}
@@ -435,12 +449,12 @@ export function ProjectAcceptance({ project }: { project: string }) {
                               <Tag color={at(finding, ['severity']) === 'blocking' && at(finding, ['state']) === 'open' ? 'error' : 'default'}>{value(at(finding, ['severity']), 'severity')}</Tag>
                               <Tag>{at(finding, ['state']) === 'open' ? t('acceptance.findingOpen') : value(at(finding, ['state']), 'state')}</Tag>
                             </Space>
-                            <Typography.Text>{asText(at(finding, ['summary']))?.trim() || missing}</Typography.Text>
-                            {asText(at(finding, ['criterion'])) ? <Typography.Text type="secondary">{t('acceptance.findingCriterion')}: {asText(at(finding, ['criterion']))}</Typography.Text> : null}
+                            <Typography.Text>{value(at(finding, ['summary']))}</Typography.Text>
+                            {asText(at(finding, ['criterion'])) ? <Typography.Text type="secondary">{t('acceptance.findingCriterion')}: {value(at(finding, ['criterion']))}</Typography.Text> : null}
                             {(['given', 'when', 'then'] as const).map((part) => (
                               asText(at(finding, ['counterexample', part])) ? (
                                 <Typography.Text key={part} type="secondary">
-                                  {t(`acceptance.counterexample.${part}`)}: {asText(at(finding, ['counterexample', part]))}
+                                  {t(`acceptance.counterexample.${part}`)}: {value(at(finding, ['counterexample', part]))}
                                 </Typography.Text>
                               ) : null
                             ))}
@@ -465,7 +479,6 @@ export function ProjectAcceptance({ project }: { project: string }) {
                     return (
                       <List.Item>
                         <Typography.Text>{related?.title ?? t('acceptance.relatedWork')}</Typography.Text>
-                        <TechnicalDetails items={[{ label: 'Dependency', value: dependency }]} />
                       </List.Item>
                     );
                   }}
@@ -473,80 +486,30 @@ export function ProjectAcceptance({ project }: { project: string }) {
               </Card>
             ) : null}
 
-            <TechnicalDetails items={[
-              { label: 'Outcome and version', testId: 'acceptance-version', value: { workId, snapshot: snapshotData } },
-              { label: 'Review', testId: 'acceptance-review', value: reviewObject },
-              ...(evidenceId ? [{ label: 'Evidence', testId: 'acceptance-evidence', value: evidence.data?.result.data }] : []),
-              ...(executionId ? [{ label: 'Execution', testId: 'acceptance-execution', value: execution.data?.result.data }] : []),
-              ...(claimId ? [{ label: 'Claim', testId: 'acceptance-claim', value: claim.data?.result.data }] : []),
-              ...(selectedCompletionId && !completionConflict ? [{ label: 'Completion', testId: 'acceptance-completion', value: completionData }] : []),
-              { label: 'Connectors and submission', testId: 'acceptance-connectors', value: { neutral: neutral.data?.result.data, submission: submission.data?.result.data, connectors } },
-              ...(integrationId ? [{ label: 'Integration', testId: 'acceptance-integration', value: integrationData }] : []),
-              ...(collaboration?.source_state ? [{ label: 'Source', testId: 'acceptance-source', value: source.data?.result.data }] : []),
-              { label: 'Delivery', testId: 'acceptance-delivery', value: deliveryObject },
-              { label: 'Exports', testId: 'acceptance-exports', value: { ...exportData, items: exportItems } },
-              { label: 'Artifacts', testId: 'acceptance-artifacts', value: artifacts },
-              {
-                label: 'Record times', testId: 'acceptance-times',
-                copyValue: JSON.stringify({ observedAt, recordedAt, pageRead: selectedSnapshot?.data?.freshness.page_read.at_unix_ms, sourceQuery: collaboration?.source_state?.query_started_at_unix_ms }),
-                value: (
-                  <>
-                    <span>{t('acceptance.externalObserved')}: <RecordedTime value={observedAt} /></span>{' · '}
-                    <span>{t('acceptance.awrRecorded')}: <RecordedTime value={recordedAt} /></span>{' · '}
-                    <span>{t('acceptance.pageRead')}: <RecordedTime value={selectedSnapshot?.data?.freshness.page_read.at_unix_ms} /></span>{' · '}
-                    <span>{t('acceptance.sourceQuery')}: <RecordedTime value={collaboration?.source_state?.query_started_at_unix_ms} /></span>
-                  </>
-                ),
-              },
-            ]}>
-              {asArray(reviewObject?.decisions).map((decision, index) => (
-                <span key={asText(at(decision, ['decision_id'])) ?? index} data-testid="decision-human-approval">
-                  {value(at(decision, ['human_approval']))}
-                </span>
-              ))}
-              {asArray(at(reviewObject, ['findings', 'findings'])).map((finding, index) => (
-                <Typography.Text key={asText(at(finding, ['finding_key'])) ?? index} data-testid={`finding-original-${asText(at(finding, ['finding_key']))}`}>
-                  {t('acceptance.originalWork', { work: workId, round: value(at(finding, ['round'])) })} · {value(at(finding, ['criterion']))}
-                </Typography.Text>
-              ))}
-              {at(reviewObject, ['evidence_provenance', 'author_self_report']) === true ? <span>{t('acceptance.selfReport')}</span> : null}
-              {at(reviewObject, ['evidence_provenance', 'execution_consistency', 'independent_verification']) === false ? <span>{t('acceptance.nonIndependent')}</span> : null}
-              {selectedCompletionId && !completionConflict ? (
-                <>
-                  <span data-testid="completion-review-round">{completionReviewRound ?? missing}</span>
-                  <span data-testid="completion-review-decision">{completionReviewDecision ?? missing}</span>
-                  <span data-testid="completion-independence">{value(completionIndependence, 'independence_kind')}</span>
-                </>
-              ) : null}
-              {integrationId ? (
-                <>
-                  <span data-testid="acceptance-integration-outcome">{value(at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'outcome']), 'outcome')}</span>
-                  <span data-testid="acceptance-integration-state">{value(integrationData?.state, 'state')}</span>
-                  <span data-testid="acceptance-dispatch-state">{value(at(integrationData, ['dispatch_receipt', 'data', 'state']), 'dispatch_state')}</span>
-                </>
-              ) : null}
-              <span data-testid="acceptance-delivery-complete">{completionConflict ? t('acceptance.conflict') : value(at(deliveryObject, ['awr_acceptance', 'complete']))}</span>
-              {artifacts.map((artifact, index) => {
-                const artifactId = asText(at(artifact, ['query', 'artifact_id']));
-                return (
-                  <div key={artifactId ?? index} data-testid={`acceptance-artifact-${artifactId}`}>
-                    <ArtifactReader project={project} artifact={artifact} revoked={revoked} />
-                  </div>
-                );
-              })}
-            </TechnicalDetails>
+            {artifacts.length > 0 ? (
+              <Card size="small" title={t('acceptance.artifacts')}>
+                {artifacts.map((artifact, index) => {
+                  const artifactId = asText(at(artifact, ['query', 'artifact_id']));
+                  return (
+                    <div key={artifactId ?? index} data-testid={`acceptance-artifact-${artifactId}`}>
+                      <ArtifactReader project={project} artifact={artifact} revoked={revoked} />
+                    </div>
+                  );
+                })}
+              </Card>
+            ) : null}
 
-            {review.isError ? readError(review, 'acceptance-review-error') : null}
-            {evidence.isError ? readError(evidence, 'acceptance-evidence-error') : null}
-            {execution.isError ? readError(execution, 'acceptance-execution-error') : null}
-            {claim.isError ? readError(claim, 'acceptance-claim-error') : null}
-            {completion.isError ? readError(completion, 'acceptance-completion-error') : null}
-            {integration.isError ? readError(integration, 'acceptance-integration-error') : null}
-            {source.isError ? readError(source, 'acceptance-source-error') : null}
-            {delivery.isError ? readError(delivery, 'acceptance-delivery-error') : null}
-            {neutral.isError ? readError(neutral, 'acceptance-connectors-error') : null}
-            {exports.isError ? readError(exports, 'acceptance-exports-error') : null}
-            {selectedSnapshot?.isError ? readError(selectedSnapshot, 'acceptance-snapshot-error') : null}
+            {review.isError ? readError('acceptance-review-error') : null}
+            {evidence.isError ? readError('acceptance-evidence-error') : null}
+            {execution.isError ? readError('acceptance-execution-error') : null}
+            {claim.isError ? readError('acceptance-claim-error') : null}
+            {completion.isError ? readError('acceptance-completion-error') : null}
+            {integration.isError ? readError('acceptance-integration-error') : null}
+            {source.isError ? readError('acceptance-source-error') : null}
+            {delivery.isError ? readError('acceptance-delivery-error') : null}
+            {neutral.isError ? readError('acceptance-connectors-error') : null}
+            {exports.isError ? readError('acceptance-exports-error') : null}
+            {selectedSnapshot?.isError ? readError('acceptance-snapshot-error') : null}
             {selectedSnapshot?.isPending || reviewLoading || (Boolean(evidenceId) && evidence.isPending) || (Boolean(executionId) && execution.isPending) || (Boolean(claimId) && claim.isPending) || completionLoading || integrationLoading || delivery.isPending || neutral.isPending || submission.isPending || (Boolean(collaboration?.source_state) && source.isPending) || exports.isPending ? loading : null}
             {!acceptanceLoading && !acceptanceUnknown && (!selectedRound || !evidenceId || !executionId || !claimId || !selectedCompletionId) ? empty : null}
           </Space>

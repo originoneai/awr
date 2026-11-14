@@ -10,7 +10,7 @@ describe('craft compatibility goldens', () => {
     expect(statusLabel(APPROVED_REVIEW.state, 'en-US', 'state')).toBe('Approved');
     expect(formatObservationValue(DEVELOPMENT_ACTIVITY.result, 'zh-CN', 'result')).toBe('已提交');
     expect(formatObservationValue('open', 'zh-CN', 'title')).toBe('open');
-    expect(formatObservationValue('covered', 'zh-CN', 'status')).toBe('covered');
+    expect(formatObservationValue('covered', 'zh-CN', 'status')).toBe('未识别状态');
   });
 
   it('keeps raw serialization and absolute-time goldens unchanged', () => {

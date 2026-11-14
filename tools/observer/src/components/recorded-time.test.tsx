@@ -14,7 +14,8 @@ describe('RecordedTime', () => {
     const { container } = render(<RecordedTime value={1761839800000} />);
     expect(container.textContent).toBe(formatUnixMs(1761839800000, 'zh-CN'));
     await userEvent.setup().hover(screen.getByText(formatUnixMs(1761839800000, 'zh-CN')));
-    expect(await screen.findByText('1761839800000')).toBeTruthy();
+    expect(screen.queryByText('1761839800000')).toBeNull();
+    expect(document.querySelector('[role="tooltip"]')).toBeNull();
   });
 
   it('reads a numeric string the same way', () => {

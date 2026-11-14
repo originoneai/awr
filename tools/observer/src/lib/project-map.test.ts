@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import page from 'awr-progress-map/project-map/page.js';
+import interaction from 'awr-progress-map/project-map/interact.js';
+import en from 'awr-progress-map/locales/en.js';
 import { teamProjectSnapshot, type GraphWork, type TeamGraphResponse } from './project-map';
 
 function graph(): TeamGraphResponse {
@@ -17,6 +19,34 @@ function graph(): TeamGraphResponse {
 }
 
 describe('Team projection into the shared project maps', () => {
+  it('keeps map cards, tables, accessibility labels and opened details free of internal identifiers', () => {
+    const response = graph();
+    response.items[0].title = 'Build the sign-in service';
+    response.items[1].title = 'Connect the sign-in page';
+    response.items[0].claims = [{ id: 'internal-claim', actor_id: '01M6AVQ870N7MBRJ5MPCN79T55', actor_name: null, session_id: 'internal-session', acquired_at_unix_ms: 1790000000000, expires_at_unix_ms: 1790001000000 }];
+    const snapshot = teamProjectSnapshot(response);
+    const translate = page.makeT({ en }, 'en');
+    const rendered = page.renderProjectMap(snapshot, undefined, { t: translate, lang: 'en', interactive: true, productOnly: true });
+    const container = document.createElement('div');
+    container.innerHTML = rendered.body;
+    document.body.appendChild(container);
+    const mounted = interaction.mount({ container, snapshot, model: rendered.model, t: translate, productOnly: true });
+    try {
+      container.querySelector('.pm-card')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      const descriptions = [...container.querySelectorAll('[title],[aria-label],title')].map(element => element.getAttribute('title') ?? element.getAttribute('aria-label') ?? element.textContent).join(' ');
+      for (const raw of ['API-001', 'UI-001', 'internal-claim', 'internal-session', '01M6AVQ870N7MBRJ5MPCN79T55', 'source-12']) {
+        expect(container.textContent).not.toContain(raw);
+        expect(descriptions).not.toContain(raw);
+      }
+      expect(container.querySelector('[data-testid="technical-details"],.notes,[data-pm-action="copy-key"]')).toBeNull();
+      expect(container.querySelectorAll('table th')).toHaveLength(6);
+      expect(container.textContent).toContain('Build the sign-in service');
+    } finally {
+      mounted.destroy();
+      container.remove();
+    }
+  });
+
   it('maps identities, dependencies and states without inventing missing data', () => {
     const response = graph();
     response.items[0].state = 'completed';

@@ -95,6 +95,7 @@
   "map.defect.line": "AWR 判定依赖未满足：下游 {count} 项无法就绪",
   "map.done.title": "{count} 项已完成",
   "map.done.accepted": "已验收，不再展开",
+  "map.group.numbered": "工作组 {count}",
   "map.group.developing": "开发中",
   "map.group.stalled": "停滞 · ≥{days} 天无活动",
   "map.group.blocked": "阻塞",

@@ -2,7 +2,6 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import './i18n';
-import { TechnicalDetails } from './components/TechnicalDetails';
 import { humanText } from './i18n/human-language';
 import { defaultVisibleText, findForbiddenVisibleText } from './lib/human-language-guard';
 import { DEMO_PROJECTS, renderApp, stubFetch } from './test-utils';
@@ -29,20 +28,12 @@ describe('human-language visible-text guard', () => {
     expect(humanText('notMeasured', 'en-US')).toBe('Not read yet');
   });
 
-  it('keeps raw values out of default text even after technical details are expanded', async () => {
+  it('detects diagnostic information inside both closed and open disclosures', async () => {
     const digest = 'a'.repeat(40);
-    render(<TechnicalDetails items={[{ label: 'work_id', value: 'TW-201' }, { label: 'digest', value: digest }]} />);
-    expect(document.body.textContent).not.toContain('TW-201');
-    expect(document.body.textContent).not.toContain(digest);
-    expect(defaultVisibleText(document.body)).not.toContain('work_id');
-
-    const user = userEvent.setup();
-    await user.click(screen.getByText('技术细节'));
-    expect(document.body.textContent).toContain('TW-201');
-    expect(document.body.textContent).toContain(digest);
-    expect(defaultVisibleText(document.body)).not.toContain('TW-201');
-    expect(defaultVisibleText(document.body)).not.toContain(digest);
-    expect(findForbiddenVisibleText(defaultVisibleText(document.body))).toEqual([]);
+    render(<details data-testid="technical-details"><summary>Details</summary><span>{digest}</span></details>);
+    expect(findForbiddenVisibleText(defaultVisibleText(document.body)).map((entry) => entry.id)).toContain('long_hex');
+    await userEvent.setup().click(screen.getByText('Details'));
+    expect(findForbiddenVisibleText(defaultVisibleText(document.body)).map((entry) => entry.id)).toContain('long_hex');
   });
 
   it.each(['/knowledge', '/members', '/settings', '/advanced'])('uses human language on the %s placeholder', async (path) => {

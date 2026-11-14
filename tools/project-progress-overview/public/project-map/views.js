@@ -37,8 +37,8 @@
     return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
   }
 
-  function createViews(t) {
-    const kit = createKit(t);
+  function createViews(t, { productOnly = false } = {}) {
+    const kit = createKit(t, { productOnly });
     const { ST } = kit;
 
     /** ['OPS-001','OPS-002'] -> 'OPS-001/002' (works on the shortened keys). */

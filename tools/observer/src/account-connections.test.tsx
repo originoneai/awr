@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { axe, toHaveNoViolations } from 'jest-axe';
 import { describe, expect, it, vi } from 'vitest';
@@ -69,7 +69,7 @@ function jsonResponse(payload: unknown) {
 }
 
 describe('agent-connect page (AWR-OBS-008)', () => {
-  it('says in words what the connection may do, from the overview identity only, and keeps the ids behind the technical details', async () => {
+  it('describes connection permissions from the overview identity without internal identifiers', async () => {
     const { calls } = setupAccount();
     renderApp('/agent-connect?scope=demo');
     const card = await screen.findByTestId('connect-capabilities');
@@ -79,8 +79,8 @@ describe('agent-connect page (AWR-OBS-008)', () => {
     expect(screen.getByTestId('connect-not-included').textContent).toBe('批准计划、做出评审结论、管理项目成员与权限、查看项目活动与审计记录');
     expect(findForbiddenVisibleText(defaultVisibleText(card))).toEqual([]);
     for (const hidden of ['lin-agent-x', 'lin-grok-x', 'work.read']) expect(defaultVisibleText(card)).not.toContain(hidden);
-    await userEvent.setup().click(within(card).getByText('技术细节'));
-    for (const exact of ['lin-agent-x', 'lin-grok-x', 'work.read']) expect(card.textContent).toContain(exact);
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    for (const exact of ['lin-agent-x', 'lin-grok-x', 'work.read']) expect(card.textContent).not.toContain(exact);
     // Identity comes from the overview only: no work.next read for it.
     expect(calls.filter((call) => String(call.init?.body ?? '').includes('work.next')).length).toBe(0);
   });
@@ -188,15 +188,13 @@ describe('account page (AWR-OBS-008)', () => {
   });
 
   it('states the revocation boundary without claiming restart or multi-instance revocation', async () => {
+
     setupAccount();
-    const user = userEvent.setup();
     renderApp('/account?scope=demo');
-    await user.click(await screen.findByText('技术细节'));
-    const boundary = await screen.findByTestId('technical-detail-Revocation boundary');
-    expect(boundary.textContent).toContain('进程');
-    expect(boundary.textContent).toContain('重启即失');
-    expect(boundary.textContent).toContain('多实例不共享');
-    expect(boundary.textContent).toContain('不支持重启后持久撤销');
+    await screen.findByTestId('account-session-card');
+    expect(document.body.textContent).toContain('退出登录只影响这台设备上的登录');
+    expect(document.body.textContent).toContain('请联系管理员');
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
   });
 
   it('the resume entry is read-only (no claim command fires)', async () => {
@@ -320,20 +318,18 @@ describe('agent-connect and account review round 2', () => {
   it('the account page also declares independent revocation unavailable, with no single-connection revoke button', async () => {
     setupAccount();
     renderApp('/account?scope=demo');
-    await screen.findByTestId('independent-revoke-unavailable');
+    expect((await screen.findByTestId('independent-revoke-unavailable')).textContent).toContain('如需断开单个 Agent 的访问，请联系管理员');
     expect(screen.queryByRole('button', { name: /撤销独立连接|撤销代理连接|撤销单个连接/ })).toBeNull();
   });
 
-  it('keeps account defaults human while preserving technical boundaries on demand', async () => {
+  it('keeps account permissions in product language without diagnostic controls', async () => {
+
     setupAccount();
     renderApp('/account?scope=demo');
     await screen.findAllByText(/2025/);
     expect(findForbiddenVisibleText(defaultVisibleText(document.body))).toEqual([]);
-
-    const user = userEvent.setup();
-    await user.click(screen.getByText('技术细节'));
-    expect(document.body.textContent).toContain('OAuth');
-    expect(document.body.textContent).toContain('client_id');
-    expect(findForbiddenVisibleText(defaultVisibleText(document.body))).toEqual([]);
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(document.body.textContent).not.toContain('OAuth');
+    expect(document.body.textContent).not.toContain('client_id');
   });
 });

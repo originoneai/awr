@@ -23,13 +23,13 @@ import { Link, useSearchParams } from 'react-router';
 import { ClaimTag } from '../components/ClaimTag';
 import { FreshnessBadge } from '../components/FreshnessBadge';
 import { LastReportText } from '../components/LastReportText';
+import { ObservationValue } from '../components/ObservationValue';
 import { ProgressReport } from '../components/ProgressReport';
 import { NotReportedYet, ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
-import { ObservationValue } from '../components/ObservationValue';
-import { TechnicalDetails } from '../components/TechnicalDetails';
+
 import { isAuthError } from '../lib/api';
 import { readStateOf } from '../lib/read-state';
-import { workStateTechnicalItems } from '../lib/work-state-technical';
+
 import {
   projectsQueryOptions,
   workInboxQueryOptions,
@@ -137,9 +137,7 @@ function ContractValues({ values }: { values: WorkContractValue[] }) {
       dataSource={values}
       renderItem={(value) => (
         <List.Item>
-          <Typography.Text>
-            {typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value)}
-          </Typography.Text>
+          <ObservationValue value={value} />
         </List.Item>
       )}
     />
@@ -222,14 +220,6 @@ function WorkDetail({
             <DetailSection title={t('workbench.detail.nextStep')}>
               {state.next.kind === 'reported' ? <Typography.Paragraph data-reporter-text>{state.next.text}</Typography.Paragraph> : <DetailAbsent />}
             </DetailSection>
-            <TechnicalDetails
-              items={[
-                { label: 'work_id', value: row.work_id, testId: 'technical-work-id' },
-                { label: 'navigation', value: row.navigation, testId: 'technical-navigation' },
-                { label: 'next_query.op', value: row.next_query.op, testId: 'technical-next-query-op' },
-                ...workStateTechnicalItems(state),
-              ]}
-            />
           </>
         )}
         <Link to={taskPath(project, row.work_id)}>{t('workbench.detail.openFull')}</Link>
@@ -418,13 +408,6 @@ export function WorkbenchPage() {
                   <Flex vertical gap={4}>
                     {effectiveProject ? <Link to={taskPath(effectiveProject, entry.work_id)}>{resumeName(entry.work_id, nextData?.items, i18n.language)}</Link> : resumeName(entry.work_id, nextData?.items, i18n.language)}
                     <Typography.Text type="secondary">{t('workbench.resume.continue')}</Typography.Text>
-                    <TechnicalDetails
-                      items={[
-                        { label: 'work_id', value: entry.work_id },
-                        { label: 'session_id', value: entry.session_id, testId: 'technical-session-id' },
-                        { label: 'session_version', value: entry.session_version },
-                      ]}
-                    />
                   </Flex>
                 </List.Item>
               )}

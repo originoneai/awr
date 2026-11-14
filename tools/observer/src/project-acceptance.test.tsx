@@ -1,7 +1,7 @@
 import { createHash, webcrypto } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { act, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, within, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from './i18n';
@@ -217,22 +217,20 @@ function json(payload: unknown) {
   return new Response(JSON.stringify(payload), { status: 200, headers: { 'content-type': 'application/json' } });
 }
 
-async function expandAllTechnicalDetails(queryClient: ReturnType<typeof renderApp>['queryClient']) {
+async function waitForAcceptanceReads(queryClient: ReturnType<typeof renderApp>['queryClient']) {
   await screen.findByTestId('acceptance-page');
   for (let pass = 0; pass < 6; pass += 1) {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
     await waitFor(() => expect(queryClient.isFetching()).toBe(0), { timeout: 10000 });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-    const collapsed = document.querySelectorAll<HTMLElement>('.ant-collapse-header[aria-expanded="false"]');
-    if (collapsed.length === 0) return;
-    for (const trigger of collapsed) fireEvent.click(trigger);
+    return;
   }
-  throw new Error('Technical details did not finish expanding');
+  throw new Error('Acceptance reads did not settle');
 }
 
 function renderAcceptance(path: string, { expand = true }: { expand?: boolean } = {}) {
   const result = renderApp(path);
-  if (expand) return expandAllTechnicalDetails(result.queryClient).then(() => result);
+  if (expand) return waitForAcceptanceReads(result.queryClient).then(() => result);
   return result;
 }
 
@@ -249,10 +247,14 @@ async function expectLiveCompletionConflict(mutate: (payloads: AcceptancePayload
   await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
   expect(await screen.findByTestId('acceptance-completion-conflict')).toBeTruthy();
   expect(screen.queryByTestId('acceptance-completion')).toBeNull();
-  expect(screen.getByTestId('acceptance-delivery-complete').textContent).not.toBe('true');
+  expect(screen.getByTestId('delivery-step-acceptance').textContent).not.toContain('业务验收已完成');
+  expect(screen.queryByTestId('completion-independence')).toBeNull();
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(async () => {
+  vi.unstubAllGlobals();
+  await act(async () => { await i18n.changeLanguage('zh-CN'); });
+});
 
 describe('project acceptance evidence (AWR-OBS-006)', () => {
   it('reports an unreadable selected snapshot as unknown instead of absent records', async () => {
@@ -265,18 +267,13 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     expect(await screen.findByTestId('acceptance-snapshot-error')).toBeTruthy();
   });
 
-  it('keeps every raw group behind one disclosure and hides identifiers by default', async () => {
+  it('keeps raw diagnostic groups and identifiers out of the interface', async () => {
+
     setupAcceptance();
-    await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api', { expand: false });
-    await waitFor(() => expect(screen.getByTestId('acceptance-from-works').textContent).toContain('2／2'));
-    // the freshness badge and the project header each have their own technical details; this is about the outcome's groups
-    const outcomeDetails = screen.getAllByTestId('technical-details')
-      .filter((element) => !screen.getByTestId('freshness-badge').contains(element) && !screen.getByTestId('project-header').contains(element));
-    expect(outcomeDetails).toHaveLength(1);
-    const visible = screen.getByTestId('acceptance-page').textContent ?? '';
-    expect(visible).not.toContain(EVIDENCE);
-    expect(visible).not.toContain(CLAIM);
-    expect(visible).not.toContain(CONTRACT);
+    await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    for (const value of [EVIDENCE, CLAIM, CONTRACT, CANDIDATE, COMPLETION]) expect(document.body.textContent).not.toContain(value);
+    expect(screen.getByTestId('acceptance-evidence-chain').textContent).toContain('业务验收已完成');
   });
 
   it('does not call a completion accepted before mainline integration is applied', async () => {
@@ -328,26 +325,22 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
   });
 
   it('loads exact evidence, execution, claim, completion, integration and source facts', async () => {
-    setupAcceptance();
+
+    const { calls } = setupAcceptance();
     await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
-    expect(await screen.findByTestId('acceptance-evidence')).toBeTruthy();
-    expect(screen.getByTestId('acceptance-evidence').textContent).toContain(EVIDENCE);
-    expect(screen.getByTestId('acceptance-execution').textContent).toContain(EXECUTION);
-    expect((await screen.findByTestId('acceptance-claim')).textContent).toContain(CLAIM);
-    expect(screen.getByTestId('acceptance-completion').textContent).toContain(COMPLETION);
-    expect(screen.getByTestId('acceptance-integration').textContent).toContain(INTEGRATION);
-    expect(screen.getByTestId('acceptance-source').textContent).toContain('sha256:confirmed');
-    expect(screen.getByTestId('acceptance-version').textContent).toContain(CANDIDATE);
-    expect(screen.getByTestId('acceptance-version').textContent).toContain(CONTRACT);
+    await waitFor(() => expect(calls.some(call => call.query?.op === 'completion.inspect')).toBe(true));
+    for (const op of ['evidence.inspect', 'execution.inspect', 'claim.inspect', 'completion.inspect', 'delivery.integration.inspect', 'delivery.source.status']) expect(calls.some(call => call.query?.op === op)).toBe(true);
+    for (const value of [EVIDENCE, EXECUTION, CLAIM, COMPLETION, INTEGRATION, CONTRACT]) expect(document.body.textContent).not.toContain(value);
+    expect(screen.getByTestId('acceptance-evidence-chain').textContent).toContain('业务验收已完成');
   });
 
-  it('words a machine-named verification check in plain words and keeps its raw name in the technical details', async () => {
+  it('describes a verification check without its internal operation name', async () => {
     setupAcceptance();
     await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
     const card = await screen.findByTestId('acceptance-verification');
     expect(card.textContent).toContain('本地内容与测试');
     expect(card.textContent).not.toContain('local_git.manifest');
-    expect(screen.getByTestId('acceptance-version').textContent).toContain('local_git.manifest');
+    expect(document.body.textContent).not.toContain('local_git.manifest');
     await act(async () => { await i18n.changeLanguage('en-US'); });
     expect((await screen.findByTestId('acceptance-verification')).textContent).toContain('Local content and tests');
     await act(async () => { await i18n.changeLanguage('zh-CN'); });
@@ -373,7 +366,7 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
   it('switches work with round-scoped reads and clears the previous completion', async () => {
     setupAcceptance();
     await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
-    await screen.findByTestId('acceptance-completion');
+    await screen.findByTestId('acceptance-evidence-chain');
     const user = userEvent.setup();
     await user.click(screen.getByTestId(`acceptance-work-${PAGE}`));
     expect(await screen.findByTestId(`acceptance-review-${PAGE_ROUND}`)).toBeTruthy();
@@ -390,15 +383,15 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
   });
 
   it('labels findings with their original work, round and criterion', async () => {
+
     setupAcceptance();
     await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
-    const label = await screen.findByTestId('finding-original-finding-1');
-    expect(label.textContent).toContain(WORK);
-    expect(label.textContent).toContain('1');
-    expect(label.textContent).toContain('Combine filters');
+    expect(screen.getByTestId('review-finding').textContent).toContain('Combine filters');
+    expect(screen.getByTestId('review-finding').textContent).not.toContain(WORK);
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
   });
 
-  it('shows rework reasons, findings and counterexamples before opening technical details', async () => {
+  it('shows rework reasons, findings and counterexamples as product facts', async () => {
     const { payloads } = setupAcceptance();
     payloads.snapshots[PAGE].observation.collaboration.review.state = 'rejected';
     const review = payloads.reviews[PAGE];
@@ -420,6 +413,26 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     expect(screen.getByText(/The previous results replace the current selection\./)).toBeTruthy();
     expect(screen.getByTestId(`acceptance-work-${PAGE}`).textContent).toContain('未通过');
     expect(screen.queryByTestId('acceptance-review')).toBeNull();
+  });
+
+  it.each(['zh-CN', 'en-US'])('keeps review meaning while removing machine references in %s', async (language) => {
+    await i18n.changeLanguage(language);
+    const { payloads } = setupAcceptance();
+    const review = payloads.reviews[WORK];
+    review.decisions[0].reason = `Check the selected result after delivery.finalize ${EXECUTION}.`;
+    Object.assign(review.findings.findings[0], {
+      summary: `Preserve the selected filter result ${CONTRACT}.`,
+      criterion: 'Keep the result after session.checkpoint.',
+      counterexample: { given: 'Two requests overlap.', when: 'internal_future_action finishes.', then: `The selected result ${EVIDENCE} must remain.` },
+    });
+    await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api', { expand: false });
+    const explanation = await screen.findByTestId('review-explanation');
+    expect(explanation.textContent).toContain('Check the selected result');
+    expect(screen.getByTestId('review-finding').textContent).toContain('Preserve the selected filter result');
+    for (const raw of [EXECUTION, CONTRACT, EVIDENCE, 'delivery.finalize', 'session.checkpoint', 'internal_future_action']) {
+      expect(document.body.textContent).not.toContain(raw);
+    }
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
   });
 
   it('does not carry a previous task explanation into another task review', async () => {
@@ -449,9 +462,11 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
   });
 
   it('shows the decision human_approval value instead of hiding it', async () => {
+
     setupAcceptance();
     await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
-    expect((await screen.findByTestId('decision-human-approval')).textContent).toBe('否');
+    expect(screen.getByTestId('decision-human-approval').textContent).toBe('未记录人工批准');
+    expect(document.body.textContent).not.toContain('human_approval');
   });
 
   it('requires candidate_current true for current approval and reports the fact as not provided', async () => {
@@ -463,13 +478,15 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
   });
 
   it('disables segment mode when the review has no segment_query', async () => {
-    const { payloads } = setupAcceptance();
+
+    const { payloads, calls } = setupAcceptance();
     payloads.reviews[WORK].submission.artifacts[0].segment_query = undefined as never;
     await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
-    const user = userEvent.setup();
-    await user.click(await screen.findByTestId(`artifact-expand-${ARTIFACT}`));
-    const option = await screen.findByText('分段读取');
-    expect(option.closest('.ant-segmented-item')?.classList.contains('ant-segmented-item-disabled')).toBe(true);
+    await userEvent.setup().click(screen.getByTestId(`artifact-expand-${ARTIFACT}`));
+    await screen.findByTestId(`artifact-read-content-${ARTIFACT}`);
+    expect(screen.queryByText('分段读取')).toBeNull();
+    expect(calls.filter(call => call.query?.op === 'artifact.content')).toHaveLength(1);
+    expect(calls.filter(call => call.query?.op === 'artifact.segment')).toHaveLength(0);
   });
 
   it('shows self-report and non-independence without inventing automatic sync', async () => {
@@ -482,27 +499,20 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
   });
 
   it('formats all four clocks with the shared formatter and keeps raw values in tooltips', async () => {
+
     setupAcceptance();
     await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
     const observed = 1793518656287;
     const recorded = 1793518656318;
-    const zhObserved = formatUnixMs(observed, 'zh-CN');
-    const enObserved = formatUnixMs(observed, 'en-US');
-    await screen.findByTestId('acceptance-integration');
-    const times = await screen.findByTestId('acceptance-times');
-    expect(times.textContent).toContain(zhObserved);
-    expect(times.textContent).not.toContain(String(observed));
-    const user = userEvent.setup();
-    await user.hover(screen.getAllByText(zhObserved)[0]);
-    expect(await screen.findByText(String(observed))).toBeTruthy();
+    const times = screen.getByTestId('acceptance-times');
+    expect(times.textContent).toContain(formatUnixMs(observed, 'zh-CN'));
     expect(times.textContent).toContain(formatUnixMs(recorded, 'zh-CN'));
-    try {
-      await i18n.changeLanguage('en-US');
-      expect((await screen.findAllByText(enObserved)).length).toBeGreaterThan(0);
-      expect(screen.getByTestId('acceptance-times').textContent).toContain(formatUnixMs(recorded, 'en-US'));
-    } finally {
-      await i18n.changeLanguage('zh-CN');
-    }
+    await userEvent.setup().hover(within(times).getAllByText(formatUnixMs(observed, 'zh-CN'))[0]);
+    expect(document.querySelector('[role="tooltip"]')).toBeNull();
+    expect(document.body.textContent).not.toContain(String(observed));
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect(times.textContent).toContain(formatUnixMs(observed, 'en-US'));
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
   });
 
   it('marks missing clock facts as not provided instead of borrowing another clock', async () => {
@@ -525,12 +535,13 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
   });
 
   it('shows completion review identifiers and independence from the verbatim approved_by object', async () => {
+
     const { payloads } = setupAcceptance();
     installLiveCompletion(payloads);
     await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
-    expect((await screen.findByTestId('completion-review-round')).textContent).toBe(ROUND);
-    expect(screen.getByTestId('completion-review-decision').textContent).toBe('01M6AZ4XY0MEJHBR91AHDR578A');
     expect(screen.getByTestId('completion-independence').textContent).toBe('成员独立复核（模拟）');
+    expect(document.body.textContent).not.toContain(ROUND);
+    expect(document.body.textContent).not.toContain('01M6AZ4XY0MEJHBR91AHDR578A');
   });
 
   it('rejects completion when the snapshot selected id differs', async () => {
@@ -570,23 +581,25 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
   });
 
   it('reads dispatch state from dispatch_receipt.data in the verbatim integration reply', async () => {
-    const { payloads } = setupAcceptance();
+
+    const { payloads, calls } = setupAcceptance();
     Object.assign(payloads.integration, structuredClone(LIVE_INTEGRATION.data));
     await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
-    expect((await screen.findByTestId('acceptance-dispatch-state')).textContent).toBe('已分派');
+    expect(calls.some(call => call.query?.op === 'delivery.integration.inspect')).toBe(true);
+    expect(screen.getByTestId('delivery-step-integration').textContent).toBeTruthy();
+    expect(document.body.textContent).not.toContain('dispatch_receipt');
   });
 
   it('shows a rejected integration attempt as rejected with its intent state', async () => {
+
     const { payloads } = setupAcceptance();
     Object.assign(payloads.integration, structuredClone(REJECTED_INTEGRATION.data));
     payloads.snapshots[PAGE].observation.collaboration.integration = {
       id: REJECTED_INTEGRATION.data.integration_id, state: 'rejected', current_binding: true, target_changed: false, reviewed_execution_id: EXECUTION,
     };
     await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-page');
-    expect(await screen.findByTestId('acceptance-integration-rejected')).toBeTruthy();
-    expect(screen.getByTestId('acceptance-integration-state').textContent).toBe('已拒绝');
-    expect(screen.getByTestId('acceptance-integration-outcome').textContent).toBe('已拒绝');
-    expect(screen.queryByText(/尚未交付/)).toBeNull();
+    expect(screen.getByTestId('acceptance-integration-rejected').textContent).toContain('并入被拒');
+    expect(document.body.textContent).not.toContain(REJECTED_INTEGRATION.data.integration_id);
   });
 
   describe('integration version binding', () => {
@@ -618,7 +631,7 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
       expect(screen.queryByTestId('acceptance-integration-rejected')).toBeNull();
       expect(Boolean(screen.queryByTestId('acceptance-integration-history'))).toBe(historical);
       // The original attempt remains inspectable even when it cannot decide the current version.
-      expect(screen.getByTestId('acceptance-integration-state').textContent).toBeTruthy();
+      expect(screen.getByTestId('delivery-step-integration').textContent).toBeTruthy();
       expect(chain.textContent).not.toContain('已完成');
     });
 
@@ -632,26 +645,25 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
   });
 
   it('keeps a child read timeout local to its card', async () => {
+
     setupAcceptance({ failOps: ['evidence.inspect'] });
     await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
-    expect(await screen.findByTestId('acceptance-completion')).toBeTruthy();
-    expect((await screen.findByTestId('acceptance-evidence-error', undefined, { timeout: 5000 })).textContent).toContain('ReadTimeout');
+    expect(screen.getByTestId('acceptance-evidence-chain')).toBeTruthy();
+    expect(screen.getByTestId('acceptance-evidence-error').textContent).toContain('这部分暂时读取不到');
+    expect(document.body.textContent).not.toContain('ReadTimeout');
   });
 
   it('reads and verifies artifact bytes only after expansion, including segment mode', async () => {
+
     vi.stubGlobal('crypto', webcrypto);
     const { calls } = setupAcceptance();
     await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
-    await screen.findByTestId(`acceptance-artifact-${ARTIFACT}`);
-    expect(calls.filter((call) => ['artifact.content', 'artifact.segment'].includes(String(call.query?.op)))).toHaveLength(0);
-    const user = userEvent.setup();
-    await user.click(screen.getByTestId(`artifact-expand-${ARTIFACT}`));
-    expect(await screen.findByTestId(`artifact-read-content-${ARTIFACT}`)).toBeTruthy();
-    expect(screen.getByTestId(`artifact-digest-${ARTIFACT}`).textContent).toBe('摘要已校验');
-    await user.click(screen.getByText('分段读取'));
-    expect(await screen.findByTestId(`artifact-read-segment-${ARTIFACT}`)).toBeTruthy();
-    expect(calls.filter((call) => call.query?.op === 'artifact.content')).toHaveLength(1);
-    expect(calls.filter((call) => call.query?.op === 'artifact.segment')).toHaveLength(1);
+    expect(calls.filter(call => ['artifact.content', 'artifact.segment'].includes(String(call.query?.op)))).toHaveLength(0);
+    await userEvent.setup().click(screen.getByTestId(`artifact-expand-${ARTIFACT}`));
+    await screen.findByTestId(`artifact-read-content-${ARTIFACT}`);
+    expect(screen.getByTestId(`artifact-digest-${ARTIFACT}`).textContent).toBe('内容已核对');
+    expect(calls.filter(call => call.query?.op === 'artifact.content')).toHaveLength(1);
+    expect(screen.queryByText('分段读取')).toBeNull();
   });
 
   it('shows artifact text as unverified when Web Crypto is unavailable', async () => {
@@ -662,6 +674,40 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     await user.click(await screen.findByTestId(`artifact-expand-${ARTIFACT}`));
     expect(await screen.findByTestId(`artifact-read-content-${ARTIFACT}`)).toBeTruthy();
     expect(screen.getByTestId(`artifact-digest-${ARTIFACT}`).textContent).toBe('尚未核对');
+  });
+
+  it('keeps operational artifact records in the backend and shows their product result', async () => {
+    vi.stubGlobal('crypto', webcrypto);
+    const { payloads } = setupAcceptance();
+    const text = JSON.stringify({ codec: 'awr-operational-example-v1', request_id: 'synthetic-internal-request', execution_id: 'synthetic-internal-execution' });
+    const digest = createHash('sha256').update(text).digest('hex');
+    payloads.reviews[WORK].submission.artifacts[0].query.expected_sha256 = digest;
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = init?.body ? JSON.parse(String(init.body)) : null;
+      if (request?.query?.op === 'artifact.content') {
+        return json({ ok: true, result: envelope({ work_id: WORK, artifact_id: ARTIFACT, byte_length: Buffer.byteLength(text), sha256: digest, text }, WORK) });
+      }
+      return originalFetch(input, init);
+    });
+    await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
+    await userEvent.setup().click(screen.getByTestId(`artifact-expand-${ARTIFACT}`));
+    expect(await screen.findByText('检查记录已保存，验证结果可在成果进展中查看')).toBeTruthy();
+    expect(document.body.textContent).not.toContain('synthetic-internal-request');
+    expect(document.body.textContent).not.toContain('execution_id');
+    expect(screen.getByTestId(`artifact-digest-${ARTIFACT}`).textContent).toBe('内容已核对');
+  });
+
+  it('automatically reads bounded artifact pages when the complete read is unavailable', async () => {
+    vi.stubGlobal('crypto', webcrypto);
+    const { calls } = setupAcceptance({ failOps: ['artifact.content'], failWith: { 'artifact.content': 'Unavailable' } });
+    await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
+    await userEvent.setup().click(screen.getByTestId(`artifact-expand-${ARTIFACT}`));
+    await screen.findByTestId(`artifact-read-content-${ARTIFACT}`);
+    expect(calls.filter(call => call.query?.op === 'artifact.content')).toHaveLength(1);
+    expect(calls.filter(call => call.query?.op === 'artifact.segment')).toHaveLength(1);
+    expect(screen.getByTestId(`artifact-digest-${ARTIFACT}`).textContent).toBe('内容已核对');
+    expect(screen.queryByText('分段读取')).toBeNull();
   });
 
   it('reads immutable artifact bytes only once across multiple poll intervals', async () => {
@@ -677,14 +723,16 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
   }, 15000);
 
   it('does not retry an Unavailable artifact read or poll it later', async () => {
-    const { calls } = setupAcceptance({ failOps: ['artifact.content'], failWith: { 'artifact.content': 'Unavailable' } });
+
+    const { calls, payloads } = setupAcceptance({ failOps: ['artifact.content'], failWith: { 'artifact.content': 'Unavailable' } });
+    payloads.reviews[WORK].submission.artifacts[0].segment_query = undefined as never;
     await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
-    const user = userEvent.setup();
-    await user.click(await screen.findByTestId(`artifact-expand-${ARTIFACT}`));
-    expect(await screen.findByText(/正文读取失败：Unavailable/, undefined, { timeout: 5000 })).toBeTruthy();
-    expect(calls.filter((call) => call.query?.op === 'artifact.content')).toHaveLength(1);
-    await new Promise((resolve) => setTimeout(resolve, 11000));
-    expect(calls.filter((call) => call.query?.op === 'artifact.content')).toHaveLength(1);
+    await userEvent.setup().click(screen.getByTestId(`artifact-expand-${ARTIFACT}`));
+    expect(await screen.findByText(/成果暂时无法读取，请稍后重试/)).toBeTruthy();
+    expect(document.body.textContent).not.toContain('Unavailable');
+    expect(calls.filter(call => call.query?.op === 'artifact.content')).toHaveLength(1);
+    await new Promise(resolve => setTimeout(resolve, 11000));
+    expect(calls.filter(call => call.query?.op === 'artifact.content')).toHaveLength(1);
   }, 15000);
 
   it('shows forbidden for an overview auth error', async () => {

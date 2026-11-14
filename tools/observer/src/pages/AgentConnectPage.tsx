@@ -4,10 +4,10 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ObservationForbidden } from '../components/states';
 import { ObservationValue } from '../components/ObservationValue';
-import { TechnicalDetails } from '../components/TechnicalDetails';
+
 import { actionWords } from '../core/observation';
 import { humanText } from '../i18n/human-language';
-import { connectionTechnicalItems } from '../lib/connection-technical';
+
 import { overviewQueryOptions, projectsQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
 import { useScope } from '../lib/scope';
@@ -118,7 +118,6 @@ export function AgentConnectPage() {
                         : []),
                     ]}
                   />
-                  <TechnicalDetails items={connectionTechnicalItems(identity, project)} />
                 </Card>
                 </Col>
                 <Col span={24}>

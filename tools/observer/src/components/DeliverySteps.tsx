@@ -21,9 +21,11 @@ export function DeliverySteps({ steps, testId }: { steps: DeliveryStep[]; testId
         key: step.key,
         title: <Typography.Text>{step.title}</Typography.Text>,
         content: (
-          <Typography.Text data-testid={step.testId} type={step.tone === 'positive' ? 'success' : step.tone === 'negative' ? 'danger' : step.tone === 'warning' ? 'warning' : 'secondary'}>
-            {step.text}
-          </Typography.Text>
+          <span data-testid={`delivery-step-${step.key}`}>
+            <Typography.Text data-testid={step.testId} type={step.tone === 'positive' ? 'success' : step.tone === 'negative' ? 'danger' : step.tone === 'warning' ? 'warning' : 'secondary'}>
+              {step.text}
+            </Typography.Text>
+          </span>
         ),
         status: step.tone === 'positive' ? 'finish' : step.tone === 'negative' ? 'error' : step.tone === 'neutral' ? 'wait' : 'process',
       }))}

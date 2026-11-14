@@ -192,11 +192,18 @@ td.k{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-spac
     return `<script type="application/json" id="pm-data">${data}${end}\n<script>\n${runtime.sources.join('\n')}\n${BOOT}\n${end}`;
   }
 
-  function renderProjectMap(snapshot, userConfig, { t, lang = 'en', interactive = false, runtime = null }) {
+  function renderProjectMap(snapshot, userConfig, { t, lang = 'en', interactive = false, runtime = null, productOnly = false }) {
     const live = interactive || Boolean(runtime);
     const model = modelLib.loadModel(snapshot, userConfig);
     const { nodes, meta, cfg } = model;
-    const views = viewsLib.createViews(t);
+    if (productOnly && !userConfig) {
+      cfg.overview.lanes.forEach((lane, index) => {
+        if (lane.name === undefined) return;
+        lane.name = t('map.group.numbered', { count: index + 1 });
+        lane.tag = '';
+      });
+    }
+    const views = viewsLib.createViews(t, { productOnly });
     const kit = kitLib.createKit(t);
     const svgs = [views.renderOverview(model), views.renderMainline(model), views.renderExplore(model)];
     const all = [...nodes.values()];
@@ -221,18 +228,18 @@ td.k{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-spac
     const laneIndex = new Map(cfg.overview.lanes.map((l, i) => [l.id, i]));
     const rows = [...all].sort((a, b) => (laneIndex.get(a.lane) ?? 99) - (laneIndex.get(b.lane) ?? 99) || compare(a.id, b.id)).map((n) => {
       const idle = n.idle === null ? '—' : kitLib.f0(n.idle);
-      return `<tr data-key="${esc(n.id)}" data-vis="${n.vis}"><td class="k">${esc(n.id)}</td><td>${esc(n.title)}</td><td title="${esc(n.status)}"><span class="pm-table-status" data-vis="${n.vis}">${esc(kit.ST[n.vis].label)}</span></td>`
+      return `<tr data-key="${esc(n.id)}" data-vis="${n.vis}">${productOnly ? '' : `<td class="k">${esc(n.id)}</td>`}<td>${esc(n.title)}</td><td${productOnly ? '' : ` title="${esc(n.status)}"`}><span class="pm-table-status" data-vis="${n.vis}">${esc(kit.ST[n.vis].label)}</span></td>`
         + `<td>${esc(laneName.get(n.lane) || n.lane)}</td><td>${esc(n.milestone || '—')}</td><td>${esc(n.owner || '—')}</td><td>${idle}</td></tr>`;
     });
     const table = `<details class="table pm-support-card"><summary><span>${esc(t('map.table.summary', { count: nodes.size }))}</span><span class="pm-summary-hint">${esc(t('map.table.hint'))}</span></summary><div class="pm-table-tools" hidden></div><div class="scroll"><table><thead><tr>`
-      + ['key', 'title', 'status', 'lane', 'milestone', 'owner', 'idle'].map((c) => `<th scope="col">${esc(t(`map.table.${c}`))}</th>`).join('')
+      + ['key', 'title', 'status', 'lane', 'milestone', 'owner', 'idle'].filter((column) => !productOnly || column !== 'key').map((c) => `<th scope="col">${esc(t(`map.table.${c}`))}</th>`).join('')
       + `</tr></thead><tbody>${rows.join('')}</tbody></table></div></details>`;
 
     const time = viewsLib.utc(meta.generated_at);
     const gaps = meta.unavailable.map((u) => `<li><code>${esc(u.field)}</code><span>${esc(gapReason(t, u))}</span></li>`).join('');
     const observation = snapshot.basis.observation;
     const freshness = observation ? `<p class="pm-fingerprint">${esc(t(observation.source_currentness_verified ? 'map.status.synced' : 'map.status.recorded'))} ${esc(t('map.status.runtime_checks'))}</p>` : '';
-    const notes = `<section class="notes"><article class="pm-note-card"><h2>${esc(t('map.notes.basis'))}</h2><p class="pm-note-intro">${esc(t('map.notes.snapshot', { revision: String(proj.revision), time }))}</p>${freshness}<details class="pm-fingerprint"><summary>${esc(t('map.notes.fingerprint'))}</summary><p>${t('map.notes.basis_text', {
+    const notes = productOnly ? '' : `<section class="notes"><article class="pm-note-card"><h2>${esc(t('map.notes.basis'))}</h2><p class="pm-note-intro">${esc(t('map.notes.snapshot', { revision: String(proj.revision), time }))}</p>${freshness}<details class="pm-fingerprint"><summary>${esc(t('map.notes.fingerprint'))}</summary><p>${t('map.notes.basis_text', {
       revision: esc(String(proj.revision)), fingerprint: `<code>${esc(meta.fingerprint)}</code>`, time: esc(time),
     })}</p></details></article>`
       + `<details class="pm-note-card"><summary>${esc(t('map.notes.rules'))}</summary><ul><li>${esc(t('map.notes.rule_stalled', { days: cfg.stale_days }))}</li><li>${esc(t('map.notes.rule_lanes'))}</li><li>${esc(t('map.notes.rule_claims'))}</li></ul></details>`

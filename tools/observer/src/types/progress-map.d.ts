@@ -17,6 +17,7 @@ declare module 'awr-progress-map/project-map/page.js' {
       t: (key: string, params?: Record<string, unknown>) => string;
       lang: string;
       interactive: boolean;
+      productOnly?: boolean;
     }): { body: string; model: unknown };
   };
   export default page;
@@ -32,7 +33,7 @@ declare module 'awr-progress-map/project-map/interact.js' {
       t: (key: string, params?: Record<string, unknown>) => string;
       restore?: unknown;
       commandFor?: (key: string) => string;
-      technicalDetails?: boolean;
+      productOnly?: boolean;
     }): { state: unknown; destroy(): void };
   };
   export default interaction;

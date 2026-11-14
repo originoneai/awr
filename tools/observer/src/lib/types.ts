@@ -255,6 +255,7 @@ export interface SourceContentData {
 }
 
 export interface WorkSnapshotData {
+  context_complete?: boolean;
   work_id?: string;
   contract_hash?: string;
   definition_state?: string;

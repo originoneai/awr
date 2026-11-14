@@ -18,6 +18,7 @@ import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
 import { FreshnessBadge } from '../components/FreshnessBadge';
+import { ObservationValue } from '../components/ObservationValue';
 import { LastReportText } from '../components/LastReportText';
 import { WorkProgress, useWorkState } from '../components/WorkProgress';
 import { ToneBadge } from '../components/ToneBadge';
@@ -26,8 +27,7 @@ import { deriveOwner, deriveTrouble, deriveWorkState, groupWorks, moreLinesText,
 import { readStateOf } from '../lib/read-state';
 import { RecentChanges } from '../components/RecentChanges';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
-import { TechnicalDetails } from '../components/TechnicalDetails';
-import { pageTechnicalItems } from '../lib/activity-technical';
+
 import { isAuthError } from '../lib/api';
 import { freshnessWord } from '../lib/freshness';
 import { formatUnixMs } from '../lib/format';
@@ -64,7 +64,7 @@ function NextStep({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
   return (
     <Typography.Text
       data-testid={`project-next-${work.key}`}
-      title={state.next.fullText ?? undefined}
+      title={state.next.fullText == null ? undefined : state.next.text}
       style={{ display: 'block' }}
     >
       {/* antd's Typography overwrites a line clamp set on itself, so the clamp sits on a plain span. */}
@@ -143,7 +143,7 @@ function GoalsBlock({ works, snapshots }: { project: string; works: TeamWork[]; 
                         <Typography.Text strong style={{ fontSize: 12 }}>{t('workbench.detail.goals')}</Typography.Text>
                         <ul style={{ margin: '2px 0', paddingLeft: 20 }}>
                           {group.goals.map((goal, goalIndex) => (
-                            <li key={goalIndex}>{rawObservationText(goal).text}</li>
+                            <li key={goalIndex}><ObservationValue value={goal} /></li>
                           ))}
                         </ul>
                       </div>
@@ -155,7 +155,7 @@ function GoalsBlock({ works, snapshots }: { project: string; works: TeamWork[]; 
                           {/* No checkbox: nothing in this data says whether an acceptance item is met;
                               that is the outcome page's question, and a box here would invent it. */}
                           {group.acceptance.map((item, itemIndex) => (
-                            <li key={itemIndex}>{rawObservationText(item).text}</li>
+                            <li key={itemIndex}><ObservationValue value={item} /></li>
                           ))}
                         </ul>
                       </div>
@@ -286,13 +286,6 @@ function DeliveryBlock({ project, works, snapshots, coverage }: {
                   ) : null}
                   {/* Hidden is not discarded: the raw values behind each named work's word and
                       sentences sit one disclosure away, never in the visible text. */}
-                  <TechnicalDetails
-                    items={attention.flatMap(({ work, trouble }) => trouble.flatMap((fact) => Object.entries(fact.technical).map(([label, value]) => ({
-                      label: `${work.title}: ${label}`,
-                      value,
-                      testId: `project-delivery-trouble-raw-${work.key}-${label.replace(/\./g, '-')}`,
-                    }))))}
-                  />
                 </div>
               ) : null}
               {loading + failed > 0 ? (
@@ -372,19 +365,6 @@ function Coverage({ data }: { data: TeamOverviewResponse }) {
             message={t('projectOverview.coverage.unread')}
           />
         ) : null}
-        <TechnicalDetails
-          items={[
-            { label: 'coverage.scope.status', value: coverage.scope.status },
-            { label: 'coverage.scope.enumerated', value: coverage.scope.enumerated },
-            { label: 'coverage.succeeded', value: coverage.succeeded },
-            { label: 'coverage.failed', value: coverage.failed },
-            { label: 'coverage.truncated', value: coverage.truncated },
-            { label: 'coverage.scope.next_cursor', value: coverage.scope.next_cursor },
-            { label: 'coverage.works_enumerated', value: coverage.works_enumerated },
-            { label: 'coverage.works_total', value: coverage.works_total, testId: 'coverage-works-total' },
-            ...coverage.streams.map((stream) => ({ label: `coverage.streams.${stream.workstream_id}`, value: stream })),
-          ]}
-        />
       </Flex>
     </Card>
   );
@@ -400,7 +380,6 @@ function RecentActivity({ query, project }: { query: ActivityQuery; project: str
       maxSteps={8}
       viewAllHref={`/activity?project=${encodeURIComponent(project)}`}
       testId="project-recent-changes"
-      extraTechnical={pageTechnicalItems(query.data?.data)}
     />
   );
   let content: ReactNode = <Spin />;
@@ -538,21 +517,6 @@ export function ProjectOverview({ project }: { project: string }) {
       />
       {/* The owner column's hidden is not discarded either: each work's row value and the two
           snapshot fields the name came from (or did not) sit behind one disclosure. */}
-      <TechnicalDetails
-        items={visibleWorks.flatMap((work, index) => {
-          const query = snapshots[index];
-          const owner = deriveOwner({
-            rowOwner: work.owner_person ?? work.agent,
-            snapshot: query?.data?.result.data,
-            readState: readStateOf(query),
-          });
-          return [
-            { label: `${work.title}: row owner`, value: owner.technical.row, testId: `project-owner-raw-row-${work.key}` },
-            { label: `${work.title}: snapshot owner_name`, value: owner.technical.snapshotOwnerName, testId: `project-owner-raw-name-${work.key}` },
-            { label: `${work.title}: snapshot owner`, value: owner.technical.snapshotOwner, testId: `project-owner-raw-owner-${work.key}` },
-          ];
-        })}
-      />
     </Flex>
   );
 

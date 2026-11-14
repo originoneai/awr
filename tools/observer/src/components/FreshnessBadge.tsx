@@ -4,7 +4,6 @@ import { PLANE_STATES, type PlaneState } from '../lib/contract';
 import { freshnessWord } from '../lib/freshness';
 import { formatUnixMs } from '../lib/format';
 import type { PlaneFreshness, TeamFreshness } from '../lib/types';
-import { TechnicalDetails } from './TechnicalDetails';
 
 const PLANE_KEYS = ['report_received', 'authoritative', 'page_read'] as const;
 
@@ -38,8 +37,8 @@ function PlaneView({ planeKey, plane }: { planeKey: (typeof PLANE_KEYS)[number];
 }
 
 /**
- * The three freshness planes keep their contractual states. Their engineering
- * names and raw replies stay in disclosure; the default names only the latest read.
+ * The three freshness planes keep their contractual states. The interface names each
+ * freshness plane and its latest confirmed read.
  */
 export function FreshnessBadge({ freshness }: { freshness?: TeamFreshness }) {
   const { t, i18n } = useTranslation();
@@ -59,10 +58,6 @@ export function FreshnessBadge({ freshness }: { freshness?: TeamFreshness }) {
       {PLANE_KEYS.map((key) => (
         <PlaneView key={key} planeKey={key} plane={freshness?.[key]} />
       ))}
-      <TechnicalDetails items={PLANE_KEYS.map((key) => ({
-        label: t(`freshness.plane.${key}`),
-        value: freshness?.[key] ?? null,
-      }))} />
     </Space>
   );
 }

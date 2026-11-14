@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useParams, useSearchParams } from 'react-router';
 import { ObservationForbidden } from '../components/states';
 import { ObservationValue } from '../components/ObservationValue';
-import { TechnicalDetails } from '../components/TechnicalDetails';
+
 import { isAuthError } from '../lib/api';
 import { ProjectAcceptance } from './ProjectAcceptance';
 import { ProjectKnowledge } from './ProjectKnowledge';
@@ -44,7 +44,6 @@ export function ProjectShell() {
               </Typography.Title>
               {meta?.role ? <Tag><ObservationValue value={meta.role} field="role" /></Tag> : null}
             </Space>
-            <TechnicalDetails items={[{ label: 'project', value: project, testId: 'technical-project-key' }]} />
           </div>
           <Tooltip title={t('shell.later')}>
             <Button disabled>{t('project.settings')}</Button>

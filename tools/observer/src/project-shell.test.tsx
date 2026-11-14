@@ -24,16 +24,16 @@ function setup(path: string) {
 }
 
 describe('ProjectShell', () => {
-  it('renders the project header with name, role and settings entry, and keeps the project key behind the technical details', async () => {
-    const user = userEvent.setup();
+  it('renders the project name, role and settings without an internal project key', async () => {
+
     setup('/projects/demo');
     await screen.findByText('Team mainline');
     const header = screen.getByTestId('project-header');
     expect(defaultVisibleText(header)).toBe('Team mainline\n项目管理员\n项目设置');
     expect(defaultVisibleText(header)).not.toMatch(/项目键|demo/);
     expect(screen.getByRole('button', { name: /项目设置/ })).toBeTruthy();
-    await user.click(within(header).getByRole('button', { name: '技术细节' }));
-    expect(within(header).getByTestId('technical-project-key').textContent).toContain('demo');
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(screen.queryByTestId("technical-project-key")).toBeNull();
   });
 
   it('renders the five tabs', async () => {
@@ -73,7 +73,8 @@ describe('ProjectShell', () => {
     await user.click(body.querySelector('.pm-card')!);
     const drawer = body.querySelector('.pm-drawer')!;
     expect(defaultVisibleText(drawer)).not.toMatch(/in_progress|synthetic-api|node\.milestone/);
-    expect(within(drawer as HTMLElement).getByRole('button', { name: '复制给 Agent' })).toBeTruthy();
+    expect(within(drawer as HTMLElement).queryByRole('button', { name: '复制给 Agent' })).toBeNull();
+    expect(within(drawer as HTMLElement).getByRole('button', { name: '在图中定位' })).toBeTruthy();
     expect(drawer.querySelector('details[data-testid="technical-details"][open]')).toBeNull();
     expect(screen.queryByTestId('state-empty')).toBeNull();
     expect(screen.queryByTestId('project-deps-not-open')).toBeNull();

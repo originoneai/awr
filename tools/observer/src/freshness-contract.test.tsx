@@ -51,7 +51,7 @@ describe('freshness behavior contract', () => {
 
   it('keeps the 403 title for revoked access without the stock illustration', () => {
     const { container } = render(<ObservationForbidden />);
-    expect(screen.getByTestId('state-forbidden').textContent).toContain('403');
+    expect(screen.getByTestId('state-forbidden').textContent).toContain('暂时无法查看');
     expect(container.querySelector('.ant-result-image')).toBeNull();
   });
 

@@ -4,7 +4,6 @@ import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { ageText, foldOperations, operationWord } from '../core/observation';
 import type { TeamActivityItem } from '../lib/types';
-import { TechnicalDetails, type TechnicalDetailItem } from './TechnicalDetails';
 
 /** The pause after which two records no longer read as one stretch of work (owner decision). */
 const PAUSE_THRESHOLD_MS = 30 * 60 * 1000;
@@ -13,21 +12,18 @@ const PAUSE_THRESHOLD_MS = 30 * 60 * 1000;
  * The newest stretches of activity in plain words: consecutive operations of one kind fold into a
  * count ("3 reads"), a lone operation says what it was, and a stretch that includes an unknown
  * result says so. Every record is still counted: the raw actions and audit ids of the shown steps
- * are in the collapsed technical details.
+ * remain in the service's audit history.
  */
 export function RecentChanges({
   items,
   maxSteps,
   viewAllHref,
   testId,
-  extraTechnical = [],
 }: {
   items: TeamActivityItem[];
   maxSteps: number;
   viewAllHref: string;
   testId?: string;
-  /** The service's own statements about these records, shown in the same collapsed block. */
-  extraTechnical?: TechnicalDetailItem[];
 }) {
   const { t, i18n } = useTranslation();
   const language = i18n.language;
@@ -72,16 +68,6 @@ export function RecentChanges({
         </Typography.Paragraph>
       ))}
       <Link to={viewAllHref} data-testid="recent-changes-all">{t('recentChanges.viewAll')} →</Link>
-      <TechnicalDetails
-        items={[
-          ...steps.map((step, index) => ({
-            label: `step ${index + 1}`,
-            value: `${step.technical.rawActions.map((action) => action ?? 'null').join(', ')} | ${step.technical.eventIds.map((id) => id ?? 'null').join(', ')}`,
-            testId: `recent-step-technical-${index}`,
-          })),
-          ...extraTechnical,
-        ]}
-      />
     </div>
   );
 }
