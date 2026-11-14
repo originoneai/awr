@@ -89,7 +89,9 @@
   }
 
   function sha256Hex(text) {
-    if (commonJS) return require('node:crypto').createHash('sha256').update(text, 'utf8').digest('hex');
+    if (commonJS && typeof process !== 'undefined' && process.versions && process.versions.node) {
+      return require('node:crypto').createHash('sha256').update(text, 'utf8').digest('hex');
+    }
     return sha256Portable(text);
   }
 

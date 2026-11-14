@@ -592,6 +592,7 @@ pub fn query_business_action(op: &str) -> Option<awr_team::Action> {
         "capabilities",
         "workstreams.list",
         "work.list",
+        "work.graph",
         "work.search",
         "work.prepare",
         "work.snapshot",

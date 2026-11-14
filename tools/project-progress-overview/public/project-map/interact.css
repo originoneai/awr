@@ -136,6 +136,7 @@
 .pm-scope .pm-d-head h2 { margin: 6px 0 0; font: 650 17px/1.35 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; letter-spacing: normal; text-transform: none; color: var(--pm-ink); overflow-wrap: anywhere; }
 .pm-scope .pm-d-key { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .pm-scope .pm-d-sec { margin-top: 18px; }
+.pm-scope .pm-d-technical { white-space: pre-wrap; overflow-wrap: anywhere; }
 .pm-scope .pm-d-sec h3 { margin: 0 0 6px; font: 600 11.5px/1.4 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; letter-spacing: .06em; text-transform: uppercase; color: var(--pm-faint); }
 .pm-scope .pm-d-sec p { margin: 4px 0; overflow-wrap: anywhere; }
 .pm-scope .pm-d-grid { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; }

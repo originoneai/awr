@@ -7,7 +7,19 @@ import { DEMO_OVERVIEW, DEMO_PROJECTS, renderApp, stubFetch } from './test-utils
 const TAB_LABELS = ['概览', '工作计划', '协作依赖', '成果与验收', '项目知识'];
 
 function setup(path: string) {
-  stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
+  stubFetch({
+    '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW,
+    '/api/team/graph': {
+      ok: true, project: 'demo', read_at_unix_ms: 1790000000000,
+      as_of: { project_revision: '12', source_snapshot_id: 'source-12', coordinator_epoch: 'current' },
+      workstreams: [{ id: 'development', title: 'Development' }],
+      items: [{
+        work_id: 'synthetic-api', external_key: 'API-001', title: 'Application API',
+        workstream_id: 'development', state: 'in_progress', owner: null,
+        last_event_at: null, claims: [], dependencies_complete: true, required_dependencies: [],
+      }],
+    },
+  });
   return renderApp(path);
 }
 
@@ -50,11 +62,20 @@ describe('ProjectShell', () => {
     );
   });
 
-  it('says the dependencies tab is not open yet, once, and does not read as an empty read', async () => {
-    setup('/projects/demo?tab=deps');
-    const body = await screen.findByTestId('project-deps-not-open');
-    expect(defaultVisibleText(body)).toBe('这里暂时没有内容\n该功能尚未开放');
+  it('renders all three shared maps and opens readable work details from the dependencies tab', async () => {
+    const user = userEvent.setup();
+    const { queryClient } = setup('/projects/demo?tab=deps');
+    const body = await screen.findByTestId('project-map-drawing');
+    await waitFor(() => expect(body.querySelectorAll('svg').length).toBe(3));
+    const query = queryClient.getQueryCache().find({ queryKey: ['team', 'graph', 'demo'] })!;
+    expect(query.observers.map((observer) => observer.options.refetchInterval)).toEqual([false]);
+    expect(defaultVisibleText(body)).toContain('Application API');
+    await user.click(body.querySelector('.pm-card')!);
+    const drawer = body.querySelector('.pm-drawer')!;
+    expect(defaultVisibleText(drawer)).not.toMatch(/in_progress|synthetic-api|node\.milestone/);
+    expect(within(drawer as HTMLElement).getByRole('button', { name: '复制给 Agent' })).toBeTruthy();
+    expect(drawer.querySelector('details[data-testid="technical-details"][open]')).toBeNull();
     expect(screen.queryByTestId('state-empty')).toBeNull();
-    expect(screen.queryByText(/未观察到相关记录|尚未完成读取/)).toBeNull();
+    expect(screen.queryByTestId('project-deps-not-open')).toBeNull();
   });
 });

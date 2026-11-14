@@ -125,6 +125,7 @@ asking anyway is refused as `Unsupported`. The lists name operations of this pro
 | --- | --- |
 | `workstreams.list` | Authorized workstreams only; `limit`, `cursor` |
 | `work.list` | Selected workstream's work summaries and count; `limit`, `cursor` |
+| `work.graph` | Selected workstream's bounded progress nodes, current leases and readable dependencies; `limit`, `cursor` |
 | `work.search` | Same visibility boundary; required literal substring `search` |
 | `work.prepare` | Required `work_id` or `session_id`; optional `max_context_bytes`; returns published contract, required_specs and authorized_readable_refs (TMCP-023) |
 | `work.admission` | Required `work_id`; whether the work is governed, its admission state and diagnostics, the scope a decision will be checked against and its `binding_fingerprint`; see [Team governance](team-governance.md) |

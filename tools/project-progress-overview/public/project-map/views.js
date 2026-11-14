@@ -295,10 +295,10 @@
       }
       const barBottom = hy + 34;
       body.add(`<rect x="${X0 - 8}" y="${by}" width="${inner + 16}" height="${barBottom - by + 14}" rx="22" fill="#fff" fill-opacity=".72" stroke="rgba(255,255,255,.9)" filter="url(#shS)"/>`);
-      body.add(text(X0 + 8, by + 28, 'EXECUTORS', 9.5, FAINT, 600, 'start', { spacing: 1.4 }));
+      body.add(text(X0 + 8, by + 28, t('map.executors.title'), 9.5, FAINT, 600, 'start', { spacing: 1.4 }));
       body.add(text(X0 + 84, by + 28, t('map.executors.note', { items: [...byAgent.values()].reduce((s, v) => s + v.length, 0), agents: byAgent.size }), 10.5, MUTED, 500));
       body.b.push(...chips);
-      body.add(text(X0 + 8, hy + 15, 'DOCTOR', 9.5, FAINT, 600, 'start', { spacing: 1.4 }));
+      body.add(text(X0 + 8, hy + 15, t('map.doctor.title'), 9.5, FAINT, 600, 'start', { spacing: 1.4 }));
       let hx = X0 + 70;
       for (const [name, val, sev] of hygiene) {
         const [fg, bg, bd] = sev === 'err' ? RED_CHIP : AMBER_CHIP;

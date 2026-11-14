@@ -15,6 +15,7 @@ mod activity;
 mod artifact_segments;
 mod assignees;
 mod delivery;
+mod graph;
 mod guidance;
 mod inbox;
 mod navigation;
@@ -24,6 +25,7 @@ pub(crate) const QUERIES: &[&str] = &[
     "capabilities",
     "workstreams.list",
     "work.list",
+    "work.graph",
     "work.search",
     "work.next",
     "work.inbox",
@@ -212,6 +214,7 @@ impl WorkstreamQuery {
             self.op.as_str(),
             "workstreams.list"
                 | "work.list"
+                | "work.graph"
                 | "work.search"
                 | "events.list"
                 | "work.next"
@@ -379,7 +382,7 @@ impl WorkstreamQuery {
         );
         let work_list = matches!(
             self.op.as_str(),
-            "work.list" | "work.search" | "planning.outcome"
+            "work.list" | "work.graph" | "work.search" | "planning.outcome"
         );
         let activity_audit = matches!(self.op.as_str(), "audit.requests" | "audit.development");
         let exact_work = matches!(
@@ -1695,6 +1698,9 @@ pub(crate) async fn read(
                 ownership,
             )
             .await?
+        }
+        "work.graph" => {
+            graph::read(tx, tenant, project, auth, &stream, q, &binding, &c, limit).await?
         }
         "work.list" | "work.search" => {
             let term = q.search.clone().unwrap_or_default();

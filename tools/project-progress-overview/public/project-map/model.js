@@ -254,7 +254,7 @@
       else vis = deps.some((d) => statusOf.get(d) !== 'completed') ? 'waiting' : 'ready';
       const cancelled = n.status === 'cancelled';
       nodes.set(n.key, {
-        id: n.key, short: shortKey(n.key, cfg), title: n.title, status: n.status, vis, lane: laneOfKey(n.key), deps,
+        id: n.key, short: n.display_key === undefined ? shortKey(n.key, cfg) : n.display_key, title: n.title, status: n.status, vis, lane: laneOfKey(n.key), deps,
         owner: cancelled ? null : (n.claims.length ? n.claims[0].agent_id : n.owner),
         live: n.claims.length > 0 && !cancelled, idle: cancelled ? null : idle, blocker: cancelled ? null : n.blocker, milestone: n.milestone,
       });

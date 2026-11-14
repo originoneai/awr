@@ -548,6 +548,7 @@ pub(crate) async fn resolve_agent_read_delegation(
                 | "work.next"
                 | "work.inbox"
                 | "work.list"
+                | "work.graph"
                 | "work.search"
                 | "events.list"
         );

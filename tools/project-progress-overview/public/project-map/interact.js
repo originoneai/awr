@@ -153,7 +153,7 @@
    */
   function mount({
     container, snapshot, config, t, model: given, restore, offsetTop, copy, win = root, timers = { set: (fn, ms) => setTimeout(fn, ms), clear: (id) => clearTimeout(id) },
-    prepare,
+    prepare, commandFor = detailLib.commandFor, technicalDetails = false,
   }) {
     const model = given || modelLib.loadModel(snapshot, config);
     const views = viewsLib.createViews(t);
@@ -639,7 +639,7 @@
         case 'clear': clearAll(); return;
         case 'reveal': if (state.drawer) reveal(state.drawer); return;
         case 'copy-key': if (state.drawer) copyText(state.drawer); return;
-        case 'copy-command': if (state.drawer) copyText(detailLib.commandFor(state.drawer)); return;
+        case 'copy-command': if (state.drawer) copyText(commandFor(state.drawer)); return;
         default:
       }
     }
@@ -662,7 +662,7 @@
       placeDrawer();
       state.drawer = key;
       state.selected = key;
-      box.querySelector('.pm-drawer-body').innerHTML = detailLib.renderDetail(data, t, (g) => pageLib.gapReason(t, g));
+      box.querySelector('.pm-drawer-body').innerHTML = detailLib.renderDetail(data, t, (g) => pageLib.gapReason(t, g), { technicalDetails });
       const panel = box.querySelector('.pm-drawer-panel');
       if (panel) panel.setAttribute('aria-labelledby', 'pm-drawer-title');
       box.hidden = false;
