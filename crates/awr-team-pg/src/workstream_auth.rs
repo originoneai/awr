@@ -625,6 +625,7 @@ pub fn query_business_action(op: &str) -> Option<awr_team::Action> {
         "artifact.segment",
         "delivery.exports",
         "planning.outcome",
+        "planning.candidates",
         "audit.history",
         "audit.export",
         "audit.count",

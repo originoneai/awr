@@ -7,6 +7,389 @@ mod integration_fixture;
 use awr_core::Id;
 use awr_team_pg::*;
 use fixture::*;
+
+async fn planning_draft(admin: &tokio_postgres::Client, work: &str) -> Value {
+    let row=admin.query_one("SELECT contract_json,title,definition_state FROM awr_team.work_contracts WHERE work_id=$1",&[&work]).await.unwrap();
+    let mut draft: Value = row.get(0);
+    draft.as_object_mut().unwrap().remove("codec");
+    draft["title"] = json!(row.get::<_, String>(1));
+    draft["definition_state"] = json!(row.get::<_, String>(2));
+    draft
+}
+
+async fn seed_planning_candidate(admin: &tokio_postgres::Client, id: &str, changes: Value) {
+    admin.execute("INSERT INTO awr_team.planning_candidates(tenant_id,project_id,id,author_person_id,
+        author_actor_id,author_client_id,baseline_digest,baseline_epoch,draft_revision,candidate_digest,
+        state,changes_json,self_approve_policy_json,delivery_completion_policy)
+        VALUES($1,$2,$3,'agent','agent','cli-a','earlier-plan','1',1,$4,'drafting',$5,'{}','review')",
+        &[&TENANT,&PROJECT,&id,&"b".repeat(64),&changes]).await.unwrap();
+}
+
+#[tokio::test]
+async fn planning_observation_matches_manifest_and_epoch_instead_of_snapshot_identity() {
+    let (_guard, admin, _, store) = setup().await;
+    let draft = planning_draft(&admin, "a").await;
+    seed_planning_candidate(
+        &admin,
+        "current-plan",
+        json!([
+            {"op":"edit_fields","before":draft,"after":draft}
+        ]),
+    )
+    .await;
+    let baseline = admin
+        .query_one(
+            "SELECT s.manifest_digest,p.authority_epoch::text,p.active_snapshot_id
+        FROM awr_team.projects p JOIN awr_team.source_snapshots s
+          ON s.tenant_id=p.tenant_id AND s.project_id=p.id AND s.id=p.active_snapshot_id
+        WHERE p.tenant_id=$1 AND p.id=$2",
+            &[&TENANT, &PROJECT],
+        )
+        .await
+        .unwrap();
+    let digest: String = baseline.get(0);
+    let epoch: String = baseline.get(1);
+    assert_ne!(digest, baseline.get::<_, String>(2));
+    admin
+        .execute(
+            "UPDATE awr_team.planning_candidates SET baseline_digest=$1,baseline_epoch=$2",
+            &[&digest, &epoch],
+        )
+        .await
+        .unwrap();
+    let current = store
+        .query(TENANT, PROJECT, A, query("planning.candidates"))
+        .await
+        .unwrap();
+    let observed = &current["data"]["items"][0]["baseline"];
+    assert_eq!(observed["source_manifest_digest"], digest);
+    assert!(observed.get("source_snapshot_id").is_none());
+    assert_eq!(observed["matches_current"], true);
+    admin
+        .batch_execute("UPDATE awr_team.planning_candidates SET baseline_digest='earlier-manifest'")
+        .await
+        .unwrap();
+    let stale = store
+        .query(TENANT, PROJECT, A, query("planning.candidates"))
+        .await
+        .unwrap();
+    assert_eq!(
+        stale["data"]["items"][0]["baseline"]["matches_current"],
+        false
+    );
+    admin.execute("UPDATE awr_team.planning_candidates SET baseline_digest=$1,baseline_epoch='earlier-epoch'",
+        &[&digest]).await.unwrap();
+    let stale = store
+        .query(TENANT, PROJECT, A, query("planning.candidates"))
+        .await
+        .unwrap();
+    assert_eq!(
+        stale["data"]["items"][0]["baseline"]["matches_current"],
+        false
+    );
+}
+
+#[tokio::test]
+async fn planning_observation_includes_assurance_and_settlement_changes_without_hidden_references()
+{
+    let (_guard, admin, _, store) = setup().await;
+    let row = admin
+        .query_one(
+            "SELECT contract_json FROM awr_team.work_contracts WHERE work_id='c'",
+            &[],
+        )
+        .await
+        .unwrap();
+    let mut contract: awr_team::WorkContract = serde_json::from_value(row.get(0)).unwrap();
+    contract.required_dependencies.push("a".into());
+    let contract_hash = contract.hash().unwrap();
+    let contract_json = serde_json::to_value(contract).unwrap();
+    admin.execute("UPDATE awr_team.work_contracts SET contract_json=$1,contract_hash=$2 WHERE work_id='c'",
+        &[&contract_json, &contract_hash]).await.unwrap();
+    let current = planning_draft(&admin, "c").await;
+    let mut assurance = current.clone();
+    assurance["dependency_acceptance"] = json!({"a":"agent_reviewed_caller_asserted_reconciled"});
+    let mut restricted = assurance.clone();
+    restricted["dependency_acceptance"]["b-private"] =
+        json!("agent_reviewed_caller_asserted_reconciled");
+    let mut settlement = current.clone();
+    settlement["execution_settlement"] =
+        json!({"mode":"independent_workspace_v1","workspace_id":"review-workspace"});
+    for (id, after) in [
+        ("assurance", assurance),
+        ("restricted", restricted),
+        ("settlement", settlement),
+    ] {
+        seed_planning_candidate(
+            &admin,
+            id,
+            json!([
+                {"op":"edit_fields","before":current,"after":after}
+            ]),
+        )
+        .await;
+    }
+    let result = store
+        .query(TENANT, PROJECT, A, query("planning.candidates"))
+        .await
+        .unwrap();
+    let items = result["data"]["items"].as_array().unwrap();
+    for item in items {
+        assert_eq!(item["current_diff"]["items"][0]["kind"], "changed");
+        assert_eq!(item["current_diff"]["counts"]["changed"], 1);
+        let fields = item["current_diff"]["items"][0]["fields"]
+            .as_array()
+            .unwrap();
+        assert_eq!(fields.len(), 1);
+        let field = &fields[0];
+        if item["candidate_id"] == "settlement" {
+            assert_eq!(field["field"], "execution_settlement");
+            assert_eq!(field["after"]["value"]["workspace_id"], "review-workspace");
+        } else {
+            assert_eq!(field["field"], "dependency_acceptance");
+            if item["candidate_id"] == "restricted" {
+                assert!(field["after"]["value"].is_null());
+                assert_eq!(field["after"]["reason"], "permission_restricted");
+            } else {
+                assert_eq!(
+                    field["after"]["value"]["a"],
+                    "agent_reviewed_caller_asserted_reconciled"
+                );
+            }
+        }
+    }
+    assert!(!result.to_string().contains("b-private"));
+}
+
+#[tokio::test]
+async fn planning_observation_compares_with_current_plan_and_does_not_expose_hidden_candidates() {
+    let (_guard, admin, _, store) = setup().await;
+    let current = planning_draft(&admin, "a").await;
+    let private = planning_draft(&admin, "b-private").await;
+    let mut changed = current.clone();
+    changed["title"] = json!("Clarify sign-in requirements");
+    let mut old = current.clone();
+    old["acceptance"] = json!(["Obsolete historical criterion"]);
+    seed_planning_candidate(
+        &admin,
+        "plan-a",
+        json!([{"op":"edit_fields","before":old,"after":changed}]),
+    )
+    .await;
+    let mut added = current.clone();
+    added["work_id"] = json!("proposed-guide");
+    added["external_key"] = json!("GUIDE");
+    added["title"] = json!("Write the help guide");
+    added["workstream"] = json!("alpha");
+    seed_planning_candidate(
+        &admin,
+        "plan-b",
+        json!([{"op":"create_task","after":added}]),
+    )
+    .await;
+    let mut hidden_future = added.clone();
+    hidden_future["workstream"] = json!("private-beta");
+    seed_planning_candidate(
+        &admin,
+        "PRIVATE-future",
+        json!([{"op":"create_task","after":hidden_future}]),
+    )
+    .await;
+    let mut removed = current.clone();
+    removed["definition_state"] = json!("cancelled");
+    seed_planning_candidate(
+        &admin,
+        "plan-c",
+        json!([{"op":"cancel","before":current,"after":removed}]),
+    )
+    .await;
+    seed_planning_candidate(
+        &admin,
+        "plan-d",
+        json!([{"op":"edit_fields","before":current,"after":current}]),
+    )
+    .await;
+    seed_planning_candidate(
+        &admin,
+        "PRIVATE-plan",
+        json!([{"op":"edit_fields","before":private,"after":private}]),
+    )
+    .await;
+    seed_planning_candidate(
+        &admin,
+        "PRIVATE-mixed",
+        json!([
+        {"op":"edit_fields","before":current,"after":current},
+        {"op":"edit_fields","before":private,"after":private}]),
+    )
+    .await;
+    let result = store
+        .query(TENANT, PROJECT, A, query("planning.candidates"))
+        .await
+        .unwrap();
+    let data = &result["data"];
+    assert_eq!(data["total"], 4);
+    assert_eq!(data["truncated"], false);
+    assert!(data["next_cursor"].is_null());
+    assert_eq!(data["execution_authorized"], false);
+    assert_eq!(
+        data["as_of"]["source_snapshot_id"],
+        result["source_snapshot_id"]
+    );
+    let items = data["items"].as_array().unwrap();
+    for (item, kind) in items
+        .iter()
+        .zip(["changed", "added", "removed", "unchanged"])
+    {
+        assert_eq!(item["current_diff"]["items"][0]["kind"], kind);
+        assert_eq!(item["current_diff"]["counts"][kind], 1);
+        assert_eq!(item["author"]["display_name"], "Worker");
+        assert!(item["created_at_unix_ms"].is_i64());
+        assert_eq!(item["approval"]["reason"], "not_approved");
+        assert_eq!(item["rejection"]["reason"], "transition_not_supported");
+    }
+    let fields = items[0]["current_diff"]["items"][0]["fields"]
+        .as_array()
+        .unwrap();
+    assert_eq!(
+        fields.len(),
+        1,
+        "the obsolete before-image must not create a false current difference"
+    );
+    assert_eq!(fields[0]["field"], "title");
+    assert_eq!(fields[0]["before"]["value"], current["title"]);
+    assert!(!result.to_string().contains("PRIVATE"));
+    let mut scoped = query("planning.candidates");
+    scoped.workstream_id = Some(Id::from(1));
+    let read = store
+        .query(TENANT, PROJECT, A, scoped.clone())
+        .await
+        .unwrap();
+    assert_eq!(read["data"]["total"], 4);
+    assert_eq!(read["workstream_id"], Id::from(1).to_string());
+    scoped.workstream_id = Some(Id::from(2));
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, scoped).await,
+        Err(PgError::Forbidden)
+    ));
+    let hidden = store
+        .query(TENANT, PROJECT, B, query("planning.candidates"))
+        .await
+        .unwrap();
+    assert_eq!(hidden["data"]["total"], 2);
+    assert_eq!(hidden["data"]["items"][0]["candidate_id"], "PRIVATE-future");
+}
+
+#[tokio::test]
+async fn planning_observation_retains_exact_approval_publication_and_activation_records() {
+    let (_guard, admin, _, store) = setup().await;
+    let draft = planning_draft(&admin, "a").await;
+    seed_planning_candidate(
+        &admin,
+        "plan-approved",
+        json!([{"op":"edit_fields","before":draft,"after":draft}]),
+    )
+    .await;
+    admin.batch_execute("INSERT INTO awr_team.planning_approvals(tenant_id,project_id,id,candidate_id,
+        candidate_digest,draft_revision,approver_person_id,approver_actor_id,approver_client_id,self_approved)
+        SELECT tenant_id,project_id,'approval',id,candidate_digest,draft_revision,'reviewer','reviewer','review-cli',false
+        FROM awr_team.planning_candidates;
+        INSERT INTO awr_team.planning_publish_receipts(tenant_id,project_id,id,candidate_id,candidate_digest,
+        draft_revision,approval_id,publisher_actor_id,publisher_client_id)
+        SELECT tenant_id,project_id,'publication',id,candidate_digest,draft_revision,'approval','agent','cli-a'
+        FROM awr_team.planning_candidates;
+        UPDATE awr_team.planning_candidates SET state='published'").await.unwrap();
+    admin
+        .batch_execute(
+            "UPDATE awr_team.project_memberships SET role='reader',business_roles='[\"observer\"]'
+        WHERE tenant_id='reader-tenant' AND project_id='reader-project' AND actor_id='agent'",
+        )
+        .await
+        .unwrap();
+    let query_plan = || query("planning.candidates");
+    let pending = store.query(TENANT, PROJECT, A, query_plan()).await.unwrap();
+    let item = &pending["data"]["items"][0];
+    assert_eq!(item["approval"]["value"]["display_name"], "Reviewer");
+    assert_eq!(item["approval"]["value"]["self_approved"], false);
+    assert_eq!(
+        item["publication"]["value"]["source_writeback_pending"],
+        true
+    );
+    assert_eq!(item["activation"]["reason"], "not_applied");
+    admin.batch_execute("INSERT INTO awr_team.planning_activation_receipts(tenant_id,project_id,id,request_id,
+        candidate_id,candidate_digest,publish_receipt_id,approval_id,approver_actor_id,publisher_actor_id,
+        source_version,activated_snapshot_id,authority_epoch,before_fingerprint,after_fingerprint,
+        affected_work_ids,unrelated_work_ids,audit_json)
+        SELECT c.tenant_id,c.project_id,'activation','activation-request',c.id,c.candidate_digest,
+        'publication','approval','reviewer','agent','source-version',p.active_snapshot_id,p.authority_epoch::text,
+        'before','after','[\"a\"]','[]','{}' FROM awr_team.planning_candidates c
+        JOIN awr_team.projects p ON p.tenant_id=c.tenant_id AND p.id=c.project_id;
+        UPDATE awr_team.planning_publish_receipts SET source_writeback_pending=false").await.unwrap();
+    let applied = store.query(TENANT, PROJECT, A, query_plan()).await.unwrap();
+    let item = &applied["data"]["items"][0];
+    assert_eq!(
+        item["publication"]["value"]["source_writeback_pending"],
+        false
+    );
+    assert_eq!(
+        item["activation"]["value"]["matches_current_snapshot"],
+        true
+    );
+    // A later draft cannot borrow the old version's approval or publication.
+    admin.batch_execute("UPDATE awr_team.planning_candidates SET draft_revision=2,state='drafting',updated_at=clock_timestamp()").await.unwrap();
+    let edited = store.query(TENANT, PROJECT, A, query_plan()).await.unwrap();
+    let item = &edited["data"]["items"][0];
+    assert_eq!(item["approval"]["reason"], "not_approved");
+    assert_eq!(item["publication"]["reason"], "not_published");
+    assert_eq!(item["activation"]["reason"], "not_applied");
+}
+
+#[tokio::test]
+async fn planning_observation_pages_expire_on_visible_changes_and_redact_dependencies() {
+    let (_guard, admin, _, store) = setup().await;
+    let draft = planning_draft(&admin, "c").await;
+    let mut after = draft.clone();
+    after["required_dependencies"] = json!(["a"]);
+    let change = json!([{"op":"edit_fields","before":draft,"after":after}]);
+    for id in ["plan-a", "plan-b"] {
+        seed_planning_candidate(&admin, id, change.clone()).await;
+    }
+    let mut q = query("planning.candidates");
+    q.limit = Some(1);
+    let first = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    assert_eq!(first["data"]["truncated"], true);
+    let field = &first["data"]["items"][0]["current_diff"]["items"][0]["fields"][0];
+    assert_eq!(field["before"]["reason"], "permission_restricted");
+    assert_eq!(field["after"]["value"], json!(["a"]));
+    assert!(!first.to_string().contains("b-private"));
+    q.cursor = Some(first["data"]["next_cursor"].as_str().unwrap().into());
+    let second = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    assert_eq!(second["data"]["items"][0]["candidate_id"], "plan-b");
+    assert!(second["data"]["next_cursor"].is_null());
+    admin.batch_execute("UPDATE awr_team.planning_candidates SET state='superseded',updated_at=clock_timestamp() WHERE id='plan-a'").await.unwrap();
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, q).await,
+        Err(PgError::CursorExpired)
+    ));
+    let mut small = query("planning.candidates");
+    small.max_context_bytes = Some(20);
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, small).await,
+        Err(PgError::ResponseTooLarge)
+    ));
+    admin
+        .batch_execute(
+            "UPDATE awr_team.credentials SET revoked_at=clock_timestamp() WHERE id='reader-a'",
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        store
+            .query(TENANT, PROJECT, A, query("planning.candidates"))
+            .await,
+        Err(PgError::Forbidden)
+    ));
+}
 use serde_json::{Value, json};
 
 #[tokio::test]

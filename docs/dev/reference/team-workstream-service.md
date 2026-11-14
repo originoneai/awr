@@ -127,6 +127,7 @@ asking anyway is refused as `Unsupported`. The lists name operations of this pro
 | `work.list` | Selected workstream's work summaries and count; `limit`, `cursor` |
 | `work.graph` | Selected workstream's bounded progress nodes, current leases and readable dependencies; `limit`, `cursor` |
 | `work.search` | Same visibility boundary; required literal substring `search` |
+| `planning.candidates` | Readable planning candidates and server-computed differences from the current plan; optional `workstream_id`, `limit`, `cursor`, `max_context_bytes` |
 | `work.prepare` | Required `work_id` or `session_id`; optional `max_context_bytes`; returns published contract, required_specs and authorized_readable_refs (TMCP-023) |
 | `work.admission` | Required `work_id`; whether the work is governed, its admission state and diagnostics, the scope a decision will be checked against and its `binding_fingerprint`; see [Team governance](team-governance.md) |
 | `work.observe` | Required `work_id` or `session_id`; returns bounded session/checkpoint, claim lease, execution and PR delivery observations under current WorkRead authority |
@@ -166,6 +167,40 @@ under the caller's current WorkRead scope. One page performs four batched data
 queries, regardless of its item count, in addition to existing authorization
 and transaction checks. Pagination, search and visibility remain unchanged.
 These fields are read-only observations; they grant no execution or approval.
+
+`planning.candidates` returns proposed changes, their author and receive times,
+the original baseline, and recorded approval, publication and source activation.
+The baseline's `source_manifest_digest` identifies the source content used to
+prepare the proposal. `matches_current` compares that digest and the authority
+epoch with the active source. The response envelope's `source_snapshot_id`
+identifies the current snapshot record.
+Its `current_diff` groups work as added, removed from the active plan, changed or
+unchanged. Field differences compare the proposal with the active source
+snapshot, rather than trusting its historical before-image. The browser does
+not calculate these differences. Changes include dependency acceptance and
+execution settlement policies. An omitted optional field retains its current
+value. Unreadable dependency values and acceptance maps are null with
+`permission_restricted`; identifiers and titles from hidden work are not exposed.
+
+Only candidates whose affected work is fully readable are enumerated. This
+filter precedes counts, ordering and pagination. A workstream selector restricts
+which candidates match without expanding the reader's scope. Cursors bind the
+read authority, source snapshot and visible planning-record fingerprint, so a
+changed draft or decision requires a fresh first page. Results include an
+as-of record, `total`, `next_cursor` and `truncated`. The full response defaults
+to a 256 KiB bound; a smaller requested budget is honored. Oversized results
+return `ResponseTooLarge` rather than silently omitting differences.
+
+Approval and publication must match the candidate's exact digest and draft
+revision. A published proposal can still have source writeback pending; only
+an activation record reports that it was applied. Missing records are explicit
+nulls with reasons. The service currently records drafting, approved, published
+and superseded candidate states. It has no separate candidate-rejection
+transition: `rejection` therefore reports null with `transition_not_supported`.
+A rejected request is never presented as a rejected plan. The bridge exposes
+the same scoped read at `GET /api/team/plans?project=PROJECT`, with optional
+`workstream_id`, `limit`, `cursor` and `max_context_bytes`; no planning commands
+are exposed by that route.
 
 Work/session selectors derive the workstream. An explicit `workstream_id` must
 agree with them. Without work/session, a unique authorized workstream can be
