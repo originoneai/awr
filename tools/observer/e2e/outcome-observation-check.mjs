@@ -67,7 +67,8 @@ try {
       await context.addInitScript(value => localStorage.setItem('i18nextLng', value), language);
       const page = await context.newPage();
       const errors = [], reads = [];
-      let historyFailure = false;
+      let historyFailure = null;
+      let missingBinding = false;
       page.on('pageerror', error => errors.push(error.message));
       await page.route('**/api/team/**', async route => {
         const request = route.request(), url = new URL(request.url());
@@ -104,8 +105,9 @@ try {
           else if (query.op === 'artifact.content') data = { artifact_id: artifact, work_id: work, text: report, sha256: digest, byte_length: Buffer.byteLength(report) };
           else if (['delivery.neutral.inspect', 'delivery.submission.describe', 'delivery.exports'].includes(query.op)) data = { work_id: work, items: [] };
           else throw new Error(`Unexpected read ${query.op}`);
+          if (query.op === 'completion.inspect' && missingBinding) delete data.completion.contract_hash;
           payload = query.op === 'review.rounds' && historyFailure
-            ? { ok: false, error: { code: 'ReadTimeout', message: 'private-upstream-diagnostic' } }
+            ? { ok: false, error: { code: historyFailure, message: 'private-upstream-diagnostic' } }
             : { ok: true, result: { data }, freshness };
         } else throw new Error(`Unexpected route ${url.pathname}`);
         await route.fulfill({ contentType: 'application/json', body: JSON.stringify(payload) });
@@ -127,7 +129,7 @@ try {
       await page.getByTestId(`artifact-expand-${artifact}`).click();
       await page.getByTestId(`artifact-read-content-${artifact}`).getByText(report, { exact: true }).waitFor();
       await page.getByTestId(`artifact-digest-${artifact}`).getByText(language === 'zh-CN' ? '内容已核对' : 'Content checked', { exact: true }).waitFor();
-      historyFailure = true;
+      historyFailure = 'ReadTimeout';
       await page.getByRole('button', { name: language === 'zh-CN' ? '刷新复核历程' : 'Refresh review history', exact: true }).click();
       await page.getByText(language === 'zh-CN' ? '复核历程暂时读取不到' : 'Review history cannot be loaded right now', { exact: true }).waitFor();
       await chain.getByText(completeText, { exact: true }).waitFor();
@@ -140,7 +142,17 @@ try {
       await page.evaluate(() => window.scrollTo(0, 0));
       await page.waitForFunction(() => window.scrollY === 0);
       await page.screenshot({ path: screenshot, fullPage: true });
-      results.push({ language, viewport: width, document: metrics.document, history_screenshot: historyShot, screenshot, reads: reads.length });
+      historyFailure = 'Forbidden';
+      await page.getByRole('button', { name: language === 'zh-CN' ? '刷新复核历程' : 'Refresh review history', exact: true }).click();
+      await page.getByTestId('state-forbidden').waitFor();
+      await chain.getByText(completeText, { exact: true }).waitFor();
+      missingBinding = true;
+      await page.reload();
+      await page.getByTestId('delivery-step-acceptance').getByText(language === 'zh-CN' ? '结果未知' : 'Outcome unknown', { exact: true }).waitFor();
+      assert.equal(await page.getByTestId('completion-independence').count(), 0);
+      assert.deepEqual(errors, []);
+      results.push({ language, viewport: width, document: metrics.document, history_screenshot: historyShot, screenshot,
+        missing_completion_unknown: true, history_forbidden_is_local: true, reads: reads.length });
       await context.close();
     }
   }

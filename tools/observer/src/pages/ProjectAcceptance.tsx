@@ -121,11 +121,11 @@ export function ProjectAcceptance({ project }: { project: string }) {
   const reviewIsCurrent = (currentCandidateCurrent === true
       || reportOnly && at(currentReviewObject, ['evidence_provenance', 'review_contract_matches_current']) === true)
     && at(currentReviewObject, ['evidence_provenance', 'review_contract_matches_current']) === true;
-  const completionData = completion.data?.result.data;
+  const completionData = selectedCompletionId ? completion.data?.result.data : undefined;
   const completionObject = asObject(completionData?.completion);
   const completionReceipt = asText(completionObject?.receipt_id);
   const completionSelected = asText(completionData?.selected_completion_id);
-  const completionReviewRound = asText(at(completionObject, ['approved_by', 'review_round_id']) ?? completionObject?.review_round_id);
+  const completionReviewRound = at(completionObject, ['approved_by', 'review_round_id']) ?? completionObject?.review_round_id;
   const completionReviewKind = asText(at(completionObject, ['approved_by', 'independence_kind']));
   const completionReviewLabels: Record<string, string> = {
     team_independent: t('outcomeReviews.roles.independent_reviewer'),
@@ -136,15 +136,26 @@ export function ProjectAcceptance({ project }: { project: string }) {
 
   const deliveryObject = asObject(at(delivery.data?.result.data, ['delivery']));
   const deliverySelected = asText(at(deliveryObject, ['awr_acceptance', 'selected_completion_id']));
-  const completionConflict = Boolean(completionData && (
-    completionReceipt !== completionSelected
-    || completionSelected !== selectedCompletionId
-    || (deliverySelected != null && deliverySelected !== completionSelected)
-    || (currentReviewObject && completionObject?.evidence_id != null && completionObject.evidence_id !== currentReviewObject.evidence_id)
-    || (currentReviewObject && completionObject?.execution_id != null && completionObject.execution_id !== currentReviewObject.execution_id)
-    || (completionObject?.contract_hash != null && completionObject.contract_hash !== snapshotData?.contract_hash)
-    || (completionReviewRound != null && completionReviewRound !== currentRound)
-  ));
+  const completionBindingsPresent = [
+    completionObject?.receipt_id, completionData?.selected_completion_id, selectedCompletionId,
+    at(deliveryObject, ['awr_acceptance', 'selected_completion_id']),
+    completionObject?.contract_hash, snapshotData?.contract_hash, currentReviewObject?.contract_hash,
+    completionObject?.evidence_id, currentReviewObject?.evidence_id,
+    completionReviewRound, currentRound, currentReviewObject?.round_id,
+  ].every(binding => typeof binding === 'string' && binding.trim() !== '')
+    // Human-reviewed reports can explicitly record a null execution.
+    && completionObject != null && Object.hasOwn(completionObject, 'execution_id')
+    && currentReviewObject != null && Object.hasOwn(currentReviewObject, 'execution_id');
+  const completionBindingsMatch = completionReceipt === completionSelected
+    && completionSelected === selectedCompletionId && deliverySelected === completionSelected
+    && completionObject?.contract_hash === snapshotData?.contract_hash
+    && currentReviewObject?.contract_hash === snapshotData?.contract_hash
+    && completionObject?.evidence_id === currentReviewObject?.evidence_id
+    && completionObject?.execution_id === currentReviewObject?.execution_id
+    && completionReviewRound === currentRound && currentReviewObject?.round_id === currentRound
+    && (completionObject?.review_round_id == null || completionObject.review_round_id === completionReviewRound);
+  const completionConflict = Boolean(completionData && completionBindingsPresent && !completionBindingsMatch);
+  const completionBindingMissing = Boolean(completionData && !completionBindingsPresent);
   const integrationData = integration.data?.result.data;
   const observedAt = at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'provenance', 'observed_at_unix_ms']);
   const recordedAt = at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'provenance', 'recorded_at_unix_ms']);
@@ -235,14 +246,14 @@ export function ProjectAcceptance({ project }: { project: string }) {
   );
   const deliveryComplete = at(deliveryObject, ['awr_acceptance', 'complete']) === true
     && at(deliveryObject, ['awr_acceptance', 'runtime_state']) === 'completed';
-  const completionKnown = completionSelected != null && completionReceipt != null;
+  const completionKnown = completionBindingsPresent && completionBindingsMatch;
   const snapshotLoading = Boolean(selectedWork) && (selectedSnapshot == null || selectedSnapshot.isPending);
   const snapshotFailed = selectedSnapshot?.isError === true;
   const reviewLoading = Boolean(currentRound) && currentReview.isPending;
   const integrationLoading = Boolean(integrationId) && integration.isPending;
   const completionLoading = Boolean(selectedCompletionId) && completion.isPending;
   const acceptanceLoading = snapshotLoading || reviewLoading || integrationLoading || completionLoading || delivery.isPending;
-  const acceptanceUnknown = snapshotFailed || currentReview.isError || integration.isError || completion.isError || delivery.isError;
+  const acceptanceUnknown = snapshotFailed || currentReview.isError || integration.isError || completion.isError || delivery.isError || completionBindingMissing;
   const integrationSatisfied = integrationConfirmed || reportOnly;
   const completionConfirmed = deliveryComplete && completionKnown && integrationSatisfied && reviewApproved;
   const steps: DeliveryStep[] = [
@@ -477,7 +488,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
                 ) : null}
                 {reviewIsHistorical ? <Tag color="warning">{t('acceptance.historical')}</Tag> : null}
                 <Typography.Text type="secondary">{t('acceptance.reviewChangeNote')}</Typography.Text>
-                {selectedRound === currentRound && selectedCompletionId && !completionConflict && at(completionObject, ['approved_by', 'independence_kind']) ? (
+                {selectedRound === currentRound && completionKnown && at(completionObject, ['approved_by', 'independence_kind']) ? (
                   <Typography.Text type="secondary" data-testid="completion-independence">
                     {completionReviewLabels[completionReviewKind ?? ''] ?? t('outcomeReviews.methodUnknown')}
                   </Typography.Text>

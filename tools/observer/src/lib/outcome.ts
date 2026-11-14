@@ -17,6 +17,7 @@ export function outcomeQueryOptions(
   const query = { protocol_version: 1 as const, op, ...selector };
   return {
     queryKey: ['team', 'outcome', project, op, selector],
+    meta: { failureScope: 'object' },
     queryFn: ({ signal }: { signal: AbortSignal }) =>
       apiPost<TeamReadResponse<OutcomeData>>('/api/team/read', { project, query }, signal),
     enabled: Boolean(project) && enabled && !revoked,
@@ -29,6 +30,7 @@ export function reviewRoundsQueryOptions(project: string, workId: string, stream
     workstream_id: stream, limit: 20, max_context_bytes: 65536, ...(cursor ? { cursor } : {}) };
   return {
     queryKey: ['team', 'review-rounds', project, workId, stream, cursor],
+    meta: { failureScope: 'object' },
     queryFn: ({ signal }: { signal: AbortSignal }) =>
       apiPost<TeamReadResponse<ReviewRoundsData>>('/api/team/read', { project, query }, signal),
     enabled: Boolean(project && workId && stream) && !revoked,

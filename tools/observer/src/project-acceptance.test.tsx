@@ -267,6 +267,77 @@ afterEach(async () => {
 });
 
 describe('project acceptance evidence (AWR-OBS-006)', () => {
+  it.each(['contract', 'evidence', 'execution', 'review', 'delivery', 'currentContract'])(
+    'keeps completion unconfirmed when the %s binding is missing', async (field) => {
+      const { payloads } = setupAcceptance();
+      const receipt = payloads.completion.completion as unknown as Record<string, unknown>;
+      if (field === 'contract') delete receipt.contract_hash;
+      if (field === 'evidence') delete receipt.evidence_id;
+      if (field === 'execution') delete receipt.execution_id;
+      if (field === 'review') delete receipt.review_round_id;
+      if (field === 'delivery') delete (payloads.deliveryByWork[WORK].delivery.awr_acceptance as Record<string, unknown>).selected_completion_id;
+      if (field === 'currentContract') delete (payloads.reviews[WORK] as unknown as Record<string, unknown>).contract_hash;
+      await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
+      expect(screen.getByTestId('delivery-step-acceptance').textContent).not.toContain('已完成');
+      expect(screen.getByTestId('delivery-step-acceptance').textContent).toMatch(/结果未知|待核对|记录不一致/);
+      expect(screen.queryByTestId('completion-independence')).toBeNull();
+    },
+  );
+
+  it('keeps a denied history read local to that panel', async () => {
+    setupAcceptance({ failOps: ['review.rounds'], failWith: { 'review.rounds': 'Forbidden' } });
+    await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
+    expect(await screen.findByTestId('state-forbidden')).toBeTruthy();
+    expect(screen.getByTestId('acceptance-evidence-chain').textContent).toContain('业务验收已完成');
+  });
+
+  it('accepts an explicitly recorded human-reviewed report without an execution', async () => {
+    const { payloads } = setupAcceptance();
+    const collaboration = payloads.snapshots[WORK].observation.collaboration;
+    collaboration.delivery_required = false;
+    collaboration.candidate = null as never;
+    collaboration.integration = null;
+    payloads.reviews[WORK].submission.delivery_required = false;
+    payloads.reviews[WORK].submission.candidate_current = false;
+    payloads.reviews[WORK].execution_id = null as never;
+    payloads.completion.completion.execution_id = null as never;
+    payloads.reviews[WORK].evidence_provenance.author_self_report = false;
+    payloads.reviews[WORK].evidence_provenance.execution_consistency.independent_verification = true;
+    payloads.reviews[WORK].decisions[0].human_approval = true;
+    payloads.reviews[WORK].decisions[0].independence_kind = 'team_independent';
+    payloads.reviews[WORK].decisions[0].approval_basis = 'human_independent_review';
+    payloads.completion.completion.approved_by.human_approval = true;
+    Object.assign(payloads.completion.completion.approved_by, { independence_kind: 'team_independent' });
+    await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
+    expect(screen.getByTestId('delivery-step-acceptance').textContent).toBe('已完成');
+  });
+
+  it('discards a cached completion after work is returned for another review', async () => {
+    const { payloads } = setupAcceptance();
+    const { queryClient } = await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
+    expect(screen.getByTestId('delivery-step-acceptance').textContent).toBe('已完成');
+    Object.assign(payloads.snapshots[WORK].observation.runtime, { state: 'claimed', selected_completion_id: null });
+    Object.assign(payloads.snapshots[WORK].observation.collaboration.review, { id: PAGE_ROUND, state: 'open' });
+    Object.assign(payloads.reviews[WORK], { round_id: PAGE_ROUND, state: 'open' });
+    Object.assign(payloads.deliveryByWork[WORK].delivery.awr_acceptance, { complete: false, runtime_state: 'claimed', selected_completion_id: null });
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ['team'] }); });
+    await screen.findByTestId(`acceptance-review-${PAGE_ROUND}`);
+    await waitFor(() => expect(screen.getByTestId('delivery-step-acceptance').textContent).toBe('还没有完成记录'));
+    expect(screen.queryByTestId('acceptance-completion-conflict')).toBeNull();
+  });
+
+  it('keeps denied activity local while current acceptance remains readable', async () => {
+    setupAcceptance();
+    const original = globalThis.fetch;
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => String(input).includes('/api/team/activity')
+      ? Promise.resolve(json({ ok: false, error: { code: 'Forbidden', message: 'private-activity-denial' } }))
+      : original(input, init));
+    await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
+    expect(await screen.findByTestId('state-forbidden')).toBeTruthy();
+    expect(screen.getByTestId('delivery-step-acceptance').textContent).toBe('已完成');
+    expect(document.body.textContent).not.toContain('private-activity-denial');
+  });
+
   it('labels required dependencies as upstream work', async () => {
     const { payloads } = setupAcceptance();
     Object.assign(payloads.snapshots[WORK].visible_contract, { required_dependencies: [PAGE] });

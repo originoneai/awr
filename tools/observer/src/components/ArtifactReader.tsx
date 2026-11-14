@@ -39,6 +39,7 @@ export function ArtifactReader({
   } : null;
   const read = useQuery({
     queryKey: ['team', 'artifact-read', project, selector],
+    meta: { failureScope: 'object' },
     queryFn: async ({ signal }: { signal: AbortSignal }) => {
       try {
         return await fetchArtifactContent(project, selector as ArtifactSelector, signal);
