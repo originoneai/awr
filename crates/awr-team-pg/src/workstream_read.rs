@@ -18,6 +18,7 @@ mod delivery;
 mod graph;
 mod guidance;
 mod inbox;
+mod list;
 mod navigation;
 mod observation;
 
@@ -1703,31 +1704,7 @@ pub(crate) async fn read(
             graph::read(tx, tenant, project, auth, &stream, q, &binding, &c, limit).await?
         }
         "work.list" | "work.search" => {
-            let term = q.search.clone().unwrap_or_default();
-            // Filter before both the page and count. Search has no global corpus
-            // or rank, so private stream contents cannot affect visible results.
-            let count:i64=tx.query_one("SELECT count(*) FROM awr_team.work_contracts c JOIN awr_team.workstream_snapshot_ownership o
-                USING(tenant_id,project_id,snapshot_id,scope_id,work_id)
-                WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.snapshot_id=$3 AND o.workstream_id=$4
-                AND strpos(lower(c.title),lower($5))>0", &[&tenant,&project,&auth.snapshot,&stream,&term]).await?.get(0);
-            let rows=tx.query("SELECT c.work_id,c.title,c.contract_hash FROM awr_team.work_contracts c JOIN awr_team.workstream_snapshot_ownership o
-                USING(tenant_id,project_id,snapshot_id,scope_id,work_id)
-                WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.snapshot_id=$3 AND o.workstream_id=$4 AND c.work_id>$5
-                AND strpos(lower(c.title),lower($6))>0 ORDER BY c.work_id LIMIT $7",
-                &[&tenant,&project,&auth.snapshot,&stream,&c.key,&term,&(limit+1)]).await?;
-            let more = rows.len() > limit as usize;
-            let items:Vec<_>=rows.iter().take(limit as usize).map(|r|json!({"work_id":r.get::<_,String>(0),"title":r.get::<_,String>(1),"contract_hash":r.get::<_,String>(2)})).collect();
-            let next = if more {
-                next_cursor(
-                    &binding,
-                    items.last().unwrap()["work_id"].as_str().unwrap(),
-                    0,
-                    -1,
-                )
-            } else {
-                Value::Null
-            };
-            json!({"items":items,"total":count,"next_cursor":next})
+            list::read(tx, tenant, project, auth, &stream, q, &binding, &c, limit).await?
         }
         "work.prepare" | "work.snapshot" => {
             let work = resolved

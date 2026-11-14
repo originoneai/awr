@@ -2,7 +2,7 @@
 use crate::{PgError, PgResult};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio_postgres::Transaction;
+use tokio_postgres::{Row, Transaction};
 
 pub(crate) const STALE_AFTER_MS: i64 = 15 * 60 * 1000;
 pub(crate) const PROGRESS_PHASES: &[&str] = &[
@@ -323,6 +323,72 @@ pub(crate) fn missing(client: &Value, capability: &str) -> &'static str {
     }
 }
 
+/// Select each work's latest actual report, independently of its latest session.
+/// Callers supply only already-authorized current work/ownership pairs.
+pub(crate) async fn report_rows(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    stream: &str,
+    works: &[(String, i64)],
+    requested_session: Option<&str>,
+    field: &str,
+) -> PgResult<Vec<Row>> {
+    let column = match field {
+        "progress" => "progress_json",
+        "usage" => "usage_json",
+        _ => return Err(invalid()),
+    };
+    let bindings = json!(
+        works
+            .iter()
+            .map(|(work, ownership)| json!({"work_id":work,"ownership_version":ownership}))
+            .collect::<Vec<_>>()
+    );
+    tx.query(
+        &format!(
+            "SELECT DISTINCT ON (s.work_id) c.id,c.{column},c.contract_hash,c.next_action,
+        (extract(epoch FROM c.created_at)*1000)::bigint,c.observed_revision,
+        s.id,s.actor_id,s.client_id,a.display_name,s.work_id
+        FROM awr_team.checkpoints c JOIN awr_team.sessions s
+          ON (s.tenant_id,s.project_id,s.id)=(c.tenant_id,c.project_id,c.session_id)
+        JOIN jsonb_to_recordset($4) AS b(work_id text,ownership_version bigint)
+          ON b.work_id=s.work_id AND b.ownership_version=s.ownership_version
+        LEFT JOIN awr_team.actors a ON a.tenant_id=s.tenant_id AND a.id=s.actor_id
+        WHERE s.tenant_id=$1 AND s.project_id=$2 AND s.scope_id='main'
+          AND s.workstream_id=$3 AND ($5::text IS NULL OR s.id=$5)
+          AND c.{column} IS NOT NULL
+        ORDER BY s.work_id,c.observed_revision DESC,c.created_at DESC,c.id DESC"
+        ),
+        &[&tenant, &project, &stream, &bindings, &requested_session],
+    )
+    .await
+    .map_err(Into::into)
+}
+
+pub(crate) fn report_value(row: &Row, field: &str, contract: &str, observed: i64) -> Value {
+    let reported: i64 = row.get(4);
+    let current = row.get::<_, String>(2) == contract;
+    let mut value: Value = row.get(1);
+    let measured = value["observed_at_unix_ms"].as_i64().unwrap_or(reported);
+    value["checkpoint_id"] = json!(row.get::<_, String>(0));
+    value["reported_at_unix_ms"] = json!(reported);
+    value["reported_contract_hash"] = json!(row.get::<_, String>(2));
+    value["recorded_project_revision"] = json!(row.get::<_, i64>(5).to_string());
+    value["client_observed_at_unix_ms"] = value["observed_at_unix_ms"].clone();
+    value["report_order_basis"] = json!("recorded_project_revision");
+    value["contract_matches_current"] = json!(current);
+    value["stale"] = json!(!current || observed.saturating_sub(measured) > STALE_AFTER_MS);
+    value["provenance"] = json!("caller_declared");
+    value["origin"] = json!({"session_id":row.get::<_,String>(6),
+        "actor_id":row.get::<_,String>(7),"client_id":row.get::<_,String>(8),
+        "actor_name":row.get::<_,Option<String>>(9)});
+    if field == "progress" {
+        value["next_action"] = json!(row.get::<_, String>(3));
+    }
+    value
+}
+
 /// Read independently timed summaries; an ordinary checkpoint must not erase
 /// an earlier report or make an old usage measurement look freshly collected.
 pub(crate) async fn observe(
@@ -365,55 +431,20 @@ pub(crate) async fn observe(
             Value::Null
         };
     }
-    // Both column names are compile-time constants, never caller-provided SQL.
-    for (field, column) in [("progress", "progress_json"), ("usage", "usage_json")] {
-        let row = tx
-            .query_opt(
-                &format!(
-                    "SELECT c.id,c.{column},c.contract_hash,c.next_action,
-            (extract(epoch FROM c.created_at)*1000)::bigint,c.observed_revision,
-            s.id,s.actor_id,s.client_id,a.display_name
-            FROM awr_team.checkpoints c JOIN awr_team.sessions s
-              ON (s.tenant_id,s.project_id,s.id)=(c.tenant_id,c.project_id,c.session_id)
-            LEFT JOIN awr_team.actors a ON a.tenant_id=s.tenant_id AND a.id=s.actor_id
-            WHERE s.tenant_id=$1 AND s.project_id=$2 AND s.scope_id='main' AND s.work_id=$3
-              AND s.workstream_id=$4 AND s.ownership_version=$5
-              AND ($6::text IS NULL OR s.id=$6) AND c.{column} IS NOT NULL
-            ORDER BY c.observed_revision DESC,c.created_at DESC,c.id DESC LIMIT 1"
-                ),
-                &[
-                    &tenant,
-                    &project,
-                    &work,
-                    &stream,
-                    &ownership,
-                    &requested_session,
-                ],
-            )
-            .await?;
-        if let Some(row) = row {
-            let reported: i64 = row.get(4);
-            let current = row.get::<_, String>(2) == contract;
-            let mut value: Value = row.get(1);
-            let measured = value["observed_at_unix_ms"].as_i64().unwrap_or(reported);
-            value["checkpoint_id"] = json!(row.get::<_, String>(0));
-            value["reported_at_unix_ms"] = json!(reported);
-            value["reported_contract_hash"] = json!(row.get::<_, String>(2));
-            value["recorded_project_revision"] = json!(row.get::<_, i64>(5).to_string());
-            // A server receive time is not a client observation. Progress v1
-            // does not collect that time; usage preserves its supplied host time.
-            value["client_observed_at_unix_ms"] = value["observed_at_unix_ms"].clone();
-            value["report_order_basis"] = json!("recorded_project_revision");
-            value["contract_matches_current"] = json!(current);
-            value["stale"] = json!(!current || observed.saturating_sub(measured) > STALE_AFTER_MS);
-            value["provenance"] = json!("caller_declared");
-            value["origin"] = json!({"session_id":row.get::<_,String>(6),
-                "actor_id":row.get::<_,String>(7),"client_id":row.get::<_,String>(8),
-                "actor_name":row.get::<_,Option<String>>(9)});
-            if field == "progress" {
-                value["next_action"] = json!(row.get::<_, String>(3));
-            }
-            data[field] = value;
+    for field in ["progress", "usage"] {
+        if let Some(row) = report_rows(
+            tx,
+            tenant,
+            project,
+            stream,
+            &[(work.into(), ownership)],
+            requested_session,
+            field,
+        )
+        .await?
+        .first()
+        {
+            data[field] = report_value(row, field, contract, observed);
             data["missing"][field] = Value::Null;
         }
     }

@@ -2,9 +2,353 @@
 mod common;
 #[path = "fixtures/workstream_access.rs"]
 mod fixture;
+#[path = "fixtures/delivery_integration.rs"]
+mod integration_fixture;
 use awr_core::Id;
-use awr_team_pg::PgError;
+use awr_team_pg::*;
 use fixture::*;
+use serde_json::{Value, json};
+
+#[tokio::test]
+async fn list_summaries_share_exact_version_bound_integration_state_with_snapshots() {
+    let f = integration_fixture::setup_content_integration().await;
+    let prepared = f.prepared().await;
+    let id = prepared["integration_id"].as_str().unwrap();
+    for state in ["prepared", "rejected"] {
+        f.admin
+            .execute(
+                "UPDATE awr_team.delivery_integration_intents SET state=$2 WHERE id=$1",
+                &[&id, &state],
+            )
+            .await
+            .unwrap();
+        let list = f
+            .reads
+            .query(TENANT, PROJECT, A, query("work.list"))
+            .await
+            .unwrap();
+        let item = &list["data"]["items"][0];
+        let mut q = query("work.snapshot");
+        q.work_id = Some("a".into());
+        let detail = f.reads.query(TENANT, PROJECT, A, q).await.unwrap();
+        let integration = &item["summary"]["outcome"]["value"]["integration"];
+        assert_eq!(
+            integration,
+            &detail["data"]["observation"]["collaboration"]["integration"]
+        );
+        assert_eq!(integration["state"], state);
+        assert_eq!(integration["current_binding"], true);
+        if state == "rejected" {
+            assert_eq!(
+                item["summary"]["blocker"]["value"]["kind"],
+                "integration_rejected"
+            );
+        }
+    }
+    // A rejection of a different version remains history, never a current blocker.
+    f.admin.execute("UPDATE awr_team.delivery_integration_intents
+        SET request_json=jsonb_set(request_json,'{prepare,selection_version}','\"earlier\"') WHERE id=$1",&[&id]).await.unwrap();
+    let changed = f
+        .reads
+        .query(TENANT, PROJECT, A, query("work.list"))
+        .await
+        .unwrap();
+    let summary = &changed["data"]["items"][0]["summary"];
+    assert_eq!(
+        summary["outcome"]["value"]["integration"]["current_binding"],
+        false
+    );
+    assert!(summary["blocker"]["value"].is_null());
+}
+
+trait PgWire: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> PgWire for T {}
+
+// Count actual PostgreSQL statement executions, without instrumenting product code
+// or requiring a server extension. Each test still uses its own isolated database.
+async fn counted_pg(
+    upstream: tokio_postgres::Config,
+    count: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+) -> (u16, tokio::task::JoinHandle<()>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let task = tokio::spawn(async move {
+        while let Ok((socket, _)) = listener.accept().await {
+            let upstream = upstream.clone();
+            let count = count.clone();
+            tokio::spawn(async move {
+                socket.set_nodelay(true).unwrap();
+                let port = upstream.get_ports().first().copied().unwrap_or(5432);
+                let remote: Box<dyn PgWire> = match &upstream.get_hosts()[0] {
+                    tokio_postgres::config::Host::Tcp(host) => {
+                        let host = upstream
+                            .get_hostaddrs()
+                            .first()
+                            .map(|ip| ip.to_string())
+                            .unwrap_or_else(|| host.clone());
+                        let stream = tokio::net::TcpStream::connect((host.as_str(), port))
+                            .await
+                            .unwrap();
+                        stream.set_nodelay(true).unwrap();
+                        Box::new(stream)
+                    }
+                    #[cfg(unix)]
+                    tokio_postgres::config::Host::Unix(path) => Box::new(
+                        tokio::net::UnixStream::connect(path.join(format!(".s.PGSQL.{port}")))
+                            .await
+                            .unwrap(),
+                    ),
+                };
+                let (mut incoming, mut outgoing) = socket.into_split();
+                let (mut responses, mut requests) = tokio::io::split(remote);
+                let forward = async {
+                    let length = incoming.read_u32().await?;
+                    let mut startup = vec![0; length as usize - 4];
+                    incoming.read_exact(&mut startup).await?;
+                    requests.write_u32(length).await?;
+                    requests.write_all(&startup).await?;
+                    loop {
+                        let kind = incoming.read_u8().await?;
+                        let length = incoming.read_u32().await?;
+                        assert!((4..=4 * 1024 * 1024).contains(&length));
+                        let mut body = vec![0; length as usize - 4];
+                        incoming.read_exact(&mut body).await?;
+                        if kind == b'E' || kind == b'Q' {
+                            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        }
+                        requests.write_u8(kind).await?;
+                        requests.write_u32(length).await?;
+                        requests.write_all(&body).await?;
+                        if kind == b'X' {
+                            return Ok::<(), std::io::Error>(());
+                        }
+                    }
+                };
+                tokio::select! {_=forward=>{},_=tokio::io::copy(&mut responses,&mut outgoing)=>{}}
+            });
+        }
+    });
+    (port, task)
+}
+
+#[tokio::test]
+async fn list_summaries_have_a_constant_number_of_database_round_trips() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    let (_guard, _, database, _) = setup().await;
+    let upstream = common::with_app_role(&common::test_config(), &database);
+    let count = Arc::new(AtomicUsize::new(0));
+    let (port, proxy) = counted_pg(upstream.clone(), count.clone()).await;
+    let mut counts = Vec::new();
+    for limit in [1, 2] {
+        let mut config = tokio_postgres::Config::new();
+        config
+            .host("127.0.0.1")
+            .port(port)
+            .user("awr_app")
+            .password("app-test")
+            .dbname(&database);
+        let store = awr_team_pg::WorkstreamReadStore::from_config(config);
+        let mut q = query("work.list");
+        q.limit = Some(limit);
+        count.store(0, Ordering::SeqCst);
+        let result = store.query(TENANT, PROJECT, A, q).await.unwrap();
+        assert_eq!(
+            result["data"]["items"].as_array().unwrap().len(),
+            limit as usize
+        );
+        counts.push(count.load(Ordering::SeqCst));
+        drop(store);
+    }
+    proxy.abort();
+    println!("work.list statement counts including authentication and transaction: {counts:?}");
+    assert_eq!(
+        counts[0], counts[1],
+        "adding items must not add database round trips"
+    );
+    assert!(counts[0] <= 20, "bounded authenticated read: {counts:?}");
+}
+
+#[tokio::test]
+async fn list_summaries_match_snapshots_and_keep_latest_actual_report() {
+    use serde_json::json;
+    let (_guard, admin, _, store) = setup().await;
+    let contract = prepare(&store, A, "a").await["data"]["contract_hash"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let report = json!({"phase":"testing","summary":"Sign-in works; checking expiry",
+        "completed":["Sign-in screen","Session renewal"],
+        "blockers":["Waiting for the review environment"],"artifacts":[],"tests":[]});
+    admin
+        .execute(
+            "UPDATE awr_team.checkpoints SET contract_hash=$1,progress_json=$2,
+        next_action='Check interrupted renewal',created_at='2026-11-01T12:00:00Z'
+        WHERE id='cp-session-a'",
+            &[&contract, &report],
+        )
+        .await
+        .unwrap();
+    admin.batch_execute("INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status)
+        VALUES('reader-tenant','reader-project','responsible','Maya','active');
+        INSERT INTO awr_team.task_responsibilities(tenant_id,project_id,work_id,owner_person_id,version)
+        VALUES('reader-tenant','reader-project','a','responsible',1);
+        UPDATE awr_team.work_runtime SET state='in_progress' WHERE work_id='a';
+        INSERT INTO awr_team.checkpoints(tenant_id,project_id,id,session_id,context_hash,contract_hash,
+            observed_revision,next_action,open_loops_json,created_at)
+        VALUES('reader-tenant','reader-project','later-journal','session-a','context','contract',2,
+            'Ordinary journal entry','[]','2026-11-02T12:00:00Z');
+        UPDATE awr_team.sessions SET latest_checkpoint_id='later-journal' WHERE id='session-a'").await.unwrap();
+    let list = store
+        .query(TENANT, PROJECT, A, query("work.list"))
+        .await
+        .unwrap();
+    for item in list["data"]["items"].as_array().unwrap() {
+        let mut q = query("work.snapshot");
+        q.work_id = Some(item["work_id"].as_str().unwrap().into());
+        let snapshot = store.query(TENANT, PROJECT, A, q).await.unwrap();
+        let observation = &snapshot["data"]["observation"];
+        let summary = &item["summary"];
+        assert_eq!(
+            summary["owner"]["value"]
+                .get("person_id")
+                .unwrap_or(&json!(null)),
+            &observation["responsibility"]["owner_person_id"]
+        );
+        assert_eq!(
+            summary["owner"]["value"]
+                .get("display_name")
+                .unwrap_or(&json!(null)),
+            &observation["responsibility"]["owner_name"]
+        );
+        assert_eq!(summary["runtime"]["value"], observation["runtime"]["state"]);
+        assert_eq!(summary["phase"]["value"], observation["progress"]["phase"]);
+        assert_eq!(
+            summary["next_action"]["value"],
+            observation["progress"]["next_action"]
+        );
+        assert_eq!(
+            summary["outcome"]["value"]["completed"],
+            observation["progress"]["completed"]
+        );
+        assert_eq!(
+            summary["outcome"]["value"]["integration"],
+            observation["collaboration"]["integration"]
+        );
+        for field in [
+            "owner",
+            "phase",
+            "runtime",
+            "outcome",
+            "blocker",
+            "next_action",
+            "report",
+        ] {
+            let value = &summary[field];
+            assert!(value.get("value").is_some(), "missing {field}");
+            if value["value"].is_null() {
+                assert!(value["as_of_unix_ms"].is_null());
+                assert!(value["reason"].is_string(), "missing reason for {field}");
+            } else {
+                assert!(value["as_of_unix_ms"].is_i64());
+                assert!(value["reason"].is_null());
+            }
+        }
+    }
+    let summary = &list["data"]["items"][0]["summary"];
+    assert_eq!(summary["owner"]["value"]["display_name"], "Maya");
+    assert_eq!(summary["phase"]["value"], "testing");
+    assert_eq!(summary["blocker"]["value"]["text"], report["blockers"][0]);
+    assert_eq!(summary["next_action"]["value"], "Check interrupted renewal");
+    assert_eq!(summary["phase"]["as_of_unix_ms"], 1793534400000_i64);
+    assert_eq!(
+        summary["outcome"]["as_of_unix_ms"],
+        summary["phase"]["as_of_unix_ms"]
+    );
+    assert!(!list.to_string().contains("PRIVATE"));
+    // Changing the reported phase must change both reads, including after an ordinary checkpoint.
+    admin.batch_execute("UPDATE awr_team.checkpoints SET progress_json=jsonb_set(progress_json,'{phase}','\"blocked\"')
+        WHERE id='cp-session-a'").await.unwrap();
+    let changed = store
+        .query(TENANT, PROJECT, A, query("work.list"))
+        .await
+        .unwrap();
+    assert_eq!(
+        changed["data"]["items"][0]["summary"]["phase"]["value"],
+        "blocked"
+    );
+    let mut q = query("work.snapshot");
+    q.work_id = Some("a".into());
+    assert_eq!(
+        store.query(TENANT, PROJECT, A, q).await.unwrap()["data"]["observation"]["progress"]["phase"],
+        "blocked"
+    );
+}
+
+#[tokio::test]
+async fn list_summaries_keep_null_reasons_permissions_search_and_pagination() {
+    let (_guard, admin, _, store) = setup().await;
+    let mut q = query("work.list");
+    q.limit = Some(1);
+    let first = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    assert_eq!(first["data"]["total"], 2);
+    assert_eq!(
+        first["data"]["items"][0]["summary"]["phase"]["reason"],
+        "client_capability_unknown"
+    );
+    q.cursor = Some(first["data"]["next_cursor"].as_str().unwrap().into());
+    let second = store.query(TENANT, PROJECT, A, q).await.unwrap();
+    assert_eq!(second["data"]["items"][0]["work_id"], "c");
+    assert_eq!(
+        second["data"]["items"][0]["summary"]["phase"]["reason"],
+        "no_session"
+    );
+    assert!(second["data"]["next_cursor"].is_null());
+    let mut search = query("work.search");
+    search.search = Some("alpha".into());
+    let result = store.query(TENANT, PROJECT, A, search).await.unwrap();
+    assert!(!result.to_string().contains("PRIVATE"));
+    let private = store
+        .query(TENANT, PROJECT, B, query("work.list"))
+        .await
+        .unwrap();
+    assert_eq!(private["data"]["total"], 1);
+    assert_eq!(private["data"]["items"][0]["work_id"], "b-private");
+    admin
+        .batch_execute(
+            "UPDATE awr_team.project_memberships SET role='reader',business_roles='[\"observer\"]'
+        WHERE tenant_id='reader-tenant' AND project_id='reader-project' AND actor_id='agent'",
+        )
+        .await
+        .unwrap();
+    let observer = store
+        .query(TENANT, PROJECT, A, query("work.list"))
+        .await
+        .unwrap();
+    assert_eq!(observer["data"]["total"], 2);
+    assert!(!observer.to_string().contains("PRIVATE"));
+    for (tenant, token) in [("other-tenant", A), (TENANT, NONE)] {
+        assert!(matches!(
+            store
+                .query(tenant, PROJECT, token, query("work.list"))
+                .await,
+            Err(PgError::Forbidden)
+        ));
+    }
+    admin
+        .batch_execute(
+            "UPDATE awr_team.credentials SET revoked_at=clock_timestamp() WHERE id='reader-a'",
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, query("work.list")).await,
+        Err(PgError::Forbidden)
+    ));
+}
 
 #[tokio::test]
 async fn progress_graph_pages_keep_scope_dependencies_and_revision() {

@@ -683,15 +683,20 @@ function createTeamBridge(opts) {
     return items.map((item) => {
       if (item && item.key) return item;
       const key = (item && (item.external_key || item.work_id || item.id)) || 'unknown';
+      const summary = item?.summary?.version === 1 ? item.summary : null;
+      const reported = summary?.report?.value;
+      const outcome = summary?.outcome?.value;
+      const blocker = summary?.blocker?.value;
       return {
         key: String(key),
         title: (item && (item.title || item.name)) || String(key),
-        owner_person: (item && item.owner_person) || null,
-        agent: (item && item.agent) || null,
-        outcome: (item && item.outcome) || null,
-        status: (item && (item.status || item.state)) || 'unknown',
-        blocker: (item && item.blocker) || null,
-        next_step: (item && item.next_step) || null,
+        owner_person: summary ? summary.owner?.value?.display_name ?? null : (item && item.owner_person) || null,
+        agent: summary ? reported?.origin?.actor_name ?? null : (item && item.agent) || null,
+        outcome: summary ? outcome?.summary ?? null : (item && item.outcome) || null,
+        status: summary ? summary.runtime?.value ?? 'unknown' : (item && (item.status || item.state)) || 'unknown',
+        blocker: summary ? blocker?.text ?? null : (item && item.blocker) || null,
+        next_step: summary ? summary.next_action?.value ?? null : (item && item.next_step) || null,
+        ...(summary ? { observation_summary: summary } : {}),
         depends_on: (item && item.depends_on) || [],
         hidden_deps: (item && item.hidden_deps) || [],
         capabilities: (item && item.capabilities) || {},
