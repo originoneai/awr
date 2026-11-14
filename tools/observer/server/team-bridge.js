@@ -1060,11 +1060,8 @@ function createTeamBridge(opts) {
       if (streams.truncated || streams.items.length !== streams.total) {
         return { ok: false, error: { code: 'ResponseTooLarge', message: 'Graph scope is incomplete' } };
       }
-      if (!streams.as_of) {
-        return { ok: false, error: { code: 'SourceChanged', message: 'Project changed while reading graph scope; refresh' } };
-      }
       const items = [];
-      const asOf = streams.as_of;
+      let asOf = null;
       for (const stream of streams.items) {
         const page = await queryAllPages(project, { op: 'work.graph', workstream_id: stream.id }, req, res,
           { pageTimeoutMs: readTimeoutMs, deadlineAt });
@@ -1072,10 +1069,22 @@ function createTeamBridge(opts) {
         if (page.truncated || page.items.length !== page.total) {
           return { ok: false, error: { code: 'ResponseTooLarge', message: 'Graph work enumeration is incomplete' } };
         }
-        if (!page.as_of || JSON.stringify(asOf) !== JSON.stringify(page.as_of)) {
+        if (!page.as_of || asOf && JSON.stringify(asOf) !== JSON.stringify(page.as_of)) {
           return { ok: false, error: { code: 'SourceChanged', message: 'Project changed while reading the graph; refresh' } };
         }
+        asOf = page.as_of;
         items.push(...page.items.map((item) => ({ ...item, workstream_id: stream.id })));
+      }
+      // Scope discovery has a bare list contract. Recheck its complete identity
+      // after composing revision-bound work pages to catch grants or scope changes.
+      const finalScope = await queryAllPagesUncached(project, { op: 'workstreams.list' }, req, res,
+        { pageTimeoutMs: readTimeoutMs, deadlineAt });
+      if (finalScope.error) return { ok: false, error: finalScope.error };
+      const scopeIdentity = (list) => JSON.stringify(list.map(({ id, authority_version }) => [id, authority_version])
+        .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+      if (finalScope.truncated || finalScope.items.length !== finalScope.total
+        || scopeIdentity(streams.items) !== scopeIdentity(finalScope.items)) {
+        return { ok: false, error: { code: 'SourceChanged', message: 'Project scope changed while reading the graph; refresh' } };
       }
       return {
         ok: true, project, items, as_of: asOf, read_at_unix_ms: now(),
