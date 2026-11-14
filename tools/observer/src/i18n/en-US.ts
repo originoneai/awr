@@ -229,6 +229,7 @@ const enUS: Messages = {
   outcomeReviews: {
     title: 'Review history',
     selected: 'Viewing',
+    methodUnknown: 'Review method not recorded',
     round: 'Review {{count}}',
     latest: 'Latest',
     empty: 'No review records yet',

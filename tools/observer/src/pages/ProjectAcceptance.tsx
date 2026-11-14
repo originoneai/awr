@@ -126,6 +126,13 @@ export function ProjectAcceptance({ project }: { project: string }) {
   const completionReceipt = asText(completionObject?.receipt_id);
   const completionSelected = asText(completionData?.selected_completion_id);
   const completionReviewRound = asText(at(completionObject, ['approved_by', 'review_round_id']) ?? completionObject?.review_round_id);
+  const completionReviewKind = asText(at(completionObject, ['approved_by', 'independence_kind']));
+  const completionReviewLabels: Record<string, string> = {
+    team_independent: t('outcomeReviews.roles.independent_reviewer'),
+    personal_self_review: t('outcomeReviews.roles.author_reviewer'),
+    agent_review: t('outcomeReviews.roles.agent_reviewer'),
+    simulated_member_independent: value('simulated_member_independent', 'independence_kind'),
+  };
 
   const deliveryObject = asObject(at(delivery.data?.result.data, ['delivery']));
   const deliverySelected = asText(at(deliveryObject, ['awr_acceptance', 'selected_completion_id']));
@@ -472,7 +479,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
                 <Typography.Text type="secondary">{t('acceptance.reviewChangeNote')}</Typography.Text>
                 {selectedRound === currentRound && selectedCompletionId && !completionConflict && at(completionObject, ['approved_by', 'independence_kind']) ? (
                   <Typography.Text type="secondary" data-testid="completion-independence">
-                    {value(at(completionObject, ['approved_by', 'independence_kind']), 'independence_kind')}
+                    {completionReviewLabels[completionReviewKind ?? ''] ?? t('outcomeReviews.methodUnknown')}
                   </Typography.Text>
                 ) : null}
                 {at(reviewObject, ['evidence_provenance', 'author_self_report']) === true ? <Typography.Text type="secondary">{t('acceptance.selfReport')}</Typography.Text> : null}

@@ -225,6 +225,7 @@ const zhCN = {
   outcomeReviews: {
     title: '复核历程',
     selected: '正在查看',
+    methodUnknown: '复核方式未记录',
     round: '第 {{count}} 次复核',
     latest: '最近一次',
     empty: '还没有复核记录',

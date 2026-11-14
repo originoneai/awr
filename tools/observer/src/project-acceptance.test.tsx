@@ -275,6 +275,19 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     expect(screen.queryByText('影响的下游工作')).toBeNull();
   });
 
+  it.each([
+    ['team_independent', '独立复核'],
+    ['personal_self_review', '作者自查'],
+    ['agent_review', 'Agent 复核'],
+    ['future_private_review_kind', '复核方式未记录'],
+  ])('describes the recorded %s review method in product language', async (kind, label) => {
+    const { payloads } = setupAcceptance();
+    Object.assign(payloads.completion.completion.approved_by, { independence_kind: kind });
+    await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
+    expect(screen.getByTestId('completion-independence').textContent).toBe(label);
+    expect(document.body.textContent).not.toContain(kind);
+  });
+
   it('accepts report-only work without requiring repository integration or a repository candidate', async () => {
     const { payloads } = setupAcceptance();
     const collaboration = payloads.snapshots[WORK].observation.collaboration;

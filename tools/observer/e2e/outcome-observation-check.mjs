@@ -94,7 +94,7 @@ try {
             })), total: 2, next_cursor: null, as_of: { at_unix_ms: at } };
           } else if (query.op === 'completion.inspect') data = { selected_completion_id: completion, runtime_state: 'completed',
             completion: { receipt_id: completion, contract_hash: contract, evidence_id: evidenceId, execution_id: execution,
-              approved_by: { review_round_id: latest, independence_kind: 'agent_reviewed' } } };
+              approved_by: { review_round_id: latest, independence_kind: 'agent_review' } } };
           else if (query.op === 'delivery.inspect') data = { delivery: { awr_acceptance: { complete: true, runtime_state: 'completed', selected_completion_id: completion } } };
           else if (query.op === 'evidence.inspect') data = { evidence: { evidence_id: query.evidence_id,
             artifact_id: artifact, artifact_digest: digest } };
@@ -119,6 +119,8 @@ try {
       await chain.getByText(completeText, { exact: true }).waitFor();
       assert.equal(await page.getByTestId('acceptance-completion-conflict').count(), 0);
       const historyShot = path.join(evidence, `obs006-history-${language}-${width}.png`);
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.waitForFunction(() => window.scrollY === 0);
       await page.screenshot({ path: historyShot, fullPage: true });
       await page.getByRole('button', { name: language === 'zh-CN' ? '返回最近一次复核' : 'Return to latest review', exact: true }).click();
       assert.equal(reads.filter(query => query.op === 'artifact.content').length, 0);
@@ -135,6 +137,8 @@ try {
       for (const raw of [work, latest, earlier, contract, digest, execution, claim, completion, 'delivery.finalize', 'session.checkpoint', 'ReadTimeout', 'private-upstream-diagnostic']) assert.ok(!metrics.text.includes(raw), `Visible internal value ${raw}`);
       assert.deepEqual(errors, []);
       const screenshot = path.join(evidence, `obs006-${language}-${width}.png`);
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.waitForFunction(() => window.scrollY === 0);
       await page.screenshot({ path: screenshot, fullPage: true });
       results.push({ language, viewport: width, document: metrics.document, history_screenshot: historyShot, screenshot, reads: reads.length });
       await context.close();
