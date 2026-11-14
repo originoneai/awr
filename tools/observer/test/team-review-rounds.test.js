@@ -59,6 +59,20 @@ async function fixture(t, respond) {
 
 const scope = 'project=portal&work_id=work-one&workstream_id=development';
 
+test('review first-line projections cannot carry additional lines through alternate separators', async (t) => {
+  let body;
+  const { read } = await fixture(t, () => ({ body }));
+  for (const separator of ['\n', '\r\n', '\r', '\u0085', '\u2028', '\u2029']) {
+    body = reply([readableRound()]);
+    body.data.items[0].reason_first_line = `Summary${separator}must-not-leak`;
+    const result = await read(scope);
+    assert.equal(result.ok, false, JSON.stringify(separator));
+    assert.equal(result.error.code, 'BadGateway', JSON.stringify(separator));
+    assert.equal(result.result, undefined);
+    assert.equal(JSON.stringify(result).includes('must-not-leak'), false);
+  }
+});
+
 test('review history retains ordered restricted placeholders and the current member session', async (t) => {
   const pages = [reply([readableRound()], 2, 'page-two'), reply([restrictedRound(2)], 2)];
   const { read, calls } = await fixture(t, (query) => ({ body: pages[query.cursor ? 1 : 0] }));

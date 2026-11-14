@@ -283,7 +283,7 @@ function validReviewRounds(reply) {
       || !(item.reviewer_person_id === null || isBoundedId(item.reviewer_person_id))
       || !(item.decision === null || ['approve', 'reject'].includes(item.decision))
       || !(item.decided_at_unix_ms === null || Number.isSafeInteger(item.decided_at_unix_ms) && item.decided_at_unix_ms >= 0)
-      || !(item.reason_first_line === null || typeof item.reason_first_line === 'string' && !/[\r\n]/.test(item.reason_first_line))
+      || !(item.reason_first_line === null || typeof item.reason_first_line === 'string' && !/[\r\n\u0085\u2028\u2029]/.test(item.reason_first_line))
       || !REVIEW_SUMMARY_FIELDS.every((field) => item.missing[field] === (item[field] === null ? 'not_recorded' : null))) return false;
     const noDecision = item.decision === null;
     if (noDecision !== (item.decided_at_unix_ms === null) || noDecision !== (item.reviewer_actor_id === null)

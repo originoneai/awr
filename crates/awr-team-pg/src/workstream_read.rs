@@ -1532,9 +1532,14 @@ pub(crate) async fn read(
             "coordinator_epoch":auth.epoch,"project_status":auth.project_status,"source_snapshot_id":auth.snapshot,"project_revision":auth.revision.to_string(),"data":data}),
         );
     }
+    let binding = hash(
+        &json!({"auth":auth.binding,"snapshot":auth.snapshot,"epoch":auth.epoch,"stream":stream,
+        "authority":resolved.authority_version,"grant":auth.grant_versions[&resolved.workstream_id],"op":q.op,
+        "work":resolved.work_item_id,"session":q.session_id,"search":q.search}),
+    )?;
     if q.op == "review.rounds" {
         let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
-        let data = reviews::read(tx, tenant, project, auth, work, q).await?;
+        let data = reviews::read(tx, tenant, project, auth, work, q, &binding).await?;
         let result = json!({"protocol_version":1,"workstream_id":stream,
             "authority_version":resolved.authority_version.to_string(),"scope_id":"main",
             "selection_basis":resolved.basis,"coordinator_epoch":auth.epoch,
@@ -1549,11 +1554,6 @@ pub(crate) async fn read(
         }
         return Ok(result);
     }
-    let binding = hash(
-        &json!({"auth":auth.binding,"snapshot":auth.snapshot,"epoch":auth.epoch,"stream":stream,
-        "authority":resolved.authority_version,"grant":auth.grant_versions[&resolved.workstream_id],"op":q.op,
-        "work":resolved.work_item_id,"session":q.session_id,"search":q.search}),
-    )?;
     let c = cursor(q, &binding)?;
     let limit = i64::from(q.limit.unwrap_or(50));
     let data = match q.op.as_str() {

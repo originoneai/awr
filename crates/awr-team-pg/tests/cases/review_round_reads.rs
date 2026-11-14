@@ -33,6 +33,60 @@ fn rounds_query() -> WorkstreamQuery {
 }
 
 #[tokio::test]
+async fn review_round_cursor_expires_when_a_still_readable_grant_version_changes() {
+    let (_guard, admin, _, store) = setup().await;
+    round(&admin, "round-one", "a", 1, "open").await;
+    round(&admin, "round-two", "a", 2, "open").await;
+    let mut q = rounds_query();
+    q.limit = Some(1);
+    let first = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    q.cursor = first["data"]["next_cursor"].as_str().map(Into::into);
+    admin.execute("UPDATE awr_team.workstream_grants SET grant_version=grant_version+1 WHERE client_id='cli-a'", &[]).await.unwrap();
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, q.clone()).await,
+        Err(PgError::CursorExpired)
+    ));
+    q.cursor = None;
+    assert_eq!(
+        store.query(TENANT, PROJECT, A, q).await.unwrap()["data"]["total"],
+        2
+    );
+}
+
+#[tokio::test]
+async fn review_round_reason_first_line_handles_all_accepted_line_separators() {
+    let (_guard, admin, _, store) = setup().await;
+    round(&admin, "round-one", "a", 1, "approved").await;
+    decision(&admin, "decision-one", "round-one", "unspecified").await;
+    for separator in ["\n", "\r\n", "\r", "\u{0085}", "\u{2028}", "\u{2029}"] {
+        let reason = format!("Checks complete{separator}Additional review details");
+        admin
+            .execute(
+                "UPDATE awr_team.review_decisions SET reason=$1 WHERE id='decision-one'",
+                &[&reason],
+            )
+            .await
+            .unwrap();
+        let result = store
+            .query(TENANT, PROJECT, A, rounds_query())
+            .await
+            .unwrap();
+        assert_eq!(
+            result["data"]["items"][0]["reason_first_line"], "Checks complete",
+            "separator {separator:?}"
+        );
+        let mut inspect = query("review.inspect");
+        inspect.work_id = Some("a".into());
+        inspect.review_round_id = Some("round-one".into());
+        let inspected = store.query(TENANT, PROJECT, A, inspect).await.unwrap();
+        assert_eq!(
+            inspected["data"]["review"]["decisions"][0]["reason"],
+            reason
+        );
+    }
+}
+
+#[tokio::test]
 async fn review_round_summaries_match_inspection_and_preserve_history_and_unknown_roles() {
     let (_guard, admin, _, store) = setup().await;
     for (index, state) in [

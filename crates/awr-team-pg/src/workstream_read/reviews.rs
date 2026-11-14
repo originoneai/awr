@@ -42,7 +42,7 @@ fn summary(row: &tokio_postgres::Row) -> Value {
         "reviewer_person_id":row.get::<_,Option<String>>("reviewer_person_id"),
         "decision":row.get::<_,Option<String>>("decision"),
         "decided_at_unix_ms":row.get::<_,Option<i64>>("decided_at"),
-        "reason_first_line":row.get::<_,Option<String>>("reason").map(|reason| reason.lines().next().unwrap_or("").to_owned()),
+        "reason_first_line":row.get::<_,Option<String>>("reason").map(|reason| reason.split(['\r','\n','\u{0085}','\u{2028}','\u{2029}']).next().unwrap_or("").to_owned()),
         "missing":{}
     });
     for field in [
@@ -83,6 +83,7 @@ pub(super) async fn read(
     auth: &ReaderAuthority,
     work: &str,
     q: &WorkstreamQuery,
+    read_binding: &str,
 ) -> PgResult<Value> {
     let params: &[&(dyn tokio_postgres::types::ToSql + Sync)] =
         &[&tenant, &project, &work, &auth.snapshot];
@@ -93,8 +94,10 @@ pub(super) async fn read(
             approval_basis,md5(reason),decided_at) ELSE NULL END)::text,E'\\n' ORDER BY round_index,id),'')),
           (extract(epoch FROM statement_timestamp())*1000)::bigint FROM rounds"),params).await?;
     let revision: String = stamp.get(1);
-    let binding = hash(&json!({"domain":"awr-review-rounds-v1","auth":auth.binding,
-        "snapshot":auth.snapshot,"epoch":auth.epoch,"work":work,"revision":revision}))?;
+    let binding = hash(
+        &json!({"domain":"awr-review-rounds-v1","authority":read_binding,
+        "snapshot":auth.snapshot,"epoch":auth.epoch,"work":work,"revision":revision}),
+    )?;
     let cursor = cursor(q, &binding)?;
     if !cursor.key.is_empty() || cursor.index < -1 {
         return Err(PgError::CursorExpired);
