@@ -332,9 +332,11 @@ const zhCN = {
       policy: {
         agentReviewed: '上游成果须经过 Agent 复核，并确认执行结果',
         collaboratorReviewed: '上游成果须由另一名协作 Agent 复核',
+        memberReviewed: '上游成果须由另一位成员独立复核',
         fixedResults: '使用已约定版本的上游成果', currentResults: '上游要求变化后，需要重新核对已采用的成果',
         confirmWhileAuthorized: '须在执行授权有效期内确认工作已停止',
         confirmAfterExpiry: '授权到期后，仍可核对原次执行已停止的结果',
+        workspaceChanged: '本次工作改用另一个工作区',
         needsCheck: '具体要求需要 Agent 核对', availableToAgent: '你的 Agent 可以读取有权查看的具体内容',
       },
       summary: '新增 {{added}} 项 · 调整 {{changed}} 项 · 移出 {{removed}} 项 · 未变 {{unchanged}} 项',

@@ -40,8 +40,16 @@ function ChangeDetails({ fields }: { fields: NonNullable<PlanningCandidatesData[
       for (const policy of Object.values(item.value)) {
         if (policy === 'agent_reviewed_caller_asserted_reconciled') descriptions.add(t('plan.changes.policy.agentReviewed'));
         else if (policy === 'simulated_member_independent') descriptions.add(t('plan.changes.policy.collaboratorReviewed'));
-        else if (policy?.cross_workstream?.version_policy === 'fixed_delivery') descriptions.add(t('plan.changes.policy.fixedResults'));
-        else if (policy?.cross_workstream?.version_policy === 'current_contract') descriptions.add(t('plan.changes.policy.currentResults'));
+        else if (policy?.cross_workstream) {
+          const requirement = policy.cross_workstream;
+          const review = requirement.review_assurance === 'team_independent' ? t('plan.changes.policy.memberReviewed')
+            : requirement.review_assurance === 'simulated_member_independent' ? t('plan.changes.policy.collaboratorReviewed')
+              : t('plan.changes.policy.needsCheck');
+          const version = requirement.version_policy === 'fixed_delivery' ? t('plan.changes.policy.fixedResults')
+            : requirement.version_policy === 'current_contract' ? t('plan.changes.policy.currentResults')
+              : t('plan.changes.policy.needsCheck');
+          descriptions.add(`${review} · ${version}`);
+        }
         else descriptions.add(t('plan.changes.policy.needsCheck'));
       }
       return [...descriptions].join(' · ') || t('plan.changes.notSet');
@@ -62,12 +70,17 @@ function ChangeDetails({ fields }: { fields: NonNullable<PlanningCandidatesData[
     const prose = ['title', 'acceptance', 'hard_rules', 'verification_requirements'].includes(field.field);
     const describe = prose || ['dependency_acceptance', 'execution_settlement'].includes(field.field)
       || field.before.reason === 'permission_restricted' || field.after.reason === 'permission_restricted';
+    const previousWorkspace = (field.before.value as { workspace_id?: unknown } | null)?.workspace_id;
+    const nextWorkspace = (field.after.value as { workspace_id?: unknown } | null)?.workspace_id;
+    const workspaceChanged = field.field === 'execution_settlement' && typeof previousWorkspace === 'string'
+      && typeof nextWorkspace === 'string' && previousWorkspace !== nextWorkspace;
     return <div key={index}>
       <Typography.Text type="secondary">{t(`plan.changes.fields.${label}`)}</Typography.Text>
       {describe ? <Flex vertical gap={4}>
         <Typography.Text type="secondary">{t('plan.changes.before', { text: content(field.before, field.field, prose) })}</Typography.Text>
         <Typography.Text>{t('plan.changes.after', { text: content(field.after, field.field, prose) })}</Typography.Text>
       </Flex> : null}
+      {workspaceChanged ? <Typography.Text>{t('plan.changes.policy.workspaceChanged')}</Typography.Text> : null}
     </div>;
   })}</>;
 }

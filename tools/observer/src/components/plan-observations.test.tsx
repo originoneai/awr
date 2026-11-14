@@ -183,6 +183,29 @@ describe('plan observation product views', () => {
     expect(screen.queryByText('所需资料已齐备')).toBeNull();
   });
 
+  it.each(['zh-CN', 'en-US'])('preserves review-assurance and workspace-only changes without exposing identifiers in %s', async (language) => {
+    await i18n.changeLanguage(language);
+    mount((q) => response(q.op === 'sources.inspect' ? documents() : {
+      items: [candidate({ current_diff: { counts: { added: 0, removed: 0, changed: 1, unchanged: 0 }, items: [{
+        work_id: INTERNAL, title: 'Update collaboration requirements', kind: 'changed', fields: [
+          { field: 'dependency_acceptance',
+            before: { value: { [INTERNAL]: { cross_workstream: { review_assurance: 'team_independent', version_policy: 'current_contract' } } } },
+            after: { value: { [INTERNAL]: { cross_workstream: { review_assurance: 'simulated_member_independent', version_policy: 'current_contract' } } } } },
+          { field: 'execution_settlement',
+            before: { value: { mode: 'independent_workspace_v1', workspace_id: INTERNAL } },
+            after: { value: { mode: 'independent_workspace_v1', workspace_id: 'opaque-replacement' } } },
+        ],
+      }] } })], total: 1, next_cursor: null, as_of: { at_unix_ms: AT },
+    }));
+    await screen.findByText(language === 'zh-CN' ? '本次工作改用另一个工作区' : 'A different workspace is assigned to this work');
+    const panel = screen.getByTestId('plan-changes');
+    expect(panel.textContent).toContain(language === 'zh-CN' ? '原先：上游成果须由另一位成员独立复核' : 'Previously: Upstream results require independent review by another member');
+    expect(panel.textContent).toContain(language === 'zh-CN' ? '调整为：上游成果须由另一名协作 Agent 复核' : 'Proposed: Use upstream results reviewed by another collaborating Agent');
+    expect(panel.textContent).not.toMatch(/opaque-replacement|workspace_id|cross_workstream|review_assurance|version_policy|simulated_member_independent|independent_workspace_v1/);
+    expect(panel.textContent).not.toContain(INTERNAL);
+    expect(panel.querySelector('details, pre, code')).toBeNull();
+  });
+
   it('shows a safe failure and retry for malformed responses instead of presenting incomplete data as verified', async () => {
     mount(() => response({ items: [], next_cursor: null, collection: { complete: true } }));
     await screen.findByText('暂时无法核对项目资料', {}, { timeout: 4000 });

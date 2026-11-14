@@ -336,9 +336,11 @@ const enUS: Messages = {
       policy: {
         agentReviewed: 'Use upstream results after Agent review and confirmation of the execution outcome',
         collaboratorReviewed: 'Use upstream results reviewed by another collaborating Agent',
+        memberReviewed: 'Upstream results require independent review by another member',
         fixedResults: 'Use the agreed version of upstream results', currentResults: 'Recheck adopted results when upstream requirements change',
         confirmWhileAuthorized: 'Confirm that work has stopped while execution access is valid',
         confirmAfterExpiry: 'The original execution can be confirmed as stopped after its access expires',
+        workspaceChanged: 'A different workspace is assigned to this work',
         needsCheck: 'Your Agent needs to check the applicable requirements', availableToAgent: 'Your Agent can read the available details',
       },
       summary: '{{added}} added · {{changed}} changed · {{removed}} removed · {{unchanged}} unchanged',
