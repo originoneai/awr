@@ -10,8 +10,25 @@ impl DeliverySyncStore {
         work: &str,
         id: Option<&str>,
     ) -> PgResult<Value> {
+        Ok(
+            Self::integration_summaries_in_tx(tx, tenant, project, auth, &[work.into()], id)
+                .await?
+                .remove(work)
+                .unwrap_or(Value::Null),
+        )
+    }
+
+    /// The same selected-version summary used by work.snapshot, batched for a page.
+    pub(crate) async fn integration_summaries_in_tx(
+        tx: &Transaction<'_>,
+        tenant: &str,
+        project: &str,
+        auth: &ReaderAuthority,
+        works: &[String],
+        id: Option<&str>,
+    ) -> PgResult<std::collections::BTreeMap<String, Value>> {
         // The carry across snapshots below repeats completion::carried_across_snapshots.
-        let row = tx.query_opt("SELECT i.id,i.state,r.execution_id,
+        let row = tx.query("SELECT DISTINCT ON (i.work_id) i.id,i.state,r.execution_id,
             coalesce((s.source_snapshot_id=$4
                 OR (EXISTS(SELECT 1 FROM awr_team.work_runtime wr
                      WHERE (wr.tenant_id,wr.project_id,wr.scope_id,wr.work_id)=(s.tenant_id,s.project_id,s.scope_id,s.work_id)
@@ -33,7 +50,7 @@ impl DeliverySyncStore {
             coalesce(f.envelope_json#>>'{record,data,outcome}'='rejected'
               AND jsonb_typeof(f.envelope_json#>'{record,data,result_revision}')='object'
               AND (f.envelope_json#>>'{record,data,binding,target,precondition,kind}'='missing'
-                OR f.envelope_json#>'{record,data,result_revision}'<>f.envelope_json#>'{record,data,binding,target,precondition,revision}'),false)
+                OR f.envelope_json#>'{record,data,result_revision}'<>f.envelope_json#>'{record,data,binding,target,precondition,revision}'),false),i.work_id
         FROM awr_team.delivery_integration_intents i
         LEFT JOIN awr_team.delivery_selections s ON (s.tenant_id,s.project_id,s.work_id)=(i.tenant_id,i.project_id,i.work_id) AND s.scope_id='main'
         LEFT JOIN awr_team.delivery_candidates c ON (c.tenant_id,c.project_id,c.binding_digest)=(s.tenant_id,s.project_id,s.binding_digest)
@@ -41,14 +58,20 @@ impl DeliverySyncStore {
         LEFT JOIN awr_team.work_contracts wc ON (wc.tenant_id,wc.project_id,wc.work_id,wc.scope_id,wc.snapshot_id)=(o.tenant_id,o.project_id,o.work_id,o.scope_id,o.snapshot_id)
         LEFT JOIN awr_team.review_rounds r ON (r.tenant_id,r.project_id,r.work_id)=(i.tenant_id,i.project_id,i.work_id) AND r.id=i.request_json#>>'{prepare,review_round_id}'
         LEFT JOIN awr_team.delivery_facts f ON (f.tenant_id,f.project_id,f.id)=(i.tenant_id,i.project_id,i.confirmation_fact_id)
-        WHERE i.tenant_id=$1 AND i.project_id=$2 AND i.work_id=$3 AND ($6::text IS NULL OR i.id=$6)
-        ORDER BY (i.state IN ('dispatched','unknown')) DESC,i.created_at DESC,i.id DESC LIMIT 1",
-            &[&tenant,&project,&work,&auth.snapshot,&auth.epoch,&id]).await?;
-        Ok(row.map_or(Value::Null, |r| {
-            json!({"id":r.get::<_,String>(0),
+        WHERE i.tenant_id=$1 AND i.project_id=$2 AND i.work_id=ANY($3) AND ($6::text IS NULL OR i.id=$6)
+        ORDER BY i.work_id,(i.state IN ('dispatched','unknown')) DESC,i.created_at DESC,i.id DESC",
+            &[&tenant,&project,&works,&auth.snapshot,&auth.epoch,&id]).await?;
+        Ok(row
+            .into_iter()
+            .map(|r| {
+                (
+                    r.get::<_, String>(5),
+                    json!({"id":r.get::<_,String>(0),
             "state":r.get::<_,String>(1),"reviewed_execution_id":r.get::<_,Option<String>>(2),
-            "current_binding":r.get::<_,bool>(3),"target_changed":r.get::<_,bool>(4)})
-        }))
+            "current_binding":r.get::<_,bool>(3),"target_changed":r.get::<_,bool>(4)}),
+                )
+            })
+            .collect())
     }
 
     /// Whether completing the work must wait for a confirmed integration: the project declared a
