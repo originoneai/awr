@@ -49,6 +49,40 @@ async function fixture(t, respond) {
 
 const scope = 'project=portal&work_id=work-one&workstream_id=development';
 
+test('handoff metadata refuses package and raw bodies at every response level', async (t) => {
+  let body;
+  const { read } = await fixture(t, () => ({ body }));
+  for (const [level, select] of [
+    ['response', (r) => r], ['data', (r) => r.data],
+    ['as-of', (r) => r.data.as_of], ['item', (r) => r.data.items[0]],
+  ]) {
+    for (const field of ['package_json', 'body_json']) {
+      body = reply([item()]);
+      select(body)[field] = { details: 'must-not-leak' };
+      const result = await read(scope);
+      assert.equal(result.ok, false, `${level}.${field}`);
+      assert.equal(result.error.code, 'BadGateway');
+      assert.equal(result.result, undefined);
+      assert.equal(JSON.stringify(result).includes('must-not-leak'), false);
+    }
+  }
+  for (const field of ['project_status', 'selection_basis']) {
+    body = reply([item()]);
+    body[field] = { package_json: 'must-not-leak' };
+    const result = await read(scope);
+    assert.equal(result.ok, false, field);
+    assert.equal(result.result, undefined);
+  }
+});
+
+test('handoff pages preserve authoritative positions for opaque Unicode identities', async (t) => {
+  const rows = [{ ...item(1), handoff_id: '\ue000' }, { ...item(2), handoff_id: '😀' }];
+  const { read } = await fixture(t, () => ({ body: reply(rows) }));
+  const result = await read(scope);
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(result.result.data.items, rows);
+});
+
 test('handoff discovery preserves member identity, bounded pages, recipients and conservative counts', async (t) => {
   const pages = [reply([item()], { total: 2, cursor: 'page-two', state: 'all', recipient: 'receiver' }),
     reply([item(2, 'accepted')], { total: 2, state: 'all', recipient: 'receiver' })];

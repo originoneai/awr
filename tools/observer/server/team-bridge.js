@@ -257,14 +257,26 @@ function validReadResponse(reply, op) {
 function validHandoffs(reply) {
   const data = reply.data, asOf = asObject(data.as_of);
   const timestamp = (value) => Number.isSafeInteger(value) && value >= 0;
-  if (!(data.work_id === null || isBoundedId(data.work_id))
+  const envelopeFields = new Set(['protocol_version', 'scope_id', 'coordinator_epoch', 'project_status',
+    'source_snapshot_id', 'project_revision', 'data', 'workstream_id', 'authority_version', 'selection_basis']);
+  const dataFields = new Set(['work_id', 'recipient_person_id', 'handoff_state', 'items', 'total', 'next_cursor',
+    'truncated', 'count_scope', 'count_limited', 'hidden_count', 'execution_authorized', 'as_of']);
+  const asOfFields = new Set(['at_unix_ms', 'source_snapshot_id', 'project_revision', 'handoffs_revision']);
+  if (!Object.keys(reply).every((field) => envelopeFields.has(field))
+    || !Object.keys(data).every((field) => dataFields.has(field))
+    || !isBoundedId(reply.source_snapshot_id) || !isBoundedId(reply.coordinator_epoch)
+    || typeof reply.project_revision !== 'string' || !/^(0|[1-9]\d*)$/.test(reply.project_revision)
+    || ['project_status', 'selection_basis', 'workstream_id'].some((field) => field in reply && !isBoundedId(reply[field]))
+    || 'authority_version' in reply && (typeof reply.authority_version !== 'string' || !/^[1-9]\d*$/.test(reply.authority_version))
+    || !(data.work_id === null || isBoundedId(data.work_id))
     || !(data.recipient_person_id === null || isBoundedId(data.recipient_person_id))
     || !['pending', 'history', 'all'].includes(data.handoff_state)
     || !Array.isArray(data.items) || data.items.length > 100
     || data.execution_authorized !== false || !Number.isSafeInteger(data.total) || data.total < data.items.length
     || !(data.next_cursor === null || isBoundedCursor(data.next_cursor))
     || data.truncated !== (data.next_cursor !== null) || data.count_scope !== 'authorized_matches'
-    || data.count_limited !== true || data.hidden_count !== null || !asOf || !timestamp(asOf.at_unix_ms)
+    || data.count_limited !== true || data.hidden_count !== null || !asOf
+    || !Object.keys(asOf).every((field) => asOfFields.has(field)) || !timestamp(asOf.at_unix_ms)
     || asOf.source_snapshot_id !== reply.source_snapshot_id || asOf.project_revision !== reply.project_revision
     || typeof asOf.handoffs_revision !== 'string' || !/^[0-9a-f]{32}$/.test(asOf.handoffs_revision)) return false;
   const fields = new Set(['handoff_id', 'handoff_position', 'work_id', 'work_title', 'kind', 'status',
@@ -289,8 +301,7 @@ function validHandoffs(reply) {
     if (item.pending !== pending || item.expired !== expired || item.group !== (pending ? 'pending' : 'history')
       || item.effective_status !== (expired ? 'expired' : item.status)
       || data.handoff_state === 'pending' && !pending || data.handoff_state === 'history' && pending
-      || previous && (item.created_at_unix_ms < previous.created_at_unix_ms
-        || item.created_at_unix_ms === previous.created_at_unix_ms && item.handoff_id <= previous.handoff_id)) return false;
+      || previous && item.created_at_unix_ms < previous.created_at_unix_ms) return false;
     ids.add(item.handoff_id);
     previous = item;
   }
