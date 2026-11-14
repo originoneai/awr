@@ -333,6 +333,17 @@ impl Store {
         self.project(project)?;
         goal_links(&self.conn, project)
     }
+    /// Read-only goal coverage view: per-goal work sets with status counts,
+    /// goals no live work supports and works referencing a missing or retired
+    /// goal. Pure aggregation over recorded projections and supports edges;
+    /// nothing is written and no judgment is made. A goal is in service only
+    /// with the exact source statuses `active` or `confirmed`; a work is live
+    /// unless it is cancelled or archived. References from retired works and
+    /// goals with unknown statuses never become orphan reasons.
+    pub fn goal_coverage(&self, project: Id) -> Result<GoalCoverage> {
+        self.project(project)?;
+        goal_coverage(&self.conn, project)
+    }
     /// Source state is shared across branches: archive changes require no active executor.
     pub fn ensure_work_unoccupied(&self, project: Id, work: Id) -> Result<()> {
         self.project(project)?;
@@ -585,4 +596,123 @@ pub(crate) fn goal_links(conn: &Connection, project: Id) -> Result<Vec<Edge>> {
                 let source_ref = serde_json::from_str(&row.get::<_, String>(5)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(5,rusqlite::types::Type::Text,Box::new(e)))?;
                 Ok(Edge { id:id_at(row,0)?, project_id:project, from_kind:EntityKind::WorkItem, from_key:row.get(1)?, relation:"supports".into(), to_kind:EntityKind::Goal, to_key:row.get(2)?, required:row.get(3)?, revision:revision_at(row,4)?, source_ref })
             }).map_err(db_error)?.collect::<rusqlite::Result<Vec<_>>>().map_err(db_error)
+}
+
+fn goal_status_class(status: &str) -> GoalStatusClass {
+    match status.trim().to_lowercase().as_str() {
+        "active" => GoalStatusClass::InService,
+        "confirmed" => GoalStatusClass::InService,
+        "cancelled" => GoalStatusClass::Retired,
+        "archived" => GoalStatusClass::Retired,
+        _ => GoalStatusClass::Unknown,
+    }
+}
+
+fn goal_coverage(conn: &Connection, project: Id) -> Result<GoalCoverage> {
+    use std::collections::BTreeMap;
+    let goals = projections::<Goal>(conn, project, EntityKind::Goal, None)?;
+    let works = projections::<WorkItem>(conn, project, EntityKind::WorkItem, None)?;
+    let links = goal_links(conn, project)?;
+    let mut goal_revision = Revision::default();
+    let mut entries: BTreeMap<String, GoalCoverageEntry> = BTreeMap::new();
+    let mut in_service: BTreeMap<String, GoalStatusClass> = BTreeMap::new();
+    for projected in &goals {
+        let goal = &projected.item;
+        let key = goal.meta.external_key.clone();
+        goal_revision = goal_revision.max(projected.project_revision);
+        let class = goal_status_class(&goal.status);
+        in_service.insert(key.clone(), class);
+        entries.insert(
+            key.clone(),
+            GoalCoverageEntry {
+                key,
+                title: goal.title.clone(),
+                status: goal.status.clone(),
+                source_pointer: goal.meta.source_ref.pointer.clone(),
+                works: vec![],
+                status_counts: BTreeMap::new(),
+            },
+        );
+    }
+    // Visible works appear in their goal's work set; only live works count as
+    // coverage. Archived works and their references are out of the report.
+    let mut visible: BTreeMap<String, WorkStatus> = BTreeMap::new();
+    let mut covered: BTreeSet<String> = BTreeSet::new();
+    for projected in &works {
+        let work = &projected.item;
+        if work.archived {
+            continue;
+        }
+        goal_revision = goal_revision.max(projected.project_revision);
+        visible.insert(work.meta.external_key.clone(), work.status);
+    }
+    for link in &links {
+        let (Some(status), Some(entry)) =
+            (visible.get(&link.from_key), entries.get_mut(&link.to_key))
+        else {
+            continue;
+        };
+        let label = status.label().to_string();
+        *entry.status_counts.entry(label.clone()).or_default() += 1;
+        entry.works.push(GoalWorkReference {
+            key: link.from_key.clone(),
+            status: label,
+        });
+        if *status != WorkStatus::Cancelled {
+            covered.insert(link.to_key.clone());
+        }
+    }
+    let mut uncovered_goal = Vec::new();
+    for (key, class) in &in_service {
+        if matches!(class, GoalStatusClass::InService) && !covered.contains(key) {
+            if let Some(entry) = entries.get(key) {
+                uncovered_goal.push(entry.clone());
+            }
+        }
+    }
+    let mut orphan_work = Vec::new();
+    for link in &links {
+        if !visible
+            .get(&link.from_key)
+            .is_some_and(|status| *status != WorkStatus::Cancelled)
+        {
+            continue;
+        }
+        let reason = match in_service.get(&link.to_key) {
+            None => "unknown_goal",
+            Some(GoalStatusClass::Retired) => {
+                if entries
+                    .get(&link.to_key)
+                    .is_some_and(|g| g.status.trim().to_lowercase() == "archived")
+                {
+                    "archived_goal"
+                } else {
+                    "cancelled_goal"
+                }
+            }
+            // In-service and unknown statuses never become orphan reasons.
+            _ => continue,
+        };
+        orphan_work.push(GoalOrphanReference {
+            work: link.from_key.clone(),
+            goal: link.to_key.clone(),
+            reason: reason.into(),
+        });
+    }
+    orphan_work.sort_by(|a, b| (&a.work, &a.goal).cmp(&(&b.work, &b.goal)));
+    for entry in entries.values_mut() {
+        entry.works.sort_by(|a, b| a.key.cmp(&b.key));
+    }
+    Ok(GoalCoverage {
+        goals: entries.into_values().collect(),
+        uncovered_goal,
+        orphan_work,
+        project_revision: goal_revision,
+    })
+}
+
+enum GoalStatusClass {
+    InService,
+    Retired,
+    Unknown,
 }

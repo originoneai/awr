@@ -57,6 +57,21 @@ impl WorkStatus {
             _ => Self::Unknown,
         }
     }
+    /// The snake_case label used by read-only aggregations; unknown raw
+    /// statuses stay `unknown` and never invent a second vocabulary.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Draft => "draft",
+            Self::Planned => "planned",
+            Self::Ready => "ready",
+            Self::Claimed => "claimed",
+            Self::InProgress => "in_progress",
+            Self::Blocked => "blocked",
+            Self::Completed => "completed",
+            Self::Cancelled => "cancelled",
+            Self::Unknown => "unknown",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

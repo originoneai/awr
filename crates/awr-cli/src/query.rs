@@ -712,6 +712,39 @@ pub fn ready(
     query.finish()
 }
 
+/// Read-only goal views over recorded projections and supports edges.
+#[derive(Debug, Subcommand)]
+pub enum GoalCommand {
+    /// Aggregate goal coverage: per-goal work sets with status counts,
+    /// uncovered goals and orphan work references. Pure aggregation; nothing
+    /// is written and no judgment is made.
+    Coverage {
+        /// Use the last recorded snapshot without refreshing files; currentness is not verified.
+        #[arg(long)]
+        cached: bool,
+    },
+}
+
+/// Read-only goal coverage across every declared goal and supports edge.
+pub fn goal(root: &Path, command: &GoalCommand, json_output: bool) -> Result<()> {
+    match command {
+        GoalCommand::Coverage { cached } => {
+            let query = QueryProject::open_read(root, *cached)?;
+            let coverage = query.store.goal_coverage(query.project.id)?;
+            query.check_revision()?;
+            query.finish()?;
+            let mut value = serde_json::to_value(&coverage)?;
+            if let Some(object) = value.as_object_mut() {
+                for (key, metadata) in query.metadata().as_object().unwrap() {
+                    object.insert(key.clone(), metadata.clone());
+                }
+            }
+            println!("{}", serde_json::to_string_pretty(&value)?);
+            Ok(())
+        }
+    }
+}
+
 pub fn work(root: &Path, command: &WorkCommand, json_output: bool) -> Result<()> {
     match command {
         WorkCommand::Activate(args) => crate::work_activate::run(root, args, json_output),
