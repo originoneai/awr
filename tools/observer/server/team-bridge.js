@@ -31,7 +31,7 @@ const INBOX_READ_OPS = new Set(['work.prepare', 'work.observe', 'work.recovery',
 // not this observation surface. The drift guard pins this explicit boundary.
 const READ_DEFERRED_OPS = new Set(['audit.history', 'audit.export', 'audit.count', 'delivery.routes']);
 const READ_PROJECT_WIDE = new Set(['capabilities', 'workstreams.list', 'work.inbox']);
-const READ_WORK_LIST = new Set(['work.list', 'work.graph', 'work.search', 'planning.outcome']);
+const READ_WORK_LIST = new Set(['work.list', 'work.graph', 'work.search', 'planning.outcome', 'planning.candidates']);
 const READ_AUDIT = new Set(['audit.requests', 'audit.development']);
 const READ_EXACT_WORK = new Set(['task.assignees', 'delivery.neutral.inspect',
   'delivery.submission.describe', 'delivery.neutral.outcome', 'delivery.source.status',
@@ -41,10 +41,10 @@ const READ_WORK_SELECTION = new Set(['work.prepare', 'work.admission', 'work.sna
   'handoff.inspect', 'evidence.inspect', 'review.inspect', 'completion.inspect',
   'delivery.inspect', 'artifact.content', 'artifact.segment', 'delivery.exports']);
 const READ_PAGED = new Set(['workstreams.list', 'work.list', 'work.graph', 'work.search', 'events.list',
-  'work.next', 'work.inbox', 'task.assignees', 'delivery.exports']);
+  'work.next', 'work.inbox', 'task.assignees', 'delivery.exports', 'planning.candidates']);
 const READ_CONTEXT_BUDGET = new Set(['work.prepare', 'work.snapshot', 'work.observe', 'work.inbox',
   'source.content', 'artifact.content', 'artifact.segment', 'review.inspect',
-  'delivery.neutral.inspect', 'delivery.submission.describe']);
+  'delivery.neutral.inspect', 'delivery.submission.describe', 'planning.candidates']);
 const READ_REQUIRED_SELECTOR = {
   'command.inspect': 'request_id',
   'planning.outcome': 'request_id',
@@ -1130,6 +1130,25 @@ function createTeamBridge(opts) {
         return { ...reply, query: input.query, freshness: readFreshness(reply.result, Date.now()) };
       }
       return { ...reply, freshness: failedFreshness(reply.error.code, Date.now()) };
+    },
+
+    'GET /api/team/plans': async (url, _body, req, res) => {
+      const allowed = new Set(['project', 'workstream_id', 'cursor', 'limit', 'max_context_bytes']);
+      if ([...url.searchParams.keys()].some((key) => !allowed.has(key) || url.searchParams.getAll(key).length !== 1)) {
+        return { ok: false, error: { code: 'InvalidInput', message: 'One bounded planning read required' },
+          freshness: unmeasuredFreshness(Date.now()) };
+      }
+      const query = { protocol_version: 1, op: 'planning.candidates' };
+      for (const key of ['workstream_id', 'cursor']) {
+        if (url.searchParams.has(key)) query[key] = url.searchParams.get(key);
+      }
+      for (const key of ['limit', 'max_context_bytes']) {
+        if (url.searchParams.has(key)) {
+          const value = url.searchParams.get(key);
+          query[key] = /^[1-9]\d*$/.test(value) ? Number(value) : null;
+        }
+      }
+      return routes['POST /api/team/read'](url, { project: url.searchParams.get('project'), query }, req, res);
     },
 
     'POST /api/team/read': async (_url, body, req, res) => {

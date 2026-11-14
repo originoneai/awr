@@ -617,6 +617,7 @@ async fn workstream_delegation_filters_discovery_navigation_sources_and_denies_p
         "capabilities",
         "work.list",
         "work.graph",
+        "planning.candidates",
         "work.search",
         "work.next",
     ] {
@@ -628,7 +629,13 @@ async fn workstream_delegation_filters_discovery_navigation_sources_and_denies_p
         assert!(!got.to_string().contains("b-private"), "{op}: {got}");
         assert!(!got.to_string().contains("private-beta"), "{op}: {got}");
     }
-    for op in ["work.list", "work.graph", "work.search", "events.list"] {
+    for op in [
+        "work.list",
+        "work.graph",
+        "work.search",
+        "events.list",
+        "planning.candidates",
+    ] {
         let mut q = query(op);
         q.workstream_id = Some(Id::from(2));
         if op == "work.search" {
@@ -677,6 +684,7 @@ async fn task_grants_discover_only_exact_work_without_enabling_other_discovery()
         "capabilities",
         "workstreams.list",
         "work.list",
+        "planning.candidates",
         "events.list",
         "audit.requests",
     ] {
