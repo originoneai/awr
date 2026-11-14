@@ -202,6 +202,10 @@ td.k{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-spac
         lane.name = t('map.group.numbered', { count: index + 1 });
         lane.tag = '';
       });
+      cfg.explore_lanes.forEach((lane, index) => {
+        lane.name = t('map.group.numbered', { count: index + 1 });
+        lane.tag = '';
+      });
     }
     const views = viewsLib.createViews(t, { productOnly });
     const kit = kitLib.createKit(t);
