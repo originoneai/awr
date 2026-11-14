@@ -109,6 +109,38 @@ test('source reads refuse missing attribution, contradictory metadata and forbid
   }
 });
 
+test('source pages cover their declared positions without missing prefixes, gaps or terminal tails', async (t) => {
+  let body;
+  const { read } = await sourceBridge(t, () => ({ body }));
+  const scope = 'project=portal&work_id=work-one&workstream_id=development';
+  const invalid = [
+    ['omitted terminal tail', sourceReply([consistentSource()], 2), ''],
+    ['missing first position', sourceReply([consistentSource(2)], 2), ''],
+    ['noncontiguous positions', sourceReply([consistentSource(1), consistentSource(3)], 3), ''],
+    ['reversed positions', sourceReply([consistentSource(2), consistentSource(1)], 2), ''],
+    ['empty nonempty collection', sourceReply([], 2), ''],
+    ['cursor past the last position', sourceReply([consistentSource()], 1, 'page-two'), '&limit=1'],
+    ['incomplete nonterminal page', sourceReply([consistentSource()], 3, 'page-two'), '&limit=2'],
+  ];
+  for (const [name, reply, parameters] of invalid) {
+    body = reply;
+    const result = await read(scope + parameters);
+    assert.equal(result.ok, false, name);
+    assert.equal(result.error.code, 'BadGateway', name);
+    assert.equal(result.result, undefined, name);
+  }
+  for (const [reply, parameters] of [
+    [sourceReply([]), ''],
+    [sourceReply([consistentSource(1), consistentSource(2)]), ''],
+    [sourceReply([consistentSource()], 2, 'page-two'), '&limit=1'],
+    [sourceReply([consistentSource(2)], 2), '&limit=1&cursor=page-two'],
+  ]) {
+    body = reply;
+    const result = await read(scope + parameters);
+    assert.equal(result.ok, true, JSON.stringify(result));
+  }
+});
+
 test('source route refuses unrelated controls and preserves revocation and expired cursors', async (t) => {
   let code = 'Forbidden';
   const { read, calls } = await sourceBridge(t, () => ({
