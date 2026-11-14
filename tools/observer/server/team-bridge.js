@@ -41,10 +41,10 @@ const READ_WORK_SELECTION = new Set(['work.prepare', 'work.admission', 'work.sna
   'handoff.inspect', 'evidence.inspect', 'review.inspect', 'review.rounds', 'completion.inspect',
   'delivery.inspect', 'artifact.content', 'artifact.segment', 'delivery.exports']);
 const READ_PAGED = new Set(['workstreams.list', 'work.list', 'work.graph', 'work.search', 'events.list',
-  'work.next', 'work.inbox', 'task.assignees', 'delivery.exports', 'planning.candidates', 'sources.inspect', 'review.rounds']);
+  'work.next', 'work.inbox', 'task.assignees', 'delivery.exports', 'planning.candidates', 'sources.inspect', 'review.rounds', 'handoff.list']);
 const READ_CONTEXT_BUDGET = new Set(['work.prepare', 'work.snapshot', 'work.observe', 'work.inbox',
   'source.content', 'artifact.content', 'artifact.segment', 'review.inspect',
-  'delivery.neutral.inspect', 'delivery.submission.describe', 'planning.candidates', 'sources.inspect', 'review.rounds']);
+  'delivery.neutral.inspect', 'delivery.submission.describe', 'planning.candidates', 'sources.inspect', 'review.rounds', 'handoff.list']);
 const READ_REQUIRED_SELECTOR = {
   'command.inspect': 'request_id',
   'planning.outcome': 'request_id',
@@ -65,7 +65,7 @@ const READ_OPS = new Set([
 ]);
 const READ_ID_KEYS = new Set(['work_id', 'session_id', 'request_id', 'claim_id', 'execution_id',
   'handoff_id', 'evidence_id', 'review_round_id', 'artifact_id', 'export_id', 'workstream_id',
-  'change_id', 'member_actor_id', 'category']);
+  'change_id', 'member_actor_id', 'category', 'recipient_person_id']);
 const READ_RESPONSE_LIMIT = { default: 1048576, 'artifact.content': 8388608, 'artifact.segment': 65536 };
 
 /**
@@ -82,6 +82,7 @@ const READ_ECHOES = {
   'work.observe': [{ path: ['work_id'], selector: 'work_id' }],
   'sources.inspect': [{ path: ['work_id'], selector: 'work_id' }],
   'review.rounds': [{ path: ['work_id'], selector: 'work_id' }],
+  'handoff.list': [{ path: ['work_id'], selector: 'work_id' }],
   'review.inspect': [
     { path: ['review', 'work_id'], selector: 'work_id' },
     { path: ['review', 'round_id'], selector: 'review_round_id' },
@@ -144,6 +145,9 @@ function validateReadQuery(query) {
     allowIds('workstream_id');
   } else if (op === 'sources.inspect') {
     allowIds('work_id', 'workstream_id');
+  } else if (op === 'handoff.list') {
+    allowIds('work_id', 'workstream_id', 'recipient_person_id');
+    allowed.add('handoff_state');
   } else if (READ_AUDIT.has(op)) {
     allowIds('work_id', 'change_id', 'member_actor_id', 'category', 'request_id');
     allowed.add('include_denies');
@@ -174,6 +178,9 @@ function validateReadQuery(query) {
     return invalidRead(`${op} requires a work or session selector`);
   }
   if (READ_EXACT_WORK.has(op) && !query.work_id) return invalidRead(`${op} requires a work selector`);
+  if ('handoff_state' in query && !['pending', 'history', 'all'].includes(query.handoff_state)) {
+    return invalidRead('Handoff view is invalid');
+  }
   if ('search' in query) {
     const search = query.search;
     if (typeof search !== 'string' || search.length === 0 || search.length > 512
@@ -243,6 +250,50 @@ function validReadResponse(reply, op) {
       || data.next_cursor.length > 4096)) return false;
   if (op === 'sources.inspect') return validRequiredSources(reply);
   if (op === 'review.rounds') return validReviewRounds(reply);
+  if (op === 'handoff.list') return validHandoffs(reply);
+  return true;
+}
+
+function validHandoffs(reply) {
+  const data = reply.data, asOf = asObject(data.as_of);
+  const timestamp = (value) => Number.isSafeInteger(value) && value >= 0;
+  if (!(data.work_id === null || isBoundedId(data.work_id))
+    || !(data.recipient_person_id === null || isBoundedId(data.recipient_person_id))
+    || !['pending', 'history', 'all'].includes(data.handoff_state)
+    || !Array.isArray(data.items) || data.items.length > 100
+    || data.execution_authorized !== false || !Number.isSafeInteger(data.total) || data.total < data.items.length
+    || !(data.next_cursor === null || isBoundedCursor(data.next_cursor))
+    || data.truncated !== (data.next_cursor !== null) || data.count_scope !== 'authorized_matches'
+    || data.count_limited !== true || data.hidden_count !== null || !asOf || !timestamp(asOf.at_unix_ms)
+    || asOf.source_snapshot_id !== reply.source_snapshot_id || asOf.project_revision !== reply.project_revision
+    || typeof asOf.handoffs_revision !== 'string' || !/^[0-9a-f]{32}$/.test(asOf.handoffs_revision)) return false;
+  const fields = new Set(['handoff_id', 'handoff_position', 'work_id', 'work_title', 'kind', 'status',
+    'pending', 'expired', 'group', 'effective_status', 'version', 'from_person_id', 'to_person_id',
+    'from_display_name', 'to_display_name', 'created_at_unix_ms', 'updated_at_unix_ms', 'expires_at_unix_ms']);
+  const ids = new Set();
+  let previous;
+  for (const item of data.items) {
+    if (!asObject(item) || !Object.keys(item).every((field) => fields.has(field))
+      || !['handoff_id', 'work_id', 'from_person_id', 'to_person_id'].every((field) => isBoundedId(item[field]))
+      || ids.has(item.handoff_id) || typeof item.work_title !== 'string'
+      || !['execution', 'responsibility'].includes(item.kind)
+      || !['proposed', 'inspected', 'accepted', 'rejected', 'cancelled', 'timed_out'].includes(item.status)
+      || !Number.isSafeInteger(item.handoff_position) || item.handoff_position < 1 || item.handoff_position > data.total
+      || typeof item.version !== 'string' || !/^[1-9]\d*$/.test(item.version)
+      || !['from_display_name', 'to_display_name'].every((field) => item[field] === null || typeof item[field] === 'string')
+      || !timestamp(item.created_at_unix_ms) || !timestamp(item.updated_at_unix_ms)
+      || !(item.expires_at_unix_ms === null || timestamp(item.expires_at_unix_ms))) return false;
+    const open = ['proposed', 'inspected'].includes(item.status);
+    const deadlineElapsed = item.expires_at_unix_ms !== null && item.expires_at_unix_ms <= asOf.at_unix_ms;
+    const pending = open && !deadlineElapsed, expired = item.status === 'timed_out' || open && deadlineElapsed;
+    if (item.pending !== pending || item.expired !== expired || item.group !== (pending ? 'pending' : 'history')
+      || item.effective_status !== (expired ? 'expired' : item.status)
+      || data.handoff_state === 'pending' && !pending || data.handoff_state === 'history' && pending
+      || previous && (item.created_at_unix_ms < previous.created_at_unix_ms
+        || item.created_at_unix_ms === previous.created_at_unix_ms && item.handoff_id <= previous.handoff_id)) return false;
+    ids.add(item.handoff_id);
+    previous = item;
+  }
   return true;
 }
 
@@ -430,6 +481,15 @@ function readAttributionError(query, result, { strictWorkstream } = {}) {
     || !isBoundedId(result.workstream_id) || typeof result.authority_version !== 'string'
     || !/^\d+$/.test(result.authority_version))) {
     return { code: 'BadGateway', message: 'Review history is not attributable to the requested scope' };
+  }
+  if (query.op === 'handoff.list' && (!validPageCoverage(data, query, 'handoff_position')
+    || data.work_id !== (query.work_id ?? null) || data.recipient_person_id !== (query.recipient_person_id ?? null)
+    || data.handoff_state !== (query.handoff_state ?? 'pending')
+    || (query.work_id || query.workstream_id) && (!isBoundedId(result.workstream_id)
+      || typeof result.authority_version !== 'string' || !/^\d+$/.test(result.authority_version))
+    || query.work_id && data.items.some((item) => item.work_id !== query.work_id)
+    || query.recipient_person_id && data.items.some((item) => item.to_person_id !== query.recipient_person_id))) {
+    return { code: 'BadGateway', message: 'Handoff observations are not attributable to the requested scope' };
   }
   if (data.execution_authorized === true) {
     return { code: 'BadGateway', message: 'A Team read response never authorizes execution' };
@@ -1320,6 +1380,25 @@ function createTeamBridge(opts) {
       }
       const query = { protocol_version: 1, op: 'review.rounds' };
       for (const key of ['work_id', 'session_id', 'workstream_id', 'cursor']) {
+        if (url.searchParams.has(key)) query[key] = url.searchParams.get(key);
+      }
+      for (const key of ['limit', 'max_context_bytes']) {
+        if (url.searchParams.has(key)) {
+          const value = url.searchParams.get(key);
+          query[key] = /^[1-9]\d*$/.test(value) ? Number(value) : null;
+        }
+      }
+      return routes['POST /api/team/read'](url, { project: url.searchParams.get('project'), query }, req, res);
+    },
+
+    'GET /api/team/handoffs': async (url, _body, req, res) => {
+      const allowed = new Set(['project', 'work_id', 'workstream_id', 'recipient_person_id', 'handoff_state', 'cursor', 'limit', 'max_context_bytes']);
+      if ([...url.searchParams.keys()].some((key) => !allowed.has(key) || url.searchParams.getAll(key).length !== 1)) {
+        return { ok: false, error: { code: 'InvalidInput', message: 'One bounded handoff read required' },
+          freshness: unmeasuredFreshness(Date.now()) };
+      }
+      const query = { protocol_version: 1, op: 'handoff.list' };
+      for (const key of ['work_id', 'workstream_id', 'recipient_person_id', 'handoff_state', 'cursor']) {
         if (url.searchParams.has(key)) query[key] = url.searchParams.get(key);
       }
       for (const key of ['limit', 'max_context_bytes']) {

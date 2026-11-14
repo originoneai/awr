@@ -797,6 +797,75 @@ async fn review_history_requires_current_exact_work_delegation_even_with_broader
 }
 
 #[tokio::test]
+async fn handoff_discovery_unions_only_readable_exact_tasks_and_rechecks_revocation() {
+    let (_guard, admin, db, store) = setup().await;
+    agent_identity(&admin).await;
+    grant(
+        &db,
+        AuthorizationScope::Task {
+            project_id: PROJECT.into(),
+            work_item_id: "a".into(),
+        },
+    )
+    .await;
+    for (id, work) in [
+        ("handoff-a", "a"),
+        ("handoff-c", "c"),
+        ("PRIVATE HANDOFF", "b-private"),
+    ] {
+        admin.execute("INSERT INTO awr_team.team_handoffs(tenant_id,project_id,id,work_id,kind,status,version,
+            from_person_id,to_person_id,package_json,body_json,created_at_ms,updated_at_ms)
+            VALUES($1,$2,$3,$4,'execution','accepted',1,'alice','alice','{}','{}',100,100)",
+            &[&TENANT,&PROJECT,&id,&work]).await.unwrap();
+    }
+    let mut q = query("handoff.list");
+    q.handoff_state = Some("all".into());
+    let first = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    assert_eq!(first["data"]["total"], 1);
+    assert_eq!(first["data"]["items"][0]["work_id"], "a");
+    assert_eq!(first["data"]["count_limited"], true);
+    assert!(!first.to_string().contains("PRIVATE"));
+    let mut sibling = q.clone();
+    sibling.work_id = Some("c".into());
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, sibling).await,
+        Err(PgError::Forbidden)
+    ));
+    let mut stream = q.clone();
+    stream.workstream_id = Some(Id::from(1));
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, stream).await,
+        Err(PgError::Forbidden)
+    ));
+    grant_task(&db, "other-task-read", "c", &[AuthorizedAction::Inspect]).await;
+    q.limit = Some(1);
+    let both = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    assert_eq!(both["data"]["total"], 2);
+    q.cursor = both["data"]["next_cursor"].as_str().map(Into::into);
+    admin
+        .execute(
+            "UPDATE awr_team.agent_authorizations SET status='revoked' WHERE id='other-task-read'",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, q.clone()).await,
+        Err(PgError::CursorExpired)
+    ));
+    q.cursor = None;
+    assert_eq!(
+        store.query(TENANT, PROJECT, A, q.clone()).await.unwrap()["data"]["total"],
+        1
+    );
+    admin.execute("UPDATE awr_team.agent_authorizations SET status='revoked' WHERE id='read-authorization'",&[]).await.unwrap();
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, q).await,
+        Err(PgError::Forbidden)
+    ));
+}
+
+#[tokio::test]
 async fn agent_authentication_defaults_to_no_product_actions_even_on_separate_audit_surface() {
     let (_g, admin, db, store) = setup().await;
     // Human behavior stays unchanged.

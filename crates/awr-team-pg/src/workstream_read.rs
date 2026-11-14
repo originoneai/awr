@@ -17,6 +17,7 @@ mod assignees;
 mod delivery;
 mod graph;
 mod guidance;
+mod handoffs;
 mod inbox;
 mod list;
 mod navigation;
@@ -45,6 +46,7 @@ pub(crate) const QUERIES: &[&str] = &[
     "claim.inspect",
     "execution.inspect",
     "handoff.inspect",
+    "handoff.list",
     "evidence.inspect",
     "review.inspect",
     "review.rounds",
@@ -86,6 +88,10 @@ pub struct WorkstreamQuery {
     pub claim_id: Option<String>,
     pub execution_id: Option<String>,
     pub handoff_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipient_person_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handoff_state: Option<String>,
     pub evidence_id: Option<String>,
     pub review_round_id: Option<String>,
     /// Controlled source path relative to the active snapshot (TMCP-023).
@@ -126,6 +132,7 @@ impl WorkstreamQuery {
         "artifact.segment",
         "review.inspect",
         "review.rounds",
+        "handoff.list",
         "delivery.neutral.inspect",
         "delivery.routes",
         "delivery.submission.describe",
@@ -174,6 +181,7 @@ impl WorkstreamQuery {
             ("claim_id", &self.claim_id),
             ("execution_id", &self.execution_id),
             ("handoff_id", &self.handoff_id),
+            ("recipient_person_id", &self.recipient_person_id),
             ("evidence_id", &self.evidence_id),
             ("review_round_id", &self.review_round_id),
             ("artifact_id", &self.artifact_id),
@@ -236,6 +244,7 @@ impl WorkstreamQuery {
                 | "planning.candidates"
                 | "sources.inspect"
                 | "review.rounds"
+                | "handoff.list"
         );
         let audit = matches!(
             self.op.as_str(),
@@ -266,6 +275,14 @@ impl WorkstreamQuery {
             ("category", self.category.is_some() && !audit),
             ("include_denies", self.include_denies.is_some() && !audit),
             (
+                "recipient_person_id",
+                self.recipient_person_id.is_some() && self.op != "handoff.list",
+            ),
+            (
+                "handoff_state",
+                self.handoff_state.is_some() && self.op != "handoff.list",
+            ),
+            (
                 "expected_sha256",
                 self.expected_sha256.is_some()
                     && !matches!(
@@ -280,6 +297,13 @@ impl WorkstreamQuery {
         }
         if self.op == "work.search" && self.search.is_none() {
             return Err(PgError::query_field("search", "required"));
+        }
+        if self
+            .handoff_state
+            .as_deref()
+            .is_some_and(|state| !matches!(state, "pending" | "history" | "all"))
+        {
+            return Err(PgError::query_field("handoff_state", "selector"));
         }
         if self
             .search
@@ -421,7 +445,7 @@ impl WorkstreamQuery {
                         || work_list
                         || activity_audit
                         || exact_work
-                        || self.op == "sources.inspect"),
+                        || matches!(self.op.as_str(), "sources.inspect" | "handoff.list")),
             ),
             (
                 "workstream_id",
@@ -1214,6 +1238,9 @@ pub(crate) async fn read(
     }
     if q.op == "sources.inspect" {
         return sources::read(tx, tenant, project, auth, q).await;
+    }
+    if q.op == "handoff.list" {
+        return handoffs::read(tx, tenant, project, auth, q).await;
     }
     if matches!(q.op.as_str(), "audit.requests" | "audit.development") {
         return activity::read(tx, tenant, project, auth, q).await;

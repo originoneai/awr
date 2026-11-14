@@ -616,7 +616,7 @@ mod tests {
         let catalog = super::super::catalog();
         assert_eq!(
             WorkstreamQuery::OPERATIONS.len() + WorkstreamCommand::OPERATIONS.len(),
-            92
+            93
         );
         for (tool, operations) in [
             ("awr_team_query", WorkstreamQuery::OPERATIONS),

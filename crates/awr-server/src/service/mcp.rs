@@ -1177,6 +1177,10 @@ fn catalog() -> Vec<Tool> {
             "description":"Optional filter for audit.history, audit.export or audit.count."},
         "member_actor_id":{"type":"string","minLength":1,"maxLength":128,
             "description":"Optional actor filter for audit operations; does not expand visibility."},
+        "recipient_person_id":{"type":"string","minLength":1,"maxLength":128,
+            "description":"Optional recipient filter for handoff.list; current work visibility still applies."},
+        "handoff_state":{"type":"string","enum":["pending","history","all"],
+            "description":"handoff.list defaults to pending. History includes terminal and deadline-expired records; this read never receives or cancels a handoff."},
         "category":{"type":"string","minLength":1,"maxLength":128,
             "description":"Optional category filter for audit.history, audit.export or audit.count."},
         "include_denies":{"type":"boolean",
@@ -1191,6 +1195,9 @@ fn catalog() -> Vec<Tool> {
         "expected_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"}
     }});
     query["allOf"] = json!([
+        {"if":{"properties":{"op":{"const":"handoff.list"}},"required":["op"]},
+            "then":{"not":{"required":["session_id"]}},
+            "else":{"not":{"anyOf":[{"required":["recipient_person_id"]},{"required":["handoff_state"]}]}}},
         {"if":{"properties":{"op":{"enum":WorkstreamQuery::WORK_SELECTION_OPERATIONS}},"required":["op"]},
             "then":{"anyOf":[{"required":["work_id"]},{"required":["session_id"]}]}},
         {"if":{"properties":{"op":{"const":"artifact.segment"}},"required":["op"]},
@@ -4550,6 +4557,8 @@ mod tests {
             claim_id: None,
             execution_id: None,
             handoff_id: None,
+            recipient_person_id: Some("recipient".into()),
+            handoff_state: Some("pending".into()),
             evidence_id: None,
             review_round_id: None,
             source_path: Some("spec.md".into()),
