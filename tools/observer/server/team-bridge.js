@@ -80,6 +80,7 @@ const READ_ECHOES = {
   'work.prepare': [{ path: ['work_id'], selector: 'work_id' }],
   'work.snapshot': [{ path: ['work_id'], selector: 'work_id' }],
   'work.observe': [{ path: ['work_id'], selector: 'work_id' }],
+  'sources.inspect': [{ path: ['work_id'], selector: 'work_id' }],
   'review.inspect': [
     { path: ['review', 'work_id'], selector: 'work_id' },
     { path: ['review', 'round_id'], selector: 'review_round_id' },
@@ -117,6 +118,11 @@ function invalidRead(message) {
 function isBoundedId(value) {
   return typeof value === 'string' && value.length > 0 && value.length <= 128
     && !/[\x00-\x1f\x7f]/.test(value);
+}
+
+function isControlledSourcePath(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 512 && !value.startsWith('/')
+    && !value.includes('..') && !value.includes('\\') && !value.includes(':') && !/[\x00-\x1f\x7f]/.test(value);
 }
 
 function validateReadQuery(query) {
@@ -204,9 +210,7 @@ function validateReadQuery(query) {
     }
   }
   if ('source_path' in query) {
-    const path = query.source_path;
-    if (typeof path !== 'string' || path.length === 0 || path.length > 512 || path.startsWith('/')
-      || path.includes('..') || path.includes('\\') || path.includes(':') || /[\x00-\x1f\x7f]/.test(path)) {
+    if (!isControlledSourcePath(query.source_path)) {
       return invalidRead('Selector source_path must be a controlled project-relative path');
     }
   }
@@ -236,7 +240,68 @@ function validReadResponse(reply, op) {
   if (data.next_cursor != null
     && (typeof data.next_cursor !== 'string' || data.next_cursor.length === 0
       || data.next_cursor.length > 4096)) return false;
+  if (op === 'sources.inspect') return validRequiredSources(reply);
   return true;
+}
+
+function validRequiredSources(reply) {
+  const data = reply.data, collection = asObject(data.collection), asOf = asObject(data.as_of);
+  const timestamp = (value) => Number.isSafeInteger(value) && value >= 0;
+  const reason = (value) => typeof value === 'string' && value.length > 0 && value.length <= 1024;
+  const digest = (value) => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+  const nullableReason = (value) => value === null || reason(value);
+  if (!collection || !asOf || !Array.isArray(data.items) || data.items.length > 100
+    || !(data.work_id === null || isBoundedId(data.work_id)) || data.execution_authorized !== false
+    || !Number.isSafeInteger(data.total) || data.total < data.items.length
+    || !(data.next_cursor === null || isBoundedCursor(data.next_cursor))
+    || data.truncated !== (data.next_cursor !== null)
+    || collection.required_total !== data.total || typeof collection.complete !== 'boolean'
+    || collection.completeness !== (collection.complete ? 'complete' : 'incomplete')
+    || !['work', 'authorized_workstreams'].includes(collection.scope)
+    || collection.verification_basis !== 'active_source_snapshot' || collection.recovery_scope !== 'page'
+    || !timestamp(collection.checked_at_unix_ms) || asOf.at_unix_ms !== collection.checked_at_unix_ms
+    || asOf.source_snapshot_id !== reply.source_snapshot_id || asOf.project_revision !== reply.project_revision
+    || !Array.isArray(collection.reasons) || collection.reasons.length > 100 || !collection.reasons.every(reason)
+    || new Set(collection.reasons).size !== collection.reasons.length
+    || collection.complete !== (collection.reasons.length === 0)
+    || !Array.isArray(collection.recovery) || collection.recovery.length > data.items.length) return false;
+  const positions = new Set();
+  for (const item of data.items) {
+    if (!asObject(item) || !Number.isSafeInteger(item.source_position) || item.source_position < 1
+      || item.source_position > data.total || positions.has(item.source_position)
+      || !(item.path === null || isControlledSourcePath(item.path))
+      || !(item.expected_sha256 === null || digest(item.expected_sha256))
+      || !(item.current_sha256 === null || digest(item.current_sha256))
+      || !['consistent', 'changed', 'missing', 'forbidden', 'unverified'].includes(item.status)
+      || item.checked_at_unix_ms !== collection.checked_at_unix_ms
+      || !asObject(item.missing) || !['path', 'expected_sha256', 'current_sha256'].every((key) => nullableReason(item.missing[key]))
+      || !nullableReason(item.reason)) return false;
+    positions.add(item.source_position);
+    if (item.status === 'consistent') {
+      if (item.reason !== null || item.path === null
+        || !digest(item.expected_sha256) || item.expected_sha256 !== item.current_sha256) return false;
+    } else if (!reason(item.reason) || collection.complete || !collection.reasons.includes(item.reason)) return false;
+    if (item.status === 'forbidden' && (item.path !== null || item.expected_sha256 !== null || item.current_sha256 !== null
+      || item.reason !== 'required_spec_forbidden' || !Object.values(item.missing).every((value) => value === 'permission_restricted'))) return false;
+    if (item.reason === 'required_spec_forbidden' && item.status !== 'forbidden') return false;
+    if (item.status === 'changed' && (item.path === null || !digest(item.expected_sha256) || !digest(item.current_sha256)
+      || item.expected_sha256 === item.current_sha256 || item.reason !== 'spec_digest_mismatch')) return false;
+    if (item.status === 'missing' && (item.path === null || item.current_sha256 !== null || item.reason !== 'required_spec_missing')) return false;
+  }
+  const recoveryPositions = new Set();
+  for (const entry of collection.recovery) {
+    const item = data.items.find((item) => item.source_position === entry?.source_position);
+    if (!asObject(entry) || !item || item.reason === null || entry.reason !== item.reason
+      || recoveryPositions.has(entry.source_position) || typeof entry.recognized !== 'boolean'
+      || !(entry.next_action === null || typeof entry.next_action === 'string' && entry.next_action.length <= 2048)
+      || !entry.recognized && entry.next_action !== null) return false;
+    recoveryPositions.add(entry.source_position);
+  }
+  return recoveryPositions.size === data.items.filter((item) => item.reason !== null).length;
+}
+
+function isBoundedCursor(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 4096;
 }
 
 /**
@@ -290,6 +355,15 @@ function readAttributionError(query, result, { strictWorkstream } = {}) {
   const data = result.data;
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     return { code: 'BadGateway', message: 'Invalid Team read response' };
+  }
+  if (query.op === 'sources.inspect' && (
+    !Array.isArray(data.items) || data.items.length > (query.limit ?? 20)
+    || ((query.work_id || query.workstream_id) && (!isBoundedId(result.workstream_id)
+      || typeof result.authority_version !== 'string' || !/^\d+$/.test(result.authority_version)))
+    || query.workstream_id && result.workstream_id !== query.workstream_id
+    || !query.work_id && data.work_id !== null
+    || data.collection?.scope !== (query.work_id ? 'work' : 'authorized_workstreams'))) {
+    return { code: 'BadGateway', message: 'Source observations are not attributable to the requested scope' };
   }
   if (data.execution_authorized === true) {
     return { code: 'BadGateway', message: 'A Team read response never authorizes execution' };

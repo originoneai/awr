@@ -51,6 +51,84 @@ async fn add_required_source(admin: &tokio_postgres::Client, stream: u128, path:
 }
 
 #[tokio::test]
+async fn required_catalog_access_uses_activated_scope_even_when_source_bytes_are_unusable() {
+    let (_guard, admin, _, store) = setup().await;
+    add_required_source(&admin, 1, "workstreams.json").await;
+    let (id, original) = source_record(&admin).await;
+    let mut snapshots = Vec::new();
+    for (text, status) in [
+        (
+            json!({"catalog":{"workstreams":[{"id":Id::from(1).to_string()}]},"contracts":[]})
+                .to_string()
+                .into(),
+            "changed",
+        ),
+        (Some("{invalid catalog".to_string()), "changed"),
+        (None, "unverified"),
+    ] {
+        let mut changed = original.clone();
+        let file = changed["files"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|file| file["path"] == "workstreams.json")
+            .unwrap();
+        file["text"] = json!(text);
+        snapshots.push((changed, status));
+    }
+    let mut missing = original.clone();
+    missing["files"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|file| file["path"] != "workstreams.json");
+    snapshots.push((missing, "missing"));
+    let mut q = query("sources.inspect");
+    q.work_id = Some("a".into());
+    for (snapshot, _) in &snapshots {
+        replace_source_record(&admin, &id, snapshot).await;
+        let result = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+        let row = &result["data"]["items"][0];
+        assert_eq!(row["status"], "forbidden");
+        assert!(
+            row["path"].is_null()
+                && row["expected_sha256"].is_null()
+                && row["current_sha256"].is_null()
+        );
+        assert_eq!(result["data"]["collection"]["complete"], false);
+        assert!(!result.to_string().contains("workstreams.json"));
+        let prepared = prepare(&store, A, "a").await;
+        assert_eq!(prepared["data"]["context_complete"], false);
+        assert!(
+            prepared["data"]["completeness_reasons"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|reason| reason == "required_spec_forbidden")
+        );
+        let mut content = query("source.content");
+        content.source_path = Some("workstreams.json".into());
+        assert!(matches!(
+            store.query(TENANT, PROJECT, A, content).await,
+            Err(PgError::Forbidden)
+        ));
+    }
+    admin
+        .execute(
+            "INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,
+        workstream_id,authority_version,can_read) VALUES($1,$2,'agent','cli-a',$3,1,true)",
+            &[&TENANT, &PROJECT, &Id::from(2).to_string()],
+        )
+        .await
+        .unwrap();
+    for (snapshot, status) in snapshots {
+        replace_source_record(&admin, &id, &snapshot).await;
+        let result = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+        assert_eq!(result["data"]["items"][0]["status"], status);
+        assert_eq!(result["data"]["collection"]["complete"], false);
+    }
+}
+
+#[tokio::test]
 async fn required_source_observation_distinguishes_integrity_missing_and_restricted_documents() {
     let (_guard, admin, _, store) = setup_with_specs(vec![
         SourceFile {

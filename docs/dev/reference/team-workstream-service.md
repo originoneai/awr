@@ -217,6 +217,10 @@ returns the standard envelope with `data.items`, `total`, `next_cursor`,
 or `unverified`. Missing metadata remains null with an explicit `missing`
 reason; it never becomes a successful check. No document bodies are returned.
 Forbidden documents expose neither paths nor digests.
+Shared catalog access is derived from the activated workstream catalog before
+source bytes or availability are inspected. Removing a private workstream from
+stored text, malformed text or missing text cannot reduce that access boundary.
+Authorized readers still receive the appropriate integrity or missing-data state.
 
 `collection.complete` covers the entire required set before pagination.
 Its `reasons` includes all incomplete conditions; its `recovery` contains
@@ -235,7 +239,11 @@ Restart pagination after a cursor expires. The bridge exposes the same read at
 `GET /api/team/sources?project=PROJECT`, accepting only `work_id`,
 `workstream_id`, `limit`, `cursor` and `max_context_bytes` in addition to `project`.
 It forwards the member's existing browser session and never falls back to
-fixtures after a failed or revoked live read. Internal digests and reason codes
+fixtures after a failed or revoked live read. Selected work and workstream
+identities must be echoed exactly. The bridge rejects incomplete pages,
+contradictory readiness, mismatched observation versions and forbidden metadata
+disclosures with `BadGateway`, without forwarding the rejected payload.
+Internal digests and reason codes
 belong to backend diagnostics; product views translate them into document
 readiness and recovery guidance without rendering technical fields.
 

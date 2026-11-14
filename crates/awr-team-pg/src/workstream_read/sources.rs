@@ -78,49 +78,44 @@ pub(super) async fn read(
             row["path"] = Value::Null;
             row["reason"] = json!("spec_path_rejected");
             row["missing"] = json!({"path":"spec_path_rejected","expected_sha256":"spec_path_rejected","current_sha256":"spec_path_rejected"});
+        } else if let Err(error) = authorize_source_file_streams(auth, &path) {
+            if !matches!(error, PgError::Forbidden) {
+                return Err(error);
+            }
+            row["path"] = Value::Null;
+            row["status"] = json!("forbidden");
+            row["reason"] = json!("required_spec_forbidden");
+            row["missing"] = json!({"path":"permission_restricted","expected_sha256":"permission_restricted","current_sha256":"permission_restricted"});
         } else if let Some(file) = by_path.get(path.as_str()) {
             let text = file["text"].as_str();
-            match authorize_source_file_streams(auth, &path, text.unwrap_or("")) {
-                Ok(()) => {
-                    let expected = file["sha256"].as_str().filter(|s| {
-                        s.len() == 64
-                            && s.bytes()
-                                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-                    });
-                    row["expected_sha256"] = json!(expected);
-                    if text.is_none() {
-                        row["reason"] = json!("source_text_not_recorded");
-                        row["missing"]["current_sha256"] = json!("not_recorded");
-                        if expected.is_none() {
-                            row["missing"]["expected_sha256"] = json!("not_recorded");
-                        }
-                        records.push(row);
-                        continue;
-                    }
-                    let text = text.unwrap();
-                    let current = crate::source::sha256_hex(text.as_bytes());
-                    row["current_sha256"] = json!(current);
-                    match expected {
-                        Some(expected) if expected == current => {
-                            row["status"] = json!("consistent")
-                        }
-                        Some(_) => {
-                            row["status"] = json!("changed");
-                            row["reason"] = json!("spec_digest_mismatch");
-                        }
-                        None => {
-                            row["reason"] = json!("expected_digest_not_recorded");
-                            row["missing"]["expected_sha256"] = json!("not_recorded");
-                        }
-                    }
+            let expected = file["sha256"].as_str().filter(|s| {
+                s.len() == 64
+                    && s.bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            });
+            row["expected_sha256"] = json!(expected);
+            if text.is_none() {
+                row["reason"] = json!("source_text_not_recorded");
+                row["missing"]["current_sha256"] = json!("not_recorded");
+                if expected.is_none() {
+                    row["missing"]["expected_sha256"] = json!("not_recorded");
                 }
-                Err(PgError::Forbidden) => {
-                    row["path"] = Value::Null;
-                    row["status"] = json!("forbidden");
-                    row["reason"] = json!("required_spec_forbidden");
-                    row["missing"] = json!({"path":"permission_restricted","expected_sha256":"permission_restricted","current_sha256":"permission_restricted"});
+                records.push(row);
+                continue;
+            }
+            let text = text.unwrap();
+            let current = crate::source::sha256_hex(text.as_bytes());
+            row["current_sha256"] = json!(current);
+            match expected {
+                Some(expected) if expected == current => row["status"] = json!("consistent"),
+                Some(_) => {
+                    row["status"] = json!("changed");
+                    row["reason"] = json!("spec_digest_mismatch");
                 }
-                Err(error) => return Err(error),
+                None => {
+                    row["reason"] = json!("expected_digest_not_recorded");
+                    row["missing"]["expected_sha256"] = json!("not_recorded");
+                }
             }
         } else {
             row["status"] = json!("missing");
