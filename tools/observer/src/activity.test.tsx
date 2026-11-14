@@ -10,7 +10,6 @@ import { revokeObservationReads } from './lib/queries';
 import { DEMO_PROJECTS, renderApp } from './test-utils';
 
 const SELF_ACTOR = 'observer-host-native-20261031T203834Z-6427d37b0df9-aadc36';
-const UNKNOWN_MEANS = 'completion_not_recorded; inspect business request before retrying';
 
 // Live replies: observer-activity-*.json and service-audit-*.json.
 // Project-scope fixtures are derived from service source shape and run-09 rows,
@@ -141,7 +140,7 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
   it.each([
     ['zh-CN', '已提交', '显示范围未提供', '未提供'],
     ['en-US', 'Committed', 'The scope of these records was not provided', 'Not provided'],
-  ])('uses shared status and missing-value vocabulary in %s', async (language, status, scopeMissing, missing) => {
+  ])('uses shared status and missing-value vocabulary in %s', async (language, status, scopeMissing, _missing) => {
     const base = fixture('observer-activity-development.json');
     setupActivity({
       development: {
@@ -167,10 +166,10 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     const user = userEvent.setup();
     await user.click(row);
     expect(screen.getByTestId('activity-event-result').textContent).toBe(status);
-    const technical = screen.getAllByTestId('technical-details').at(-1)!;
-    await user.click(within(technical).getByRole('button'));
+
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
     for (const label of ['scope', 'request_retention', 'development_source', 'chat_text_collected', 'tool_io_collected', 'unknown_means']) {
-      expect((await screen.findByTestId(`technical-detail-${label}`)).textContent).toContain(missing);
+      expect(screen.queryByTestId(`technical-detail-${label}`)).toBeNull();
     }
   });
 
@@ -312,16 +311,16 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     for (const hidden of [event, SELF_ACTOR, 'audit.requests']) expect(defaultVisibleText(detail)).not.toContain(hidden);
     expect(findForbiddenVisibleText(defaultVisibleText(detail))).toEqual([]);
 
-    await user.click(within(detail).getByRole('button', { name: /技术细节/ }));
-    expect((await screen.findByTestId('activity-event-id')).textContent).toContain(event);
-    expect(screen.getByTestId('activity-event-actor-id').textContent).toContain(SELF_ACTOR);
-    expect(screen.getByTestId('technical-detail-action').textContent).toContain('audit.requests');
-    expect(screen.getByTestId('activity-event-not-request').textContent).toContain('不是业务请求号');
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(screen.queryByTestId("activity-event-id")).toBeNull();
+    expect(screen.queryByTestId("activity-event-actor-id")).toBeNull();
+    expect(screen.queryByTestId("technical-detail-action")).toBeNull();
+    expect(screen.queryByTestId('activity-event-not-request')).toBeNull();
     expect(router.state.location.search).toContain(`event=${event}`);
     expect(calls.some((call) => call.url.includes('command.inspect'))).toBe(false);
   });
 
-  it('keeps unknown results unknown in plain words, keeps unknown_means verbatim in the technical details, and offers no retry or reconciliation control', async () => {
+  it('explains unknown results without protocol text or execution controls', async () => {
     const { calls } = setupActivity();
     const event = '01M6A0PZ0CB6PZ6X8JQ4TSFQWN';
     renderApp(`/activity?project=demo&kind=requests&event=${event}`);
@@ -329,9 +328,9 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     expect(alert.textContent).toBe('还没有完成记录；请先核对原业务请求，再决定是否重试');
     expect(alert.textContent).not.toContain('completion_not_recorded');
     expect(screen.queryByRole('button', { name: /重试|对账|Retry|Reconcile/i })).toBeNull();
-    const user = userEvent.setup();
-    await user.click(within(screen.getAllByTestId('technical-details').at(-1)!).getByRole('button'));
-    expect((await screen.findByTestId('technical-detail-unknown_means')).textContent).toContain(UNKNOWN_MEANS);
+
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(screen.queryByTestId("technical-detail-unknown_means")).toBeNull();
     expect(calls.some((call) => call.url.includes('command.inspect'))).toBe(false);
   });
 
@@ -443,10 +442,10 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     expect(text).not.toContain('manager-agent-native');
     expect(text).not.toContain('-ee9ddb44e6e7-');
     expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('page-activity')))).toEqual([]);
-    expect(screen.getByTestId('activity-operators-note').textContent).toContain('真实标识在每条记录的技术细节里');
+    expect(screen.getByTestId('activity-operators-note').textContent).toContain('编号用于区分当前记录中的参与者');
   });
 
-  it('names a work by its readable key, an opaque id by a neutral phrase, and keeps the real id for the link and the technical details', async () => {
+  it('names work readably and retains opaque identifiers only in navigation', async () => {
     const base = fixture('observer-activity-development.json');
     const opaque = '01M6A0PZ0CB6PZ6X8JQ4TSFQWN';
     const development = { data: { ...base.data, items: [
@@ -461,12 +460,12 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     expect(opaqueLink.getAttribute('href')).toBe(`/projects/demo?tab=acceptance&work=${opaque}`);
     const detail = screen.getByTestId('activity-event-detail');
     expect(defaultVisibleText(detail)).not.toContain(opaque);
-    const user = userEvent.setup();
-    await user.click(within(detail).getByRole('button', { name: /技术细节/ }));
-    expect((await screen.findByTestId('technical-detail-work_id')).textContent).toContain(opaque);
+
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(screen.queryByTestId("technical-detail-work_id")).toBeNull();
   });
 
-  it('groups an unlisted operation as other operation, says so once, and keeps the raw name in the technical details', async () => {
+  it('groups an unlisted operation under a neutral product label', async () => {
     const base = fixture('observer-activity-development.json');
     const items = [
       { ...base.data.items[0], id: 'odd-1', action: 'invalid.query' },
@@ -479,9 +478,9 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     expect(screen.getAllByTestId('activity-note-unmapped-action')).toHaveLength(1);
     expect(screen.getByTestId('activity-note-unmapped-action').textContent).toBe('未收录的操作已归为其他操作');
     for (const row of rows) expect(row.textContent).not.toMatch(/invalid\.query|another\.unlisted/);
-    const user = userEvent.setup();
-    await user.click(within(screen.getByTestId('activity-event-detail')).getByRole('button', { name: /技术细节/ }));
-    expect((await screen.findByTestId('technical-detail-action')).textContent).toContain('invalid.query');
+
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(screen.queryByTestId("technical-detail-action")).toBeNull();
   });
 
   it('shows a readable "all" entry in each filter when nothing is filtered, and the chosen work when one is', async () => {

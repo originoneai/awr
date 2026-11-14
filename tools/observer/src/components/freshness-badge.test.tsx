@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+
 import { afterEach, describe, expect, it } from 'vitest';
 import i18n from '../i18n';
 import { formatUnixMs } from '../lib/format';
@@ -64,15 +64,15 @@ describe('FreshnessBadge (four-state vocabulary from observation-contract)', () 
     expect(badge.textContent).not.toContain(formatUnixMs(1761840000000, 'zh-CN'));
   });
 
-  it('keeps the failed error code and plane names in technical details', async () => {
+  it('explains read failure without error codes or internal plane names', async () => {
     render(<FreshnessBadge freshness={freshness()} />);
     const badge = screen.getByTestId('freshness-badge');
     expect(badge.textContent).not.toContain('ReadTimeout');
-    await userEvent.setup().click(screen.getByText('技术细节'));
-    expect(await screen.findByText(/ReadTimeout/)).toBeTruthy();
-    expect(screen.getByText(/上报接收/)).toBeTruthy();
-    expect(screen.getByText(/权威测量/)).toBeTruthy();
-    expect(screen.getByText(/页面读取/)).toBeTruthy();
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(screen.queryByText(/ReadTimeout/)).toBeNull();
+    expect(screen.getByText(/Agent 汇报/)).toBeTruthy();
+    expect(screen.getByText(/系统核对/)).toBeTruthy();
+    expect(screen.getByText(/本页读取/)).toBeTruthy();
   });
 
   it('renders not_measured without inventing a read time', () => {

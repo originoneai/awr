@@ -153,10 +153,11 @@
    */
   function mount({
     container, snapshot, config, t, model: given, restore, offsetTop, copy, win = root, timers = { set: (fn, ms) => setTimeout(fn, ms), clear: (id) => clearTimeout(id) },
-    prepare, commandFor = detailLib.commandFor, technicalDetails = false,
+    prepare, commandFor = detailLib.commandFor, productOnly = false,
   }) {
     const model = given || modelLib.loadModel(snapshot, config);
-    const views = viewsLib.createViews(t);
+    const views = viewsLib.createViews(t, { productOnly });
+    const tableColumns = TABLE_COLUMNS.filter((column) => !productOnly || column !== 'key');
     const index = detailLib.dependencyIndex(model);
     const targets = foldTargets(model);
     const state = createState();
@@ -234,7 +235,7 @@
         const n = model.nodes.get(attr(card, 'data-key'));
         card.setAttribute('tabindex', '0');
         card.setAttribute('role', 'button');
-        if (n) card.setAttribute('aria-label', t('map.ui.card_label', { key: n.id, title: n.title, status: t(`map.status.${n.vis}`) }));
+        if (n) card.setAttribute('aria-label', productOnly ? `${n.title} · ${t(`map.status.${n.vis}`)}` : t('map.ui.card_label', { key: n.id, title: n.title, status: t(`map.status.${n.vis}`) }));
       }
       for (const agent of target.querySelectorAll('.pm-agent')) {
         agent.setAttribute('tabindex', '0');
@@ -351,10 +352,10 @@
       }
       if (saved) {
         state.table.open = Boolean(saved.open);
-        for (const column of TABLE_FILTERS) {
+        for (const column of TABLE_FILTERS.filter((column) => !productOnly || column !== 'key')) {
           if (saved.filters && typeof saved.filters[column] === 'string') state.table.filters[column] = saved.filters[column];
         }
-        if (saved.sort && TABLE_COLUMNS.includes(saved.sort.column) && ['ascending', 'descending'].includes(saved.sort.direction)) state.table.sort = { ...saved.sort };
+        if (saved.sort && tableColumns.includes(saved.sort.column) && ['ascending', 'descending'].includes(saved.sort.direction)) state.table.sort = { ...saved.sort };
       }
       if (state.table.open) tablePanel.setAttribute('open', '');
       on(tablePanel, 'toggle', () => { state.table.open = tablePanel.hasAttribute('open'); saveTable(); });
@@ -364,7 +365,7 @@
       tools.hidden = false;
       const collator = new Intl.Collator(tableLocale, { numeric: true, sensitivity: 'base' });
       const headers = [...table.querySelectorAll('th')];
-      for (const [index, column] of TABLE_COLUMNS.entries()) {
+      for (const [index, column] of tableColumns.entries()) {
         const header = headers[index];
         const label = t(`map.table.${column}`);
         const accessible = esc(t('map.table.filter', { field: label }));
@@ -392,7 +393,7 @@
       for (const control of table.querySelectorAll('[data-pm-table-filter]')) control.value = state.table.filters[attr(control, 'data-pm-table-filter')] || '';
       tableEmpty = doc.createElement('tr');
       tableEmpty.className = 'pm-table-empty';
-      tableEmpty.innerHTML = `<td colspan="7">${esc(t('map.table.empty'))}</td>`;
+      tableEmpty.innerHTML = `<td colspan="${tableColumns.length}">${esc(t('map.table.empty'))}</td>`;
       refreshTable();
     }
 
@@ -443,7 +444,7 @@
       const count = bar.querySelector('[data-pm-count]');
       if (count) count.textContent = query ? (found.size ? t('map.ui.matches', { count: found.size }) : t('map.ui.no_matches')) : '';
       const note = bar.querySelector('[data-pm-note]');
-      if (note) note.textContent = focus ? t('map.ui.highlighting', { key: focus.key, up: focus.up.size, down: focus.down.size }) : interactionHint;
+      if (note) note.textContent = focus ? t('map.ui.highlighting', { key: productOnly ? model.nodes.get(focus.key).title : focus.key, up: focus.up.size, down: focus.down.size }) : interactionHint;
       const clear = bar.querySelector('[data-pm-action="clear"]');
       if (clear) clear.hidden = !(state.selected || state.search || state.filters.size);
       const can = foldableNow();
@@ -662,7 +663,7 @@
       placeDrawer();
       state.drawer = key;
       state.selected = key;
-      box.querySelector('.pm-drawer-body').innerHTML = detailLib.renderDetail(data, t, (g) => pageLib.gapReason(t, g), { technicalDetails });
+      box.querySelector('.pm-drawer-body').innerHTML = detailLib.renderDetail(data, t, (g) => pageLib.gapReason(t, g), { productOnly });
       const panel = box.querySelector('.pm-drawer-panel');
       if (panel) panel.setAttribute('aria-labelledby', 'pm-drawer-title');
       box.hidden = false;
@@ -898,7 +899,8 @@
     for (const row of container.querySelectorAll('tr[data-key]')) {
       row.setAttribute('tabindex', '0');
       row.setAttribute('role', 'button');
-      row.setAttribute('aria-label', t('map.ui.row_open', { key: attr(row, 'data-key') }));
+      const key = attr(row, 'data-key');
+      row.setAttribute('aria-label', t('map.ui.row_open', { key: productOnly ? model.nodes.get(key).title : key }));
     }
     container.classList.add('pm-scope');
     const checked = container.querySelector('input[name="view"][checked]');

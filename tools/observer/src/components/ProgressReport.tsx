@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { moreLinesText, type CappedList, type ProgressReportResult } from '../core/observation';
 import { humanText } from '../i18n/human-language';
 import { NotReportedYet } from './states';
-import { TechnicalDetails } from './TechnicalDetails';
+
 import { ToneBadge } from './ToneBadge';
 
 function ReportList<T>({ title, list, testId, render }: {
@@ -24,7 +24,7 @@ function ReportList<T>({ title, list, testId, render }: {
   );
 }
 
-/** The reporter's checkpoint in plain words; every raw field is in the collapsed technical details. */
+/** The reporter's progress and outcomes in business language. */
 export function ProgressReport({ report }: { report: ProgressReportResult }) {
   const { t, i18n } = useTranslation();
   if (report.kind === 'missing') return <NotReportedYet />;
@@ -53,7 +53,6 @@ export function ProgressReport({ report }: { report: ProgressReportResult }) {
       {report.declaration.length > 0 ? (
         <Typography.Text type="secondary" data-testid="progress-report-declaration">{report.declaration.join(' · ')}</Typography.Text>
       ) : null}
-      <TechnicalDetails items={report.technical.items.map((item) => ({ label: item.label, value: item.value }))} />
     </Flex>
   );
 }

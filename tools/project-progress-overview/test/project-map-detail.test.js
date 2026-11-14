@@ -130,14 +130,13 @@ test('the fields the official commands do not provide are listed, with the reaso
   assert.doesNotMatch(zh, /project\.scenarios|release_funnel/, 'only fields that belong to work items are listed there');
 });
 
-test('Team details keep raw identities in a closed disclosure and render the same dependencies', () => {
-  const t = (key, params) => key === 'map.detail.technical' ? 'Technical details' : h.tFor('en')(key, params);
+test('Team details use product language and retain dependency navigation', () => {
+  const t = h.tFor('en');
   const d = detail.detailData(model, 'DEMO-A-004', t);
-  const html = detail.renderDetail(d, t, (g) => g.reason, { technicalDetails: true });
-  const visible = html.replace(/<details[\s\S]*?<\/details>/g, '');
-  assert.match(html, /<details class="pm-d-sec" data-testid="technical-details">/);
-  assert.match(html, /&quot;key&quot;: &quot;DEMO-A-004&quot;/);
-  assert.doesNotMatch(visible, /<code>|node\.milestone|in_progress|data-pm-action="copy-key"/);
+  const html = detail.renderDetail(d, t, (g) => g.reason, { productOnly: true });
+  assert.doesNotMatch(html, /data-testid="technical-details"/);
+  assert.doesNotMatch(html, /&quot;key&quot;: &quot;DEMO-A-004&quot;/);
+  assert.doesNotMatch(html, /<code>|node\.milestone|in_progress|data-pm-action="copy-(?:key|command)"/);
   assert.deepEqual([...html.matchAll(/data-pm-jump="([^"]+)"/g)].map((m) => m[1]), [...d.prerequisites, ...d.dependents].map((n) => n.key));
   h.assertWellFormed(html, 'Team detail');
 });

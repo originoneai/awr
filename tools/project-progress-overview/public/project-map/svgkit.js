@@ -238,7 +238,7 @@
   }
 
   /** Status palette entry with its localized label. */
-  function createKit(t) {
+  function createKit(t, { productOnly = false } = {}) {
     const ST = {};
     for (const [vis, style] of Object.entries(PALETTE)) ST[vis] = { ...style, label: t(`map.status.${vis}`) };
 
@@ -311,7 +311,7 @@
         : '';
       const hook = o.key ? ` class="pm-card" data-key="${esc(o.key)}" data-vis="${vis}"` : '';
       const ring = o.key ? `<rect class="pm-ring" x="${x - 2}" y="${y - 2}" width="${w + 4}" height="${f1(h + 4)}" rx="16" fill="none" stroke="none"/>` : '';
-      const out = [`<g opacity="${op}"${hook}><title>${esc(o.full || o.nid)} · ${esc(o.title)}</title>`, halo,
+      const out = [`<g opacity="${op}"${hook}><title>${productOnly ? '' : `${esc(o.full || o.nid)} · `}${esc(o.title)}</title>`, halo,
         `<rect x="${x}" y="${y}" width="${w}" height="${f1(h)}" rx="14" fill="${s.cardbg}" fill-opacity="${o.opaque ? 1 : 0.9}" stroke="${s.border}" stroke-width="1.2"${dash}${flt}/>`,
         dot(x + pad + 5, y + 17, vis),
         text(x + pad + 17, y + 20.5, dispId(o.nid, idw), 9.8, FAINT, 600, 'start', { mono: true, spacing: 0.3 }), chipMarkup, ...body, ring, '</g>'];
@@ -437,7 +437,7 @@
     /** One finished item as a single line, for unfolded finished work. */
     function miniRow(x, y, w, o) {
       const h = 24;
-      return [`<g class="pm-card" data-key="${esc(o.key)}" data-vis="${o.vis}" opacity=".95"><title>${esc(o.full || o.nid)} · ${esc(o.title)}</title>`
+      return [`<g class="pm-card" data-key="${esc(o.key)}" data-vis="${o.vis}" opacity=".95"><title>${productOnly ? '' : `${esc(o.full || o.nid)} · `}${esc(o.title)}</title>`
         + `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="9" fill="#fff" fill-opacity=".82" stroke="${ST[o.vis].border}" stroke-width="1"/>`
         + dot(x + 14, y + 12, o.vis, 4.2)
         + text(x + 26, y + 15.5, dispId(o.nid, 70, 9), 9, FAINT, 600, 'start', { mono: true })

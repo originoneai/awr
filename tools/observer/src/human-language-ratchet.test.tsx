@@ -189,9 +189,9 @@ describe('human-language violation ratchet', () => {
 // What the reporters of the run wrote, as the pages show it in English: the sentences are the reporter's own, long identifiers are
 // cut to a short start, and the machine names a vocabulary knows are in words. Nothing else on these pages is exempt from the guard.
 const IN_REVIEW = {
-  next: 'Wait for independent review of round 01M6AVQ8…. Do not self-approve or merge to main.',
+  next: 'Wait for independent review of round the related record. Do not self-approve or merge to main.',
   report: [
-    'Status and keyword filters are on branch issue-filter-api at 5f7eb2fe…. npm test passed 5 of 5. Local content and tests passed. Review is open.',
+    'Status and keyword filters are on branch issue-filter-api at the related record. npm test passed 5 of 5. Local content and tests passed. Review is open.',
     'filterIssues combines status and keyword without writing issue records.',
     'Checks cover an empty list, no match, and combined filters.',
     'Published refs/heads/issue-filter-api and submitted the report plus both manifest files.',
@@ -200,10 +200,10 @@ const IN_REVIEW = {
 const DELIVERED = {
   next: 'Leave issue-filter-page available for self-claim. Eligible assignees are lin and mei. The page has no implementation, review, or delivery.',
   report: [
-    'Fast-forwarded refs/heads/main from a5163424… to 5f7eb2fe… and finalized issue-filter-api. Completion receipt 01M6B189…. Source publication 01M6B189… is confirmed.',
-    'Prepare mainline integration 01M6B0NN… confirmed applied',
-    'Finalize delivery receipt 01M6B189…',
-    'origin/main is 5f7eb2fe…',
+    'Fast-forwarded refs/heads/main from the related record to the related record and finalized issue-filter-api. Completion receipt the related record. Source publication the related record is confirmed.',
+    'Prepare mainline integration the related record confirmed applied',
+    'Finalize delivery receipt the related record',
+    'origin/main is the related record',
   ],
 };
 const REPORTER_SENTENCES = {

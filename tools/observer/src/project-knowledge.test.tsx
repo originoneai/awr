@@ -1,6 +1,6 @@
 import { createHash, webcrypto } from 'node:crypto';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -258,7 +258,7 @@ describe('project knowledge tab (AWR-OBS-009)', () => {
     expect(screen.queryByText(/[a-f0-9]{12}…/)).toBeNull();
   });
 
-  it('keeps the path, the full digest and the size in the technical details and none of them in the default view', async () => {
+  it('shows readable document names without source fingerprints', async () => {
     const spec = specFor();
     setupKnowledge({ snapshots: { W1: snapshotFor('W1'), W2: snapshotFor('W2') } });
     renderApp('/projects/demo?tab=knowledge');
@@ -267,10 +267,10 @@ describe('project knowledge tab (AWR-OBS-009)', () => {
     expect(findForbiddenVisibleText(defaultVisibleText(page))).toEqual([]);
     expect(defaultVisibleText(page)).not.toContain(spec.sha256.slice(0, 12));
     expect(defaultVisibleText(page)).not.toContain('docs/support.md');
-    await userEvent.setup().click(within(page).getByRole('button', { name: /技术细节/ }));
-    expect((await screen.findByTestId('technical-detail-sha256')).textContent).toContain(spec.sha256);
-    expect(screen.getByTestId('technical-detail-path').textContent).toContain('docs/support.md');
-    expect(screen.getByTestId('technical-detail-byte_length').textContent).toContain(String(spec.byte_length));
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(screen.queryByTestId("technical-detail-sha256")).toBeNull();
+    expect(screen.queryByTestId("technical-detail-path")).toBeNull();
+    expect(screen.queryByTestId("technical-detail-byte_length")).toBeNull();
   });
 
   it('shows only metadata when content_included is false', async () => {
@@ -368,10 +368,11 @@ describe('project knowledge tab (AWR-OBS-009)', () => {
     });
     setupKnowledge({ snapshots: { W1: snapshot, W2: snapshot } });
     renderApp('/projects/demo?tab=knowledge');
-    expect((await screen.findAllByText('{"kind":"metric","target":5}')).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('详细内容暂时无法显示')).length).toBeGreaterThan(0);
     expect(screen.getAllByText('7').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('true').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('{"check":"empty list"}').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('是').length).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toContain('{"kind":"metric","target":5}');
+    expect(document.body.textContent).not.toContain('{"check":"empty list"}');
     expect(screen.queryByText('[object Object]')).toBeNull();
   });
 

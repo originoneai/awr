@@ -1,3 +1,4 @@
+import { ObservationValue } from '../components/ObservationValue';
 import { useQuery } from '@tanstack/react-query';
 import { Button, Card, Col, Input, List, Pagination, Row, Space, Tag, Typography, theme } from 'antd';
 import { useState } from 'react';
@@ -5,11 +6,10 @@ import { Stamp } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
 import { ObservationEmpty, ObservationForbidden } from '../components/states';
-import { TechnicalDetails } from '../components/TechnicalDetails';
+
 import {
   documentLabel,
   judgeContentRead,
-  rawObservationText,
   utf8ByteLength,
   type ContentReadStatus,
 } from '../core/observation';
@@ -350,30 +350,13 @@ export function ProjectKnowledge({ project }: { project: string }) {
                   {contractGroups(selected.citingWorks).map((group) => (
                     <Card key={group.titles.join('\u0000')} size="small" type="inner" title={t('knowledge.contractFor', { title: group.titles.join(t('knowledge.titleSeparator')) })}>
                       {group.goals?.length ? (
-                        <List size="small" header={t('workbench.detail.goals')} dataSource={group.goals} renderItem={(goal) => <List.Item>{rawObservationText(goal).text}</List.Item>} />
+                        <List size="small" header={t('workbench.detail.goals')} dataSource={group.goals} renderItem={(goal) => <List.Item><ObservationValue value={goal} /></List.Item>} />
                       ) : null}
                       {group.acceptance?.length ? (
-                        <List size="small" header={t('workbench.detail.acceptance')} dataSource={group.acceptance} renderItem={(item) => <List.Item>{rawObservationText(item).text}</List.Item>} />
+                        <List size="small" header={t('workbench.detail.acceptance')} dataSource={group.acceptance} renderItem={(item) => <List.Item><ObservationValue value={item} /></List.Item>} />
                       ) : null}
                     </Card>
                   ))}
-                  <TechnicalDetails
-                    items={[
-                      { label: 'path', value: selected.path },
-                      { label: 'sha256', value: selected.sha256 },
-                      { label: 'byte_length', value: selected.byteLength },
-                      { label: 'content_included', value: selected.contentIncluded },
-                      { label: 'digest_check', value: digestCheck },
-                      { label: 'citing_works', value: selected.citingWorks.map((work) => work.key) },
-                      ...(otherVersions.length > 1 ? [{ label: 'versions_of_this_path', value: otherVersions.map((entry) => entry.sha256) }] : []),
-                      ...(readRequested ? [
-                        { label: 'read_status', value: contentRead.isError ? 'failed' : readStatus },
-                        { label: 'read_error_code', value: (contentRead.error as { code?: string } | null)?.code ?? null },
-                        { label: 'read_received_sha256', value: readData?.sha256 ?? null },
-                        { label: 'read_received_byte_length', value: readData?.byte_length ?? null },
-                      ] : []),
-                    ]}
-                  />
                 </Space>
               </Card>
             </Col>

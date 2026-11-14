@@ -17,10 +17,10 @@ describe('defaultVisibleText', () => {
     expect(findForbiddenVisibleText(root.textContent ?? '')).toEqual([]);
   });
 
-  it('leaves out the technical details, collapsed or expanded, and leaves the page itself untouched', () => {
+  it('includes diagnostic disclosures and leaves the page itself untouched', () => {
     const root = page('<p>Ready for review</p><div data-testid="technical-details"><span>work_id</span><pre>01M6AVQ870N7MBRJ5MPCN79T55</pre></div><p>Waiting</p>');
-    expect(defaultVisibleText(root)).toBe('Ready for review\nWaiting');
-    expect(findForbiddenVisibleText(defaultVisibleText(root))).toEqual([]);
+    expect(defaultVisibleText(root)).toBe('Ready for review\nwork_id\n01M6AVQ870N7MBRJ5MPCN79T55\nWaiting');
+    expect(findForbiddenVisibleText(defaultVisibleText(root)).map((entry) => entry.id)).toEqual(['snake_case', 'ulid']);
     expect(root.querySelector('[data-testid="technical-details"]')).not.toBeNull();
   });
 
@@ -36,12 +36,12 @@ describe('visibleTextParts', () => {
     expect(visibleTextParts(root)).toEqual({ own: 'Next step\nReady for review', reporter: 'Leave the page for self-claim.' });
   });
 
-  it('takes the outermost marked element once and leaves the technical details out of both parts', () => {
+  it('takes the outermost marked element once and includes disclosures in the checks', () => {
     const root = page(
       '<p data-reporter-text>Outer <span data-reporter-text>inner</span> end</p>'
       + '<div data-testid="technical-details"><p data-reporter-text>raw_name</p><span>work_id</span></div>',
     );
-    expect(visibleTextParts(root)).toEqual({ own: '', reporter: 'Outer\ninner\nend' });
+    expect(visibleTextParts(root)).toEqual({ own: 'work_id', reporter: 'Outer\ninner\nend\nraw_name' });
   });
 
   it('keeps the words around a marked element in the page\'s own part and leaves the page itself untouched', () => {
@@ -79,6 +79,12 @@ describe('findIdentifierText', () => {
 });
 
 describe('findHumanLanguageViolations', () => {
+  it('checks tooltip and accessibility text for hidden diagnostic information', () => {
+    const root = page('<button title="request_id" aria-label="execution.prepare">Open</button>');
+    expect(findHumanLanguageViolations(root).map(entry => entry.id)).toContain('snake_case');
+    expect(findHumanLanguageViolations(root).map(entry => entry.id)).toContain('operation_name');
+  });
+
   it('lets a reporter\'s engineering word stand as written', () => {
     expect(findHumanLanguageViolations(page('<p data-reporter-text>Leave the page available for self-claim.</p>'))).toEqual([]);
   });

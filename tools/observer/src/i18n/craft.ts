@@ -1,4 +1,4 @@
-import { STATUS_FIELDS, rawObservationText, statusWord } from '../core/observation';
+import { rawObservationText, readableSentence, statusWord } from '../core/observation';
 import { humanText } from './human-language';
 
 export { STATUS_FIELDS } from '../core/observation';
@@ -123,9 +123,7 @@ export const NUMERIC_STRING_FIELDS = new Set([
 ]);
 
 export function statusLabel(status: string, language: string, field: string): string {
-  const result = statusWord(status, { language, field });
-  // Compatibility only: existing pages keep unknown raw enums until their adoption slice.
-  return STATUS_FIELDS.has(field) && !result.known ? status : result.text;
+  return statusWord(status, { language, field }).text;
 }
 
 export function notProvided(language: string): string {
@@ -154,7 +152,9 @@ export function formatObservationValue(value: unknown, language: string, field?:
   if (Array.isArray(value)) return value.length ? value.map((item) => formatObservationValue(item, language, field)).join(', ') : notProvided(language);
   if (typeof value === 'string') {
     if (NUMERIC_STRING_FIELDS.has(field ?? '')) return formatMetric(value, language, field);
-    return statusLabel(value, language, field ?? '');
+    return readableSentence(statusLabel(value, language, field ?? ''), language);
   }
-  return rawObservationValue(value) ?? notProvided(language);
+  const record = value as Record<string, unknown>;
+  const statement = [record.text, record.description, record.title, record.summary].find((item) => typeof item === 'string' && item.trim() !== '');
+  return typeof statement === 'string' ? readableSentence(statement, language) : humanText('contentUnavailable', language);
 }

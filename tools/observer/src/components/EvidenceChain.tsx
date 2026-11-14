@@ -48,7 +48,7 @@ export function EvidenceChain({
       current: false,
       description: completionReceipt == null || completionReceipt === ''
         ? <Typography.Text type="secondary">{t('acceptance.noCompletionReceipt')}</Typography.Text>
-        : <ObservationValue value={completionReceipt} />,
+        : <ObservationValue value={completionState} field="state" />,
     },
   ];
   return (

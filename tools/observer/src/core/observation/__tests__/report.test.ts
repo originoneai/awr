@@ -21,10 +21,10 @@ describe('describeProgressReport: the real checkpoints', () => {
     const report = describeProgressReport(DELIVERED, zh);
     expect(report.kind).toBe('reported');
     expect(report.summary).toBe(readableSentence(DELIVERED.summary, 'zh-CN'));
-    expect(report.summary).toContain('from a5163424… to 5f7eb2fe… and finalized issue-filter-api');
+    expect(report.summary).toContain('from 相关记录 to 相关记录 and finalized issue-filter-api');
     expect(report.completed).toEqual({ shown: DELIVERED.completed.map((sentence) => readableSentence(sentence, 'zh-CN')), more: 0 });
-    expect(report.completed.shown).toEqual(['准备并入主线 01M6B0NN… confirmed applied', '完成交付 receipt 01M6B189…', 'origin/main is 5f7eb2fe…']);
-    expect(describeProgressReport(DELIVERED, en).completed.shown[0]).toBe('Prepare mainline integration 01M6B0NN… confirmed applied');
+    expect(report.completed.shown).toEqual(['准备并入主线 相关记录 confirmed applied', '完成交付 receipt 相关记录', 'origin/main is 相关记录']);
+    expect(describeProgressReport(DELIVERED, en).completed.shown[0]).toBe('Prepare mainline integration the related record confirmed applied');
     const { technical, ...visible } = report;
     expect(JSON.stringify(visible)).not.toContain('5f7eb2fe9c563e4d355aa64a527e0aef754116c1');
     expect(JSON.stringify(technical)).toContain('5f7eb2fe9c563e4d355aa64a527e0aef754116c1');

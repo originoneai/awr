@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+
 import { afterEach, describe, expect, it } from 'vitest';
 import i18n from '../i18n';
 import {
@@ -32,7 +32,7 @@ describe('observation state presentations', () => {
 
   it('forbidden: antd Result 403', async () => {
     render(<ObservationForbidden />);
-    expect(screen.getByText('403')).toBeTruthy();
+    expect(screen.getByText('暂时无法查看')).toBeTruthy();
     expect(screen.getByText(/没有查看该范围的权限/)).toBeTruthy();
     await i18n.changeLanguage('en-US');
     expect(screen.getByText(/not authorized/i)).toBeTruthy();
@@ -53,11 +53,11 @@ describe('observation state presentations', () => {
     );
     // Confirmed facts stay on screen...
     expect(screen.getByText('已确认的事实')).toBeTruthy();
-    // The warning is human-readable; the exact error stays in disclosure.
+    // The warning explains the failure without rendering the backend error.
     expect(screen.getByRole('alert')).toBeTruthy();
     expect(screen.queryByText(/ReadTimeout/)).toBeNull();
-    await userEvent.setup().click(screen.getByText('技术细节'));
-    expect(await screen.findByText(/ReadTimeout/)).toBeTruthy();
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(screen.queryByText(/ReadTimeout/)).toBeNull();
     await i18n.changeLanguage('en-US');
     expect(screen.getByText(/partial read failure/i)).toBeTruthy();
   });

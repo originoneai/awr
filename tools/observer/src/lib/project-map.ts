@@ -1,4 +1,5 @@
 import snapshot from 'awr-progress-map/project-map/snapshot.js';
+import { readsAsName } from '../core/observation';
 
 export interface GraphWork {
   work_id: string;
@@ -34,15 +35,19 @@ export function teamProjectSnapshot(graph: TeamGraphResponse) {
     throw new Error('Duplicate graph work identity');
   }
   const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
+  const actors = new Map([...new Set(graph.items.flatMap(item => item.claims.map(claim => claim.actor_id)))].sort(compare).map((id, index) => [id, `Agent ${index + 1}`]));
+  const members = new Map([...new Set(graph.items.flatMap(item => item.owner ? [item.owner] : []))].sort(compare).map((id, index) => [id, `Member ${index + 1}`]));
+  const actorName = (claim: GraphWork['claims'][number]) => claim.actor_name && readsAsName(claim.actor_name) ? claim.actor_name : actors.get(claim.actor_id);
   const nodes = graph.items.map((item) => ({
     id: item.work_id, key: item.external_key, title: item.title,
-    display_key: /^WORK-[a-f0-9]{16,}$/i.test(item.external_key) ? '' : undefined,
+    display_key: '',
     status: item.state === 'unclaimed' ? 'planned' : snapshot.STATUSES.includes(item.state) ? item.state : 'unknown',
     source_status: item.state,
-    owner: item.owner, last_event_at: item.last_event_at, blocker: null, milestone: null,
+    owner: item.owner && readsAsName(item.owner) ? item.owner : item.owner ? members.get(item.owner) : null,
+    last_event_at: item.last_event_at, blocker: null, milestone: null,
     ready: null, archived: item.definition_state === 'archived', next_action: null, waits: [], diagnostics: [],
     claims: item.claims.map((claim) => ({
-      id: claim.id, agent_id: claim.actor_name || claim.actor_id, session_id: claim.session_id,
+      id: claim.id, agent_id: actorName(claim), session_id: claim.session_id,
       acquired_at: claim.acquired_at_unix_ms, expires_at: claim.expires_at_unix_ms,
     })),
   })).sort((a, b) => compare(a.key, b.key));
@@ -52,7 +57,7 @@ export function teamProjectSnapshot(graph: TeamGraphResponse) {
     return { dependent: item.external_key, prerequisite, required: true };
   })).sort((a, b) => compare(a.dependent, b.dependent) || compare(a.prerequisite, b.prerequisite));
   const sessions = graph.items.flatMap((item) => item.claims.map((claim) => ({
-    id: claim.session_id, agent_id: claim.actor_name || claim.actor_id,
+    id: claim.session_id, agent_id: actorName(claim),
     work_key: item.external_key, status: 'active', started_at: null,
     last_event_at: null, last_checkpoint_id: null,
   })));

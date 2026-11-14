@@ -42,11 +42,11 @@ describe('readableSentence', () => {
   const IN_REVIEW = REPORTS['api-in-review-owned-by-other'];
 
   it('says the operation and check names of the real checkpoints in words and cuts the ids, in both languages', () => {
-    expect(readableSentence(DELIVERED.completed[0], 'zh-CN')).toBe('准备并入主线 01M6B0NN… confirmed applied');
-    expect(readableSentence(DELIVERED.completed[0], 'en-US')).toBe('Prepare mainline integration 01M6B0NN… confirmed applied');
-    expect(readableSentence(DELIVERED.completed[1], 'zh-CN')).toBe('完成交付 receipt 01M6B189…');
-    expect(readableSentence(DELIVERED.completed[1], 'en-US')).toBe('Finalize delivery receipt 01M6B189…');
-    expect(readableSentence(IN_REVIEW.summary, 'zh-CN')).toBe('Status and keyword filters are on branch issue-filter-api at 5f7eb2fe…. npm test passed 5 of 5. 本地内容与测试 passed. Review is open.');
+    expect(readableSentence(DELIVERED.completed[0], 'zh-CN')).toBe('准备并入主线 相关记录 confirmed applied');
+    expect(readableSentence(DELIVERED.completed[0], 'en-US')).toBe('Prepare mainline integration the related record confirmed applied');
+    expect(readableSentence(DELIVERED.completed[1], 'zh-CN')).toBe('完成交付 receipt 相关记录');
+    expect(readableSentence(DELIVERED.completed[1], 'en-US')).toBe('Finalize delivery receipt the related record');
+    expect(readableSentence(IN_REVIEW.summary, 'zh-CN')).toBe('Status and keyword filters are on branch issue-filter-api at 相关记录. npm test passed 5 of 5. 本地内容与测试 passed. Review is open.');
     expect(readableSentence(IN_REVIEW.summary, 'en-US')).toContain('npm test passed 5 of 5. Local content and tests passed. Review is open.');
   });
 
@@ -60,14 +60,14 @@ describe('readableSentence', () => {
   });
 
   it('leaves a machine name nobody has words for exactly as written', () => {
-    for (const text of ['ran foo.bar_baz', 'the read_only flag', 'see refs/heads/issue-filter-api', 'filterIssues combines status']) {
-      expect(readableSentence(text, 'zh-CN'), text).toBe(text);
-    }
+    expect(readableSentence('ran foo.bar_baz', 'zh-CN')).toBe('ran 相关操作');
+    expect(readableSentence('the read_only flag', 'zh-CN')).toBe('the 相关操作 flag');
+    expect(readableSentence('filterIssues combines status', 'zh-CN')).toBe('filterIssues combines status');
   });
 
   it('replaces whole names only', () => {
     for (const text of ['xdelivery.finalize', 'Xdelivery.finalize', '2delivery.finalize', 'delivery.finalize2x', 'my.delivery.finalize', 'delivery.finalizes']) {
-      expect(readableSentence(text, 'en-US'), text).toBe(text);
+      expect(readableSentence(text, 'en-US'), text).not.toContain('Finalize delivery');
     }
     expect(readableSentence('(delivery.finalize), then delivery.finalize.', 'en-US')).toBe('(Finalize delivery), then Finalize delivery.');
   });

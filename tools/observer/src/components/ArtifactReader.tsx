@@ -1,14 +1,21 @@
 import { useQuery } from '@tanstack/react-query';
-import { Button, Segmented, Space, Tag, Tooltip, Typography } from 'antd';
+import { Button, Space, Tag, Typography } from 'antd';
 import { useState } from 'react';
 import { Stamp } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ApiError } from '../lib/api';
-import { FieldLabel, ObservationValue } from './ObservationValue';
 import { fetchArtifactContent, fetchArtifactSegments, type ArtifactSelector } from '../lib/artifact';
 import { asText, at } from '../lib/json';
 
-type ReadMode = 'content' | 'segment';
+function isOperationalRecord(text: string): boolean {
+  try {
+    const record = JSON.parse(text);
+    return record != null && typeof record === 'object'
+      && [record.codec, record.protocol].some(value => typeof value === 'string' && value.startsWith('awr-'));
+  } catch {
+    return false;
+  }
+}
 
 /** On-demand artifact bytes; verification is derived atomically with the bytes. */
 export function ArtifactReader({
@@ -22,7 +29,6 @@ export function ArtifactReader({
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
-  const [mode, setMode] = useState<ReadMode>('content');
   const artifactId = asText(at(artifact, ['query', 'artifact_id']));
   const expected = asText(at(artifact, ['query', 'expected_sha256']));
   const segmentAvailable = Boolean(at(artifact, ['segment_query', 'artifact_id']));
@@ -32,10 +38,15 @@ export function ArtifactReader({
     expected_sha256: expected,
   } : null;
   const read = useQuery({
-    queryKey: ['team', 'artifact-read', project, mode, selector],
-    queryFn: ({ signal }: { signal: AbortSignal }) => mode === 'content'
-      ? fetchArtifactContent(project, selector as ArtifactSelector, signal)
-      : fetchArtifactSegments(project, selector as ArtifactSelector, signal),
+    queryKey: ['team', 'artifact-read', project, selector],
+    queryFn: async ({ signal }: { signal: AbortSignal }) => {
+      try {
+        return await fetchArtifactContent(project, selector as ArtifactSelector, signal);
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.code !== 'Unavailable' || !segmentAvailable) throw error;
+        return fetchArtifactSegments(project, selector as ArtifactSelector, signal);
+      }
+    },
     enabled: expanded && !revoked && Boolean(selector?.work_id),
     // Digest-addressed bytes are immutable: one read per selector, never a poll.
     refetchInterval: false,
@@ -51,14 +62,9 @@ export function ArtifactReader({
   return (
     <Space direction="vertical" size={6} style={{ width: '100%' }}>
       <Typography.Text strong style={{ overflowWrap: 'anywhere' }}>
-        <ObservationValue value={at(artifact, ['manifest_artifact_id'])} />
+        {t('acceptance.artifacts')}
       </Typography.Text>
-      <Typography.Text type="secondary"><FieldLabel field="artifact_id" />: <ObservationValue value={artifactId} /></Typography.Text>
-      <Typography.Text type="secondary"><FieldLabel field="byte_length" />: <ObservationValue value={at(artifact, ['byte_length'])} field="byte_length" /></Typography.Text>
       <Space size={8} wrap>
-        <Tooltip title={expected}>
-          <Typography.Text type="secondary">{expected ? `${expected.slice(0, 12)}…` : t('common.notProvided')}</Typography.Text>
-        </Tooltip>
         {status ? (
           <Tag data-testid={`artifact-digest-${artifactId}`} color={status === 'verified' ? 'success' : status === 'mismatch' ? 'error' : 'default'}>
             {status === 'verified' ? <Stamp size={16} strokeWidth={1.5} aria-label={digestText} /> : null}
@@ -70,33 +76,22 @@ export function ArtifactReader({
             {expanded ? t('artifact.collapse') : t('artifact.expand')}
           </Button>
         ) : null}
-        {expanded ? (
-          <Segmented
-            size="small"
-            value={mode}
-            onChange={(value) => setMode(value as ReadMode)}
-            options={[
-              { label: t('artifact.content'), value: 'content' },
-              { label: t('artifact.segment'), value: 'segment', disabled: !segmentAvailable },
-            ]}
-          />
-        ) : null}
       </Space>
       {expanded && selector?.work_id ? (
         read.isPending ? <Typography.Text type="secondary">{t('common.loading')}</Typography.Text>
           : read.isError ? (
             <Typography.Text type="warning">
-              {t('artifact.readFailed', { code: errorCode })}
+              {t('artifact.readFailed')}
               {errorCode === 'Unavailable' ? ` ${t('artifact.digestMayChange')}` : ''}
             </Typography.Text>
           ) : read.data ? (
             <>
               {read.data.text ? (
                 <Typography.Paragraph
-                  data-testid={`artifact-read-${mode}-${artifactId}`}
+                  data-testid={`artifact-read-content-${artifactId}`}
                   style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}
                 >
-                  {read.data.text}
+                  {isOperationalRecord(read.data.text) ? t('artifact.recordSaved') : read.data.text}
                 </Typography.Paragraph>
               ) : (
                 <Typography.Text type={status === 'mismatch' ? 'warning' : 'secondary'}>

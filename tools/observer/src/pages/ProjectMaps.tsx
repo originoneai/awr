@@ -14,7 +14,7 @@ import { apiGet, isAuthError } from '../lib/api';
 import { teamProjectSnapshot, type TeamGraphResponse } from '../lib/project-map';
 import { useRevocation } from '../lib/revocation';
 
-function MapDrawing({ snapshot, graph }: { snapshot: ReturnType<typeof teamProjectSnapshot>; graph: TeamGraphResponse }) {
+function MapDrawing({ snapshot }: { snapshot: ReturnType<typeof teamProjectSnapshot> }) {
   const { t, i18n } = useTranslation();
   const { token } = theme.useToken();
   const host = useRef<HTMLDivElement>(null);
@@ -25,8 +25,7 @@ function MapDrawing({ snapshot, graph }: { snapshot: ReturnType<typeof teamProje
     if (!container) return;
     const messages = page.makeT({ en, 'zh-CN': zh }, language);
     const labels = {
-      'map.detail.copy_command': 'projectMaps.copyInstruction',
-      'map.detail.technical': 'projectMaps.technical',
+      'map.ui.search_placeholder': 'projectMaps.search',
       'map.overview.note': 'projectMaps.readOnly',
       'map.project.source': 'projectMaps.source',
       'map.project.revision': 'projectMaps.currentRead',
@@ -45,35 +44,18 @@ function MapDrawing({ snapshot, graph }: { snapshot: ReturnType<typeof teamProje
       const label = labels[key as keyof typeof labels];
       return label ? t(label, params) : messages(key, params);
     };
-    const rendered = page.renderProjectMap(snapshot, undefined, { t: translate, lang: language, interactive: true });
+    const rendered = page.renderProjectMap(snapshot, undefined, { t: translate, lang: language, interactive: true, productOnly: true });
     container.innerHTML = rendered.body;
-    // Keep extraction metadata available through the existing technical disclosure.
-    const notes = container.querySelector('.notes');
-    if (notes) {
-      const details = document.createElement('details');
-      details.dataset.testid = 'technical-details';
-      const summary = document.createElement('summary');
-      summary.textContent = t('projectMaps.technical');
-      details.append(summary);
-      notes.replaceWith(details);
-      details.append(notes);
-    }
     const mounted = interaction.mount({
       container, snapshot, model: rendered.model, t: translate, restore: restored.current,
-      technicalDetails: true,
-      commandFor: (key) => {
-        const work = graph.items.find((item) => item.external_key === key)!;
-        return t('projectMaps.agentInstruction', { query: JSON.stringify({
-          protocol_version: 1, op: 'work.prepare', work_id: work.work_id, workstream_id: work.workstream_id,
-        }) });
-      },
+      productOnly: true,
     });
     return () => {
       restored.current = mounted.state;
       mounted.destroy();
       container.replaceChildren();
     };
-  }, [snapshot, graph, language, t]);
+  }, [snapshot, language, t]);
   const variables = {
     '--ink': token.colorText, '--ink-2': token.colorTextSecondary, '--ink-3': token.colorTextTertiary,
     '--surface': token.colorBgContainer, '--surface-2': token.colorFillQuaternary,
@@ -115,7 +97,7 @@ export function ProjectMaps({ project }: { project: string }) {
       {graph.error ? <Alert type="warning" showIcon title={t('projectMaps.readFailed')} /> : null}
       {hiddenDependencies ? <Alert type="info" showIcon title={t('projectMaps.restricted')} /> : null}
       {graph.data?.response.demo ? <Typography.Text type="secondary">{t('projectMaps.demo')}</Typography.Text> : null}
-      {graph.data?.response.items.length ? <MapDrawing key={project} snapshot={graph.data.snapshot} graph={graph.data.response} /> : graph.data ? <ObservationEmpty /> : null}
+      {graph.data?.response.items.length ? <MapDrawing key={project} snapshot={graph.data.snapshot} /> : graph.data ? <ObservationEmpty /> : null}
     </Flex>
   );
 }

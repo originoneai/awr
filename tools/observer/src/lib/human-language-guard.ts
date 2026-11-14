@@ -35,19 +35,13 @@ function textOf(root: ParentNode): string {
   return parts.join('\n');
 }
 
-function withoutTechnicalDetails(root: ParentNode): ParentNode {
-  const clone = root.cloneNode(true) as ParentNode;
-  clone.querySelectorAll('[data-testid="technical-details"]').forEach((element) => element.remove());
-  return clone;
-}
-
 /**
- * The text of a page as a person reads it: the entire technical-details region, collapsed or expanded, is
- * left out, and the text of separate elements is kept apart. `textContent` glues neighbours together, so a
+ * Check all rendered text, including disclosures and interactive overlays.
+ * Keep separate elements apart. `textContent` glues neighbours together, so a
  * file name followed by a capital letter or a digit lost its word boundary and escaped the patterns.
  */
 export function defaultVisibleText(root: ParentNode): string {
-  return textOf(withoutTechnicalDetails(root));
+  return textOf(root);
 }
 
 /**
@@ -55,7 +49,7 @@ export function defaultVisibleText(root: ParentNode): string {
  * wrote (elements marked `data-reporter-text`), which the page shows as written and cannot rewrite.
  */
 export function visibleTextParts(root: ParentNode): { own: string; reporter: string } {
-  const clone = withoutTechnicalDetails(root);
+  const clone = root.cloneNode(true) as ParentNode;
   const marked = [...clone.querySelectorAll(REPORTER_SELECTOR)].filter((element) => element.parentElement?.closest(REPORTER_SELECTOR) == null);
   const reporter = marked.map((element) => textOf(element)).filter(Boolean).join('\n');
   marked.forEach((element) => element.remove());
@@ -65,7 +59,9 @@ export function visibleTextParts(root: ParentNode): { own: string; reporter: str
 /** What the ratchet counts: the page's own words against the whole list, a reporter's words against identifiers only. */
 export function findHumanLanguageViolations(root: ParentNode): VisibleTextViolation[] {
   const { own, reporter } = visibleTextParts(root);
-  return [...findForbiddenVisibleText(own), ...findIdentifierText(reporter)];
+  const descriptions = [...root.querySelectorAll('[title],[aria-label],[alt]')]
+    .flatMap(element => ['title', 'aria-label', 'alt'].map(attribute => element.getAttribute(attribute) ?? ''));
+  return [...findForbiddenVisibleText(own), ...findIdentifierText(reporter), ...descriptions.flatMap(findForbiddenVisibleText)];
 }
 
 export function withinHumanLanguageBaseline(current: number, baseline: number): boolean {

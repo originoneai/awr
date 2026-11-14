@@ -18,12 +18,8 @@ import { WorkProgress } from './WorkProgress';
 import { ProgressReport } from './ProgressReport';
 import { NotReportedYet, ObservationEmpty, ObservationForbidden, PartialFailure } from './states';
 import { FieldLabel, ObservationValue } from './ObservationValue';
-import { deriveWorkState, describeProgressReport, documentLabel, rawObservationText } from '../core/observation';
-import { sourceStateTechnicalItems } from '../lib/source-technical';
-import { reviewTechnicalItems, workStateTechnicalItems } from '../lib/work-state-technical';
+import { deriveWorkState, describeProgressReport, documentLabel } from '../core/observation';
 import { RecentChanges } from './RecentChanges';
-import { TechnicalDetails } from './TechnicalDetails';
-import { pageTechnicalItems } from '../lib/activity-technical';
 import { isAuthError } from '../lib/api';
 import { activityQueryOptions, reviewQueryOptions, workSnapshotQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
@@ -56,7 +52,7 @@ function ContractValues({ values }: { values?: WorkContractValue[] }) {
       dataSource={values}
       renderItem={(value) => (
         <List.Item>
-          <Typography.Text>{rawObservationText(value).text}</Typography.Text>
+          <ObservationValue value={value} />
         </List.Item>
       )}
     />
@@ -97,7 +93,7 @@ function Requirements({ query }: { query: SnapshotQuery }) {
           },
         ]}
       />
-      <TechnicalDetails items={workStateTechnicalItems(state)} />
+
       <section>
         <Typography.Title level={5}>{t('workbench.detail.goalsAcceptance')}</Typography.Title>
         <Typography.Text strong>{t('workbench.detail.goals')}</Typography.Text>
@@ -117,21 +113,14 @@ function Requirements({ query }: { query: SnapshotQuery }) {
                   <Typography.Text strong data-testid="required-spec-name">
                     {documentLabel(spec.path, { language: i18n.language, position: index + 1 }).text}
                   </Typography.Text>
-                  <Typography.Text data-testid="required-spec-text" ellipsis={{ tooltip: spec.text }}>
-                    {spec.text ?? t('common.notProvided')}
+                  <Typography.Text type="secondary" data-testid="required-spec-text">
+                    {t('plan.detail.materialReference')}
                   </Typography.Text>
                 </Flex>
               </List.Item>
             )}
           />
         ) : <Measured value={null} />}
-        <TechnicalDetails
-          items={(data?.required_specs ?? []).flatMap((spec, index) => [
-            { label: `required_specs[${index}].path`, value: spec.path },
-            { label: `required_specs[${index}].sha256`, value: spec.sha256 },
-            { label: `required_specs[${index}].byte_length`, value: spec.byte_length },
-          ])}
-        />
       </section>
       <section>
         <Typography.Title level={5}>{t('workbench.detail.currentOutcome')}</Typography.Title>
@@ -180,7 +169,7 @@ function ReviewOutcomes({ query, roundId, currentRoundId }: { query: ReviewQuery
           </List.Item>
         )}
       />
-      <TechnicalDetails items={reviewTechnicalItems(review)} />
+
       <Typography.Paragraph type="secondary">
         {t('state.placeholder.title')} — {t('plan.detail.deliveryPending')}
       </Typography.Paragraph>
@@ -201,7 +190,7 @@ function History({ query, project, workId }: { query: ActivityQuery; project: st
   } else if (data) {
     content = data.items.length === 0
       ? <ObservationEmpty />
-      : <RecentChanges items={data.items} maxSteps={10} viewAllHref={viewAllHref} testId="plan-recent-changes" extraTechnical={pageTechnicalItems(data)} />;
+      : <RecentChanges items={data.items} maxSteps={10} viewAllHref={viewAllHref} testId="plan-recent-changes" />;
   }
   return (
     <div data-testid="plan-history">
@@ -213,14 +202,24 @@ function History({ query, project, workId }: { query: ActivityQuery; project: st
   );
 }
 
-/** Which read this page shows: engineering facts, so they live behind the technical details only. */
+/** The required project material and its current availability. */
 function SourceState({ query }: { query: SnapshotQuery }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  if (query.isPending) return <Spin />;
+  if (query.isError) return null;
+  const data = query.data?.result.data;
   return (
     <div data-testid="source-state-card">
-      <TechnicalDetails items={sourceStateTechnicalItems(query.data?.result)}>
-        <Typography.Text type="secondary">{t('plan.detail.takeoverNote')}</Typography.Text>
-      </TechnicalDetails>
+      <Alert
+        type={data?.context_complete === true ? 'success' : 'info'}
+        showIcon
+        message={t(data?.context_complete === true ? 'plan.detail.materialReady' : 'plan.detail.materialIncomplete')}
+      />
+      <List
+        size="small"
+        dataSource={data?.required_specs ?? []}
+        renderItem={(spec, index) => <List.Item>{documentLabel(spec.path, { language: i18n.language, position: index + 1 }).text}</List.Item>}
+      />
     </div>
   );
 }
@@ -253,7 +252,7 @@ export function WorkDetailPanel({
   // Only the work-level read decides the whole panel's access: a Forbidden
   // from a review round of another work (stale/mistyped deep link) or from
   // the activity log must not blank requirements and source state. Those
-  // failures stay inside their own tabs as partial failures with the code.
+  // failures stay inside their own tabs as product-language partial failures.
   if (revoked || isAuthError(snapshot.error)) {
     return <ObservationForbidden />;
   }
@@ -272,7 +271,6 @@ export function WorkDetailPanel({
             <Typography.Title level={3} style={{ marginTop: 0 }}>{work.title}</Typography.Title>
             <Space wrap>
               <WorkProgress work={work} query={snapshot} testId="plan-detail-status" />
-              <Typography.Text type="secondary">{work.key}</Typography.Text>
             </Space>
           </div>
           <Tabs

@@ -241,7 +241,7 @@ describe('effective plan table', () => {
 });
 
 describe('work detail requirements and source state', () => {
-  it('renders real contract, required specs, runtime, a plain next step with the agent guidance kept in the technical details, and the report time', async () => {
+  it('renders requirements, materials, progress, a product next step and report time', async () => {
     const longNote = 'Batch progress with next_action/open_loops. Stop and report workspace execution before publication. '.repeat(4);
     setupPlan({
       snapshot: (workId) => {
@@ -255,27 +255,27 @@ describe('work detail requirements and source state', () => {
     expect(screen.getByTestId('plan-detail').textContent).toContain('Do not mutate input records');
     expect(screen.getByTestId('required-spec-name').textContent).toBe('support');
     expect(defaultVisibleText(screen.getByTestId('plan-detail'))).not.toContain('docs/support.md');
-    expect(screen.getByTestId('plan-detail').textContent).toContain('Keep the support API stable.');
+    expect(screen.getByTestId('plan-detail').textContent).toContain('用于当前工作');
     expect(screen.getByTestId('plan-runtime-state').textContent).toBe('已认领');
     expect(screen.getByTestId('plan-guidance').textContent).toBe('未报告下一步');
     expect(screen.getByTestId('plan-detail').textContent).not.toContain('session.checkpoint');
     expect(screen.getByTestId('plan-detail').textContent).not.toContain('Batch progress');
     expect(screen.getByTestId('last-report-W1').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN'));
     expect(screen.getByTestId('last-report-W1').textContent).not.toBe(formatUnixMs(1761839900000, 'zh-CN'));
-    // The service's own guidance is addressed to the agent: verbatim, but only behind the technical details.
-    const user = userEvent.setup();
-    await user.click(within(screen.getByTestId('plan-detail')).getAllByText('技术细节')[0]);
-    expect((await screen.findByTestId('technical-guidance-op')).textContent).toContain('session.checkpoint');
-    expect(screen.getByTestId('technical-guidance-note').textContent).toContain(longNote);
-    expect(screen.getByTestId('technical-next-step').textContent).toContain('未提供');
-    // the path of the required source, with its digest and size, is behind its own technical details
-    await user.click(within(screen.getByTestId('plan-detail')).getAllByText('技术细节')[1]);
-    expect((await screen.findByTestId('technical-detail-required_specs[0].path')).textContent).toContain('docs/support.md');
-    expect(screen.getByTestId('technical-detail-required_specs[0].sha256')).toBeTruthy();
-    expect(screen.getByTestId('technical-detail-required_specs[0].byte_length')).toBeTruthy();
+    // Agent protocol guidance belongs in retained service records.
+
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(screen.queryByTestId("technical-guidance-op")).toBeNull();
+    expect(screen.queryByTestId("technical-guidance-note")).toBeNull();
+    expect(screen.queryByTestId("technical-next-step")).toBeNull();
+    // The material name is visible while source fingerprints stay off the interface.
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(screen.queryByTestId("technical-detail-required_specs[0].path")).toBeNull();
+    expect(screen.queryByTestId("technical-detail-required_specs[0].sha256")).toBeNull();
+    expect(screen.queryByTestId("technical-detail-required_specs[0].byte_length")).toBeNull();
   });
 
-  it('shows the reporter\'s own next action in the detail, keeps the raw value in the technical details, and marks a report the service declared stale', async () => {
+  it('shows the reported next action and marks stale feedback without raw fields', async () => {
     setupPlan({
       snapshot: (workId) => {
         const response = demoWorkSnapshot(workId) as {
@@ -288,16 +288,16 @@ describe('work detail requirements and source state', () => {
     });
     await waitFor(() => expect(screen.getByTestId('plan-guidance').textContent).toBe('Review the contract first'));
     expect(screen.getByTestId('last-report-W1').textContent).toBe(`${formatUnixMs(1761839800000, 'zh-CN')}可能已过期`);
-    await userEvent.setup().click(within(screen.getByTestId('plan-detail')).getAllByText('技术细节')[0]);
-    expect((await screen.findByTestId('technical-next-action')).textContent).toContain('Review the contract first');
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(screen.queryByTestId("technical-next-action")).toBeNull();
     // why the note is (not) there stays checkable: the service's flag and the work's own state, verbatim
-    expect(screen.getByTestId('technical-client-stale').textContent).toContain('true');
-    expect(screen.getByTestId('technical-runtime-state').textContent).toContain('claimed');
-    expect(screen.getByTestId('technical-completion-id').textContent).toContain('未提供');
-    expect(screen.getByTestId('technical-observed-at').textContent).toContain('1761839999000');
+    expect(screen.queryByTestId("technical-client-stale")).toBeNull();
+    expect(screen.queryByTestId("technical-runtime-state")).toBeNull();
+    expect(screen.queryByTestId("technical-completion-id")).toBeNull();
+    expect(screen.queryByTestId("technical-observed-at")).toBeNull();
   });
 
-  it('shows the checkpoint in plain words instead of a JSON dump and keeps every raw field in the technical details', async () => {
+  it('shows a product progress report without raw checkpoint fields', async () => {
     setupPlan({
       snapshot: (workId) => {
         const response = demoWorkSnapshot(workId) as { result: { data: { observation: { progress: Record<string, unknown> | null } } } };
@@ -319,10 +319,10 @@ describe('work detail requirements and source state', () => {
     expect(block.textContent).not.toContain('refs/heads');
     expect(findForbiddenVisibleText(defaultVisibleText(block))).toEqual([]);
     expect(within(block).queryByTestId('progress-report-contract')).toBeNull();
-    const user = userEvent.setup();
-    await user.click(within(block).getByText('技术细节'));
-    expect((await within(block).findByTestId('technical-detail-progress.checkpoint_id')).textContent).toContain('checkpoint-1');
-    expect(within(block).getByTestId('technical-detail-progress.artifacts').textContent).toContain('refs/heads/issue-filter-api@abc123');
+
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(screen.queryByTestId("technical-detail-progress.checkpoint_id")).toBeNull();
+    expect(screen.queryByTestId("technical-detail-progress.artifacts")).toBeNull();
   });
 
   it('wires the work being finished into the checkpoint: a stale checkpoint is marked on an open work and not on a finished one', async () => {
@@ -346,7 +346,7 @@ describe('work detail requirements and source state', () => {
     expect((await screen.findByTestId('progress-report-declaration')).textContent).not.toContain('可能已过期');
   });
 
-  it('cuts the long ids of the reporter\'s sentences in the checkpoint block and keeps them as written in the technical details', async () => {
+  it('keeps report meaning while removing long identifiers from the product interface', async () => {
     const hash = '5f7eb2fe9c563e4d355aa64a527e0aef754116c1';
     setupPlan({
       snapshot: (workId) => {
@@ -356,11 +356,11 @@ describe('work detail requirements and source state', () => {
       },
     });
     const block = await screen.findByTestId('progress-report');
-    expect(within(block).getByTestId('progress-report-summary').textContent).toBe('Merged 5f7eb2fe… into main.');
-    expect(within(block).getByTestId('progress-report-completed').textContent).toContain('Published 5f7eb2fe….');
+    expect(within(block).getByTestId('progress-report-summary').textContent).toBe('Merged 相关记录 into main.');
+    expect(within(block).getByTestId('progress-report-completed').textContent).toContain('Published 相关记录.');
     expect(block.textContent).not.toContain(hash);
-    await userEvent.setup().click(within(block).getByText('技术细节'));
-    expect((await within(block).findByTestId('technical-detail-progress.summary')).textContent).toContain(hash);
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(screen.queryByTestId("technical-detail-progress.summary")).toBeNull();
   });
 
   it('warns on the checkpoint when the task changed after it was written', async () => {
@@ -385,26 +385,19 @@ describe('work detail requirements and source state', () => {
       },
     });
     const text = await screen.findByTestId('required-spec-text');
-    expect(text.className).toContain('ant-typography-ellipsis');
+    expect(text.textContent).toContain('用于当前工作');
+    expect(text.textContent).not.toContain(longSpec);
     expect(text.parentElement?.style.minWidth).toBe('0px');
   });
 
-  it('keeps the source facts and an honest not-measured takeover note behind the technical details only', async () => {
+  it('shows material availability without source fingerprints', async () => {
+
     setupPlan();
     const card = await screen.findByTestId('source-state-card');
-    // collapsed by default: a person sees one words-only entry, no ids, no versions
-    expect(card.textContent).toBe('技术细节');
-    await userEvent.setup().click(within(card).getByText('技术细节'));
-    expect((await within(card).findByTestId('source-snapshot-id')).textContent).toContain('snapshot-1');
-    expect(card.textContent).toContain('epoch-1');
-    expect(card.textContent).toContain('contract-1');
-    expect(card.textContent).toContain('enabled');
-    expect(card.textContent).toContain('project_revision');
-    expect(card.textContent).toContain('authority_version');
-    expect(card.textContent).toContain('selection_basis');
-    expect(card.textContent).toContain('尚未读取');
+    expect(card.textContent).toContain('部分资料还需补充');
+    for (const raw of ['epoch-1', 'contract-1', 'enabled', 'project_revision', 'authority_version', 'selection_basis']) expect(card.textContent).not.toContain(raw);
     expect(card.textContent).not.toContain('已同步');
-    expect(card.textContent).not.toContain('takeover complete');
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
   });
 
   it('marks a missing attribution triple as not provided, never synchronized', async () => {
@@ -424,10 +417,10 @@ describe('work detail requirements and source state', () => {
       },
     });
     const card = await screen.findByTestId('source-state-card');
-    await userEvent.setup().click(within(card).getByText('技术细节'));
-    expect((await within(card).findByTestId('source-snapshot-id')).textContent).toContain('未提供');
-    expect(within(card).getByTestId('source-project-revision').textContent).toContain('未提供');
-    expect(within(card).getByTestId('source-coordinator-epoch').textContent).toContain('未提供');
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(screen.queryByTestId("source-snapshot-id")).toBeNull();
+    expect(screen.queryByTestId("source-project-revision")).toBeNull();
+    expect(screen.queryByTestId("source-coordinator-epoch")).toBeNull();
     expect(card.textContent).not.toContain('已同步');
   });
 
@@ -524,10 +517,10 @@ describe('work detail review outcomes', () => {
     expect(defaultVisibleText(review)).not.toContain('author-agent-1');
     expect(defaultVisibleText(review)).not.toContain('artifact-digest-1');
     expect(defaultVisibleText(review)).not.toContain('bundle-hash-1');
-    await user.click(within(review).getByRole('button', { name: '技术细节' }));
-    expect(within(review).getByText('author-agent-1')).toBeTruthy();
-    expect(within(review).getByText('artifact-digest-1')).toBeTruthy();
-    expect(within(review).getByText('bundle-hash-1')).toBeTruthy();
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(within(review).queryByText('author-agent-1')).toBeNull();
+    expect(within(review).queryByText('artifact-digest-1')).toBeNull();
+    expect(within(review).queryByText('bundle-hash-1')).toBeNull();
     expect(review.querySelector('[data-testid="review-narrative"]')).toBeNull();
     expect(review.textContent).toContain('尚未开放');
   });
@@ -558,7 +551,7 @@ describe('work detail review outcomes', () => {
 });
 
 describe('work detail history', () => {
-  it('filters development history by work_id and shows it in plain words with the raw records in the technical details', async () => {
+  it('filters development history by work and presents product events', async () => {
     const user = userEvent.setup();
     const { fetchMock } = setupPlan();
     await user.click(await screen.findByRole('tab', { name: '历史' }));
@@ -570,10 +563,10 @@ describe('work detail history', () => {
       expect(defaultVisibleText(history)).not.toContain(hidden);
     }
     expect(within(history).getByTestId('recent-changes-all').getAttribute('href')).toBe('/activity?project=demo&work=W1');
-    for (const toggle of within(history).getAllByRole('button', { name: /技术细节/ })) await user.click(toggle);
-    expect((await within(history).findByTestId('recent-step-technical-0')).textContent).toContain('access.changed');
-    expect(within(history).getByTestId('technical-detail-development_source').textContent).toContain('audit.development');
-    expect(within(history).getByTestId('technical-detail-unknown_means').textContent).toContain('not_observed');
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(screen.queryByTestId("recent-step-technical-0")).toBeNull();
+    expect(screen.queryByTestId("technical-detail-development_source")).toBeNull();
+    expect(screen.queryByTestId("technical-detail-unknown_means")).toBeNull();
     const urls = fetchMock.mock.calls.map(([input]) => String(input))
       .filter((url) => url.includes('/api/team/activity'));
     expect(urls).toHaveLength(1);
@@ -610,8 +603,8 @@ describe('work detail history', () => {
     const history = screen.getByTestId('plan-history');
     expect(history.textContent).toContain('部分读取失败');
     expect(history.textContent).not.toContain('ReadTimeout');
-    await user.click(within(history).getByText('技术细节'));
-    expect(await within(history).findByText('ReadTimeout')).toBeTruthy();
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(within(history).queryByText('ReadTimeout')).toBeNull();
   });
 
   it('discloses earlier records and caps the newest history at ten steps', async () => {
@@ -642,7 +635,7 @@ describe('work plan localization and accessibility', () => {
     expect(screen.getByRole('tab', { name: 'Requirements & progress' })).toBeTruthy();
     expect(screen.getByRole('tab', { name: 'Outcomes' })).toBeTruthy();
     expect(screen.getByRole('tab', { name: 'History' })).toBeTruthy();
-    expect(within(screen.getByTestId('source-state-card')).getByText('Technical details')).toBeTruthy();
+    expect(within(screen.getByTestId('source-state-card')).getByText('Some required material is still missing')).toBeTruthy();
     expect(screen.queryByText('Source state')).toBeNull();
   });
 
@@ -669,8 +662,8 @@ describe('work-plan review round 2: sub-read failures and behavior pins', () => 
     await user.click(screen.getByRole('tab', { name: '成果' }));
     const partial = await screen.findByTestId('state-partial');
     expect(partial.textContent).not.toContain('Forbidden');
-    await user.click(within(partial).getByText('技术细节'));
-    expect(await within(partial).findByText('Forbidden')).toBeTruthy();
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(within(partial).queryByText('Forbidden')).toBeNull();
   });
 
   it('a missing progress report time reads 尚未读取, never the current clock', async () => {
@@ -717,8 +710,8 @@ describe('work-plan review round 2: sub-read failures and behavior pins', () => 
     setupPlan({ snapshot: () => ({ ok: false, error: { code: 'ReadTimeout', message: 'slow' } }) });
     const partial = await screen.findByTestId('state-partial', undefined, { timeout: 5000 });
     expect(partial.textContent).not.toContain('ReadTimeout');
-    await userEvent.setup().click(within(partial).getByText('技术细节'));
-    expect(await within(partial).findByText('ReadTimeout')).toBeTruthy();
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(within(partial).queryByText('ReadTimeout')).toBeNull();
   });
 
   it('changing the page clears the selected work', async () => {
@@ -857,8 +850,8 @@ describe('work-plan review round 3: three remaining pins', () => {
     await user.click(screen.getByRole('tab', { name: '历史' }));
     const partial = await screen.findByTestId('state-partial');
     expect(partial.textContent).not.toContain('Forbidden');
-    await user.click(within(partial).getByText('技术细节'));
-    expect(await within(partial).findByText('Forbidden')).toBeTruthy();
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(within(partial).queryByText('Forbidden')).toBeNull();
   });
 
   it('Space on a focused row changes the selected work', async () => {

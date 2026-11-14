@@ -25,6 +25,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { diagnosticRecord } = require('./server/diagnostics');
 
 // Arguments
 
@@ -148,6 +149,7 @@ function securityHeaders(nonce) {
 }
 
 function sendJson(res, status, payload) {
+  if (payload?.ok === false) res.observationErrorCode = payload.error?.code || 'ObservationError';
   const headers = {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
@@ -246,6 +248,21 @@ function readBody(req) {
 // HTTP
 
 const server = http.createServer((req, res) => {
+  const requestId = crypto.randomUUID();
+  const startedAt = performance.now();
+  res.once('finish', () => {
+    if (res.statusCode < 400 && !res.observationErrorCode) return;
+    let route = 'unrecognized';
+    try {
+      const pathname = new URL(req.url, 'http://127.0.0.1').pathname;
+      if (routes[`${req.method} ${pathname}`]) route = pathname;
+    } catch (_) { /* Malformed request targets carry no caller-controlled log fields. */ }
+    process.stderr.write(`${JSON.stringify(diagnosticRecord({
+      requestId, route, method: ['GET', 'POST'].includes(req.method) ? req.method : 'OTHER',
+      operation: res.observationOperation,
+      status: res.statusCode, code: res.observationErrorCode, durationMs: performance.now() - startedAt,
+    }))}\n`);
+  });
   handleRequest(req, res).catch((err) => {
     try {
       sendJson(res, 500, {
@@ -296,6 +313,7 @@ async function handleRequest(req, res) {
           });
         }
         body = read.body;
+        if (url.pathname === '/api/team/read') res.observationOperation = body?.query?.op;
       }
       return sendJson(res, 200, await handler(url, body, req, res));
     } catch (err) {

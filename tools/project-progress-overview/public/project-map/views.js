@@ -37,8 +37,8 @@
     return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
   }
 
-  function createViews(t) {
-    const kit = createKit(t);
+  function createViews(t, { productOnly = false } = {}) {
+    const kit = createKit(t, { productOnly });
     const { ST } = kit;
 
     /** ['OPS-001','OPS-002'] -> 'OPS-001/002' (works on the shortened keys). */
@@ -137,7 +137,7 @@
         const ls = [...lines];
         if (prereq) {
           const unmet = n.deps.filter((d) => nodes.get(d).status !== 'completed');
-          if (unmet.length) ls.push([t('map.card.prereq', { keys: compress(unmet.map(shortOf)) }), FAINT]);
+          if (unmet.length) ls.push([t(productOnly ? 'map.card.prereq_count' : 'map.card.prereq', { count: unmet.length, keys: compress(unmet.map(shortOf)) }), FAINT]);
         }
         let label = tag;
         if (n.vis === 'stalled') label = n.idle !== null ? t('map.card.stalled_idle', { days: f0(n.idle) }) : ST.stalled.label;
@@ -145,6 +145,7 @@
       };
 
       const doneFamily = (ns, k = 3) => {
+        if (productOnly) return t('map.panel.show_done');
         const c = new Map();
         for (const n of ns) {
           const m = /^(?:[A-Z]+-)?([A-Za-z]+)/.exec(n.id) || /^(.*)$/.exec(n.id);
@@ -186,7 +187,7 @@
           col.label(t('map.defect.label'), RED);
           col.put((x, y, w) => kit.card(x, y, w, {
             vis: 'blocked', nid: `${shortOf(c)} → ${shortOf(depsOf[0])}`, full: `${c} <- ${depsOf[0]}`, key: c,
-            title: t('map.defect.title', { count: depsOf.length, key: shortOf(c) }), tag: t('map.defect.tag'), compact: true, titleSize: 11.5,
+            title: t(productOnly ? 'map.defect.product_title' : 'map.defect.title', { count: depsOf.length, key: shortOf(c) }), tag: t('map.defect.tag'), compact: true, titleSize: 11.5,
             lines: [[t('map.defect.line', { count: down.size }), RED]],
           }));
         }
@@ -209,7 +210,7 @@
           if (rest.length) {
             col.put((x, y, w) => kit.groupCard(x, y, w, {
               vis, title: t('map.more.title', { count: rest.length }), tag: ST[vis].label, group: groupKey,
-              items: compress(rest.map(shortOf), true).slice(0, 4).map((s) => [s, MUTED]), note: label.split(' ·')[0],
+              items: productOnly ? [] : compress(rest.map(shortOf), true).slice(0, 4).map((s) => [s, MUTED]), note: label.split(' ·')[0],
             }));
           } else if (expanded && gIds.length > K) {
             col.put((x, y) => [kit.pill(x + 2, y, t('map.more.fewer'), `data-group="${esc(groupKey)}" data-open="true"`, { h: 22 })[0], 22]);
@@ -223,10 +224,10 @@
       const body = new Svg(W, 0);
       const cx = W / 2;
       kit.header(body, cx, 74, 'AWR · PROJECT NODE GRAPH', cfg.titles.overview || t('map.title.overview'),
-        t('map.overview.subtitle', { nodes: nodes.size, cancelled: tot.cancelled || 0, edges: edges.length, lanes: N, time: utc(now) }),
+        t(productOnly ? 'map.overview.product_subtitle' : 'map.overview.subtitle', { nodes: nodes.size, cancelled: tot.cancelled || 0, edges: edges.length, lanes: N, time: utc(now) }),
         t('map.overview.note'));
-      const pcBottom = kit.projectCard(body, cx, 196, meta.project.name, t('map.project.revision', { revision: meta.revision }), t('map.project.source'), cfg.project_goal || '',
-        [[String(nodes.size), t('map.stat.items')], [String(edges.length), t('map.stat.edges')], [String(tot.stalled || 0), ST.stalled.label], [String(tot.blocked || 0), ST.blocked.label]]);
+      const pcBottom = kit.projectCard(body, cx, 196, meta.project.name, t(productOnly ? 'map.project.product_progress' : 'map.project.revision', { revision: meta.revision }), t(productOnly ? 'map.project.product_source' : 'map.project.source'), cfg.project_goal || '',
+        [[String(nodes.size), t('map.stat.items')], [String(edges.length), t(productOnly ? 'map.stat.dependencies' : 'map.stat.edges')], [String(tot.stalled || 0), ST.stalled.label], [String(tot.blocked || 0), ST.blocked.label]]);
       const busY = pcBottom + 20;
       const laneCx = lanes.map((_, i) => X0 + i * (CW + GAP) + CW / 2);
       body.add(`<path d="M${cx},${pcBottom} L${cx},${busY}" stroke="#b7c9ee" stroke-width="1.6" fill="none"/>`);
@@ -276,7 +277,7 @@
       });
       for (const [agent, ns] of agents) {
         const worst = ns.reduce((acc, n) => ((RANK[n.vis] || 0) > (RANK[acc.vis] || 0) ? n : acc), ns[0]).vis;
-        const work = [...ns].sort((a, b) => compare(a.id, b.id)).map((n) => n.short).join(' · ');
+        const work = productOnly ? t('map.executors.work_count', { count: ns.length }) : [...ns].sort((a, b) => compare(a.id, b.id)).map((n) => n.short).join(' · ');
         const [, w0] = member(0, 0, agent, work, worst);
         if (rowx + w0 > X0 + inner) {
           rowx = X0;
@@ -289,7 +290,7 @@
       const membersBottom = rowy + 30;
       const hy = membersBottom + 16;
       const hygiene = [[t('map.doctor.active_sessions'), meta.sessions_active, 'warn']];
-      for (const code of Object.keys(meta.doctor.codes).sort(compare)) {
+      for (const code of (productOnly ? [] : Object.keys(meta.doctor.codes).sort(compare))) {
         const sev = meta.doctor.severity_by_code[code];
         if (sev === 'error' || sev === 'warning') hygiene.push([code, meta.doctor.codes[code], sev === 'error' ? 'err' : 'warn']);
       }
@@ -319,9 +320,9 @@
       const visItems = ['done', 'developing', 'stalled', 'blocked', 'ready', 'waiting'].concat(tot.draft ? ['draft'] : [], tot.unknown ? ['unknown'] : []);
       const lgBottom = kit.legend(body, X0, barBottom + 40, inner, visItems, [['dep', t('map.edge.dep')]]);
       const gaps = meta.unavailable.map((u) => u.field).join(', ');
-      body.add(text(X0 + 6, lgBottom + 4, t('map.overview.note_stalled', { days: stale }), 9.5, FAINT, 500));
-      body.add(text(X0 + 6, lgBottom + 20, t('map.overview.note_counts', { edges: edges.length, cross: cross.length, fingerprint: meta.fingerprint.slice(7, 19), revision: meta.revision, time: utc(now) }), 9.5, FAINT, 500));
-      body.add(text(X0 + 6, lgBottom + 36, t('map.overview.note_gaps', { fields: fit(gaps, 9.5, inner - 20) }), 9.5, FAINT, 500));
+      body.add(text(X0 + 6, lgBottom + 4, t(productOnly ? 'map.overview.product_stalled' : 'map.overview.note_stalled', { days: stale }), 9.5, FAINT, 500));
+      body.add(text(X0 + 6, lgBottom + 20, t(productOnly ? 'map.overview.product_counts' : 'map.overview.note_counts', { edges: edges.length, cross: cross.length, fingerprint: meta.fingerprint.slice(7, 19), revision: meta.revision, time: utc(now) }), 9.5, FAINT, 500));
+      if (!productOnly) body.add(text(X0 + 6, lgBottom + 36, t('map.overview.note_gaps', { fields: fit(gaps, 9.5, inner - 20) }), 9.5, FAINT, 500));
       return frame(body, W, Math.floor(lgBottom + 72));
     }
 
@@ -422,13 +423,14 @@
       }
       const shortOf = (k) => model.nodes.get(k).short;
       const draw = (x, y) => {
-        const o = [`<g class="pm-fold" data-panel-done="${esc(laneId)}" data-open="false"><title>${esc(t('map.minimap.title', { count: coll.length }))} · ${esc(t('map.minimap.sub', { first: shortOf(coll[0]), last: shortOf(coll[coll.length - 1]) }))}</title>`,
+        const subtitle = t(productOnly ? 'map.minimap.product_sub' : 'map.minimap.sub', { first: shortOf(coll[0]), last: shortOf(coll[coll.length - 1]) });
+        const o = [`<g class="pm-fold" data-panel-done="${esc(laneId)}" data-open="false"><title>${esc(t('map.minimap.title', { count: coll.length }))} · ${esc(subtitle)}</title>`,
           `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="14" fill="rgba(31,174,116,.07)" stroke="rgba(31,174,116,.42)" stroke-width="1.2" stroke-dasharray="5 4"/>`,
           kit.chevron(x + w - 24, y + 21, false),
           `<circle cx="${x + 22}" cy="${y + 22}" r="9" fill="#1fae74"/>`,
           `<path d="M${x + 17.5},${y + 22.3} l3.2,3.3 l6.2,-6.8" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`,
           text(x + 40, y + 20, t('map.minimap.title', { count: coll.length }), 12, '#12855c', 700),
-          text(x + 40, y + 34, t('map.minimap.sub', { first: shortOf(coll[0]), last: shortOf(coll[coll.length - 1]) }), 9.2, MUTED, 500)];
+          text(x + 40, y + 34, subtitle, 9.2, MUTED, 500)];
         for (const [a, b] of Rin) {
           const [x1, y1] = pos.get(b);
           const [x2, y2] = pos.get(a);
@@ -529,14 +531,14 @@
       }
       const names = built.map(({ p }) => modelLib.laneName(laneMeta.get(p.lane), t));
       const title = cfg.titles.mainline || (built.length && built.length <= 3 ? t('map.title.mainline_lanes', { lanes: names.join(t('map.join.and')) }) : t('map.title.mainline'));
-      if (!built.length) return placeholder(title, t('map.mainline.none'));
+      if (!built.length) return placeholder(title, t(productOnly ? 'map.mainline.product_none' : 'map.mainline.none'));
       const W = Math.floor(Math.max(1200, Math.max(...built.map(({ P }) => P.pw)) + 2 * 76));
       for (const b of built) if (b.folded) b.P.pw = W - 152;
       const declared = built.reduce((s, { G }) => s + G.E.length, 0);
       const reduced = built.reduce((s, { G }) => s + G.E.length - G.R.length, 0);
       const sv = new Svg(W, 0);
       kit.header(sv, W / 2, 74, 'AWR · DEPENDENCY GRAPH', title,
-        `${built.map(({ p, G }) => t('map.mainline.lane_count', { name: modelLib.laneName(laneMeta.get(p.lane), t), count: G.ids.length })).join(' · ')} · ${t('map.mainline.reduction', { declared, kept: declared - reduced })} · ${utc(now)} UTC`,
+        `${built.map(({ p, G }) => t('map.mainline.lane_count', { name: modelLib.laneName(laneMeta.get(p.lane), t), count: G.ids.length })).join(' · ')} · ${t(productOnly ? 'map.mainline.product_dependencies' : 'map.mainline.reduction', { declared, kept: declared - reduced })} · ${utc(now)} UTC`,
         t('map.mainline.note'));
       let y = 196;
       for (const { p, G, P, end, folded, doneToggle } of built) {
@@ -544,7 +546,7 @@
         const cnt = counter(G.ids, (k) => nodes.get(k).vis);
         let crossCount = 0;
         for (const n of nodes.values()) for (const d of n.deps) if (nodes.has(d) && ((n.lane === lid) !== (nodes.get(d).lane === lid))) crossCount += 1;
-        let sub = folded
+        let sub = folded || productOnly
           ? t('map.panel.folded', { done: cnt.done || 0, total: G.ids.length, open: G.open.size })
           : P.critPath.length
             ? t('map.panel.crit', { done: cnt.done || 0, total: G.ids.length, open: G.open.size, layers: P.critPath.length, end: nodes.get(end).short })
@@ -558,9 +560,9 @@
       const ly = y - 6;
       const critEnds = built.filter(({ P }) => P.critPath.length).map(({ end }) => nodes.get(end).short);
       const edgeKinds = [['dep', t('map.edge.dep_up')]];
-      if (critEnds.length) edgeKinds.push(['crit', t('map.edge.crit_of', { ends: critEnds.join(t('map.join.list')) })]);
+      if (critEnds.length) edgeKinds.push(['crit', t(productOnly ? 'map.edge.product_critical' : 'map.edge.crit_of', { ends: critEnds.join(t('map.join.list')) })]);
       const lg = kit.legend(sv, 76, ly, W - 152, visItems, edgeKinds);
-      sv.add(text(82, lg + 4, t('map.mainline.note_reduced'), 9.5, FAINT, 500));
+      if (!productOnly) sv.add(text(82, lg + 4, t('map.mainline.note_reduced'), 9.5, FAINT, 500));
       return frame(sv, W, Math.floor(lg + 40));
     }
 
@@ -574,7 +576,7 @@
       const lanes = cfg.explore_lanes || [];
       const byMainline = lanes.length > 0 && lanes.every((lane) => lane.work_keys);
       const title = cfg.titles.explore || t(byMainline ? 'map.title.explore_mainlines' : 'map.title.explore');
-      if (!lanes.length) return placeholder(title, t('map.explore.no_lanes'));
+      if (!lanes.length) return placeholder(title, t(productOnly ? 'map.explore.product_no_lanes' : 'map.explore.no_lanes'));
       const now = meta.generated_at;
       const exIds = [...model.exploreLaneByWork.keys()];
       const GE = prepare(model, exIds);
@@ -618,8 +620,8 @@
       const ce = counter(GE.ids, (k) => nodes.get(k).vis);
       const sv = new Svg(W, 0);
       kit.header(sv, W / 2, 74, 'AWR · DEPENDENCY GRAPH', title,
-        t(byMainline ? 'map.explore.mainline_subtitle' : 'map.explore.subtitle', { live: GE.live.size, declared: GE.E.length, kept: GE.R.length, time: utc(now) }),
-        t(byMainline ? 'map.explore.mainline_note' : 'map.explore.note'));
+        t(productOnly ? 'map.explore.product_subtitle' : byMainline ? 'map.explore.mainline_subtitle' : 'map.explore.subtitle', { live: GE.live.size, declared: GE.E.length, kept: GE.R.length, time: utc(now) }),
+        t(productOnly ? 'map.explore.product_note' : byMainline ? 'map.explore.mainline_note' : 'map.explore.note'));
       const ox = (W - pw) / 2;
       const oy = 196;
       sv.add(`<rect x="${ox}" y="${oy}" width="${pw}" height="${ph}" rx="24" fill="#fff" fill-opacity=".42" stroke="rgba(255,255,255,.88)" filter="url(#shS)"/>`);
@@ -675,9 +677,10 @@
         const dependentsBad = [...new Set(badPairs.map(([, d]) => d))].sort(compare);
         const stHere = GE.ids.filter((k) => meta.stuck.has(k));
         const freeHere = [...GE.live].filter((k) => !meta.stuck.has(k)).sort(compare);
-        const names = cancelledPre.map((k) => nodes.get(k).short).join(t('map.join.list'));
-        const deps = dependentsBad.slice(0, 3).map((k) => nodes.get(k).short).join(t('map.join.list')) + (dependentsBad.length > 3 ? t('map.explore.etc') : '');
-        const free = freeHere.length ? compress(freeHere.map((k) => nodes.get(k).short)) : t('map.explore.none_free');
+        const label = (key) => productOnly ? nodes.get(key).title : nodes.get(key).short;
+        const names = cancelledPre.map(label).join(t('map.join.list'));
+        const deps = dependentsBad.slice(0, 3).map(label).join(t('map.join.list')) + (dependentsBad.length > 3 ? t('map.explore.etc') : '');
+        const free = freeHere.length ? (productOnly ? String(freeHere.length) : compress(freeHere.map(label))) : t('map.explore.none_free');
         sv.add(text(ox + PAD, oy + 14, fit(t('map.explore.defect', { names, deps, stuck: stHere.length, free }), 10, pw - 2 * PAD), 10, RED, 650));
       }
       const ly = oy + ph + 22;
@@ -688,7 +691,7 @@
         + [t('map.edge.same_lane'), t('map.edge.cross_lane'), t('map.edge.to_cancelled')].reduce((s, label) => s + 38 + tw(label, 10) + 22, 0);
       sv.add(`<rect x="${cx0}" y="${ly + 17}" width="22" height="14" rx="5" fill="none" stroke="#e14b54" stroke-opacity=".6" stroke-dasharray="2.5 3"/>`);
       sv.add(text(cx0 + 30, ly + 27.5, t('map.legend.downstream'), 10, MUTED, 500));
-      sv.add(text(82, lg + 4, t('map.explore.note_done', { done: ce.done || 0, rows: nrows }), 9.5, FAINT, 500));
+      sv.add(text(82, lg + 4, t(productOnly ? 'map.explore.product_legend_note' : 'map.explore.note_done', { done: ce.done || 0, rows: nrows }), 9.5, FAINT, 500));
       return frame(sv, W, Math.floor(lg + 40));
     }
 

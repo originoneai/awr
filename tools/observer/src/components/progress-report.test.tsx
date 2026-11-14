@@ -1,5 +1,5 @@
 import { render, screen, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+
 import { afterEach, describe, expect, it } from 'vitest';
 import { describeProgressReport } from '../core/observation';
 import i18n from '../i18n';
@@ -55,12 +55,12 @@ describe('ProgressReport', () => {
     expect(dots[1]).toContain('ant-badge-status-error');
   });
 
-  it('shows the task-changed warning, the declaration and the raw fields only behind the technical details', async () => {
+  it('shows the task-changed warning and declaration without raw fields', async () => {
     show({ summary: 'Done.', provenance: 'caller_declared', contract_matches_current: false, checkpoint_id: 'cp-9', origin: { actor_name: 'Lin Agent' } });
     expect(screen.getByTestId('progress-report-contract').textContent).toContain('任务要求有变化');
     expect(screen.getByTestId('progress-report-declaration').textContent).toBe('Lin Agent 汇报 · 内容由汇报者自述，系统未核验');
     expect(screen.queryByText(/cp-9/)).toBeNull();
-    await userEvent.setup().click(screen.getByText('技术细节'));
-    expect((await screen.findByTestId('technical-detail-progress.checkpoint_id')).textContent).toContain('cp-9');
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(screen.queryByTestId("technical-detail-progress.checkpoint_id")).toBeNull();
   });
 });

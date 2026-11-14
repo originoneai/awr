@@ -186,8 +186,8 @@ describe('project workstream progress', () => {
         return response;
       },
     });
-    await waitFor(() => expect(screen.getByTestId('project-next-W1').textContent).toBe('Wait for independent review of round 01M6AVQ8….'));
-    expect(screen.getByTestId('project-next-W1').getAttribute('title')).toBe('Wait for independent review of round 01M6AVQ870N7MBRJ5MPCN79T55.');
+    await waitFor(() => expect(screen.getByTestId('project-next-W1').textContent).toBe('Wait for independent review of round 相关记录.'));
+    expect(screen.getByTestId('project-next-W1').getAttribute('title')).toBe('Wait for independent review of round 相关记录.');
     expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('project-progress-table')))).toEqual([]);
   });
 
@@ -451,23 +451,18 @@ describe('project workstream progress', () => {
   });
 });
 
-async function openTechnicalDetails(block: HTMLElement) {
-  const user = userEvent.setup();
-  for (const toggle of within(block).getAllByRole('button', { name: /技术细节/ })) await user.click(toggle);
-}
-
 describe('project coverage and freshness', () => {
-  it('says in words how much was read, with an unknown total rather than zero, and keeps the raw rows behind the technical details', async () => {
+  it('explains read coverage and unknown totals without raw response rows', async () => {
     setupOverview();
     const coverage = await screen.findByTestId('project-coverage');
     expect(within(coverage).getByTestId('coverage-summary').textContent).toBe('已读取 2 个工作项，总数暂时未知');
     expect(within(coverage).getByTestId('freshness-badge')).toBeTruthy();
     expect(findForbiddenVisibleText(defaultVisibleText(coverage))).toEqual([]);
     expect(within(coverage).queryByTestId('coverage-works-total')).toBeNull();
-    await openTechnicalDetails(coverage);
-    expect(within(coverage).getByTestId('coverage-works-total').textContent).toContain('未提供');
-    expect(within(coverage).getByTestId('technical-detail-coverage.works_enumerated').textContent).toContain('2');
-    expect(within(coverage).getByTestId('technical-detail-coverage.scope.next_cursor').textContent).toContain('未提供');
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(screen.queryByTestId("coverage-works-total")).toBeNull();
+    expect(screen.queryByTestId("technical-detail-coverage.works_enumerated")).toBeNull();
+    expect(screen.queryByTestId("technical-detail-coverage.scope.next_cursor")).toBeNull();
   });
 
   it('says all of it was read when the total is known, and counts a partial batch against the total', async () => {
@@ -530,8 +525,8 @@ describe('project coverage and freshness', () => {
     expect(screen.getByTestId('coverage-failed-summary').textContent).toBe('有 1 条工作线读取失败，列表可能不完整');
     const coverage = screen.getByTestId('project-coverage');
     expect(findForbiddenVisibleText(defaultVisibleText(coverage))).toEqual([]);
-    await openTechnicalDetails(coverage);
-    expect(within(coverage).getByTestId('technical-detail-coverage.streams.WS1').textContent).toContain('ReadTimeout');
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(screen.queryByTestId("technical-detail-coverage.streams.WS1")).toBeNull();
     expect(screen.getByRole('link', { name: 'Build the filter API' })).toBeTruthy();
   });
 
@@ -549,14 +544,14 @@ describe('project coverage and freshness', () => {
     const unread = await screen.findByTestId('project-coverage-unread');
     expect(unread.textContent).toContain('还有未读部分');
     expect(unread.textContent).not.toContain('cursor-next-2');
-    const coverage = screen.getByTestId('project-coverage');
-    await openTechnicalDetails(coverage);
-    expect(within(coverage).getByTestId('technical-detail-coverage.scope.next_cursor').textContent).toContain('cursor-next-2');
+    screen.getByTestId('project-coverage');
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(screen.queryByTestId("technical-detail-coverage.scope.next_cursor")).toBeNull();
   });
 });
 
 describe('project recent development activity', () => {
-  it('shows recent changes in plain words, keeps the raw records in the technical details, and reads development activity only', async () => {
+  it('shows product changes from development activity without raw records', async () => {
     const { fetchMock } = setupOverview();
     const block = await screen.findByTestId('project-activity');
     const step = await within(block).findByTestId('recent-step-0');
@@ -567,12 +562,12 @@ describe('project recent development activity', () => {
     }
     expect(findForbiddenVisibleText(defaultVisibleText(block))).toEqual([]);
     expect(step.querySelector('[data-testid="activity-narrative"]')).toBeNull();
-    const user = userEvent.setup();
-    for (const toggle of within(block).getAllByRole('button', { name: /技术细节/ })) await user.click(toggle);
-    expect((await within(block).findByTestId('recent-step-technical-0')).textContent).toContain('access.changed');
-    expect(within(block).getByTestId('recent-step-technical-0').textContent).toContain('activity-1');
-    expect(within(block).getByTestId('technical-detail-development_source').textContent).toContain('audit.development');
-    expect(within(block).getByTestId('technical-detail-unknown_means').textContent).toContain('not_observed');
+
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(screen.queryByTestId("recent-step-technical-0")).toBeNull();
+    expect(screen.queryByTestId("recent-step-technical-0")).toBeNull();
+    expect(screen.queryByTestId("technical-detail-development_source")).toBeNull();
+    expect(screen.queryByTestId("technical-detail-unknown_means")).toBeNull();
     expect(within(block).getByTestId('recent-changes-all').getAttribute('href')).toBe('/activity?project=demo');
     const activityUrls = fetchMock.mock.calls.map(([input]) => String(input))
       .filter((url) => url.includes('/api/team/activity'));
@@ -605,8 +600,8 @@ describe('project recent development activity', () => {
     const block = screen.getByTestId('project-activity');
     const partial = within(block).getByTestId('state-partial');
     expect(partial.textContent).not.toContain('ReadTimeout');
-    await userEvent.setup().click(within(partial).getByText('技术细节'));
-    expect(await within(partial).findByText('ReadTimeout')).toBeTruthy();
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(within(partial).queryByText('ReadTimeout')).toBeNull();
   });
 
   it('discloses earlier activity records without continuation', async () => {
@@ -630,9 +625,9 @@ describe('project recent development activity', () => {
     expect(within(steps[0] as HTMLElement).getByTestId('recent-step-text').textContent).toBe('开始执行');
     expect(within(steps[1] as HTMLElement).getByTestId('recent-step-text').textContent).toBe('查看工作现状');
     expect(within(block).getByTestId('recent-changes-more').textContent).toBe('更早的变化请在“活动与审计”里查看');
-    const user = userEvent.setup();
-    for (const toggle of within(block).getAllByRole('button', { name: /技术细节/ })) await user.click(toggle);
-    expect(within(block).getByTestId('recent-step-technical-0').textContent).toContain('activity-22');
+
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(screen.queryByTestId("recent-step-technical-0")).toBeNull();
     expect(block.textContent).not.toContain('activity-1 ');
   });
 
@@ -1327,54 +1322,25 @@ describe('trouble facts from the service\'s own record (review)', () => {
     expect(screen.queryByTestId('project-delivery-trouble-W2')).toBeNull();
   });
 
-  it('keeps the raw facts behind the disclosure: clean visible text, values when expanded', async () => {
-    setupOverview({ snapshot: (id) => snapshotWithTrouble(id) });
+  it('keeps raw facts out of the interface in every interaction state', async () => {
+
+    setupOverview({ snapshot: id => snapshotWithTrouble(id) });
     await screen.findByTestId('project-delivery-trouble-W1');
-    // This end: nothing raw in the default visible text.
     const visible = defaultVisibleText(screen.getByTestId('project-overview'));
     expect(visible).not.toContain('01M6SYNTHETICINTEGRATION000000A');
     expect(visible).not.toContain('rejected');
     expect(findForbiddenVisibleText(visible)).toEqual([]);
-    // The other end: expanding the delivery block's disclosure shows every raw value.
-    const delivery = screen.getByTestId('project-delivery');
-    // The disclosure must be a real, displayed technical-details control (a display:none
-    // wrapper would keep the values reachable by query while hiding them from the person).
-    const controls = within(delivery).getAllByTestId('technical-details');
-    expect(controls.length).toBeGreaterThan(0);
-    for (const control of controls) {
-      for (let el: HTMLElement | null = control; el; el = el.parentElement) {
-        expect(getComputedStyle(el).display, 'no hidden ancestor').not.toBe('none');
-      }
-    }
-    const disclosure = within(delivery).getAllByText('技术细节')[0];
-    await userEvent.setup().click(disclosure);
-    expect((await screen.findByTestId('project-delivery-trouble-raw-W1-collaboration-integration-id')).textContent).toContain('01M6SYNTHETICINTEGRATION000000A');
-    expect(screen.getByTestId('project-delivery-trouble-raw-W1-collaboration-integration-state').textContent).toContain('rejected');
-    expect(screen.getByTestId('project-delivery-trouble-raw-W1-collaboration-integration-target_changed').textContent).toContain('true');
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
   });
 
-  it('keeps the owner sources and raw values behind the disclosure, both ends', async () => {
-    setupOverview();
-    await screen.findAllByTestId('project-status-W2');
-    // Visible: the name only, never the id shapes.
-    const visible = defaultVisibleText(screen.getByTestId('project-overview'));
-    expect(visible).toContain('lin');
-    // Expanded: the row value (empty) and both snapshot fields (the disclosure sits under the
-    // table, beside the pagination, not inside the table element).
-    const page = screen.getByTestId('project-overview');
-    const disclosure = within(page).getAllByText('技术细节').find((el) => el.closest('[data-testid="project-owner-raw-name-W1"], [data-testid^="project-owner-raw-"]')?.textContent === undefined && el.textContent === '技术细节');
-    void disclosure;
-    const buttons = within(page).getAllByText('技术细节');
-    // The owner disclosure is the one whose following content holds the owner raw values.
-    let opened = false;
-    for (const label of buttons) {
-      await userEvent.setup().click(label);
-      if (screen.queryByTestId('project-owner-raw-name-W1')) { opened = true; break; }
-    }
-    expect(opened).toBe(true);
-    // The demo snapshot records owner 'lin' and no owner_name: both raw fields say so.
-    expect((await screen.findByTestId('project-owner-raw-owner-W1')).textContent).toContain('lin');
-    expect(screen.getByTestId('project-owner-raw-name-W1').textContent).toContain('未提供');
-    expect(screen.getByTestId('project-owner-raw-row-W1').textContent).toContain('未提供');
+  it('keeps internal owner sources and raw values out of the interface', async () => {
+
+    setupOverview({ snapshot: id => snapshotWithTrouble(id) });
+    await screen.findByTestId('project-delivery-trouble-W1');
+    const overview = screen.getByTestId('project-overview');
+    expect(findForbiddenVisibleText(defaultVisibleText(overview))).toEqual([]);
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(overview.textContent).not.toContain('actor_id');
+    expect(overview.textContent).not.toContain('client_id');
   });
 });

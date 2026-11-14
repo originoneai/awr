@@ -3,7 +3,6 @@ import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { humanText } from '../i18n/human-language';
 import { formatUnixMs } from '../lib/format';
-import { TechnicalDetails } from './TechnicalDetails';
 
 /**
  * Empty means "nothing observed as of a specific read", never "no data ever".
@@ -39,7 +38,7 @@ export function ObservationForbidden() {
       // Keep the factual title while using the neutral, icon-free variant.
       status="info"
       icon={null}
-      title="403"
+      title={t('state.forbidden.title')}
       subTitle={t('state.forbidden.subtitle')}
     />
   );
@@ -83,7 +82,6 @@ export function NotReportedYet() {
  * to an Alert naming the failed part — the failure is declared, never hidden.
  */
 export function PartialFailure({
-  errorCode,
   confirmedAtUnixMs,
   children,
 }: {
@@ -101,7 +99,7 @@ export function PartialFailure({
         description={
           <>
             {humanText('partialFailure', i18n.language)}
-            <TechnicalDetails items={[{ label: 'Error', value: errorCode ?? 'UnknownError' }]} />
+
             {confirmedAtUnixMs != null
               ? ` ${t('state.partial.confirmedAt', { time: formatUnixMs(confirmedAtUnixMs, i18n.language) })}`
               : ''}

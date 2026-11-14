@@ -3,7 +3,7 @@ import { Alert, Badge, Button, Card, Col, Descriptions, Row, Select, Space, Tabl
 import { useMemo, type HTMLAttributes } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
-import { TechnicalDetails } from '../components/TechnicalDetails';
+
 import { badgeStatusOf } from '../components/ToneBadge';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
 import {
@@ -19,7 +19,6 @@ import {
   type SemanticTone,
 } from '../core/observation';
 import { activityListQueryOptions, capabilitiesQueryOptions, type ActivityKind } from '../lib/activity';
-import { eventTechnicalItems, pageTechnicalItems } from '../lib/activity-technical';
 import { isAuthError } from '../lib/api';
 import { projectsQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
@@ -143,7 +142,6 @@ export function ActivityPage() {
   const foldNotes = Array.from(new Map(
     folded.disclosures.filter((item) => item.code !== 'time-gap').map((item) => [item.code, item]),
   ).values());
-  const pageFacts = pageTechnicalItems(firstPage);
 
   function renderResult(value: unknown) {
     const word = statusWord(value, { language, field: 'result' });
@@ -185,9 +183,6 @@ export function ActivityPage() {
         {event.work_id ? (
           <Link data-testid="activity-event-outcome-link" to={workLink(event.work_id)}>{t('activity.openOutcome')} →</Link>
         ) : null}
-        <TechnicalDetails items={eventTechnicalItems(event)}>
-          <Typography.Text type="secondary" data-testid="activity-event-not-request">{t('activity.auditRowNote')}</Typography.Text>
-        </TechnicalDetails>
       </Space>
     );
   }
@@ -319,7 +314,6 @@ export function ActivityPage() {
           {foldNotes.map((note) => (
             <Typography.Text key={note.code} type="secondary" data-testid={`activity-note-${note.code}`}>{note.text}</Typography.Text>
           ))}
-          <TechnicalDetails items={pageFacts} />
         </Space>
       </Card>
     </Space>

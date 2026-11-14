@@ -133,7 +133,7 @@ describe('My work sourced rows and navigation', () => {
   });
 
   it('does not show an operation name or a navigation code the page has no words for', async () => {
-    const user = userEvent.setup();
+
     const items = [{
       ...makeItems(1)[0],
       navigation: 'brand_new_state',
@@ -147,10 +147,10 @@ describe('My work sourced rows and navigation', () => {
     expect(defaultVisibleText(table)).not.toMatch(/brand_new_state|work\.recover/);
     expect(findForbiddenVisibleText(defaultVisibleText(table))).toEqual([]);
     // the exact codes are still there for whoever checks them
-    const detail = await screen.findByTestId('workbench-detail');
-    await user.click(within(detail).getAllByRole('button', { name: /技术细节/ }).at(-1) as HTMLElement);
-    expect(within(detail).getByTestId('technical-navigation').textContent).toContain('brand_new_state');
-    expect(within(detail).getByTestId('technical-next-query-op').textContent).toContain('work.recover');
+    await screen.findByTestId('workbench-detail');
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(screen.queryByTestId("technical-navigation")).toBeNull();
+    expect(screen.queryByTestId("technical-next-query-op")).toBeNull();
   });
 
   it('colours a claimed work as in progress, leaves an unclaimed one calm, and never says unclaimed for rows that carry no claim state', async () => {
@@ -212,7 +212,7 @@ describe('My work sourced rows and navigation', () => {
   });
 
   it('renders real resume entries without turning them into claim controls', async () => {
-    const user = userEvent.setup();
+
     setupWorkbench({
       next: makeNext([], [{
         work_id: 'W-resume',
@@ -226,13 +226,13 @@ describe('My work sourced rows and navigation', () => {
     expect(within(resume).getByRole('link', { name: 'W-resume' }).getAttribute('href'))
       .toBe('/projects/demo?tab=plan&work=W-resume');
     expect(within(resume).getByText('上次的进度还在，可以接着做')).toBeTruthy();
-    // the session's id and version are for whoever checks the session: behind the technical details, not in the card
+    // Internal session identity and version stay outside the product card.
     expect(defaultVisibleText(resume)).not.toContain('01M69PHCX2R0Y5M588J945JDEH');
     expect(defaultVisibleText(resume)).not.toMatch(/版本|会话/);
     expect(findForbiddenVisibleText(defaultVisibleText(resume))).toEqual([]);
-    await user.click(within(resume).getByRole('button', { name: /技术细节/ }));
-    expect(within(resume).getByTestId('technical-session-id').textContent).toContain('01M69PHCX2R0Y5M588J945JDEH');
-    expect(within(resume).getByTestId('technical-detail-session_version').textContent).toContain('3');
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(screen.queryByTestId("technical-session-id")).toBeNull();
+    expect(screen.queryByTestId("technical-detail-session_version")).toBeNull();
     expect(screen.queryByTestId('state-empty')).toBeNull();
   });
 
@@ -269,7 +269,7 @@ describe('My work sourced rows and navigation', () => {
   });
 
   it('shows a task by its title and keeps the work key out of the default view, in the table and in the detail', async () => {
-    const user = userEvent.setup();
+
     setupWorkbench({ path: '/workbench?scope=demo&work=W1', next: makeNext(makeItems(2)) });
 
     const detail = await screen.findByTestId('workbench-detail');
@@ -277,8 +277,8 @@ describe('My work sourced rows and navigation', () => {
     expect(within(table).getAllByRole('link', { name: /Observed task/ })).toHaveLength(2);
     expect(defaultVisibleText(table)).not.toMatch(/\bW[12]\b/);
     expect(defaultVisibleText(detail)).not.toMatch(/\bW1\b/);
-    await user.click(within(detail).getAllByRole('button', { name: /技术细节/ }).at(-1) as HTMLElement);
-    expect(within(detail).getByTestId('technical-work-id').textContent).toContain('W1');
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(screen.queryByTestId("technical-work-id")).toBeNull();
   });
 
   it('names a task without a title by what the work label makes of its key', async () => {
@@ -543,8 +543,8 @@ describe('visible-row snapshot hydration', () => {
     expect(await screen.findByTestId('state-partial')).toBeTruthy();
     const partial = screen.getByTestId('state-partial');
     expect(partial.textContent).not.toContain('ReadTimeout');
-    await userEvent.setup().click(within(partial).getByText('技术细节'));
-    expect(await within(partial).findByText('ReadTimeout')).toBeTruthy();
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(within(partial).queryByText('ReadTimeout')).toBeNull();
     expect(screen.getByText('Prepare the support page')).toBeTruthy();
   });
 });
@@ -576,7 +576,7 @@ describe('My work states, detail, and localization', () => {
     expect(await screen.findByTestId('state-empty')).toBeTruthy();
   });
 
-  it('shows real contract and dependency fields, keeps the agent guidance in the technical details, plus honest absent progress', async () => {
+  it('shows requirements, dependencies and unreported progress without protocol guidance', async () => {
     setupWorkbench({ path: '/workbench?scope=demo&work=W1' });
     const detail = await screen.findByTestId('workbench-detail');
     await waitFor(() => expect(detail.textContent).toContain('Keep support filters useful'));
@@ -584,9 +584,9 @@ describe('My work states, detail, and localization', () => {
     expect(detail.textContent).toContain('upstream-contract-v1');
     expect(detail.textContent).not.toContain('Record the verified outcome.');
     expect(detail.textContent).not.toContain('session.checkpoint');
-    await userEvent.setup().click(within(detail).getByText('技术细节'));
-    expect((await within(detail).findByTestId('technical-guidance-note')).textContent).toContain('Record the verified outcome.');
-    expect(within(detail).getByTestId('technical-guidance-op').textContent).toContain('session.checkpoint');
+    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+    expect(screen.queryByTestId("technical-guidance-note")).toBeNull();
+    expect(screen.queryByTestId("technical-guidance-op")).toBeNull();
     expect(within(detail).getByTestId('state-not-reported')).toBeTruthy();
     expect(within(detail).getByRole('link', { name: '打开完整任务 →' }).getAttribute('href'))
       .toBe('/projects/demo?tab=plan&work=W1');
