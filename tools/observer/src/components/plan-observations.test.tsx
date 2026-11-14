@@ -8,7 +8,7 @@ import { RevocationProvider } from '../lib/revocation';
 import { PlanningChanges, SourceReadiness } from './PlanObservations';
 
 const AT = 1793534400000;
-const INTERNAL = '01M7DRXDZWVP66RCRGK190BCXF';
+const INTERNAL = '01J000000000000000000000001';
 const DIGEST = 'a'.repeat(64);
 
 function candidate(overrides = {}) {

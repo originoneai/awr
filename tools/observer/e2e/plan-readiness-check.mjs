@@ -10,7 +10,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const evidence = path.resolve(process.env.OBSERVER_EVIDENCE_DIR ?? path.join(root, '../../.local/observer-plan-check'));
 const at = 1793534400000;
 const digest = 'b'.repeat(64);
-const internal = '01M7DRXDZWVP66RCRGK190BCXF';
+const internal = '01J000000000000000000000001';
 const freshness = { page_read: { status: 'measured', at_unix_ms: at },
   authoritative: { status: 'measured', at_unix_ms: at }, report_received: { status: 'not_measured' } };
 const overview = { ok: true, project: 'demo', works: [],
