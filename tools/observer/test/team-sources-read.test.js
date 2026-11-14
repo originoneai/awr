@@ -4,6 +4,33 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const { createTeamBridge } = require('../server/team-bridge');
+const at = 1793534400000;
+const digest = 'a'.repeat(64);
+
+function sourceReply(items, total = items.length, cursor = null) {
+  const reasons = [...new Set(items.map((item) => item.reason).filter(Boolean))];
+  const complete = reasons.length === 0;
+  return { protocol_version: 1, scope_id: 'main', source_snapshot_id: 'current-documents',
+    project_revision: '12', coordinator_epoch: 'current', workstream_id: 'development', authority_version: '1',
+    data: { work_id: 'work-one', items, total, next_cursor: cursor, truncated: cursor !== null,
+      collection: { complete, completeness: complete ? 'complete' : 'incomplete', required_total: total,
+        checked_at_unix_ms: at, scope: 'work', reasons, verification_basis: 'active_source_snapshot', recovery_scope: 'page',
+        recovery: items.filter((item) => item.reason).map((item) => ({ source_position: item.source_position,
+          reason: item.reason, recognized: true, next_action: 'Ask the project administrator to check access' })) },
+      as_of: { at_unix_ms: at, source_snapshot_id: 'current-documents', project_revision: '12' }, execution_authorized: false } };
+}
+
+function consistentSource(position = 1) {
+  return { source_position: position, path: 'docs/requirements.md', status: 'consistent', reason: null,
+    expected_sha256: digest, current_sha256: digest, checked_at_unix_ms: at,
+    missing: { path: null, expected_sha256: null, current_sha256: null } };
+}
+
+function forbiddenSource(position = 1) {
+  return { source_position: position, path: null, status: 'forbidden', reason: 'required_spec_forbidden',
+    expected_sha256: null, current_sha256: null, checked_at_unix_ms: at,
+    missing: { path: 'permission_restricted', expected_sha256: 'permission_restricted', current_sha256: 'permission_restricted' } };
+}
 
 async function sourceBridge(t, respond) {
   const calls = [];
@@ -28,21 +55,15 @@ async function sourceBridge(t, respond) {
 }
 
 test('source route preserves full-collection completeness across pages and the current member session', async (t) => {
-  const pages = [
-    { items: [{ path: 'docs/requirements.md', status: 'consistent' }], next_cursor: 'page-two' },
-    { items: [{ path: null, status: 'forbidden', expected_sha256: null, current_sha256: null }], next_cursor: null },
-  ].map((page) => ({ ...page, total: 2, truncated: page.next_cursor != null,
-    collection: { complete: false, reasons: ['required_spec_forbidden'], verification_basis: 'active_source_snapshot' },
-    as_of: { at_unix_ms: 1793534400000 }, execution_authorized: false }));
-  const { read, calls } = await sourceBridge(t, (query) => ({ body: {
-    protocol_version: 1, scope_id: 'main', source_snapshot_id: 'current-documents',
-    project_revision: '12', coordinator_epoch: 'current', workstream_id: 'development',
-    authority_version: '1', data: { ...pages[query.cursor ? 1 : 0], work_id: query.work_id },
-  } }));
+  const pages = [sourceReply([consistentSource()], 2, 'page-two'), sourceReply([forbiddenSource(2)], 2)];
+  pages[0].data.collection.complete = false;
+  pages[0].data.collection.completeness = 'incomplete';
+  pages[0].data.collection.reasons = ['required_spec_forbidden'];
+  const { read, calls } = await sourceBridge(t, (query) => ({ body: pages[query.cursor ? 1 : 0] }));
   for (const [index, cursor] of ['', '&cursor=page-two'].entries()) {
     const result = await read(`project=portal&work_id=work-one&workstream_id=development&limit=1&max_context_bytes=65536${cursor}`);
     assert.equal(result.ok, true, JSON.stringify(result));
-    assert.deepEqual(result.result.data, { ...pages[index], work_id: 'work-one' });
+    assert.deepEqual(result.result.data, pages[index].data);
     assert.equal(result.freshness.authoritative.status, 'measured');
     assert.deepEqual(calls[index], {
       path: '/v1/web/projects/portal/query', cookie: 'awr_web_session=synthetic-document-reader',
@@ -50,6 +71,41 @@ test('source route preserves full-collection completeness across pages and the c
         workstream_id: 'development', limit: 1, max_context_bytes: 65536,
         ...(index ? { cursor: 'page-two' } : {}) },
     });
+  }
+});
+
+test('source reads refuse missing attribution, contradictory metadata and forbidden disclosures', async (t) => {
+  let body;
+  const { read } = await sourceBridge(t, () => ({ body }));
+  const mutations = [
+    ['missing work identity', (r) => { delete r.data.work_id; }],
+    ['different work identity', (r) => { r.data.work_id = 'must-not-leak'; }],
+    ['missing workstream identity', (r) => { delete r.workstream_id; }],
+    ['different workstream identity', (r) => { r.workstream_id = 'must-not-leak'; }],
+    ['missing authority', (r) => { delete r.authority_version; }],
+    ['missing items', (r) => { delete r.data.items; }],
+    ['missing collection', (r) => { delete r.data.collection; }],
+    ['different totals', (r) => { r.data.total = 2; }],
+    ['contradictory readiness', (r) => { r.data.collection.complete = true; r.data.collection.completeness = 'complete'; r.data.collection.reasons = []; }],
+    ['different as-of revision', (r) => { r.data.as_of.project_revision = 'earlier'; }],
+    ['invalid cursor', (r) => { r.data.next_cursor = 3; }],
+    ['unknown status', (r) => { r.data.items[0].status = 'must-not-leak'; }],
+    ['forbidden path', (r) => { r.data.items[0].path = 'docs/must-not-leak.md'; }],
+    ['forbidden expected digest', (r) => { r.data.items[0].expected_sha256 = digest; }],
+    ['forbidden current digest', (r) => { r.data.items[0].current_sha256 = digest; }],
+    ['hidden permission classification', (r) => { r.data.items[0].status = 'unverified'; }],
+    ['missing recovery', (r) => { r.data.collection.recovery = []; }],
+    ['recovery from another page', (r) => { r.data.collection.recovery[0].source_position = 2; }],
+    ['unknown recovery action', (r) => { r.data.collection.recovery[0].recognized = false; }],
+  ];
+  for (const [name, mutate] of mutations) {
+    body = sourceReply([forbiddenSource()]);
+    mutate(body);
+    const result = await read('project=portal&work_id=work-one&workstream_id=development');
+    assert.equal(result.ok, false, name);
+    assert.equal(result.error.code, 'BadGateway', name);
+    assert.equal(result.result, undefined, name);
+    assert.equal(JSON.stringify(result).includes('must-not-leak'), false, name);
   }
 });
 
