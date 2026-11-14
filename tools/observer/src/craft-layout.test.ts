@@ -10,7 +10,7 @@ describe('craft layout rhythm', () => {
     expect(source).toContain('lg={17}');
     expect(source).toContain('acceptance.verificationTitle');
     expect(source).toContain('acceptance.reviewChanges');
-    expect(source).toContain('acceptance.downstream');
+    expect(source).toContain('acceptance.requiredWork');
   });
 
   it('uses asymmetric account and connection grids instead of equal card stacks', () => {

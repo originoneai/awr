@@ -50,6 +50,7 @@ function snapshotFor(workId: string, delivered: boolean) {
     visible_contract: { goals: [`GOAL OF ${workId}`], acceptance: [`ACCEPT ${workId}`] },
     observation: {
       collaboration: {
+        delivery_required: true,
         candidate: { current: true, digest: delivered ? CANDIDATE : 'page-candidate', selection_version: '1', required_checks: ['local_git.manifest'] },
         review: { id: round, state: delivered ? 'approved' : 'open', current_candidate: true, bundle_hash: 'bundle-hash', author_actor_id: 'lin' },
         integration: delivered ? { id: INTEGRATION, state: 'confirmed', current_binding: true, target_changed: false, reviewed_execution_id: EXECUTION } : null,
@@ -152,13 +153,21 @@ function setupAcceptance({ failOps = [], failWith = {} }: { failOps?: string[]; 
     confirmation: { envelope: { record: { data: { outcome: 'applied', result_revision: { value: '5f7eb2fe9c563e4d355aa64a527e0aef754116c1' }, provenance: { observed_at_unix_ms: 1793518656287, recorded_at_unix_ms: 1793518656318, source: 'adapter_observation' } } } } },
     current_binding: true, confirmation_current: true, target_changed: false, request_binding: 'original_candidate_and_read_set', dispatched_at: '2026-11-01T07:37:35Z', state: 'confirmed',
   };
-  const payloads = { snapshots, reviews, completion, deliveryByWork, integration };
+  const rounds = Object.fromEntries(Object.entries(reviews).map(([work, review]) => [work, [{
+    round_id: review.round_id, round_index: review.round_index, round_position: 1, readable: true,
+    state: review.state, contract_matches_current: true, reviewer_role: 'simulated_member_reviewer',
+    reviewer_actor_id: 'chen-agent', reviewer_person_id: 'chen', decided_at_unix_ms: 1793518656287,
+    reason_first_line: review.decisions[0]?.reason ?? null,
+  }]]));
+  const activity = { items: [], scope: 'self', next_cursor: null, chat_text_collected: false, tool_io_collected: false };
+  const payloads = { snapshots, reviews, completion, deliveryByWork, integration, rounds, activity };
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     let query: Record<string, unknown> | undefined;
     if (url.includes('/api/team/read')) query = JSON.parse(String(init?.body)).query;
     calls.push({ url, query });
     if (url.includes('/api/team/projects')) return json(DEMO_PROJECTS);
+    if (url.includes('/api/team/activity')) return json({ ok: true, data: activity });
     if (url.includes('/api/team/overview')) {
       return json({ ...DEMO_OVERVIEW, works: WORKS, workstreams: [{ id: 'WS1', external_key: 'support', title: 'Support' }] });
     }
@@ -168,6 +177,7 @@ function setupAcceptance({ failOps = [], failWith = {} }: { failOps?: string[]; 
       switch (query.op) {
         case 'work.snapshot': data = snapshots[query.work_id as keyof typeof snapshots]; break;
         case 'review.inspect': data = { review: reviews[query.work_id as keyof typeof reviews] }; break;
+        case 'review.rounds': data = { work_id: query.work_id, items: rounds[String(query.work_id)], total: rounds[String(query.work_id)].length, next_cursor: null, as_of: { at_unix_ms: 1793518656287 } }; break;
         case 'evidence.inspect':
           data = { evidence: { work_id: WORK, evidence_id: EVIDENCE, execution_id: EXECUTION, artifact_id: ARTIFACT, artifact_digest: DIGEST, digest: 'evidence-digest', contract_hash: CONTRACT, trust_basis: 'caller_asserted', execution_consistency: { independent_verification: false, status: 'consistent' } } };
           break;
@@ -257,6 +267,61 @@ afterEach(async () => {
 });
 
 describe('project acceptance evidence (AWR-OBS-006)', () => {
+  it('labels required dependencies as upstream work', async () => {
+    const { payloads } = setupAcceptance();
+    Object.assign(payloads.snapshots[WORK].visible_contract, { required_dependencies: [PAGE] });
+    await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
+    expect(screen.getByText('依赖的工作')).toBeTruthy();
+    expect(screen.queryByText('影响的下游工作')).toBeNull();
+  });
+
+  it('accepts report-only work without requiring repository integration or a repository candidate', async () => {
+    const { payloads } = setupAcceptance();
+    const collaboration = payloads.snapshots[WORK].observation.collaboration;
+    collaboration.delivery_required = false;
+    collaboration.candidate = null as never;
+    collaboration.integration = null;
+    payloads.reviews[WORK].submission.delivery_required = false;
+    payloads.reviews[WORK].submission.candidate_current = false;
+    await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
+    expect(screen.getByTestId(`acceptance-work-${WORK}`)).toBeTruthy();
+    expect(screen.getByTestId('acceptance-evidence-chain').textContent).toContain('业务验收已完成');
+    expect(screen.queryByTestId('acceptance-review-history')).toBeNull();
+    expect(screen.getByTestId('delivery-step-integration').textContent).toContain('无需并入代码仓库');
+  });
+
+  it('keeps current completion separate from the historical review being read', async () => {
+    const { payloads, calls } = setupAcceptance();
+    const earlier = '01J000000000000000000000099';
+    const earlierReview = structuredClone(payloads.reviews[WORK]);
+    Object.assign(earlierReview, { round_id: earlier, round_index: 1, state: 'rejected', evidence_id: 'earlier-evidence', execution_id: 'earlier-execution' });
+    const original = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const query = init?.body ? JSON.parse(String(init.body)).query : null;
+      if (query?.op === 'review.inspect' && query.review_round_id === earlier) {
+        calls.push({ url: String(input), query });
+        return json({ ok: true, result: envelope({ review: earlierReview }), freshness: freshness() });
+      }
+      return original(input, init);
+    });
+    await renderAcceptance(`/projects/demo?tab=acceptance&work=${WORK}&round=${earlier}`);
+    expect(screen.getByTestId(`acceptance-review-${earlier}`)).toBeTruthy();
+    expect(screen.queryByTestId('acceptance-completion-conflict')).toBeNull();
+    expect(screen.getByTestId('acceptance-evidence-chain').textContent).toContain('业务验收已完成');
+    expect(calls.some(call => call.query?.op === 'review.inspect' && call.query.review_round_id === ROUND)).toBe(true);
+  });
+
+  it('offers the exact primary report when a report-only review has no repository manifest', async () => {
+    const { payloads, calls } = setupAcceptance();
+    payloads.reviews[WORK].submission.artifacts = [];
+    await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
+    expect(await screen.findByTestId(`artifact-expand-${ARTIFACT}`)).toBeTruthy();
+    expect(calls.some(call => call.query?.op === 'artifact.content')).toBe(false);
+    await userEvent.setup().click(screen.getByTestId(`artifact-expand-${ARTIFACT}`));
+    expect(await screen.findByTestId(`artifact-read-content-${ARTIFACT}`)).toBeTruthy();
+    expect(calls.find(call => call.query?.op === 'artifact.content')?.query).toMatchObject({ work_id: WORK, artifact_id: ARTIFACT, expected_sha256: DIGEST });
+  });
+
   it('reports an unreadable selected snapshot as unknown instead of absent records', async () => {
     setupAcceptance({ failOps: ['work.snapshot'] });
     await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');

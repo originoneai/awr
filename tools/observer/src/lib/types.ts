@@ -247,6 +247,7 @@ export interface WorkContract {
 }
 
 export interface WorkCollaboration {
+  delivery_required?: boolean;
   candidate?: {
     current?: boolean;
     digest?: string;
@@ -281,6 +282,26 @@ export interface WorkCollaboration {
   } | null;
   verification?: Array<{ check?: string; run_id?: string; outcome?: string }>;
   facts_truncated?: boolean;
+}
+
+export interface ReviewRoundsData {
+  work_id: string;
+  items: Array<{
+    round_id: string;
+    round_index: number;
+    round_position: number;
+    readable: boolean;
+    state: 'open' | 'approved' | 'rejected' | 'invalidated' | null;
+    contract_matches_current: boolean | null;
+    reviewer_role: 'independent_reviewer' | 'author_reviewer' | 'agent_reviewer' | 'simulated_member_reviewer' | null;
+    reviewer_actor_id: string | null;
+    reviewer_person_id: string | null;
+    decided_at_unix_ms: number | null;
+    reason_first_line: string | null;
+  }>;
+  total: number;
+  next_cursor: string | null;
+  as_of: { at_unix_ms: number };
 }
 
 /** The data of a source.content reply; text arrives as the service decoded it. */

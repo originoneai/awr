@@ -61,9 +61,6 @@ export function ArtifactReader({
 
   return (
     <Space direction="vertical" size={6} style={{ width: '100%' }}>
-      <Typography.Text strong style={{ overflowWrap: 'anywhere' }}>
-        {t('acceptance.artifacts')}
-      </Typography.Text>
       <Space size={8} wrap>
         {status ? (
           <Tag data-testid={`artifact-digest-${artifactId}`} color={status === 'verified' ? 'success' : status === 'mismatch' ? 'error' : 'default'}>
