@@ -26,6 +26,142 @@ async fn seed_planning_candidate(admin: &tokio_postgres::Client, id: &str, chang
 }
 
 #[tokio::test]
+async fn planning_observation_matches_manifest_and_epoch_instead_of_snapshot_identity() {
+    let (_guard, admin, _, store) = setup().await;
+    let draft = planning_draft(&admin, "a").await;
+    seed_planning_candidate(
+        &admin,
+        "current-plan",
+        json!([
+            {"op":"edit_fields","before":draft,"after":draft}
+        ]),
+    )
+    .await;
+    let baseline = admin
+        .query_one(
+            "SELECT s.manifest_digest,p.authority_epoch::text,p.active_snapshot_id
+        FROM awr_team.projects p JOIN awr_team.source_snapshots s
+          ON s.tenant_id=p.tenant_id AND s.project_id=p.id AND s.id=p.active_snapshot_id
+        WHERE p.tenant_id=$1 AND p.id=$2",
+            &[&TENANT, &PROJECT],
+        )
+        .await
+        .unwrap();
+    let digest: String = baseline.get(0);
+    let epoch: String = baseline.get(1);
+    assert_ne!(digest, baseline.get::<_, String>(2));
+    admin
+        .execute(
+            "UPDATE awr_team.planning_candidates SET baseline_digest=$1,baseline_epoch=$2",
+            &[&digest, &epoch],
+        )
+        .await
+        .unwrap();
+    let current = store
+        .query(TENANT, PROJECT, A, query("planning.candidates"))
+        .await
+        .unwrap();
+    let observed = &current["data"]["items"][0]["baseline"];
+    assert_eq!(observed["source_manifest_digest"], digest);
+    assert!(observed.get("source_snapshot_id").is_none());
+    assert_eq!(observed["matches_current"], true);
+    admin
+        .batch_execute("UPDATE awr_team.planning_candidates SET baseline_digest='earlier-manifest'")
+        .await
+        .unwrap();
+    let stale = store
+        .query(TENANT, PROJECT, A, query("planning.candidates"))
+        .await
+        .unwrap();
+    assert_eq!(
+        stale["data"]["items"][0]["baseline"]["matches_current"],
+        false
+    );
+    admin.execute("UPDATE awr_team.planning_candidates SET baseline_digest=$1,baseline_epoch='earlier-epoch'",
+        &[&digest]).await.unwrap();
+    let stale = store
+        .query(TENANT, PROJECT, A, query("planning.candidates"))
+        .await
+        .unwrap();
+    assert_eq!(
+        stale["data"]["items"][0]["baseline"]["matches_current"],
+        false
+    );
+}
+
+#[tokio::test]
+async fn planning_observation_includes_assurance_and_settlement_changes_without_hidden_references()
+{
+    let (_guard, admin, _, store) = setup().await;
+    let row = admin
+        .query_one(
+            "SELECT contract_json FROM awr_team.work_contracts WHERE work_id='c'",
+            &[],
+        )
+        .await
+        .unwrap();
+    let mut contract: awr_team::WorkContract = serde_json::from_value(row.get(0)).unwrap();
+    contract.required_dependencies.push("a".into());
+    let contract_hash = contract.hash().unwrap();
+    let contract_json = serde_json::to_value(contract).unwrap();
+    admin.execute("UPDATE awr_team.work_contracts SET contract_json=$1,contract_hash=$2 WHERE work_id='c'",
+        &[&contract_json, &contract_hash]).await.unwrap();
+    let current = planning_draft(&admin, "c").await;
+    let mut assurance = current.clone();
+    assurance["dependency_acceptance"] = json!({"a":"agent_reviewed_caller_asserted_reconciled"});
+    let mut restricted = assurance.clone();
+    restricted["dependency_acceptance"]["b-private"] =
+        json!("agent_reviewed_caller_asserted_reconciled");
+    let mut settlement = current.clone();
+    settlement["execution_settlement"] =
+        json!({"mode":"independent_workspace_v1","workspace_id":"review-workspace"});
+    for (id, after) in [
+        ("assurance", assurance),
+        ("restricted", restricted),
+        ("settlement", settlement),
+    ] {
+        seed_planning_candidate(
+            &admin,
+            id,
+            json!([
+                {"op":"edit_fields","before":current,"after":after}
+            ]),
+        )
+        .await;
+    }
+    let result = store
+        .query(TENANT, PROJECT, A, query("planning.candidates"))
+        .await
+        .unwrap();
+    let items = result["data"]["items"].as_array().unwrap();
+    for item in items {
+        assert_eq!(item["current_diff"]["items"][0]["kind"], "changed");
+        assert_eq!(item["current_diff"]["counts"]["changed"], 1);
+        let fields = item["current_diff"]["items"][0]["fields"]
+            .as_array()
+            .unwrap();
+        assert_eq!(fields.len(), 1);
+        let field = &fields[0];
+        if item["candidate_id"] == "settlement" {
+            assert_eq!(field["field"], "execution_settlement");
+            assert_eq!(field["after"]["value"]["workspace_id"], "review-workspace");
+        } else {
+            assert_eq!(field["field"], "dependency_acceptance");
+            if item["candidate_id"] == "restricted" {
+                assert!(field["after"]["value"].is_null());
+                assert_eq!(field["after"]["reason"], "permission_restricted");
+            } else {
+                assert_eq!(
+                    field["after"]["value"]["a"],
+                    "agent_reviewed_caller_asserted_reconciled"
+                );
+            }
+        }
+    }
+    assert!(!result.to_string().contains("b-private"));
+}
+
+#[tokio::test]
 async fn planning_observation_compares_with_current_plan_and_does_not_expose_hidden_candidates() {
     let (_guard, admin, _, store) = setup().await;
     let current = planning_draft(&admin, "a").await;

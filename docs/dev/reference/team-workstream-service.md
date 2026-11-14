@@ -170,11 +170,16 @@ These fields are read-only observations; they grant no execution or approval.
 
 `planning.candidates` returns proposed changes, their author and receive times,
 the original baseline, and recorded approval, publication and source activation.
+The baseline's `source_manifest_digest` identifies the source content used to
+prepare the proposal. `matches_current` compares that digest and the authority
+epoch with the active source. The response envelope's `source_snapshot_id`
+identifies the current snapshot record.
 Its `current_diff` groups work as added, removed from the active plan, changed or
 unchanged. Field differences compare the proposal with the active source
 snapshot, rather than trusting its historical before-image. The browser does
-not calculate these differences. An omitted optional rule field retains the
-current rules. Unreadable dependency values are null with
+not calculate these differences. Changes include dependency acceptance and
+execution settlement policies. An omitted optional field retains its current
+value. Unreadable dependency values and acceptance maps are null with
 `permission_restricted`; identifiers and titles from hidden work are not exposed.
 
 Only candidates whose affected work is fully readable are enumerated. This
