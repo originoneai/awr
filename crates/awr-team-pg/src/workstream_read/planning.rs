@@ -43,6 +43,8 @@ fn diff(
         "acceptance",
         "scope_paths",
         "required_dependencies",
+        "dependency_acceptance",
+        "execution_settlement",
         "definition_state",
         "completion_policy",
         "hard_rules",
@@ -62,11 +64,16 @@ fn diff(
             continue;
         }
         let disclose = |value: Value| {
-            let restricted = field == "required_dependencies"
-                && value.as_array().is_some_and(|ids| {
+            let restricted = match field {
+                "required_dependencies" => value.as_array().is_some_and(|ids| {
                     ids.iter()
                         .any(|id| id.as_str().is_none_or(|id| !readable.contains(id)))
-                });
+                }),
+                "dependency_acceptance" => value
+                    .as_object()
+                    .is_some_and(|modes| modes.keys().any(|id| !readable.contains(id))),
+                _ => false,
+            };
             if restricted {
                 nullable(Value::Null, "permission_restricted")
             } else {
@@ -155,7 +162,9 @@ pub(super) async fn read(
                 "SELECT count(*),md5(COALESCE(string_agg(
         c.id||c.candidate_digest||c.state||c.updated_at::text,'|' ORDER BY c.id),'')),
         (extract(epoch FROM statement_timestamp())*1000)::bigint,
-        (SELECT authority_epoch::text FROM awr_team.projects WHERE tenant_id=$1 AND id=$2)
+        (SELECT authority_epoch::text FROM awr_team.projects WHERE tenant_id=$1 AND id=$2),
+        (SELECT manifest_digest FROM awr_team.source_snapshots
+          WHERE tenant_id=$1 AND project_id=$2 AND id=$3)
         FROM awr_team.planning_candidates c WHERE {FILTER}"
             ),
             params,
@@ -273,8 +282,9 @@ pub(super) async fn read(
             "author":{"actor_id":r.get::<_,String>(1),"display_name":r.get::<_,Option<String>>(2),
                 "person_id":r.get::<_,String>(3)},
             "created_at_unix_ms":r.get::<_,i64>(10),"updated_at_unix_ms":r.get::<_,i64>(11),
-            "baseline":{"source_snapshot_id":r.get::<_,String>(4),"authority_epoch":r.get::<_,String>(5),
-                "matches_current":r.get::<_,String>(4)==auth.snapshot && r.get::<_,String>(5)==stamp.get::<_,String>(3)},
+            "baseline":{"source_manifest_digest":r.get::<_,String>(4),"authority_epoch":r.get::<_,String>(5),
+                "matches_current":stamp.get::<_,Option<String>>(4).as_deref()==Some(r.get::<_,String>(4).as_str())
+                    && r.get::<_,String>(5)==stamp.get::<_,String>(3)},
             "current_diff":{"items":differences,"counts":counts},
             "approval":nullable(r.get::<_,Option<Value>>(12).unwrap_or(Value::Null),"not_approved"),
             "publication":nullable(r.get::<_,Option<Value>>(13).unwrap_or(Value::Null),"not_published"),
@@ -312,4 +322,35 @@ pub(super) async fn read(
         return Err(PgError::ResponseTooLarge);
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn omitted_optional_assurance_and_settlement_retain_current_values() {
+        let current = json!({"work_id":"work","external_key":"WORK","title":"Update help",
+            "definition_state":"enabled","goals":["goal"],"required_dependencies":["input"],
+            "scope_paths":["docs"],"acceptance":["Help explains the current behavior"],
+            "completion_policy":"caller_managed_execution_and_agent_review",
+            "dependency_acceptance":{"input":"agent_reviewed_caller_asserted_reconciled"},
+            "execution_settlement":{"mode":"independent_workspace_v1","workspace_id":"help-workspace"}});
+        let mut proposed = current.clone();
+        proposed
+            .as_object_mut()
+            .unwrap()
+            .remove("dependency_acceptance");
+        proposed
+            .as_object_mut()
+            .unwrap()
+            .remove("execution_settlement");
+        let change: DraftChange = serde_json::from_value(json!({
+            "op":"edit_fields","before":current,"after":proposed
+        }))
+        .unwrap();
+        let observed = diff(&change, Some(&current), &BTreeSet::from(["input".into()])).unwrap();
+        assert_eq!(observed["kind"], "unchanged");
+        assert_eq!(observed["fields"], json!([]));
+    }
 }
