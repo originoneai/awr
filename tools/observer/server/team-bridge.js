@@ -304,6 +304,18 @@ function isBoundedCursor(value) {
   return typeof value === 'string' && value.length > 0 && value.length <= 4096;
 }
 
+function validSourceCoverage(data, query) {
+  const items = data.items, limit = query.limit ?? 20;
+  if (!Array.isArray(items) || items.length > limit) return false;
+  if (data.total === 0) return items.length === 0 && data.next_cursor === null;
+  if (items.length === 0) return false;
+  const first = items[0]?.source_position;
+  if (!Number.isSafeInteger(first) || !query.cursor && first !== 1
+    || !items.every((item, index) => item?.source_position === first + index)) return false;
+  const last = first + items.length - 1;
+  return data.next_cursor === null ? last === data.total : last < data.total && items.length === limit;
+}
+
 /**
  * AWR-OBS-002 shared read attribution: one semantics for the generic read
  * route and the coordination detail route. Enveloped reads must belong to
@@ -357,7 +369,7 @@ function readAttributionError(query, result, { strictWorkstream } = {}) {
     return { code: 'BadGateway', message: 'Invalid Team read response' };
   }
   if (query.op === 'sources.inspect' && (
-    !Array.isArray(data.items) || data.items.length > (query.limit ?? 20)
+    !validSourceCoverage(data, query)
     || ((query.work_id || query.workstream_id) && (!isBoundedId(result.workstream_id)
       || typeof result.authority_version !== 'string' || !/^\d+$/.test(result.authority_version)))
     || query.workstream_id && result.workstream_id !== query.workstream_id
