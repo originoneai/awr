@@ -31,7 +31,7 @@ const INBOX_READ_OPS = new Set(['work.prepare', 'work.observe', 'work.recovery',
 // not this observation surface. The drift guard pins this explicit boundary.
 const READ_DEFERRED_OPS = new Set(['audit.history', 'audit.export', 'audit.count', 'delivery.routes']);
 const READ_PROJECT_WIDE = new Set(['capabilities', 'workstreams.list', 'work.inbox']);
-const READ_WORK_LIST = new Set(['work.list', 'work.search', 'planning.outcome']);
+const READ_WORK_LIST = new Set(['work.list', 'work.graph', 'work.search', 'planning.outcome']);
 const READ_AUDIT = new Set(['audit.requests', 'audit.development']);
 const READ_EXACT_WORK = new Set(['task.assignees', 'delivery.neutral.inspect',
   'delivery.submission.describe', 'delivery.neutral.outcome', 'delivery.source.status',
@@ -40,7 +40,7 @@ const READ_WORK_SELECTION = new Set(['work.prepare', 'work.admission', 'work.sna
   'work.observe', 'work.recovery', 'command.inspect', 'claim.inspect', 'execution.inspect',
   'handoff.inspect', 'evidence.inspect', 'review.inspect', 'completion.inspect',
   'delivery.inspect', 'artifact.content', 'artifact.segment', 'delivery.exports']);
-const READ_PAGED = new Set(['workstreams.list', 'work.list', 'work.search', 'events.list',
+const READ_PAGED = new Set(['workstreams.list', 'work.list', 'work.graph', 'work.search', 'events.list',
   'work.next', 'work.inbox', 'task.assignees', 'delivery.exports']);
 const READ_CONTEXT_BUDGET = new Set(['work.prepare', 'work.snapshot', 'work.observe', 'work.inbox',
   'source.content', 'artifact.content', 'artifact.segment', 'review.inspect',
@@ -1024,6 +1024,62 @@ function createTeamBridge(opts) {
           page_read: { status: 'measured', at_unix_ms: Date.now() },
         },
         schema: data.schema,
+      };
+    },
+
+    'GET /api/team/graph': async (url, _body, req, res) => {
+      const project = url.searchParams.get('project');
+      if (!project || project.length > 128 || [...url.searchParams.keys()].some((key) => key !== 'project')) {
+        return { ok: false, error: { code: 'InvalidInput', message: 'One bounded project required' } };
+      }
+      if (!TEAM.live) {
+        if (!TEAM.demoMode) return { ok: false, error: { code: 'DemoDisabled', message: 'fixtures require demo mode' } };
+        const data = readFixture('team-view.json');
+        if (!data.projects.some((item) => item.key === project)) {
+          return { ok: false, error: { code: 'NotFound', message: 'Project unavailable' } };
+        }
+        return {
+          ok: true, project, demo: true, workstreams: data.workstreams || [],
+          as_of: null, read_at_unix_ms: now(),
+          items: data.works.map((work) => ({
+            work_id: work.key, external_key: work.key, title: work.title,
+            workstream_id: work.workstream_id, state: work.status || 'unknown',
+            required_dependencies: (work.depends_on || []).filter((dep) => dep.visible !== false).map((dep) => dep.key),
+            dependencies_complete: !(work.hidden_deps || []).length,
+            owner: work.owner_person || work.agent || null, last_event_at: null, claims: [],
+          })),
+        };
+      }
+      const session = await readOverviewSession(req);
+      applyProxiedCookies(res, session && session.setCookie);
+      if (!session || session.status >= 400) return liveError(session);
+      const deadlineAt = now() + overviewDeadlineMs;
+      const streams = await queryAllPagesUncached(project, { op: 'workstreams.list' }, req, res,
+        { pageTimeoutMs: readTimeoutMs, deadlineAt });
+      if (streams.error) return { ok: false, error: streams.error };
+      if (streams.truncated || streams.items.length !== streams.total) {
+        return { ok: false, error: { code: 'ResponseTooLarge', message: 'Graph scope is incomplete' } };
+      }
+      if (!streams.as_of) {
+        return { ok: false, error: { code: 'SourceChanged', message: 'Project changed while reading graph scope; refresh' } };
+      }
+      const items = [];
+      const asOf = streams.as_of;
+      for (const stream of streams.items) {
+        const page = await queryAllPages(project, { op: 'work.graph', workstream_id: stream.id }, req, res,
+          { pageTimeoutMs: readTimeoutMs, deadlineAt });
+        if (page.error) return { ok: false, error: page.error };
+        if (page.truncated || page.items.length !== page.total) {
+          return { ok: false, error: { code: 'ResponseTooLarge', message: 'Graph work enumeration is incomplete' } };
+        }
+        if (!page.as_of || JSON.stringify(asOf) !== JSON.stringify(page.as_of)) {
+          return { ok: false, error: { code: 'SourceChanged', message: 'Project changed while reading the graph; refresh' } };
+        }
+        items.push(...page.items.map((item) => ({ ...item, workstream_id: stream.id })));
+      }
+      return {
+        ok: true, project, items, as_of: asOf, read_at_unix_ms: now(),
+        workstreams: streams.items.map(({ id, external_key, title }) => ({ id, external_key, title })),
       };
     },
 

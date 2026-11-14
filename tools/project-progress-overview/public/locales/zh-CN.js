@@ -310,6 +310,7 @@
   "map.detail.sessions": "会话",
   "map.detail.findings": "健康发现",
   "map.detail.gaps": "官方接口未提供",
+  "map.detail.technical": "技术细节",
   "map.detail.gaps_text": "工作项的这些字段拿不到；这里不做猜测，也不用别处的数据补上。",
   "map.detail.status": "状态",
   "map.detail.ready": "就绪判定",

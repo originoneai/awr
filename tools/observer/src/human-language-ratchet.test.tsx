@@ -50,6 +50,20 @@ function installRealShapeMock(state: State, moment: RealMoment) {
     if (url.includes('/api/team/projects')) {
       return json(state === 'empty' ? { ...DEMO_PROJECTS, projects: [] } : DEMO_PROJECTS);
     }
+    if (url.includes('/api/team/graph')) {
+      if (state === 'partial' || state === 'unknown') return json(failure);
+      return json({
+        ok: true, project: 'demo', read_at_unix_ms: 1790000000000,
+        as_of: { project_revision: '12', source_snapshot_id: 'source-12', coordinator_epoch: 'current' },
+        workstreams: [{ id: 'development', title: 'Development' }],
+        items: state === 'empty' ? [] : [{
+          work_id: 'synthetic-api', external_key: 'API-001', title: 'Application API',
+          workstream_id: 'development', state: 'in_progress', owner: 'Developer',
+          last_event_at: 1790000000000, claims: [], dependencies_complete: true,
+          required_dependencies: [],
+        }],
+      });
+    }
     if (url.includes('/api/team/overview')) {
       if (state === 'empty') return json({ ...DEMO_OVERVIEW, works: [], workstreams: [] });
       return json({

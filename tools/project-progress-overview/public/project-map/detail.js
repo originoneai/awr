@@ -96,12 +96,12 @@
     };
   }
 
-  const utc = (ms) => `${viewsLib.utc(ms)} UTC`;
+  const utc = (ms) => Number.isFinite(ms) ? `${viewsLib.utc(ms)} UTC` : '—';
 
   /** The popup body as HTML (all text escaped). `t` is the language function. */
-  function renderDetail(d, t, gapReason) {
+  function renderDetail(d, t, gapReason, { technicalDetails = false } = {}) {
     const badge = (vis, label) => `<span class="pm-badge" data-vis="${esc(vis)}">${esc(label)}</span>`;
-    const jump = (n) => `<li><button type="button" class="pm-link" data-pm-jump="${esc(n.key)}"><code>${esc(n.short)}</code> <span class="pm-link-title">${esc(n.title)}</span> ${badge(n.vis, t(`map.status.${n.vis}`))}</button></li>`;
+    const jump = (n) => `<li><button type="button" class="pm-link" data-pm-jump="${esc(n.key)}">${technicalDetails ? '' : `<code>${esc(n.short)}</code> `}<span class="pm-link-title">${esc(n.title)}</span> ${badge(n.vis, t(`map.status.${n.vis}`))}</button></li>`;
     const section = (title, body) => `<section class="pm-d-sec"><h3>${esc(title)}</h3>${body}</section>`;
     const row = (label, value) => `<dt>${esc(label)}</dt><dd>${value}</dd>`;
     const list = (items) => `<ul class="pm-d-list">${items.join('')}</ul>`;
@@ -111,14 +111,14 @@
     const flags = [badge(d.vis, t(`map.status.${d.vis}`))];
     if (d.stuck) flags.push(`<span class="pm-badge pm-warn">${esc(t('map.detail.stuck'))}</span>`);
     if (d.archived) flags.push(`<span class="pm-badge">${esc(t('map.detail.archived'))}</span>`);
-    parts.push(`<header class="pm-d-head"><div class="pm-d-key"><code>${esc(d.key)}</code> ${flags.join(' ')}</div><h2 id="pm-drawer-title">${esc(d.title)}</h2></header>`);
+    parts.push(`<header class="pm-d-head"><div class="pm-d-key">${technicalDetails ? '' : `<code>${esc(d.key)}</code> `}${flags.join(' ')}</div><h2 id="pm-drawer-title">${esc(d.title)}</h2></header>`);
 
     const last = d.lastEventAt
       ? t('map.detail.last_value', { time: utc(d.lastEventAt), days: Math.max(0, Math.round((d.generatedAt - d.lastEventAt) / DAY_MS)) })
       : t('map.detail.never');
     parts.push(section(t('map.detail.summary'), `<dl class="pm-d-grid">${[
-      row(t('map.detail.status'), `<code>${esc(d.status)}</code>`),
-      row(t('map.detail.ready'), esc(t(d.ready ? 'map.detail.ready_yes' : 'map.detail.ready_no'))),
+      row(t('map.detail.status'), technicalDetails ? esc(t(`map.status.${d.vis}`)) : `<code>${esc(d.status)}</code>`),
+      row(t('map.detail.ready'), esc(t(typeof d.ready === 'boolean' ? (d.ready ? 'map.detail.ready_yes' : 'map.detail.ready_no') : 'map.detail.unset'))),
       row(t('map.detail.lane'), esc(d.lane)),
       row(t('map.detail.milestone'), d.milestone ? esc(d.milestone) : `<span class="pm-d-none">${esc(t('map.detail.unset'))}</span>`),
       row(t('map.detail.owner'), d.owner ? esc(d.owner) : `<span class="pm-d-none">${esc(t('map.detail.unset'))}</span>`),
@@ -128,18 +128,19 @@
 
     if (d.stuck) {
       parts.push(section(t('map.detail.stuck'), `<p>${esc(t('map.detail.stuck_text'))}</p>`
-        + (d.cancelledAbove.length ? `<p>${esc(t('map.detail.stuck_behind', { keys: d.cancelledAbove.join(t('map.join.list')) }))}</p>` : '')));
+        + (!technicalDetails && d.cancelledAbove.length ? `<p>${esc(t('map.detail.stuck_behind', { keys: d.cancelledAbove.join(t('map.join.list')) }))}</p>` : '')));
     }
     if (d.blocker) parts.push(section(t('map.detail.blocker'), `<p>${esc(d.blocker)}</p>`));
     if (d.nextAction) parts.push(section(t('map.detail.next_action'), `<p>${esc(d.nextAction)}</p>`));
     if (d.waits.length) {
       parts.push(section(t('map.detail.waits'), list(d.waits.map((w) => `<li><code>${esc(w.kind)}</code> ${esc(w.summary)}<br><small>${esc(w.release)}</small></li>`))));
     }
-    if (d.diagnostics.length) {
+    if (!technicalDetails && d.diagnostics.length) {
       parts.push(section(t('map.detail.diagnostics'), list(d.diagnostics.map((x) => `<li><code>${esc(x.code)}</code> ${esc(x.detail)}${x.work && x.work !== d.key ? ` <small>${esc(t('map.detail.on', { key: x.work }))}</small>` : ''}</li>`))));
     }
     parts.push(section(t('map.detail.claims'), d.claims.length
       ? list(d.claims.map((c) => {
+        if (technicalDetails) return `<li>${esc(c.agent)}</li>`;
         let expiry = t('map.detail.unset');
         if (c.expiresAt === null) expiry = t('map.detail.no_expiry');
         else if (Number.isFinite(c.expiresAt)) expiry = utc(c.expiresAt);
@@ -148,14 +149,19 @@
       : none));
     parts.push(section(t('map.detail.needs', { count: d.prerequisites.length }), d.prerequisites.length ? list(d.prerequisites.map(jump)) : none));
     parts.push(section(t('map.detail.unlocks', { count: d.dependents.length }), d.dependents.length ? list(d.dependents.map(jump)) : none));
-    if (d.sessions.length) {
+    if (!technicalDetails && d.sessions.length) {
       parts.push(section(t('map.detail.sessions'), list(d.sessions.map((x) => `<li><code>${esc(x.agent)}</code> <code>${esc(x.id)}</code> <span class="pm-badge">${esc(x.status)}</span><br><small>${esc(t('map.detail.started'))} ${esc(utc(x.startedAt))} · ${esc(t('map.detail.last_event'))} ${x.lastEventAt ? esc(utc(x.lastEventAt)) : '—'}</small></li>`))));
     }
-    if (d.findings.length) {
+    if (!technicalDetails && d.findings.length) {
       parts.push(section(t('map.detail.findings'), list(d.findings.map((f) => `<li><code>${esc(f.code)}</code> <small>${esc(f.severity)}</small> ${esc(f.message)}</li>`))));
     }
-    parts.push(section(t('map.detail.gaps'), `<p class="pm-d-note">${esc(t('map.detail.gaps_text'))}</p>${list(d.gaps.map((g) => `<li><code>${esc(g.field)}</code>: ${esc(gapReason(g))}</li>`))}`));
-    parts.push(`<footer class="pm-d-actions"><button type="button" class="pm-btn-solid" data-pm-action="reveal">${esc(t('map.detail.reveal'))}</button><button type="button" data-pm-action="copy-key">${esc(t('map.detail.copy_key'))}</button><button type="button" data-pm-action="copy-command">${esc(t('map.detail.copy_command'))}</button><span class="pm-d-status" data-pm-status-line role="status" aria-live="polite"></span></footer>`);
+    const copyKey = `<button type="button" data-pm-action="copy-key">${esc(t('map.detail.copy_key'))}</button>`;
+    if (technicalDetails) {
+      parts.push(`<details class="pm-d-sec" data-testid="technical-details"><summary>${esc(t('map.detail.technical'))}</summary><pre class="pm-d-technical">${esc(JSON.stringify(d, null, 2))}</pre>${copyKey}</details>`);
+    } else {
+      parts.push(section(t('map.detail.gaps'), `<p class="pm-d-note">${esc(t('map.detail.gaps_text'))}</p>${list(d.gaps.map((g) => `<li><code>${esc(g.field)}</code>: ${esc(gapReason(g))}</li>`))}`));
+    }
+    parts.push(`<footer class="pm-d-actions"><button type="button" class="pm-btn-solid" data-pm-action="reveal">${esc(t('map.detail.reveal'))}</button>${technicalDetails ? '' : copyKey}<button type="button" data-pm-action="copy-command">${esc(t('map.detail.copy_command'))}</button><span class="pm-d-status" data-pm-status-line role="status" aria-live="polite"></span></footer>`);
     return parts.join('');
   }
 

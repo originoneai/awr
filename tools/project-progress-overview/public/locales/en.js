@@ -310,6 +310,7 @@
   "map.detail.sessions": "Sessions",
   "map.detail.findings": "Health findings",
   "map.detail.gaps": "Not provided by the official interfaces",
+  "map.detail.technical": "Technical details",
   "map.detail.gaps_text": "These fields are not available for work items; nothing here is guessed or filled in from elsewhere.",
   "map.detail.status": "Status",
   "map.detail.ready": "Readiness",
