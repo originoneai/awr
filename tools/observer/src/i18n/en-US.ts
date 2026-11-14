@@ -71,6 +71,9 @@ const enUS: Messages = {
     owner: 'Owner',
     participating: 'Participating agents',
     executors: '{{agents}} agents participating in {{items}} work items',
+    activeAgents: 'Active agent sessions',
+    participantsTitle: 'Agents',
+    activityTitle: 'Activity',
   },
   project: {
     settings: 'Project settings',

@@ -70,6 +70,7 @@
       short: node.short,
       title: node.title,
       status: node.status,
+      ...(raw.source_status ? { sourceStatus: raw.source_status } : {}),
       vis: node.vis,
       lane: lane ? modelLib.laneName(lane, t) : node.lane,
       milestone: node.milestone,

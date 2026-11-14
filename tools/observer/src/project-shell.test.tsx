@@ -64,9 +64,11 @@ describe('ProjectShell', () => {
 
   it('renders all three shared maps and opens readable work details from the dependencies tab', async () => {
     const user = userEvent.setup();
-    setup('/projects/demo?tab=deps');
+    const { queryClient } = setup('/projects/demo?tab=deps');
     const body = await screen.findByTestId('project-map-drawing');
     await waitFor(() => expect(body.querySelectorAll('svg').length).toBe(3));
+    const query = queryClient.getQueryCache().find({ queryKey: ['team', 'graph', 'demo'] })!;
+    expect(query.observers.map((observer) => observer.options.refetchInterval)).toEqual([false]);
     expect(defaultVisibleText(body)).toContain('Application API');
     await user.click(body.querySelector('.pm-card')!);
     const drawer = body.querySelector('.pm-drawer')!;

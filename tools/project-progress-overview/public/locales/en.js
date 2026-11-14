@@ -115,6 +115,8 @@
   "map.lane.done_of": "{done}/{total} done",
   "map.executors.note": "Unfinished work with an active claim · {items} items / {agents} executors",
   "map.doctor.active_sessions": "active sessions",
+  "map.executors.title": "EXECUTORS",
+  "map.doctor.title": "DOCTOR",
   "map.doctor.cancelled_deps": "Dependencies on cancelled items {count} · {stuck} stuck",
   "map.doctor.stale_claims": "{count} active claims sit on completed work",
   "map.edge.dep": "Direct dependency",

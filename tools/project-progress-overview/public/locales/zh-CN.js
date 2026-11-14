@@ -115,6 +115,8 @@
   "map.lane.done_of": "{done}/{total} 完成",
   "map.executors.note": "持有活动认领的未完成工作 · {items} 项 / {agents} 个执行者",
   "map.doctor.active_sessions": "active 会话",
+  "map.executors.title": "EXECUTORS",
+  "map.doctor.title": "DOCTOR",
   "map.doctor.cancelled_deps": "依赖指向已取消项 {count} · 卡住 {stuck} 项",
   "map.doctor.stale_claims": "{count} 个活动认领落在已完成工作项上",
   "map.edge.dep": "直接依赖",

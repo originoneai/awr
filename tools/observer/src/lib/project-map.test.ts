@@ -52,6 +52,14 @@ describe('Team projection into the shared project maps', () => {
     expect(snapshot.sessions).toMatchObject([{ started_at: null, agent_id: 'Developer' }]);
   });
 
+  it('maps unclaimed Team work to the backlog and preserves its original state', () => {
+    const response = graph();
+    response.items[0].state = 'unclaimed';
+    expect((teamProjectSnapshot(response).nodes as object[])[0]).toMatchObject({ status: 'planned', source_status: 'unclaimed' });
+    response.items[0].state = 'unsupported-future-state';
+    expect((teamProjectSnapshot(response).nodes as object[])[0]).toMatchObject({ status: 'unknown', source_status: 'unsupported-future-state' });
+  });
+
   it('keeps opaque source identifiers out of card subtitles while retaining their identity', () => {
     const response = graph();
     response.items[0].external_key = `WORK-${'b'.repeat(32)}`;

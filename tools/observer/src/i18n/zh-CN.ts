@@ -67,6 +67,9 @@ const zhCN = {
     owner: '负责人',
     participating: '正在参与的 Agent',
     executors: '{{agents}} 个 Agent 正在参与 {{items}} 项工作',
+    activeAgents: '正在参与的 Agent 会话',
+    participantsTitle: '参与者',
+    activityTitle: '活动',
   },
   project: {
     settings: '项目设置',

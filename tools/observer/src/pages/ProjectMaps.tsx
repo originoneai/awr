@@ -37,6 +37,9 @@ function MapDrawing({ snapshot, graph }: { snapshot: ReturnType<typeof teamProje
       'map.detail.owner': 'projectMaps.owner',
       'map.detail.claims': 'projectMaps.participating',
       'map.executors.note': 'projectMaps.executors',
+      'map.doctor.active_sessions': 'projectMaps.activeAgents',
+      'map.executors.title': 'projectMaps.participantsTitle',
+      'map.doctor.title': 'projectMaps.activityTitle',
     } as const;
     const translate = (key: string, params?: Record<string, unknown>) => {
       const label = labels[key as keyof typeof labels];
@@ -94,6 +97,8 @@ export function ProjectMaps({ project }: { project: string }) {
     enabled: Boolean(project) && !revoked,
     retry: false,
     refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchInterval: false,
     staleTime: 0,
   });
   if (revoked || isAuthError(graph.error)) return <ObservationForbidden />;

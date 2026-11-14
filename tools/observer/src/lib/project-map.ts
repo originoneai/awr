@@ -37,7 +37,8 @@ export function teamProjectSnapshot(graph: TeamGraphResponse) {
   const nodes = graph.items.map((item) => ({
     id: item.work_id, key: item.external_key, title: item.title,
     display_key: /^WORK-[a-f0-9]{16,}$/i.test(item.external_key) ? '' : undefined,
-    status: snapshot.STATUSES.includes(item.state) ? item.state : 'unknown',
+    status: item.state === 'unclaimed' ? 'planned' : snapshot.STATUSES.includes(item.state) ? item.state : 'unknown',
+    source_status: item.state,
     owner: item.owner, last_event_at: item.last_event_at, blocker: null, milestone: null,
     ready: null, archived: item.definition_state === 'archived', next_action: null, waits: [], diagnostics: [],
     claims: item.claims.map((claim) => ({
