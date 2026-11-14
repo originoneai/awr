@@ -33,6 +33,31 @@ fn run_binary(binary: &Path, args: &[&str]) -> Output {
         .unwrap()
 }
 
+fn wait_until_executable(binary: &Path) {
+    // A concurrent fork can retain the copied fixture's writable descriptor on Linux.
+    for attempt in 0..=500 {
+        match Command::new(binary)
+            .env("AWR_LOCAL_WEB", "0")
+            .env("NO_COLOR", "1")
+            .env("TERM", "dumb")
+            .arg("--help")
+            .output()
+        {
+            Ok(output) => {
+                assert!(output.status.success(), "{output:?}");
+                assert!(output.stderr.is_empty(), "{output:?}");
+                return;
+            }
+            Err(error)
+                if error.kind() == std::io::ErrorKind::ExecutableFileBusy && attempt < 500 =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(error) => panic!("{} cannot be executed: {error}", binary.display()),
+        }
+    }
+}
+
 fn baseline_for_program(baseline: &[u8], program: &str) -> Vec<u8> {
     // Only the expected invocation name varies; compare actual output byte-for-byte.
     String::from_utf8(baseline.to_vec())
@@ -292,6 +317,7 @@ fn help_fixtures_preserve_the_invoked_executable_name() {
     std::fs::create_dir(&directory.0).unwrap();
     let binary = directory.0.join("awr.exe");
     std::fs::copy(env!("CARGO_BIN_EXE_awr"), &binary).unwrap();
+    wait_until_executable(&binary);
     for (args, baseline) in [
         (vec!["help", "all"], HELP),
         (vec!["work", "help", "all"], CURRENT_WORK_HELP),
