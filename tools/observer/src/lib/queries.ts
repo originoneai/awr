@@ -12,6 +12,8 @@ import type {
   WorkNextData,
   SourceContentData,
   WorkSnapshotData,
+  PlanningCandidatesData,
+  RequiredSourcesData,
 } from './types';
 
 // AWR-前后端能力审查完整清单.md:212 and reviewer-web.md:22 require a 5 s
@@ -121,16 +123,76 @@ export function activityQueryOptions(project: string | null, revoked = false, wo
 
 interface TeamReadQuery {
   protocol_version: 1;
-  op: 'work.next' | 'work.inbox' | 'work.snapshot' | 'review.inspect' | 'source.content';
+  op: 'work.next' | 'work.inbox' | 'work.snapshot' | 'review.inspect' | 'source.content' | 'planning.candidates' | 'sources.inspect';
   work_id?: string;
   workstream_id?: string;
   review_round_id?: string;
   source_path?: string;
   expected_sha256?: string;
+  cursor?: string;
+  limit?: number;
+  max_context_bytes?: number;
 }
 
 function teamRead<T>(project: string, query: TeamReadQuery, signal?: AbortSignal) {
   return apiPost<TeamReadResponse<T>>('/api/team/read', { project, query }, signal);
+}
+
+export function planningCandidatesQueryOptions(project: string, stream: string | null, cursor: string | null, revoked: boolean) {
+  return {
+    queryKey: ['team', 'planning.candidates', project, stream, cursor],
+    queryFn: async ({ signal }: { signal: AbortSignal }) => {
+      const response = await teamRead<PlanningCandidatesData>(project, {
+        protocol_version: 1, op: 'planning.candidates', limit: 5, max_context_bytes: 262144,
+        ...(stream ? { workstream_id: stream } : {}), ...(cursor ? { cursor } : {}),
+      }, signal);
+      const data = response.result?.data;
+      if (!Array.isArray(data?.items) || !Number.isFinite(data.as_of?.at_unix_ms)
+        || !(data.next_cursor === null || typeof data.next_cursor === 'string')
+        || !data.items.every((item) => item && typeof item.candidate_id === 'string'
+          && typeof item.state === 'string' && Number.isSafeInteger(item.draft_revision)
+          && item.author && Number.isFinite(item.updated_at_unix_ms)
+          && typeof item.baseline?.matches_current === 'boolean'
+          && item.approval && item.publication && item.activation
+          && Array.isArray(item.current_diff?.items) && item.current_diff.items.every((change) =>
+            change && typeof change.title === 'string' && typeof change.work_id === 'string'
+            && (change.fields == null || Array.isArray(change.fields) && change.fields.every((field) =>
+              field && typeof field.field === 'string' && field.before && field.after)))
+          && ['added', 'removed', 'changed', 'unchanged'].every((key) => Number.isSafeInteger(item.current_diff.counts?.[key as keyof typeof item.current_diff.counts])))) {
+        throw new ApiError('InvalidResponse', 'Planning observations are incomplete');
+      }
+      return response;
+    },
+    enabled: Boolean(project) && !revoked,
+    ...readQueryDefaults,
+    refetchInterval: cursor ? false as const : SNAPSHOT_POLL_INTERVAL_MS,
+  } satisfies UseQueryOptions<TeamReadResponse<PlanningCandidatesData>>;
+}
+
+export function requiredSourcesQueryOptions(project: string, stream: string | null, workId: string | null, cursor: string | null, revoked: boolean) {
+  return {
+    queryKey: ['team', 'sources.inspect', project, stream, workId, cursor],
+    queryFn: async ({ signal }: { signal: AbortSignal }) => {
+      const response = await teamRead<RequiredSourcesData>(project, {
+        protocol_version: 1, op: 'sources.inspect', limit: 20, max_context_bytes: 262144,
+        ...(workId ? { work_id: workId } : stream ? { workstream_id: stream } : {}),
+        ...(cursor ? { cursor } : {}),
+      }, signal);
+      const data = response.result?.data;
+      if (!Array.isArray(data?.items) || typeof data.collection?.complete !== 'boolean'
+        || !Number.isSafeInteger(data.collection.required_total) || data.collection.required_total < data.items.length
+        || !Number.isFinite(data.collection.checked_at_unix_ms)
+        || !(data.next_cursor === null || typeof data.next_cursor === 'string')
+        || !data.items.every((item) => item && Number.isSafeInteger(item.source_position)
+          && (item.path === null || typeof item.path === 'string') && typeof item.status === 'string')) {
+        throw new ApiError('InvalidResponse', 'Required document observations are incomplete');
+      }
+      return response;
+    },
+    enabled: Boolean(project) && !revoked,
+    ...readQueryDefaults,
+    refetchInterval: cursor ? false as const : SNAPSHOT_POLL_INTERVAL_MS,
+  } satisfies UseQueryOptions<TeamReadResponse<RequiredSourcesData>>;
 }
 
 export function reviewQueryOptions(

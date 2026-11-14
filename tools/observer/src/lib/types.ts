@@ -128,6 +128,46 @@ export interface TeamReadResponse<T> {
   freshness: TeamFreshness;
 }
 
+export interface PlanningCandidatesData {
+  items: Array<{
+    candidate_id: string;
+    state: string;
+    draft_revision: number;
+    author: { display_name: string | null };
+    updated_at_unix_ms: number;
+    baseline: { matches_current: boolean };
+    current_diff: {
+      counts: Record<'added' | 'removed' | 'changed' | 'unchanged', number>;
+      items: Array<{ work_id: string; title: string; kind: string; fields?: Array<{
+        field: string; before: { value: unknown; reason?: string | null }; after: { value: unknown; reason?: string | null };
+      }> }>;
+    };
+    approval: { value: { display_name: string | null } | null };
+    publication: { value: { source_writeback_pending: boolean } | null };
+    activation: { value: { matches_current_snapshot: boolean } | null };
+  }>;
+  total: number;
+  next_cursor: string | null;
+  as_of: { at_unix_ms: number };
+}
+
+export interface RequiredSourcesData {
+  items: Array<{
+    source_position: number;
+    path: string | null;
+    status: string;
+    reason: string | null;
+  }>;
+  total: number;
+  next_cursor: string | null;
+  collection: {
+    complete: boolean;
+    required_total: number;
+    checked_at_unix_ms: number;
+  };
+  as_of: { at_unix_ms: number };
+}
+
 export interface WorkQuery {
   op: string;
   protocol_version: 1;

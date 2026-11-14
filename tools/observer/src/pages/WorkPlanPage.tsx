@@ -21,6 +21,7 @@ import { Link, useSearchParams } from 'react-router';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
 import { WorkProgress } from '../components/WorkProgress';
 import { WorkDetailPanel } from '../components/WorkDetailPanel';
+import { PlanningChanges, SourceReadiness } from '../components/PlanObservations';
 import { isAuthError } from '../lib/api';
 import { overviewQueryOptions } from '../lib/queries';
 import { readStateOf } from '../lib/read-state';
@@ -238,12 +239,7 @@ export function WorkPlanPage({ project }: { project: string }) {
         <Col xs={24} lg={16} style={{ minWidth: 0 }}>
           <Flex vertical gap={16}>
             <Card style={{ minWidth: 0 }}>{content}</Card>
-            <Card data-testid="plan-candidates-placeholder" size="small">
-              <Typography.Text strong>{t('state.placeholder.title')}</Typography.Text>
-              <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-                {t('state.placeholder.description')}
-              </Typography.Paragraph>
-            </Card>
+            <PlanningChanges key={`${project}:${stream}`} project={project} stream={stream} />
           </Flex>
         </Col>
         <Col xs={24} lg={8} style={{ minWidth: 0 }}>
@@ -253,12 +249,7 @@ export function WorkPlanPage({ project }: { project: string }) {
               work={selectedWork}
               reviewRoundId={searchParams.get('review_round_id')}
             />
-            <Card data-testid="plan-source-set-placeholder" size="small">
-              <Typography.Text strong>{t('state.placeholder.title')}</Typography.Text>
-              <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-                {t('state.placeholder.description')}
-              </Typography.Paragraph>
-            </Card>
+            <SourceReadiness key={`${project}:${stream}:${selectedWork?.key}`} project={project} stream={stream} workId={selectedWork?.key ?? null} />
           </Flex>
         </Col>
       </Row>

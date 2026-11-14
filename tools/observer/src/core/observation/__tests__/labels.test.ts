@@ -199,7 +199,7 @@ describe('documentLabel', () => {
   });
 
   it('keeps a file name without an extension and a dotfile as they are', () => {
-    expect(documentLabel('docs/README', { ...en, position: 1 }).text).toBe('README');
+    expect(documentLabel('docs/README', { ...en, position: 1 }).text).toBe('Project guide');
     expect(documentLabel('.gitignore', { ...en, position: 1 }).text).toBe('.gitignore');
     expect(documentLabel('config/.env', { ...en, position: 1 }).text).toBe('.env');
     expect(documentLabel('docs/', { ...en, position: 1 })).toMatchObject({ kind: 'named', text: 'docs' });

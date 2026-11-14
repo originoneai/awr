@@ -92,8 +92,8 @@ export function artifactLabel(label: unknown, options: { language: string; posit
  * The name to show for a document known by its path: the file name without its directories and its
  * extension, with hyphens and underscores read as spaces ("docs/specs/issue-filter-api.md" as
  * "issue filter api"). A path with no usable name, or one whose name the human-language guard would
- * flag, reads "Document N", N being its place in the list. The path itself is always returned for
- * the technical details.
+ * flag, reads "Document N", N being its place in the list. Standard project documents use localized
+ * product names. The original path remains an internal reference.
  */
 export function documentLabel(path: unknown, options: { language: string; position: number }): DocumentLabelResult {
   const raw = statementText(path);
@@ -101,6 +101,9 @@ export function documentLabel(path: unknown, options: { language: string; positi
   if (raw == null) return { kind: 'numbered', text: numbered, technical: { raw: null } };
   const file = raw.split(/[\\/]/).filter((part) => part !== '').pop() ?? '';
   const stem = file.replace(/(?<=.)\.[A-Za-z0-9]{1,8}$/, '');
+  const projectDocuments = { goals: 'documentGoals', plan: 'documentPlan', rules: 'documentRules', readme: 'documentGuide' } as const;
+  const standard = Object.hasOwn(projectDocuments, stem.toLowerCase()) ? projectDocuments[stem.toLowerCase() as keyof typeof projectDocuments] : null;
+  if (standard) return { kind: 'named', text: humanText(standard, options.language), technical: { raw } };
   const name = stem.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
   if (name === '' || FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(name))) {
     return { kind: 'numbered', text: numbered, technical: { raw } };
