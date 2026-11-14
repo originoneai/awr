@@ -8,6 +8,234 @@ use awr_core::Id;
 use awr_team_pg::*;
 use fixture::*;
 
+async fn source_record(admin: &tokio_postgres::Client) -> (String, Value) {
+    let row=admin.query_one("SELECT s.id,s.source_ref_json FROM awr_team.source_snapshots s
+        JOIN awr_team.projects p ON p.tenant_id=s.tenant_id AND p.id=s.project_id AND p.active_snapshot_id=s.id
+        WHERE p.tenant_id=$1 AND p.id=$2",&[&TENANT,&PROJECT]).await.unwrap();
+    (row.get(0), row.get(1))
+}
+
+async fn replace_source_record(admin: &tokio_postgres::Client, id: &str, value: &Value) {
+    admin
+        .execute(
+            "UPDATE awr_team.source_snapshots SET source_ref_json=$2 WHERE id=$1",
+            &[&id, &value],
+        )
+        .await
+        .unwrap();
+}
+
+async fn add_required_source(admin: &tokio_postgres::Client, stream: u128, path: &str) {
+    let mut catalog: Value = admin
+        .query_one("SELECT catalog_json FROM awr_team.workstream_catalogs", &[])
+        .await
+        .unwrap()
+        .get(0);
+    let entry = catalog["workstreams"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|s| s["id"] == Id::from(stream).to_string())
+        .unwrap();
+    entry["acceptance_contracts"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!(path));
+    admin
+        .execute(
+            "UPDATE awr_team.workstream_catalogs SET catalog_json=$1",
+            &[&catalog],
+        )
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn required_source_observation_distinguishes_integrity_missing_and_restricted_documents() {
+    let (_guard, admin, _, store) = setup_with_specs(vec![
+        SourceFile {
+            path: "docs/alpha.md".into(),
+            bytes: b"Public API contract".to_vec(),
+        },
+        SourceFile {
+            path: "docs/private-beta.md".into(),
+            bytes: b"PRIVATE peer contract".to_vec(),
+        },
+    ])
+    .await;
+    let (id, original) = source_record(&admin).await;
+    let mut q = query("sources.inspect");
+    q.work_id = Some("a".into());
+    let consistent = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    let data = &consistent["data"];
+    let row = &data["items"][0];
+    assert_eq!(data["collection"]["complete"], true);
+    assert_eq!(data["collection"]["scope"], "work");
+    assert_eq!(row["status"], "consistent");
+    assert_eq!(row["expected_sha256"], row["current_sha256"]);
+    assert!(row["checked_at_unix_ms"].is_i64());
+    assert!(!consistent.to_string().contains("Public API contract"));
+    assert!(!consistent.to_string().contains("PRIVATE"));
+    let mut changed = original.clone();
+    changed["files"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|f| f["path"] == "docs/alpha.md")
+        .unwrap()["text"] = json!("Revised API contract");
+    replace_source_record(&admin, &id, &changed).await;
+    let mismatch = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    assert_eq!(mismatch["data"]["items"][0]["status"], "changed");
+    assert_ne!(
+        mismatch["data"]["items"][0]["expected_sha256"],
+        mismatch["data"]["items"][0]["current_sha256"]
+    );
+    assert_eq!(mismatch["data"]["collection"]["complete"], false);
+    assert_eq!(
+        mismatch["data"]["collection"]["recovery"][0]["reason"],
+        "spec_digest_mismatch"
+    );
+    let mut missing = original.clone();
+    missing["files"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|f| f["path"] != "docs/alpha.md");
+    replace_source_record(&admin, &id, &missing).await;
+    let absent = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    assert_eq!(absent["data"]["items"][0]["status"], "missing");
+    assert_eq!(absent["data"]["collection"]["complete"], false);
+    assert_eq!(
+        absent["data"]["collection"]["recovery"][0]["reason"],
+        "required_spec_missing"
+    );
+    assert!(absent["data"]["items"][0]["current_sha256"].is_null());
+    replace_source_record(&admin, &id, &original).await;
+    add_required_source(&admin, 2, "docs/alpha.md").await;
+    let restricted = store.query(TENANT, PROJECT, A, q).await.unwrap();
+    let row = &restricted["data"]["items"][0];
+    assert_eq!(row["status"], "forbidden");
+    assert_eq!(row["missing"]["path"], "permission_restricted");
+    assert!(
+        row["path"].is_null()
+            && row["expected_sha256"].is_null()
+            && row["current_sha256"].is_null()
+    );
+    assert_eq!(restricted["data"]["collection"]["complete"], false);
+    assert_eq!(
+        restricted["data"]["collection"]["recovery"][0]["reason"],
+        "required_spec_forbidden"
+    );
+    assert!(!restricted.to_string().contains("docs/alpha.md"));
+    assert!(!restricted.to_string().contains("PRIVATE"));
+}
+
+#[tokio::test]
+async fn required_source_completeness_covers_all_pages_and_rechecks_current_permissions() {
+    let (_guard, admin, _, store) = setup_with_specs(vec![SourceFile {
+        path: "docs/alpha.md".into(),
+        bytes: b"Public requirements".to_vec(),
+    }])
+    .await;
+    add_required_source(&admin, 1, "docs/z-notes.md").await;
+    let mut q = query("sources.inspect");
+    q.limit = Some(1);
+    let first = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    assert_eq!(first["data"]["items"][0]["status"], "consistent");
+    assert_eq!(first["data"]["collection"]["complete"], false);
+    assert_eq!(
+        first["data"]["collection"]["reasons"],
+        json!(["required_spec_missing"])
+    );
+    assert_eq!(first["data"]["collection"]["recovery"], json!([]));
+    assert_eq!(first["data"]["total"], 2);
+    assert_eq!(first["data"]["truncated"], true);
+    let cursor = first["data"]["next_cursor"].as_str().unwrap();
+    assert!(!cursor.contains("docs/"));
+    q.cursor = Some(cursor.into());
+    let second = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    assert_eq!(second["data"]["items"][0]["status"], "missing");
+    assert_eq!(
+        second["data"]["collection"]["recovery"][0]["source_position"],
+        2
+    );
+    assert!(second["data"]["next_cursor"].is_null());
+    let (id, mut current) = source_record(&admin).await;
+    current["files"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|f| f["path"] == "docs/alpha.md")
+        .unwrap()["text"] = json!("Updated requirements");
+    replace_source_record(&admin, &id, &current).await;
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, q).await,
+        Err(PgError::CursorExpired)
+    ));
+    for work in ["b-private", "missing"] {
+        let mut selected = query("sources.inspect");
+        selected.work_id = Some(work.into());
+        assert!(matches!(
+            store.query(TENANT, PROJECT, A, selected).await,
+            Err(PgError::Forbidden)
+        ));
+    }
+    let mut small = query("sources.inspect");
+    small.max_context_bytes = Some(10);
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, small).await,
+        Err(PgError::ResponseTooLarge)
+    ));
+    admin
+        .batch_execute(
+            "UPDATE awr_team.credentials SET revoked_at=clock_timestamp() WHERE id='reader-a'",
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        store
+            .query(TENANT, PROJECT, A, query("sources.inspect"))
+            .await,
+        Err(PgError::Forbidden)
+    ));
+}
+
+#[tokio::test]
+async fn required_source_observation_does_not_treat_missing_integrity_metadata_as_verified() {
+    let (_guard, admin, _, store) = setup_with_specs(vec![SourceFile {
+        path: "docs/alpha.md".into(),
+        bytes: b"Public requirements".to_vec(),
+    }])
+    .await;
+    let (id, original) = source_record(&admin).await;
+    for (field, reason, missing_field) in [
+        ("text", "source_text_not_recorded", "current_sha256"),
+        ("sha256", "expected_digest_not_recorded", "expected_sha256"),
+    ] {
+        let mut changed = original.clone();
+        let source = changed["files"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|file| file["path"] == "docs/alpha.md")
+            .unwrap();
+        source.as_object_mut().unwrap().remove(field);
+        replace_source_record(&admin, &id, &changed).await;
+        let result = store
+            .query(TENANT, PROJECT, A, query("sources.inspect"))
+            .await
+            .unwrap();
+        assert_eq!(result["data"]["collection"]["complete"], false);
+        assert_eq!(result["data"]["items"][0]["status"], "unverified");
+        assert!(result["data"]["items"][0][missing_field].is_null());
+        assert_eq!(result["data"]["collection"]["reasons"], json!([reason]));
+        assert_eq!(
+            result["data"]["collection"]["recovery"][0]["recognized"],
+            false
+        );
+        assert!(result["data"]["collection"]["recovery"][0]["next_action"].is_null());
+    }
+}
+
 async fn planning_draft(admin: &tokio_postgres::Client, work: &str) -> Value {
     let row=admin.query_one("SELECT contract_json,title,definition_state FROM awr_team.work_contracts WHERE work_id=$1",&[&work]).await.unwrap();
     let mut draft: Value = row.get(0);

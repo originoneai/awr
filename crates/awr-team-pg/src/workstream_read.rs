@@ -22,6 +22,7 @@ mod list;
 mod navigation;
 mod observation;
 mod planning;
+mod sources;
 
 pub(crate) const QUERIES: &[&str] = &[
     "capabilities",
@@ -59,6 +60,7 @@ pub(crate) const QUERIES: &[&str] = &[
     "delivery.exports",
     "planning.outcome",
     "planning.candidates",
+    "sources.inspect",
     "audit.history",
     "audit.export",
     "audit.count",
@@ -112,6 +114,7 @@ impl WorkstreamQuery {
     /// Used by validation and MCP discovery; other queries must omit the budget.
     pub const CONTEXT_BUDGET_OPERATIONS: &'static [&'static str] = &[
         "planning.candidates",
+        "sources.inspect",
         "work.prepare",
         "work.snapshot",
         "work.observe",
@@ -227,6 +230,7 @@ impl WorkstreamQuery {
                 | "delivery.exports"
                 | "delivery.routes"
                 | "planning.candidates"
+                | "sources.inspect"
         );
         let audit = matches!(
             self.op.as_str(),
@@ -408,7 +412,11 @@ impl WorkstreamQuery {
             (
                 "session_id",
                 self.session_id.is_some()
-                    && (project_wide || work_list || activity_audit || exact_work),
+                    && (project_wide
+                        || work_list
+                        || activity_audit
+                        || exact_work
+                        || self.op == "sources.inspect"),
             ),
             (
                 "workstream_id",
@@ -1198,6 +1206,9 @@ pub(crate) async fn read(
     }
     if q.op == "planning.candidates" {
         return planning::read(tx, tenant, project, auth, q).await;
+    }
+    if q.op == "sources.inspect" {
+        return sources::read(tx, tenant, project, auth, q).await;
     }
     if matches!(q.op.as_str(), "audit.requests" | "audit.development") {
         return activity::read(tx, tenant, project, auth, q).await;

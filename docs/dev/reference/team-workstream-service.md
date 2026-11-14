@@ -128,6 +128,7 @@ asking anyway is refused as `Unsupported`. The lists name operations of this pro
 | `work.graph` | Selected workstream's bounded progress nodes, current leases and readable dependencies; `limit`, `cursor` |
 | `work.search` | Same visibility boundary; required literal substring `search` |
 | `planning.candidates` | Readable planning candidates and server-computed differences from the current plan; optional `workstream_id`, `limit`, `cursor`, `max_context_bytes` |
+| `sources.inspect` | Required document integrity in the active snapshot; optional `work_id`, `workstream_id`, `limit`, `cursor`, `max_context_bytes`; no document bodies |
 | `work.prepare` | Required `work_id` or `session_id`; optional `max_context_bytes`; returns published contract, required_specs and authorized_readable_refs (TMCP-023) |
 | `work.admission` | Required `work_id`; whether the work is governed, its admission state and diagnostics, the scope a decision will be checked against and its `binding_fingerprint`; see [Team governance](team-governance.md) |
 | `work.observe` | Required `work_id` or `session_id`; returns bounded session/checkpoint, claim lease, execution and PR delivery observations under current WorkRead authority |
@@ -196,6 +197,42 @@ A rejected request is never presented as a rejected plan. The bridge exposes
 the same scoped read at `GET /api/team/plans?project=PROJECT`, with optional
 `workstream_id`, `limit`, `cursor` and `max_context_bytes`; no planning commands
 are exposed by that route.
+
+`sources.inspect` checks the required documents declared by readable workstreams.
+An optional `work_id` selects that work's workstream; a supplied `workstream_id`
+must agree. With neither selector it covers the caller's readable workstreams,
+including current Agent delegation restrictions. It does not scan a developer's
+filesystem or claim that unpublished local changes have been checked.
+
+For example, `{"protocol_version":1,"op":"sources.inspect","work_id":"WORK","limit":20}`
+returns the standard envelope with `data.items`, `total`, `next_cursor`,
+`truncated`, `as_of` and `collection`. Each item contains its readable `path`,
+`expected_sha256`, rehashed `current_sha256`, `checked_at_unix_ms`,
+`source_position` and `status`: `consistent`, `changed`, `missing`, `forbidden`
+or `unverified`. Missing metadata remains null with an explicit `missing`
+reason; it never becomes a successful check. No document bodies are returned.
+Forbidden documents expose neither paths nor digests.
+
+`collection.complete` covers the entire required set before pagination.
+Its `reasons` includes all incomplete conditions; its `recovery` contains
+read-only suggestions for the current page, linked by `source_position`.
+Existing reasons include `required_spec_missing`, `required_spec_forbidden`,
+`spec_digest_mismatch` and `spec_path_rejected`. Unrecognized reasons remain
+explicit with `recognized:false` and a null `next_action`; no repair is executed.
+The verification basis is `active_source_snapshot`, with a transaction read time.
+An empty required set is complete but does not prove any documents were checked.
+
+Cursors bind current read authority, snapshot and observed source integrity.
+A changed binding returns `CursorExpired`; malformed selectors return
+`InvalidInput`, unauthorized selection returns `Forbidden`, and a response
+exceeding the requested bound (default 256 KiB) returns `ResponseTooLarge`.
+Restart pagination after a cursor expires. The bridge exposes the same read at
+`GET /api/team/sources?project=PROJECT`, accepting only `work_id`,
+`workstream_id`, `limit`, `cursor` and `max_context_bytes` in addition to `project`.
+It forwards the member's existing browser session and never falls back to
+fixtures after a failed or revoked live read. Internal digests and reason codes
+belong to backend diagnostics; product views translate them into document
+readiness and recovery guidance without rendering technical fields.
 
 Work/session selectors derive the workstream. An explicit `workstream_id` must
 agree with them. Without work/session, a unique authorized workstream can be

@@ -618,6 +618,7 @@ async fn workstream_delegation_filters_discovery_navigation_sources_and_denies_p
         "work.list",
         "work.graph",
         "planning.candidates",
+        "sources.inspect",
         "work.search",
         "work.next",
     ] {
@@ -635,6 +636,7 @@ async fn workstream_delegation_filters_discovery_navigation_sources_and_denies_p
         "work.search",
         "events.list",
         "planning.candidates",
+        "sources.inspect",
     ] {
         let mut q = query(op);
         q.workstream_id = Some(Id::from(2));
@@ -685,6 +687,7 @@ async fn task_grants_discover_only_exact_work_without_enabling_other_discovery()
         "workstreams.list",
         "work.list",
         "planning.candidates",
+        "sources.inspect",
         "events.list",
         "audit.requests",
     ] {

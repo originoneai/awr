@@ -94,6 +94,7 @@ const VALID_QUERIES = {
   'workstreams.list': { limit: 10 },
   'work.list': { workstream_id: 'stream' },
   'planning.candidates': { workstream_id: 'stream', limit: 5, max_context_bytes: 65536 },
+  'sources.inspect': { work_id: 'WORK', workstream_id: 'stream', limit: 5, max_context_bytes: 65536 },
   'work.search': { search: 'observation', workstream_id: 'stream', limit: 25, cursor: 'opaque-cursor' },
   'work.next': { limit: 5 },
   'work.inbox': { limit: 20, max_context_bytes: 65536 },
