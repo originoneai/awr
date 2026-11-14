@@ -7,6 +7,105 @@ use awr_team_pg::PgError;
 use fixture::*;
 
 #[tokio::test]
+async fn progress_graph_pages_keep_scope_dependencies_and_revision() {
+    let (_guard, admin, _, store) = setup().await;
+    let row = admin
+        .query_one(
+            "SELECT contract_json FROM awr_team.work_contracts WHERE work_id='c'",
+            &[],
+        )
+        .await
+        .unwrap();
+    let mut contract: awr_team::WorkContract = serde_json::from_value(row.get(0)).unwrap();
+    contract.required_dependencies.push("a".into());
+    admin.execute(
+        "UPDATE awr_team.work_contracts SET contract_json=$1,contract_hash=$2 WHERE work_id='c'",
+        &[&serde_json::to_value(&contract).unwrap(), &contract.hash().unwrap()],
+    ).await.unwrap();
+    let mut q = query("work.graph");
+    q.limit = Some(1);
+    let first = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    assert_eq!(first["data"]["total"], 2);
+    assert_eq!(first["data"]["items"][0]["work_id"], "a");
+    assert_eq!(first["data"]["execution_authorized"], false);
+    assert!(!first.to_string().contains("PRIVATE"));
+    q.cursor = Some(first["data"]["next_cursor"].as_str().unwrap().into());
+    let second = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    let node = &second["data"]["items"][0];
+    assert_eq!(node["work_id"], "c");
+    assert_eq!(node["required_dependencies"], serde_json::json!(["a"]));
+    assert_eq!(node["dependencies_complete"], false);
+    assert!(second["data"]["next_cursor"].is_null());
+    assert!(!second.to_string().contains("b-private"));
+    assert!(matches!(
+        store.query(TENANT, PROJECT, B, q.clone()).await,
+        Err(PgError::CursorExpired)
+    ));
+    admin
+        .batch_execute("UPDATE awr_team.projects SET project_revision=project_revision+1")
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, q).await,
+        Err(PgError::CursorExpired)
+    ));
+    let private = store
+        .query(TENANT, PROJECT, B, query("work.graph"))
+        .await
+        .unwrap();
+    assert_eq!(private["data"]["total"], 1);
+    assert_eq!(private["data"]["items"][0]["work_id"], "b-private");
+    assert!(matches!(
+        store
+            .query("other-tenant", PROJECT, A, query("work.graph"))
+            .await,
+        Err(PgError::Forbidden)
+    ));
+}
+
+#[tokio::test]
+async fn progress_graph_only_shows_live_current_claims_with_recorded_dates() {
+    let (_guard, admin, _, store) = setup().await;
+    let stream = Id::from(1).to_string();
+    admin
+        .execute(
+            "INSERT INTO awr_team.work_runtime(tenant_id,project_id,scope_id,work_id,state,last_fence)
+             VALUES($1,$2,'main','a','claimed',1)
+             ON CONFLICT(tenant_id,project_id,scope_id,work_id) DO UPDATE SET last_fence=1",
+            &[&TENANT, &PROJECT],
+        )
+        .await
+        .unwrap();
+    admin.execute(
+        "INSERT INTO awr_team.claims(tenant_id,project_id,id,scope_id,work_id,session_id,actor_id,
+         fence,acquired_at,expires_at,state,workstream_id,ownership_version,coordinator_epoch)
+         VALUES($1,$2,'graph-claim','main','a','session-a','agent',1,
+         '2026-01-01T12:00:00Z',clock_timestamp()+interval '1 hour','active',$3,1,'epoch-a')",
+        &[&TENANT, &PROJECT, &stream],
+    ).await.unwrap();
+    let graph = store
+        .query(TENANT, PROJECT, A, query("work.graph"))
+        .await
+        .unwrap();
+    let claim = &graph["data"]["items"][0]["claims"][0];
+    assert_eq!(claim["actor_name"], "Worker");
+    assert_eq!(claim["acquired_at_unix_ms"], 1767268800000_i64);
+    assert!(claim["expires_at_unix_ms"].as_i64().unwrap() > 1767268800000);
+    for mutation in [
+        "UPDATE awr_team.claims SET coordinator_epoch='old'",
+        "UPDATE awr_team.claims SET coordinator_epoch='epoch-a',expires_at=clock_timestamp()-interval '1 second'",
+        "UPDATE awr_team.claims SET expires_at=clock_timestamp()+interval '1 hour'; UPDATE awr_team.sessions SET state='ended'",
+    ] {
+        admin.batch_execute(mutation).await.unwrap();
+        let graph = store
+            .query(TENANT, PROJECT, A, query("work.graph"))
+            .await
+            .unwrap();
+        assert_eq!(graph["data"]["items"][0]["claims"], serde_json::json!([]));
+    }
+}
+
+#[tokio::test]
 async fn work_snapshot_preserves_context_hash_scope_and_total_byte_budget() {
     let (_guard, _, _, store) = setup().await;
     let prepared = prepare(&store, A, "a").await;

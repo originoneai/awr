@@ -2,13 +2,14 @@ import { useQuery } from '@tanstack/react-query';
 import { Button, Card, Space, Tabs, Tag, Tooltip, Typography } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { useParams, useSearchParams } from 'react-router';
-import { NotOpenYet, ObservationForbidden } from '../components/states';
+import { ObservationForbidden } from '../components/states';
 import { ObservationValue } from '../components/ObservationValue';
 import { TechnicalDetails } from '../components/TechnicalDetails';
 import { isAuthError } from '../lib/api';
 import { ProjectAcceptance } from './ProjectAcceptance';
 import { ProjectKnowledge } from './ProjectKnowledge';
 import { ProjectOverview } from './ProjectOverview';
+import { ProjectMaps } from './ProjectMaps';
 import { WorkPlanPage } from './WorkPlanPage';
 import { projectsQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
@@ -71,7 +72,7 @@ export function ProjectShell() {
                   ? <ProjectKnowledge project={project} />
                   : key === 'acceptance'
                     ? <ProjectAcceptance project={project} />
-                    : <NotOpenYet testId="project-deps-not-open" />,
+                    : <ProjectMaps project={project} />,
           }))}
         />
       </Card>

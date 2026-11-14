@@ -11,20 +11,22 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 // must be pre-bundled in dev (optimizeDeps.include) and transformed by the
 // commonjs plugin in build (commonjsOptions.include).
 const contractPath = path.resolve(here, './server/observation-contract.js');
+const progressPath = path.resolve(here, '../project-progress-overview/public');
 
 export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
       'observation-contract': contractPath,
+      'awr-progress-map': progressPath,
     },
   },
   optimizeDeps: {
-    include: ['observation-contract'],
+    include: ['observation-contract', 'awr-progress-map/project-map/page.js', 'awr-progress-map/project-map/interact.js'],
   },
   build: {
     commonjsOptions: {
-      include: [/observation-contract/, /node_modules/],
+      include: [/observation-contract/, /project-progress-overview/, /node_modules/],
     },
   },
   server: {

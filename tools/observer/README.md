@@ -21,6 +21,14 @@ service's allowed Web origin for this server.
 Browser login exchanges a member credential for an HttpOnly session cookie. The workspace uses
 that session for authorized reads. Project work continues through the member's connected Agent.
 
+Open a project and select **Collaboration dependencies** for project nodes,
+mainline dependencies and collaboration swimlanes. These views share PPO's
+renderer, layout and interactions and read current Team state through the
+authenticated `/api/team/graph` bridge. Refresh reads the current project again.
+Graph pages must agree on a project revision and source snapshot. Incomplete
+reads and restricted dependencies are reported explicitly. The frozen personal
+database is retained for historical evidence.
+
 ## Service ownership
 
 `server/team-bridge.js` owns the existing `/api/team/*` bridge routes, report mapping and upstream

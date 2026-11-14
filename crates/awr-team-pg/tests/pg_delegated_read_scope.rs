@@ -161,7 +161,7 @@ async fn multiple_scopes_are_discoverable_without_sharing_actions_or_hidden_work
     let inspect = serde_json::from_value(resume["next_query"].clone()).unwrap();
     store.query(TENANT, PROJECT, A, inspect).await.unwrap();
 
-    for op in ["work.list", "work.search", "events.list"] {
+    for op in ["work.list", "work.graph", "work.search", "events.list"] {
         let mut q = query(op);
         if op == "work.search" {
             q.search = Some("private".into());
@@ -613,7 +613,13 @@ async fn workstream_delegation_filters_discovery_navigation_sources_and_denies_p
         .unwrap();
     assert_eq!(streams["total"], 1);
     assert_eq!(streams["items"][0]["external_key"], "alpha");
-    for op in ["capabilities", "work.list", "work.search", "work.next"] {
+    for op in [
+        "capabilities",
+        "work.list",
+        "work.graph",
+        "work.search",
+        "work.next",
+    ] {
         let mut q = query(op);
         if op == "work.search" {
             q.search = Some("private".into());
@@ -622,7 +628,7 @@ async fn workstream_delegation_filters_discovery_navigation_sources_and_denies_p
         assert!(!got.to_string().contains("b-private"), "{op}: {got}");
         assert!(!got.to_string().contains("private-beta"), "{op}: {got}");
     }
-    for op in ["work.list", "work.search", "events.list"] {
+    for op in ["work.list", "work.graph", "work.search", "events.list"] {
         let mut q = query(op);
         q.workstream_id = Some(Id::from(2));
         if op == "work.search" {
