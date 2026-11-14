@@ -22,6 +22,7 @@ mod list;
 mod navigation;
 mod observation;
 mod planning;
+mod reviews;
 mod sources;
 
 pub(crate) const QUERIES: &[&str] = &[
@@ -46,6 +47,7 @@ pub(crate) const QUERIES: &[&str] = &[
     "handoff.inspect",
     "evidence.inspect",
     "review.inspect",
+    "review.rounds",
     "completion.inspect",
     "delivery.inspect",
     "delivery.neutral.inspect",
@@ -123,6 +125,7 @@ impl WorkstreamQuery {
         "artifact.content",
         "artifact.segment",
         "review.inspect",
+        "review.rounds",
         "delivery.neutral.inspect",
         "delivery.routes",
         "delivery.submission.describe",
@@ -141,6 +144,7 @@ impl WorkstreamQuery {
         "handoff.inspect",
         "evidence.inspect",
         "review.inspect",
+        "review.rounds",
         "completion.inspect",
         "delivery.inspect",
         "artifact.content",
@@ -231,6 +235,7 @@ impl WorkstreamQuery {
                 | "delivery.routes"
                 | "planning.candidates"
                 | "sources.inspect"
+                | "review.rounds"
         );
         let audit = matches!(
             self.op.as_str(),
@@ -1526,6 +1531,23 @@ pub(crate) async fn read(
             json!({"protocol_version":1,"workstream_id":stream,"authority_version":resolved.authority_version.to_string(),"scope_id":"main","selection_basis":resolved.basis,
             "coordinator_epoch":auth.epoch,"project_status":auth.project_status,"source_snapshot_id":auth.snapshot,"project_revision":auth.revision.to_string(),"data":data}),
         );
+    }
+    if q.op == "review.rounds" {
+        let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
+        let data = reviews::read(tx, tenant, project, auth, work, q).await?;
+        let result = json!({"protocol_version":1,"workstream_id":stream,
+            "authority_version":resolved.authority_version.to_string(),"scope_id":"main",
+            "selection_basis":resolved.basis,"coordinator_epoch":auth.epoch,
+            "project_status":auth.project_status,"source_snapshot_id":auth.snapshot,
+            "project_revision":auth.revision.to_string(),"data":data});
+        if serde_json::to_vec(&result)
+            .map_err(|_| PgError::SourceDivergence)?
+            .len()
+            > q.max_context_bytes.unwrap_or(262144)
+        {
+            return Err(PgError::ResponseTooLarge);
+        }
+        return Ok(result);
     }
     let binding = hash(
         &json!({"auth":auth.binding,"snapshot":auth.snapshot,"epoch":auth.epoch,"stream":stream,

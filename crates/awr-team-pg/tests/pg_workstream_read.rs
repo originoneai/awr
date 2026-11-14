@@ -8,6 +8,9 @@ use awr_core::Id;
 use awr_team_pg::*;
 use fixture::*;
 
+#[path = "cases/review_round_reads.rs"]
+mod review_round_reads;
+
 async fn source_record(admin: &tokio_postgres::Client) -> (String, Value) {
     let row=admin.query_one("SELECT s.id,s.source_ref_json FROM awr_team.source_snapshots s
         JOIN awr_team.projects p ON p.tenant_id=s.tenant_id AND p.id=s.project_id AND p.active_snapshot_id=s.id

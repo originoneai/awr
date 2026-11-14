@@ -129,6 +129,7 @@ asking anyway is refused as `Unsupported`. The lists name operations of this pro
 | `work.search` | Same visibility boundary; required literal substring `search` |
 | `planning.candidates` | Readable planning candidates and server-computed differences from the current plan; optional `workstream_id`, `limit`, `cursor`, `max_context_bytes` |
 | `sources.inspect` | Required document integrity in the active snapshot; optional `work_id`, `workstream_id`, `limit`, `cursor`, `max_context_bytes`; no document bodies |
+| `review.rounds` | Required work/session selection; ordered review history with bounded `limit`, `cursor`, `max_context_bytes` and transaction `as_of`; no review action |
 | `work.prepare` | Required `work_id` or `session_id`; optional `max_context_bytes`; returns published contract, required_specs and authorized_readable_refs (TMCP-023) |
 | `work.admission` | Required `work_id`; whether the work is governed, its admission state and diagnostics, the scope a decision will be checked against and its `binding_fingerprint`; see [Team governance](team-governance.md) |
 | `work.observe` | Required `work_id` or `session_id`; returns bounded session/checkpoint, claim lease, execution and PR delivery observations under current WorkRead authority |
@@ -202,6 +203,43 @@ A rejected request is never presented as a rejected plan. The bridge exposes
 the same scoped read at `GET /api/team/plans?project=PROJECT`, with optional
 `workstream_id`, `limit`, `cursor` and `max_context_bytes`; no planning commands
 are exposed by that route.
+
+`review.rounds` discovers review history for one readable work. Its standard
+envelope contains `data.work_id`, `items`, `total`, `next_cursor`, `truncated`
+and `as_of`. The default page has 20 rows and the maximum is 100. The response
+budget, including the envelope, defaults to 262,144 bytes. Reads cannot grant
+execution or approve a review.
+Task-scoped Agent delegations require the exact `work_id` and `workstream_id`
+alongside a session selector. A session selector alone cannot widen that grant.
+
+Each readable row includes `round_id`, historical `round_index`, contiguous
+`round_position`, recorded `state`, `bundle_hash`, `contract_hash`,
+`contract_matches_current` and `artifact_digest`. These bindings use the same
+stored round as `review.inspect`. Approved, returned and invalidated rounds
+remain in history. State is one of `open`, `approved`, `rejected` or `invalidated`.
+The latest decision matching that work and bundle supplies `decision`,
+`decided_at_unix_ms`, reviewer attribution and `reason_first_line`. Ties use the
+decision identifier after the recorded time, matching inspection order.
+
+`reviewer_role` describes the recorded approval basis as `independent_reviewer`,
+`author_reviewer`, `agent_reviewer` or `simulated_member_reviewer`.
+It does not infer a historical role from current membership. Unknown historical
+roles and absent decisions remain null with `missing` reasons. A round whose
+bound evidence belongs outside the selected work stays counted as a placeholder
+with `readable:false` and `reason:not_in_review_work_scope`. Only its round
+identifier, index and position remain visible. The other summary fields are
+null with the same missing reason. Unbound legacy rounds remain readable with
+their recorded metadata and explicit gaps.
+
+`as_of` records the transaction read time, active source snapshot, project
+revision and a visible-history fingerprint. Cursors bind that history, work,
+snapshot, epoch and current authority. A changed visible round or matching
+decision expires the cursor. Hidden body values do not enter the fingerprint.
+The Observer bridge exposes this through `GET /api/team/reviews` with `project`
+and the same selection, paging and budget fields. It validates exact attribution,
+missing-field semantics and complete positional pages. Internal metadata stays
+in the service contract and backend records. Product pages use localized
+business descriptions.
 
 `sources.inspect` checks the required documents declared by readable workstreams.
 An optional `work_id` selects that work's workstream; a supplied `workstream_id`

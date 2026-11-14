@@ -750,6 +750,53 @@ async fn task_grants_discover_only_exact_work_without_enabling_other_discovery()
 }
 
 #[tokio::test]
+async fn review_history_requires_current_exact_work_delegation_even_with_broader_stream_access() {
+    let (_guard, admin, db, store) = setup().await;
+    agent_identity(&admin).await;
+    grant(
+        &db,
+        AuthorizationScope::Task {
+            project_id: PROJECT.into(),
+            work_item_id: "a".into(),
+        },
+    )
+    .await;
+    let mut selected = query("review.rounds");
+    selected.work_id = Some("a".into());
+    let own = store
+        .query(TENANT, PROJECT, A, selected.clone())
+        .await
+        .unwrap();
+    assert_eq!(own["data"]["work_id"], "a");
+    assert_eq!(own["data"]["items"], json!([]));
+    let mut session = query("review.rounds");
+    session.session_id = Some("session-a".into());
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, session.clone()).await,
+        Err(PgError::Forbidden)
+    ));
+    session.work_id = Some("a".into());
+    session.workstream_id = Some(Id::from(1));
+    assert_eq!(
+        store.query(TENANT, PROJECT, A, session).await.unwrap()["data"]["work_id"],
+        "a"
+    );
+    for work in ["c", "b-private"] {
+        let mut q = selected.clone();
+        q.work_id = Some(work.into());
+        assert!(matches!(
+            store.query(TENANT, PROJECT, A, q).await,
+            Err(PgError::Forbidden)
+        ));
+    }
+    admin.execute("UPDATE awr_team.agent_authorizations SET status='revoked' WHERE id='read-authorization'", &[]).await.unwrap();
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, selected).await,
+        Err(PgError::Forbidden)
+    ));
+}
+
+#[tokio::test]
 async fn agent_authentication_defaults_to_no_product_actions_even_on_separate_audit_surface() {
     let (_g, admin, db, store) = setup().await;
     // Human behavior stays unchanged.

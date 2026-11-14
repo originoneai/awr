@@ -95,6 +95,7 @@ const VALID_QUERIES = {
   'work.list': { workstream_id: 'stream' },
   'planning.candidates': { workstream_id: 'stream', limit: 5, max_context_bytes: 65536 },
   'sources.inspect': { work_id: 'WORK', workstream_id: 'stream', limit: 5, max_context_bytes: 65536 },
+  'review.rounds': { work_id: 'WORK', workstream_id: 'stream', limit: 5, max_context_bytes: 65536 },
   'work.search': { search: 'observation', workstream_id: 'stream', limit: 25, cursor: 'opaque-cursor' },
   'work.next': { limit: 5 },
   'work.inbox': { limit: 20, max_context_bytes: 65536 },
@@ -156,6 +157,14 @@ test('read adapter forwards every registered read op with its exact selectors, u
           collection: { complete: true, completeness: 'complete', required_total: 0, checked_at_unix_ms: 1793534400000,
             scope: 'work', verification_basis: 'active_source_snapshot', reasons: [], recovery_scope: 'page', recovery: [] },
           as_of: { at_unix_ms: 1793534400000, source_snapshot_id: ENVELOPE.source_snapshot_id, project_revision: ENVELOPE.project_revision },
+        } }));
+        return;
+      }
+      if (parsed.op === 'review.rounds') {
+        response.end(JSON.stringify({ ...ENVELOPE, workstream_id: parsed.workstream_id, authority_version: '1', data: {
+          work_id: parsed.work_id, items: [], total: 0, next_cursor: null, truncated: false, execution_authorized: false,
+          as_of: { at_unix_ms: 1793534400000, source_snapshot_id: ENVELOPE.source_snapshot_id,
+            project_revision: ENVELOPE.project_revision, rounds_revision: 'a'.repeat(32) },
         } }));
         return;
       }
