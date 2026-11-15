@@ -327,6 +327,7 @@ function validDocuments(reply) {
       || item.document_position > data.total || item.source_kind !== 'registered_source'
       || item.summary_kind !== 'source_excerpt'
       || ('content_work_id' in item && !isBoundedId(item.content_work_id))
+      || (data.scope === 'authorized_workstreams' && 'content_work_id' in item)
       || !(item.path === null || isControlledSourcePath(item.path))
       || !(item.name === null || boundedText(item.name, 256))
       || !(item.summary === null || boundedText(item.summary, 512))) return false;

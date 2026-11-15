@@ -1,6 +1,6 @@
 //! Bounded document discovery over the same authorized sources used by work context.
 use super::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const CONTENT_READ_LIMIT: usize = 262_144;
 
@@ -183,13 +183,24 @@ pub(super) async fn read(
         )
         .await?
         .get(0);
-    let mut content_authorities = BTreeMap::<Option<String>, Option<ReaderAuthority>>::new();
+    let mut content_authorities =
+        BTreeMap::<(Option<String>, BTreeSet<Id>), Option<ReaderAuthority>>::new();
     let mut rows = Vec::new();
     for (path, content_work) in &paths {
-        if !content_authorities.contains_key(content_work) {
+        if safe_relative_source_path(path).is_err() {
+            rows.push(document(
+                auth,
+                path,
+                files_by_path.get(path.as_str()).copied(),
+            )?);
+            continue;
+        }
+        let authority_key = (content_work.clone(), source_file_workstreams(auth, path)?);
+        if !content_authorities.contains_key(&authority_key) {
             let mut selected = auth.clone();
             let mut content_query = q.clone();
             content_query.op = "source.content".into();
+            content_query.source_path = Some(path.clone());
             content_query.work_id = content_work.clone();
             content_query.workstream_id = None;
             content_query.session_id = None;
@@ -206,10 +217,10 @@ pub(super) async fn read(
                 Err(PgError::Forbidden) => None,
                 Err(error) => return Err(error),
             };
-            content_authorities.insert(content_work.clone(), authority);
+            content_authorities.insert(authority_key.clone(), authority);
         }
         let mut row = match content_authorities
-            .get(content_work)
+            .get(&authority_key)
             .and_then(Option::as_ref)
         {
             Some(selected) => document(selected, path, files_by_path.get(path.as_str()).copied())?,

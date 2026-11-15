@@ -153,8 +153,11 @@ test('document discovery carries an exact task selector for controlled content r
 test('document discovery validates content selectors and their exact work attribution', async (t) => {
   let body;
   const { read } = await setup(t, () => ({ body }));
+  body = reply([document(1, { content_work_id: 'task-one' })]);
+  assert.equal((await read()).error.code, 'BadGateway');
   for (const value of ['', null, 1, {}, 'bad\u0000identity']) {
     body = reply([document(1, { content_work_id: value })]);
+    body.data.scope = 'authorized_works';
     assert.equal((await read()).error.code, 'BadGateway');
   }
   body = reply([document(1, { content_work_id: 'another-task' })], { work: 'task-one' });

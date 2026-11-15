@@ -326,6 +326,10 @@ which rechecks current access and source content independently. Rows can include
 controlled read needs an exact task selection. Carry that value as `work_id` in
 `source.content`, alongside the registered path and expected digest. The catalog
 uses the same selected read authority before advertising content availability.
+For each source, one live delegation must cover every referencing workstream.
+Independent grants can expose separate documents, while a shared document requires
+one covering grant. Grant creation order does not change content availability.
+Pages scoped to `authorized_workstreams` carry no task content selector.
 Restricted rows retain no content selector. Revocation and ownership changes are
 rechecked on every read and invalidate earlier cursors.
 

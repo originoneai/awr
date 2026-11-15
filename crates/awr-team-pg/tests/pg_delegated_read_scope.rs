@@ -1447,6 +1447,195 @@ async fn checkpoint_resolves_read_and_command_grants_independently() {
 }
 
 #[tokio::test]
+async fn document_content_selects_a_covering_grant_after_an_earlier_task_grant() {
+    for scope in [
+        AuthorizationScope::Workstream {
+            project_id: PROJECT.into(),
+            workstream_id: Id::from(1).to_string(),
+        },
+        AuthorizationScope::Project {
+            project_id: PROJECT.into(),
+        },
+    ] {
+        let (_guard, admin, db, store) = setup_with_specs(vec![
+            SourceFile {
+                path: "docs/alpha.md".into(),
+                bytes: b"# Delivery guide\n\nReview delivery.".to_vec(),
+            },
+            SourceFile {
+                path: "docs/private-beta.md".into(),
+                bytes: b"# Peer guide\n\nReview peer delivery.".to_vec(),
+            },
+        ])
+        .await;
+        agent_identity(&admin).await;
+        grant(
+            &db,
+            AuthorizationScope::Task {
+                project_id: PROJECT.into(),
+                work_item_id: "a".into(),
+            },
+        )
+        .await;
+        grant_scope(&db, "later-broad-read", scope, &[AuthorizedAction::Inspect]).await;
+        for stream in [None, Some(Id::from(1))] {
+            let mut q = query("documents.list");
+            q.workstream_id = stream;
+            let result = store.query(TENANT, PROJECT, A, q).await.unwrap();
+            let items = result["data"]["items"].as_array().unwrap();
+            assert!(!items.is_empty());
+            for item in items {
+                assert_eq!(item["readable"], true, "{item}");
+                assert!(item["content_work_id"].is_null());
+                let mut content = query("source.content");
+                content.source_path = item["path"].as_str().map(Into::into);
+                content.expected_sha256 = item["sha256"].as_str().map(Into::into);
+                let body = store
+                    .query(TENANT, PROJECT, A, content.clone())
+                    .await
+                    .unwrap();
+                assert_eq!(body["data"]["byte_length"], item["byte_length"]);
+                content.work_id = Some(
+                    if item["path"] == "docs/alpha.md" {
+                        "a"
+                    } else {
+                        "b-private"
+                    }
+                    .into(),
+                );
+                store.query(TENANT, PROJECT, A, content).await.unwrap();
+            }
+        }
+        // Grant order can change which candidate is first, never availability.
+        admin.execute("UPDATE awr_team.agent_authorizations SET created_at_ms=0 WHERE id='later-broad-read'", &[]).await.unwrap();
+        let result = store
+            .query(TENANT, PROJECT, A, query("documents.list"))
+            .await
+            .unwrap();
+        assert!(
+            result["data"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|item| item["readable"] == true)
+        );
+    }
+}
+
+#[tokio::test]
+async fn independent_stream_document_reads_do_not_union_shared_source_authority() {
+    let (_guard, admin, db, store) = setup_with_specs(vec![
+        SourceFile {
+            path: "docs/alpha.md".into(),
+            bytes: b"# Delivery guide".to_vec(),
+        },
+        SourceFile {
+            path: "docs/private-beta.md".into(),
+            bytes: b"# Peer guide".to_vec(),
+        },
+        SourceFile {
+            path: "docs/shared.md".into(),
+            bytes: b"# Shared guide".to_vec(),
+        },
+    ])
+    .await;
+    let mut catalog: serde_json::Value = admin
+        .query_one("SELECT catalog_json FROM awr_team.workstream_catalogs", &[])
+        .await
+        .unwrap()
+        .get(0);
+    for stream in catalog["workstreams"].as_array_mut().unwrap() {
+        stream["acceptance_contracts"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!("docs/shared.md"));
+    }
+    admin
+        .execute(
+            "UPDATE awr_team.workstream_catalogs SET catalog_json=$1",
+            &[&catalog],
+        )
+        .await
+        .unwrap();
+    agent_identity(&admin).await;
+    grant(
+        &db,
+        AuthorizationScope::Workstream {
+            project_id: PROJECT.into(),
+            workstream_id: Id::from(1).to_string(),
+        },
+    )
+    .await;
+    grant_stream(&db, "peer-stream-read", 2, &[AuthorizedAction::Inspect]).await;
+    for selected in [None, Some(Id::from(1)), Some(Id::from(2))] {
+        let mut q = query("documents.list");
+        q.workstream_id = selected;
+        let result = store.query(TENANT, PROJECT, A, q).await.unwrap();
+        let items = result["data"]["items"].as_array().unwrap();
+        assert_eq!(
+            items.iter().filter(|item| item["readable"] == true).count(),
+            if selected.is_none() { 2 } else { 1 }
+        );
+        assert_eq!(
+            items
+                .iter()
+                .filter(|item| item["status"] == "restricted")
+                .count(),
+            1
+        );
+        for item in items.iter().filter(|item| item["readable"] == true) {
+            let mut content = query("source.content");
+            content.source_path = item["path"].as_str().map(Into::into);
+            content.expected_sha256 = item["sha256"].as_str().map(Into::into);
+            let body = store.query(TENANT, PROJECT, A, content).await.unwrap();
+            assert_eq!(body["data"]["sha256"], item["sha256"]);
+        }
+    }
+    let mut shared = query("source.content");
+    shared.source_path = Some("docs/shared.md".into());
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, shared.clone()).await,
+        Err(PgError::Forbidden)
+    ));
+    grant_scope(
+        &db,
+        "project-read",
+        AuthorizationScope::Project {
+            project_id: PROJECT.into(),
+        },
+        &[AuthorizedAction::Inspect],
+    )
+    .await;
+    let result = store
+        .query(TENANT, PROJECT, A, query("documents.list"))
+        .await
+        .unwrap();
+    assert_eq!(result["data"]["total"], 3);
+    assert!(
+        result["data"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["readable"] == true)
+    );
+    store
+        .query(TENANT, PROJECT, A, shared.clone())
+        .await
+        .unwrap();
+    admin
+        .execute(
+            "UPDATE awr_team.agent_authorizations SET status='revoked' WHERE id='project-read'",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, shared).await,
+        Err(PgError::Forbidden)
+    ));
+}
+
+#[tokio::test]
 async fn task_document_discovery_and_content_use_the_same_exact_live_read_scope() {
     let body = "# Delivery guide\n\nCheck the outcome before sharing it.";
     let (_guard, admin, db, store) = setup_with_specs(vec![

@@ -2331,7 +2331,10 @@ async fn read_controlled_source_content(
     }))
 }
 
-fn authorize_source_file_streams(auth: &ReaderAuthority, path: &str) -> PgResult<()> {
+pub(crate) fn source_file_workstreams(
+    auth: &ReaderAuthority,
+    path: &str,
+) -> PgResult<std::collections::BTreeSet<awr_core::Id>> {
     use awr_core::Id;
     use std::collections::BTreeSet;
 
@@ -2359,9 +2362,13 @@ fn authorize_source_file_streams(auth: &ReaderAuthority, path: &str) -> PgResult
     if required.is_empty() {
         return Err(PgError::Forbidden);
     }
-    for id in &required {
+    Ok(required)
+}
+
+fn authorize_source_file_streams(auth: &ReaderAuthority, path: &str) -> PgResult<()> {
+    for id in source_file_workstreams(auth, path)? {
         auth.access
-            .authorize(&auth.catalog, *id, WorkstreamAction::Read)
+            .authorize(&auth.catalog, id, WorkstreamAction::Read)
             .map_err(|_| PgError::Forbidden)?;
     }
     Ok(())
