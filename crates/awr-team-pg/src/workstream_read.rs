@@ -14,6 +14,7 @@ use tokio_postgres::{IsolationLevel, Transaction};
 mod activity;
 mod artifact_segments;
 mod assignees;
+mod decisions;
 mod delivery;
 mod dependencies;
 mod documents;
@@ -69,6 +70,7 @@ pub(crate) const QUERIES: &[&str] = &[
     "planning.candidates",
     "sources.inspect",
     "documents.list",
+    "decisions.list",
     "audit.history",
     "audit.export",
     "audit.count",
@@ -96,6 +98,10 @@ pub struct WorkstreamQuery {
     pub recipient_person_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handoff_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_state: Option<String>,
     pub evidence_id: Option<String>,
     pub review_round_id: Option<String>,
     /// Controlled source path relative to the active snapshot (TMCP-023).
@@ -128,6 +134,7 @@ impl WorkstreamQuery {
         "planning.candidates",
         "sources.inspect",
         "documents.list",
+        "decisions.list",
         "work.prepare",
         "work.snapshot",
         "work.observe",
@@ -250,6 +257,7 @@ impl WorkstreamQuery {
                 | "planning.candidates"
                 | "sources.inspect"
                 | "documents.list"
+                | "decisions.list"
                 | "review.rounds"
                 | "handoff.list"
                 | "dependencies.list"
@@ -286,6 +294,14 @@ impl WorkstreamQuery {
             ("category", self.category.is_some() && !audit),
             ("include_denies", self.include_denies.is_some() && !audit),
             (
+                "decision_id",
+                self.decision_id.is_some() && self.op != "decisions.list",
+            ),
+            (
+                "decision_state",
+                self.decision_state.is_some() && self.op != "decisions.list",
+            ),
+            (
                 "recipient_person_id",
                 self.recipient_person_id.is_some() && self.op != "handoff.list",
             ),
@@ -308,6 +324,23 @@ impl WorkstreamQuery {
         }
         if self.op == "work.search" && self.search.is_none() {
             return Err(PgError::query_field("search", "required"));
+        }
+        if self.op == "decisions.list" && self.session_id.is_some() {
+            return Err(PgError::query_field("session_id", "unsupported"));
+        }
+        if self
+            .decision_id
+            .as_deref()
+            .is_some_and(|id| id.is_empty() || id.len() > 128 || id.chars().any(char::is_control))
+        {
+            return Err(PgError::query_field("decision_id", "selector"));
+        }
+        if self
+            .decision_state
+            .as_deref()
+            .is_some_and(|state| !matches!(state, "open" | "replied" | "cancelled" | "all"))
+        {
+            return Err(PgError::query_field("decision_state", "selector"));
         }
         if self
             .handoff_state
@@ -1259,6 +1292,9 @@ pub(crate) async fn read(
     if q.op == "documents.list" {
         return documents::read(tx, tenant, project, auth, q).await;
     }
+    if q.op == "decisions.list" {
+        return decisions::read(tx, tenant, project, auth, q).await;
+    }
     if q.op == "dependencies.list" {
         return dependencies::read(tx, tenant, project, auth, q).await;
     }
@@ -1429,6 +1465,11 @@ pub(crate) async fn read(
             "max_mcp_result_bytes":WorkstreamQuery::MAX_ARTIFACT_SEGMENT_WIRE_BYTES,
             "encoding":"base64","complete_read":"Follow next_query until end_of_artifact; concatenate contiguous ranges from 0 and verify the full length and sha256."});
         caps["identity"] = navigation::identity(auth);
+        caps["ordinary_decisions"] = json!({"version":1,"query":"decisions.list",
+            "commands":["decision.request","decision.respond","decision.cancel"],
+            "request_authority":"current_owned_live_claim","response_authority":"selected_current_member_and_owned_session",
+            "context_field":"ordinary_decisions","one_open_question_per_work":true,
+            "execution_permission_granted":false,"formal_acceptance_granted":false});
         caps["business_role_presets"] = json!({
             "roles":awr_team::BusinessRole::all(), "explicit_combined_duties":true,
             "semantics":"membership_grants_intersect_declared_ceiling_then_one_live_delegation",
@@ -1912,6 +1953,8 @@ pub(crate) async fn read(
                     json!("re-prepare after restoring missing authorized specs/deps, or raise max_context_bytes / use source.content")
                 }
             });
+            data["ordinary_decisions"] =
+                decisions::context(tx, tenant, project, auth, work).await?;
             // Source snapshots and project audit revisions may advance because
             // of unrelated work. Bind actual selected facts, not those cursors.
             let context_hash = hash(&json!({"domain":"awr-team-workstream-context-v1",
@@ -2165,7 +2208,7 @@ async fn active_source_files(
         .unwrap_or_default())
 }
 
-async fn controlled_prepare_context(
+pub(crate) async fn controlled_prepare_context(
     tx: &Transaction<'_>,
     tenant: &str,
     project: &str,

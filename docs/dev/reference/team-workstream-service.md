@@ -110,7 +110,7 @@ POST JSON to `/v1/projects/<alias>/query` with an
 {"protocol_version":1,"op":"capabilities"}
 ```
 
-The response advertises the following queries and twelve session/claim/execution commands.
+The response advertises the supported queries and work commands.
 The operation list describes implemented protocol, not a grant to invoke it.
 Unsupported operations or protocol versions fail explicitly.
 
@@ -130,6 +130,7 @@ asking anyway is refused as `Unsupported`. The lists name operations of this pro
 | `planning.candidates` | Readable planning candidates and server-computed differences from the current plan; optional `workstream_id`, `limit`, `cursor`, `max_context_bytes` |
 | `sources.inspect` | Required document integrity in the active snapshot; optional `work_id`, `workstream_id`, `limit`, `cursor`, `max_context_bytes`; no document bodies |
 | `documents.list` | Project document discovery across authorized workstreams; optional `work_id`, `workstream_id`, literal case-insensitive `search`, `limit`, `cursor`, `max_context_bytes`; verified display metadata, availability and transaction `as_of` |
+| `decisions.list` | Authorized ordinary questions and recorded answers, with optional `work_id`, `workstream_id`, exact `decision_id`, `decision_state`, `limit`, `cursor`, `max_context_bytes`. Defaults to open questions and includes transaction `as_of`. |
 | `review.rounds` | Read-only ordered review history for a required work/session selection with bounded `limit`, `cursor`, `max_context_bytes` and transaction `as_of` |
 | `handoff.list` | Read-only authorized handoff discovery with optional `work_id`, `workstream_id`, `recipient_person_id`, `handoff_state`, `limit`, `cursor`, `max_context_bytes` |
 | `dependencies.list` | Read-only authorized dependency edges with required, available, adopted and consumed versions; optional `work_id`, `workstream_id`, `limit`, `cursor`, `max_context_bytes` |
@@ -503,6 +504,46 @@ Dedicated queries:
   `work_id`; metadata-only artifacts are refused.
 
 Capabilities advertise `artifact_content` / `source_content` / `planning_mcp`.
+
+## Ordinary decisions across sessions
+
+An Agent with the current owned live claim can use `decision.request` to ask a
+specific question and record its impact. Supply the owned `session_id`, current
+`expected_session_version`, `claim_id`, `expected_fence`,
+`expected_lease_version`, a stable `request_key`, `question`, `impact` and explicit
+`allowed_responder_person_ids`. Person identities come from current project
+membership or responsibility records. The selected people still need live
+permission when responding.
+
+The wait mechanism supports one open question per work, with execution,
+claim and completion guards. The request binds the contract,
+responsibility, workstream authority and verified required-source fingerprints.
+Unrelated audit activity and unrelated source documents preserve that baseline.
+
+Read `decisions.list` after reconnecting or losing a response. Reuse the same
+business request key and content to recover its existing question across sessions.
+The query supports `decision_state` values `open`, `replied`, `cancelled` and `all`.
+`work.prepare` and `work.snapshot` include up to three selected questions in
+`ordinary_decisions`, with a bounded follow-up query for history.
+
+A selected responder uses their own active session with `decision.respond`.
+Supply `session_id`, `expected_session_version`, the exact `decision_id`,
+`expected_decision_version` from the read and `reply`. Concurrent responses have
+one applied answer. A later caller receives `applied=false` and
+`already_resolved=true` with the recorded outcome. Changed baselines refuse an
+unapplied answer, and every request rechecks credential and scope authority.
+
+`decision.cancel` uses the same fields and records the reason in `reply`.
+The requester, selected responders, current task owner and an authorized
+supervisor can withdraw an open question. This supports recovery after a goal,
+responsibility or participant change. Versioned ordinary questions retain their
+attributed resolution history.
+
+Ordinary answers record project decisions. Execution admission uses
+`execution.start`, formal review uses `review.decide`, and delivery acceptance
+uses `work.complete` or `delivery.finalize`. Observation clients display the
+question, impact, responsibility and confirmed result. Technical bindings belong
+in service records.
 
 ## Durable session commands
 

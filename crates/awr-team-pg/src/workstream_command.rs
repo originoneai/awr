@@ -6,6 +6,7 @@
 pub(crate) mod action_auth;
 mod admission;
 pub(crate) mod claims;
+pub(crate) mod decisions;
 mod delivery;
 pub(crate) mod executions;
 pub(crate) mod handoffs;
@@ -25,6 +26,9 @@ use tokio_postgres::Transaction;
 
 pub(crate) const COMMANDS: &[&str] = &[
     "admission.decide",
+    "decision.request",
+    "decision.respond",
+    "decision.cancel",
     "task.assign",
     "task.accept_assignment",
     "task.claim_available",
@@ -119,6 +123,7 @@ struct End {
 }
 enum Action {
     Admission(admission::Action),
+    Decision(decisions::Action),
     Start(Start),
     Checkpoint(Checkpoint),
     End(End),
@@ -204,6 +209,9 @@ impl WorkstreamCommand {
             ));
         }
         match self.op.as_str() {
+            "decision.request" | "decision.respond" | "decision.cancel" => Ok(Action::Decision(
+                decisions::Action::parse(&self.op, self.args.clone())?,
+            )),
             "admission.decide" => Ok(Action::Admission(admission::Action::parse(
                 &self.op,
                 self.args.clone(),
@@ -668,7 +676,7 @@ impl WorkstreamCommandStore {
         if contract_hash != command.expected_contract_hash {
             return Err(PgError::PreconditionsChanged);
         }
-        if ["task.", "claim.", "execution.", "handoff."]
+        if ["task.", "claim.", "execution.", "handoff.", "decision."]
             .iter()
             .any(|prefix| command.op.starts_with(prefix))
             || command.op == "delivery.adopt"
@@ -711,6 +719,9 @@ impl WorkstreamCommandStore {
             }
             Action::Admission(a) => {
                 admission::apply(&tx, tenant, project, &auth, &command, a).await?
+            }
+            Action::Decision(a) => {
+                decisions::apply(&tx, tenant, project, &auth, &command, ownership, a).await?
             }
             Action::Execution(a) => {
                 if command.op == "execution.prepare"
@@ -935,6 +946,7 @@ async fn apply(
         | Action::Review(_)
         | Action::Intake(_)
         | Action::Admission(_)
+        | Action::Decision(_)
         | Action::Delivery(_)
         | Action::Export(_)
         | Action::Adopt(_) => Err(invalid()), // Specialized dispatch only.

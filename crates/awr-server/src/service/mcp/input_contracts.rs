@@ -364,6 +364,35 @@ fn value_sources(tool: &str, op: &str, schema: &Value) -> Value {
             "freshness":"Use the hash from the context actually consumed. session.inspect context_hash is historical."
         }));
     }
+    if has(&["decision_id", "expected_decision_version"]) {
+        classified.extend(["decision_id", "expected_decision_version"].map(str::to_owned));
+        sources.push(json!({"fields":["decision_id","expected_decision_version"],
+            "read_op":"decisions.list",
+            "pointers":{"decision_id":"/data/items/*/decision_id","expected_decision_version":"/data/items/*/decision_version"},
+            "freshness":"Read the exact persisted question in this work. Use its current version. An answer never grants execution authority or formal acceptance."}));
+    }
+    if op == "decision.request" {
+        classified.extend(
+            [
+                "request_key",
+                "question",
+                "impact",
+                "allowed_responder_person_ids",
+            ]
+            .map(str::to_owned),
+        );
+        sources.push(json!({"fields":["request_key"],"source":"caller_stable_identifier",
+            "rule":"Keep the same ordinary-question key and content across reconnects. Inspect decisions.list or command.inspect after an uncertain response before proposing a different question."}));
+        sources.push(json!({"fields":["question","impact"],"source":"caller_observed_business_request",
+            "rule":"Describe the exact question and its effect on the project in product language. Do not include credentials or raw diagnostics."}));
+        sources.push(json!({"fields":["allowed_responder_person_ids"],"source":"current_verified_project_members",
+            "rule":"Use explicit person IDs from current responsibility or authorized membership records. Do not derive an identity from a display name or grant permissions through this list."}));
+    }
+    if matches!(op, "decision.respond" | "decision.cancel") {
+        classified.insert("reply".to_owned());
+        sources.push(json!({"fields":["reply"],"source":"caller_observed_answer_or_withdrawal",
+            "rule":"Answer or withdraw only the exact selected question. General chat consent cannot answer another question. Wait for the service receipt before reporting a confirmed outcome."}));
+    }
     if has(&["expected_responsibility_version", "expected_work_version"]) {
         classified.extend(
             ["expected_responsibility_version", "expected_work_version"].map(str::to_owned),
@@ -616,7 +645,7 @@ mod tests {
         let catalog = super::super::catalog();
         assert_eq!(
             WorkstreamQuery::OPERATIONS.len() + WorkstreamCommand::OPERATIONS.len(),
-            95
+            99
         );
         for (tool, operations) in [
             ("awr_team_query", WorkstreamQuery::OPERATIONS),
