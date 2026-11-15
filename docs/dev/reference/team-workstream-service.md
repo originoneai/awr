@@ -129,7 +129,8 @@ asking anyway is refused as `Unsupported`. The lists name operations of this pro
 | `work.search` | Same visibility boundary; required literal substring `search` |
 | `planning.candidates` | Readable planning candidates and server-computed differences from the current plan; optional `workstream_id`, `limit`, `cursor`, `max_context_bytes` |
 | `sources.inspect` | Required document integrity in the active snapshot; optional `work_id`, `workstream_id`, `limit`, `cursor`, `max_context_bytes`; no document bodies |
-| `review.rounds` | Required work/session selection; ordered review history with bounded `limit`, `cursor`, `max_context_bytes` and transaction `as_of`; no review action |
+| `review.rounds` | Read-only ordered review history for a required work/session selection with bounded `limit`, `cursor`, `max_context_bytes` and transaction `as_of` |
+| `handoff.list` | Read-only authorized handoff discovery with optional `work_id`, `workstream_id`, `recipient_person_id`, `handoff_state`, `limit`, `cursor`, `max_context_bytes` |
 | `work.prepare` | Required `work_id` or `session_id`; optional `max_context_bytes`; returns published contract, required_specs and authorized_readable_refs (TMCP-023) |
 | `work.admission` | Required `work_id`; whether the work is governed, its admission state and diagnostics, the scope a decision will be checked against and its `binding_fingerprint`; see [Team governance](team-governance.md) |
 | `work.observe` | Required `work_id` or `session_id`; returns bounded session/checkpoint, claim lease, execution and PR delivery observations under current WorkRead authority |
@@ -203,6 +204,46 @@ A rejected request is never presented as a rejected plan. The bridge exposes
 the same scoped read at `GET /api/team/plans?project=PROJECT`, with optional
 `workstream_id`, `limit`, `cursor` and `max_context_bytes`; no planning commands
 are exposed by that route.
+
+`handoff.list` discovers metadata from the existing `execution` and
+`responsibility` handoff records. It defaults to `handoff_state:pending`.
+Use `history` for terminal or elapsed proposals and `all` for both groups.
+An optional `recipient_person_id` filters the recorded receiving person.
+Project discovery uses the same current workstream and exact-task read scopes
+as `work.next`. A work or recipient filter cannot widen them. A session selector
+is unsupported. Selecting a work requires its current read authority.
+
+The standard envelope contains `data.work_id`, `recipient_person_id`,
+`handoff_state`, `items`, `total`, `next_cursor`, `truncated` and `as_of`.
+Each item includes its handoff and work identities, work title, kind, version,
+recorded `status`, sender and recipient with available display names, and
+creation, update and optional expiration times. `pending`, `expired`, `group`
+and `effective_status` separate waiting work from history. The recorded states
+remain `proposed`, `inspected`, `accepted`, `rejected`, `cancelled` or `timed_out`.
+A proposal past its deadline has `effective_status:expired` and `pending:false`
+while retaining its recorded status. The observation uses the transaction clock
+and does not perform a timeout transition. Accepted or cancelled records do not
+become expired merely because their former deadline has passed.
+
+The default page has 20 rows and the maximum is 100, ordered by creation time
+and identifier. The serialized response budget defaults to 262,144 bytes.
+`handoff_position` is contiguous within the selected visible collection.
+`total` counts authorized matches. `count_scope:authorized_matches` and
+`count_limited:true` explicitly avoid promising a project-wide count.
+`hidden_count` remains null. Neither hidden handoff existence nor its count is
+disclosed. Packages, checkpoint content, raw bodies and acceptance material
+are absent from discovery.
+
+`as_of` binds the transaction read time, source snapshot, project revision
+and visible handoff-history fingerprint. Cursors additionally bind current
+authority, grant versions and request filters. Changes to readable records,
+recipient filters, permission scope or relevant deadlines require a fresh page.
+The Observer bridge exposes `GET /api/team/handoffs` with `project` and the same
+selection, paging and budget fields. It checks attribution, expiry semantics,
+conservative counts, metadata-only rows and complete page coverage.
+Product pages use localized descriptions for these observations.
+Reads never inspect a package for consumption, accept a transfer, cancel it,
+start execution or alter responsibility.
 
 `review.rounds` discovers review history for one readable work. Its standard
 envelope contains `data.work_id`, `items`, `total`, `next_cursor`, `truncated`

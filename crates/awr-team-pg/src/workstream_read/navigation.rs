@@ -30,6 +30,19 @@ pub(super) fn visible_streams(auth: &ReaderAuthority) -> Vec<String> {
         .collect()
 }
 
+pub(super) fn visible_work_scope(
+    auth: &ReaderAuthority,
+) -> (Vec<String>, Vec<String>, Vec<String>) {
+    match &auth.navigation_read_scope {
+        Some(scope) => (
+            scope.streams.iter().map(ToString::to_string).collect(),
+            scope.tasks.keys().cloned().collect(),
+            scope.tasks.values().map(ToString::to_string).collect(),
+        ),
+        None => (visible_streams(auth), Vec::new(), Vec::new()),
+    }
+}
+
 pub(super) async fn next(
     tx: &Transaction<'_>,
     tenant: &str,
@@ -37,15 +50,7 @@ pub(super) async fn next(
     auth: &ReaderAuthority,
     q: &WorkstreamQuery,
 ) -> PgResult<Value> {
-    let (streams, task_ids, task_streams): (Vec<String>, Vec<String>, Vec<String>) =
-        match &auth.navigation_read_scope {
-            Some(scope) => (
-                scope.streams.iter().map(ToString::to_string).collect(),
-                scope.tasks.keys().cloned().collect(),
-                scope.tasks.values().map(ToString::to_string).collect(),
-            ),
-            None => (visible_streams(auth), Vec::new(), Vec::new()),
-        };
+    let (streams, task_ids, task_streams) = visible_work_scope(auth);
     let binding = hash(
         &json!({"reader":auth.binding,"snapshot":auth.snapshot,"catalog":auth.catalog,
         "grants":auth.grant_versions,"op":"work.next"}),
