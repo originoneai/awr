@@ -172,6 +172,8 @@ describe('plan observation product views', () => {
       'token: synthetic-session-value',
       ...['client_secret', 'auth_token', 'session_token', 'private_key', 'x-api-key', 'clientSecret']
         .flatMap((field) => [`${field}=synthetic-session-value`, `Review https://example.com/guide?${field}=synthetic-session-value`]),
+      'Review https://example.com/guide#%61%75%74%68%5f%74%6f%6b%65%6e=synthetic-session-value',
+      'Review https://example.com/%63%6c%69%65%6e%74%5f%73%65%63%72%65%74=synthetic-session-value',
     ];
     const { container } = mount((q) => response(q.op === 'sources.inspect' ? documents() : {
       items: reasons.map((reason, index) => candidate({ candidate_id: `${INTERNAL}-${index}`,
@@ -180,7 +182,8 @@ describe('plan observation product views', () => {
       })), total: reasons.length, next_cursor: null, as_of: { at_unix_ms: AT },
     }));
     await screen.findAllByText(i18n.t('plan.changes.returnedReasonUnavailable'));
-    expect(screen.getAllByText(i18n.t('plan.changes.returnedReasonUnavailable'))).toHaveLength(reasons.length);
+    expect(screen.getAllByText(i18n.t('plan.changes.returnedReasonUnavailable')))
+      .toHaveLength(reasons.filter((reason) => !reason.startsWith('Review https://')).length);
     expect(container.textContent).not.toMatch(/synthetic-session-value|proposal-123|payload|candidate_id|clarify scope/);
     expect(container.querySelector('details,pre,code,[data-testid="technical-details"]')).toBeNull();
     expect(within(screen.getByTestId('plan-changes')).queryByRole('button', { name: /copy|复制/i })).toBeNull();

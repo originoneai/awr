@@ -26,8 +26,21 @@ describe('readableNarrative', () => {
         expect(readableNarrative(text, language), text).toBeNull();
       }
       for (const key of [field, [...field].map((c) => `%${c.charCodeAt(0).toString(16)}`).join('')]) {
-        const result = readableNarrative(`Review https://example.com/guide?${key}=synthetic-field-value`, language);
-        expect(result ?? '', key).not.toContain('synthetic-field-value');
+        for (const url of [`https://example.com/guide?${key}=synthetic-field-value`,
+          `https://example.com/guide#${key}=synthetic-field-value`,
+          `https://example.com/${key}=synthetic-field-value`]) {
+          expect(readableNarrative(`Review ${url}`, language) ?? '', url).not.toContain('synthetic-field-value');
+        }
+      }
+    }
+    for (const value of ['client_secret=synthetic-field-value', '{"token":"synthetic-field-value"}']) {
+      let encoded = value;
+      for (let depth = 0; depth < 6; depth += 1) {
+        encoded = encodeURIComponent(encoded);
+        for (const url of [`https://example.com/${encoded}`, `https://example.com/guide#${encoded}`,
+          `https://example.com/guide?customer=${encoded}`]) {
+          expect(readableNarrative(url, language) ?? '', url).not.toContain('synthetic-field-value');
+        }
       }
     }
   });
@@ -38,7 +51,8 @@ describe('readableNarrative', () => {
     expect(readableNarrative(`${reason}. candidate_id=proposal-123`, language)).toBe(`${reason}.`);
     expect(readableNarrative('请补充验收要求，然后让 Agent 重新提交。', language)).toBe('请补充验收要求，然后让 Agent 重新提交。');
     expect(readableNarrative('Review https://example.com/guide?topic=release', language)).toBe('Review https://example.com/guide?topic=release');
-    expect(readableNarrative('Review https://example.com/guide?access_token=synthetic-session-value', language)).toBeNull();
+    expect(readableNarrative('Review https://example.com/guide?access_token=synthetic-session-value', language))
+      .not.toContain('synthetic-session-value');
     const result = readableNarrative('Review https://example.com/guide?access%5Ftoken=synthetic-session-value', language);
     expect(result).not.toContain('synthetic-session-value');
     expect(result).not.toContain('access_token');

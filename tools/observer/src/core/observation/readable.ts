@@ -78,28 +78,50 @@ function removeDiagnosticAssignments(text: string): string {
     });
 }
 
+function diagnosticContent(text: string): boolean {
+  return /[{}]|```|\[\s*(?:["'\[\d]|true\b|false\b|null\b)/i.test(text)
+    || [...text.matchAll(/["']?\b([a-z][a-z0-9_-]*)["']?\s*([:：=])/gi)]
+      .some(([, field, separator]) => SENSITIVE_FIELD.test(field)
+        || separator === '=' || /[_-]|[a-z][A-Z]/.test(field))
+    || /\bBearer\s+\S+|-----BEGIN [A-Z ]*PRIVATE KEY-----|^\s*(?:Traceback\b|at\s+\S+\s*\([^\n]+:\d+)/im.test(text);
+}
+
+function decodeReferencePart(text: string): string | null {
+  for (let depth = 0; depth < 4; depth += 1) {
+    let decoded: string;
+    try { decoded = decodeURIComponent(text); } catch { return null; }
+    if (decoded === text) return text;
+    text = decoded;
+  }
+  return /%[a-f0-9]{2}/i.test(text) ? null : text;
+}
+
 function businessUrl(text: string, reference: string): string {
   let url: URL;
   try { url = new URL(text); } catch { return reference; }
   if (/^(?:(?:[a-z0-9-]+\.)*localhost|127(?:\.\d+){3}|\[::1\]|0\.0\.0\.0)$/.test(url.hostname.replace(/\.$/, ''))
     || url.username || url.password || /^\/v\d+\/(?:projects|web)(?:\/|$)/.test(url.pathname)) return reference;
-  let pathname: string;
-  try { pathname = decodeURIComponent(url.pathname); } catch { return reference; }
-  if (OPAQUE_URL_COMPONENT.test(url.hostname) || OPAQUE_URL_COMPONENT.test(pathname) || SYSTEM_PATH.test(pathname)) return reference;
+  const pathname = decodeReferencePart(url.pathname);
+  if (pathname === null || diagnosticContent(pathname)
+    || /^\/v\d+\/(?:projects|web)(?:\/|$)/.test(pathname)
+    || OPAQUE_URL_COMPONENT.test(url.hostname) || OPAQUE_URL_COMPONENT.test(pathname) || SYSTEM_PATH.test(pathname)) return reference;
   let changed = false;
-  for (const [rawField, value] of [...url.searchParams]) {
-    const field = rawField.toLowerCase();
-    if (SENSITIVE_FIELD.test(field)) return reference;
+  for (const [rawField, rawValue] of [...url.searchParams]) {
+    const decodedField = decodeReferencePart(rawField);
+    const value = decodeReferencePart(rawValue);
+    if (decodedField === null || value === null) return reference;
+    const field = decodedField.toLowerCase();
+    if (SENSITIVE_FIELD.test(field) || diagnosticContent(value)) return reference;
     if (internalField(field) || DIAGNOSTIC_FIELDS.has(field) && diagnosticValue(field, value)) {
       url.searchParams.delete(rawField);
       changed = true;
-    } else if (/[_-]|[a-z][A-Z]/.test(rawField)
+    } else if (/[_-]|[a-z][A-Z]/.test(decodedField)
       || OPAQUE_URL_COMPONENT.test(field) || OPAQUE_URL_COMPONENT.test(value)) {
       return reference;
     }
   }
-  let fragment: string;
-  try { fragment = decodeURIComponent(url.hash); } catch { return reference; }
+  const fragment = decodeReferencePart(url.hash);
+  if (fragment === null || diagnosticContent(removeDiagnosticAssignments(fragment))) return reference;
   if (removeDiagnosticAssignments(fragment) !== fragment || OPAQUE_URL_COMPONENT.test(fragment)) {
     url.hash = ''; changed = true;
   }
@@ -110,17 +132,13 @@ function businessUrl(text: string, reference: string): string {
 export function readableNarrative(text: string, language: string): string | null {
   // Diagnostic payloads stay in protected service history. A partial scrub of
   // structured content cannot establish that the remaining values are prose.
-  if (/[{}]|```|\[\s*(?:["'\[\d]|true\b|false\b|null\b)/i.test(text)
-    || [...text.matchAll(/["']?\b([a-z][a-z0-9_-]*)["']?\s*[:：=]/gi)]
-      .some(([, field]) => SENSITIVE_FIELD.test(field))
-    || [...removeDiagnosticAssignments(text.replace(/https?:\/\/[^\s()]+/gi, ''))
-      .matchAll(/["']?\b([a-z][a-z0-9_-]*)["']?\s*([:：=])/gi)]
-      .some(([, field, separator]) => separator === '=' || /[_-]|[a-z][A-Z]/.test(field))
-    || /\bBearer\s+\S+|-----BEGIN [A-Z ]*PRIVATE KEY-----|^\s*(?:Traceback\b|at\s+\S+\s*\([^\n]+:\d+)/im.test(text)) return null;
+  const parts = text.split(/(https?:\/\/[^\s()]+)/gi);
+  if (parts.some((part) => !/^https?:\/\//i.test(part)
+    && diagnosticContent(removeDiagnosticAssignments(part)))) return null;
   const zh = language.toLowerCase().startsWith('zh');
   const record = zh ? '相关记录' : 'the related record';
   const file = zh ? '相关文件' : 'the related file';
-  const result = text.split(/(https?:\/\/[^\s()]+)/gi).map((part) => {
+  const result = parts.map((part) => {
     if (/^https?:\/\//i.test(part)) return businessUrl(part, record);
     const redacted = removeDiagnosticAssignments(part)
       .replace(new RegExp(SYSTEM_PATH.source, 'g'), file)
