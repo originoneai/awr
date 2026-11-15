@@ -11,7 +11,6 @@ afterEach(async () => {
 describe('pages whose feature is not open yet', () => {
   it.each([
     ['/knowledge', '知识与技能'],
-    ['/members', '成员与 Agent'],
     ['/settings', '管理设置'],
     ['/advanced', '高级工具'],
   ])('%s says once that it is not open, and does not read as an empty read', async (path, title) => {

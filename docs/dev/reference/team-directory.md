@@ -54,6 +54,10 @@ Schema 62 adds the current directory and append-only change receipts. An apply r
 
 Observation clients use project-qualified references to drill back to project facts. Product views present organization, department and member names with relationship availability. Version tokens, authorization bindings and diagnostic fields belong in the protected service records.
 
+The Observer **Members & Agents** page reads `/v1/web/projects/{project}/directory/read` through its existing HttpOnly browser session and the `/api/team/directory` bridge. The service repeats the same directory authorization on every read. The bridge validates complete project-qualified relationships, then returns organization, department and member display names, availability and the maintenance time. Operational provenance and internal references stay on the service.
+
+Members are shown as recorded in that project's directory. A directory may cover a subset of its people, and an available member record does not establish that an Agent is connected or executing work. The page provides member search, department filtering, name sorting, manual refresh and links to the existing personal connection controls. Each project is read separately, and same-name members retain separate rows. Relationship changes continue through the authorized Agent entries.
+
 ## Focused verification
 
 The domain tests cover shape, bounds, reference validation and order-independent hashing. PostgreSQL tests cover conditional writes, concurrent attempts, exact replay, recovery, revoked authority and project-qualified identities. Native MCP and HTTP tests exercise Agent delegation and the shared service entry points.
