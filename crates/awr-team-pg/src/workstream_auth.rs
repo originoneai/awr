@@ -543,7 +543,9 @@ pub fn command_business_action(op: &str) -> Option<awr_team::Action> {
     Some(match op {
         "task.assign" | "delivery.route.reuse" => WorkAssign,
         "task.accept_assignment" | "task.claim_available" => ClaimManageOwn,
-        "session.start" | "session.checkpoint" | "session.end" => SessionMaintainOwn,
+        "session.start" | "session.checkpoint" | "session.end" | "decision.respond"
+        | "decision.cancel" => SessionMaintainOwn,
+        "decision.request" => ClaimManageOwn,
         "claim.acquire" | "claim.renew" | "claim.release" | "handoff.propose"
         | "handoff.accept" | "handoff.reject" | "handoff.cancel" | "handoff.timeout"
         | "handoff.inspect" => ClaimManageOwn,
@@ -631,6 +633,7 @@ pub fn query_business_action(op: &str) -> Option<awr_team::Action> {
         "planning.candidates",
         "sources.inspect",
         "documents.list",
+        "decisions.list",
         "audit.history",
         "audit.export",
         "audit.count",
@@ -761,8 +764,12 @@ pub(crate) fn command_authority(op: &str) -> Option<DomainAuthority> {
     Some(match op {
         "session.checkpoint" | "session.end" | "claim.release" | "execution.cancel"
         | "execution.report" | "handoff.reject" | "handoff.cancel" | "handoff.timeout"
-        | "handoff.inspect" | "review.return" | "work.rework" => DomainAuthority::WritePreserve,
+        | "handoff.inspect" | "review.return" | "work.rework" | "decision.cancel" => {
+            DomainAuthority::WritePreserve
+        }
         "session.start"
+        | "decision.request"
+        | "decision.respond"
         | "admission.decide"
         | "task.assign"
         | "delivery.route.reuse"

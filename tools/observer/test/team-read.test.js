@@ -96,6 +96,7 @@ const VALID_QUERIES = {
   'planning.candidates': { workstream_id: 'stream', limit: 5, max_context_bytes: 65536 },
   'sources.inspect': { work_id: 'WORK', workstream_id: 'stream', limit: 5, max_context_bytes: 65536 },
   'documents.list': { work_id: 'WORK', workstream_id: 'stream', search: 'guide', limit: 5, max_context_bytes: 65536 },
+  'decisions.list': { work_id: 'WORK', workstream_id: 'stream', decision_id: 'question', decision_state: 'all', limit: 5, max_context_bytes: 65536 },
   'review.rounds': { work_id: 'WORK', workstream_id: 'stream', limit: 5, max_context_bytes: 65536 },
   'handoff.list': { work_id: 'WORK', workstream_id: 'stream', recipient_person_id: 'recipient', handoff_state: 'all', limit: 5, max_context_bytes: 65536 },
   'work.search': { search: 'observation', workstream_id: 'stream', limit: 25, cursor: 'opaque-cursor' },
@@ -166,6 +167,16 @@ test('read adapter forwards every registered read op with its exact selectors, u
         response.end(JSON.stringify({ ...ENVELOPE, workstream_id: parsed.workstream_id, authority_version: '1', data: {
           work_id: parsed.work_id, items: [], total: 0, next_cursor: null, truncated: false,
           read_only: true, execution_authorized: false, content_read_limit_bytes: 262144, scope: 'work',
+          as_of: { at_unix_ms: 1793534400000, source_snapshot_id: ENVELOPE.source_snapshot_id,
+            project_revision: ENVELOPE.project_revision },
+        } }));
+        return;
+      }
+      if (parsed.op === 'decisions.list') {
+        response.end(JSON.stringify({ ...ENVELOPE, workstream_id: parsed.workstream_id, authority_version: '1',
+          selection_basis: parsed.work_id ? 'work' : parsed.workstream_id ? 'explicit' : 'project', data: {
+          work_id: parsed.work_id ?? null, decision_id: parsed.decision_id ?? null, decision_state: parsed.decision_state ?? 'open',
+          items: [], next_cursor: null, truncated: false, execution_authorized: false,
           as_of: { at_unix_ms: 1793534400000, source_snapshot_id: ENVELOPE.source_snapshot_id,
             project_revision: ENVELOPE.project_revision },
         } }));
@@ -642,5 +653,88 @@ test('read adapter errors never echo selector values on any rejection path', asy
   } finally {
     await bridge.close();
     await upstream.close();
+  }
+});
+
+function questionPage(state = 'open') {
+  const person = { person_id: 'lin', display_name: 'Lin Chen' };
+  const actor = { ...person, actor_id: 'lin-agent', client_id: 'lin-client' };
+  const item = {
+    decision_id: 'question', work_id: 'WORK', workstream_id: 'stream', work_title: 'Prepare the customer portal',
+    session_id: 'session', request_key: 'portal-theme', question: 'Should the portal use the blue theme?',
+    impact: 'The answer lets the design work continue.', reply: null, state,
+    decision_version: '1', contract_hash: 'a'.repeat(64), baseline_matches_current: true,
+    requester: actor, allowed_responder_person_ids: ['lin'], allowed_responders: [person],
+    resolution: null, created_at_unix_ms: 1000, source_snapshot_id: 'snap-1', approval_granted: false,
+  };
+  if (state !== 'open') {
+    item.reply = 'Use the blue theme.';
+    item.decision_version = '2';
+    item.resolution = { ...actor, kind: state, session_id: 'later-session', request_id: 'reply', at_unix_ms: 2000 };
+  }
+  return { ...ENVELOPE, workstream_id: 'stream', authority_version: '1', selection_basis: 'work', data: {
+    work_id: 'WORK', decision_id: 'question', decision_state: state, items: [item], next_cursor: null,
+    truncated: false, execution_authorized: false, as_of: { at_unix_ms: 3000,
+      source_snapshot_id: ENVELOPE.source_snapshot_id, project_revision: ENVELOPE.project_revision },
+  } };
+}
+
+test('ordinary question reads preserve confirmed responses and refuse malformed or mismatched observations', async () => {
+  let result = questionPage();
+  const upstream = await startMockUpstream((_request, response) => response.end(JSON.stringify(result)));
+  const bridge = await startLiveBridge(upstream.base);
+  const read = (state = 'open', extra = {}) => req(bridge.base, 'POST', '/api/team/read', { body: {
+    project: 'demo', query: { protocol_version: 1, op: 'decisions.list', work_id: 'WORK', workstream_id: 'stream',
+      decision_id: 'question', decision_state: state, limit: 1, max_context_bytes: 65536, ...extra },
+  } });
+  try {
+    for (const state of ['open', 'replied', 'cancelled']) {
+      result = questionPage(state);
+      assert.equal((await read(state)).json.ok, true, state);
+    }
+    const mutations = [
+      (page) => { page.data.items[0].work_id = 'OTHER'; },
+      (page) => { page.data.items[0].workstream_id = 'OTHER'; },
+      (page) => { page.data.items[0].decision_id = 'OTHER'; },
+      (page) => { page.data.decision_id = null; },
+      (page) => { page.data.work_id = null; },
+      (page) => { page.data.decision_state = 'all'; },
+      (page) => { delete page.authority_version; },
+      (page) => { page.selection_basis = 'project'; },
+      (page) => { page.data.execution_authorized = true; },
+      (page) => { page.data.items[0].approval_granted = true; },
+      (page) => { page.data.items[0].baseline_matches_current = null; },
+      (page) => { page.data.items[0].allowed_responder_person_ids = ['other']; },
+      (page) => { page.data.items[0].allowed_responders = []; },
+      (page) => { page.data.items[0].requester.display_name = 42; },
+      (page) => { page.data.items[0].resolution = { kind: 'replied' }; },
+      (page) => { page.data.items[0].question = '\0private'; },
+      (page) => { page.data.items[0].question = '文'.repeat(683); },
+      (page) => { page.data.items[0].reply = 'unconfirmed'; },
+      (page) => { page.data.items.push(structuredClone(page.data.items[0])); },
+      (page) => { page.data.truncated = true; },
+      (page) => { page.data.as_of.source_snapshot_id = 'other'; },
+    ];
+    for (const [index, mutate] of mutations.entries()) {
+      result = questionPage(); mutate(result);
+      assert.equal((await read()).json.error.code, 'BadGateway', `mutation ${index}`);
+    }
+    result = questionPage('replied');
+    result.data.items[0].resolution.at_unix_ms = 500;
+    assert.equal((await read('replied')).json.error.code, 'BadGateway');
+    result = questionPage();
+    result.data.items[0].workstream_id = 'OTHER';
+    const workOnly = await req(bridge.base, 'POST', '/api/team/read', { body: { project: 'demo', query: {
+      protocol_version: 1, op: 'decisions.list', work_id: 'WORK', decision_id: 'question', limit: 1,
+    } } });
+    assert.equal(workOnly.json.error.code, 'BadGateway');
+    for (const extra of [{ session_id: 'private' }, { decision_state: 'private' }, { question: 'private' }]) {
+      assert.equal((await read('open', extra)).json.error.code, 'InvalidInput');
+    }
+    const command = await req(bridge.base, 'POST', '/api/team/read', { body: { project: 'demo',
+      query: { protocol_version: 1, op: 'decision.respond' } } });
+    assert.equal(command.json.error.code, 'Unsupported');
+  } finally {
+    await bridge.close(); await upstream.close();
   }
 });

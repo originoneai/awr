@@ -41,10 +41,10 @@ const READ_WORK_SELECTION = new Set(['work.prepare', 'work.admission', 'work.sna
   'handoff.inspect', 'evidence.inspect', 'review.inspect', 'review.rounds', 'completion.inspect',
   'delivery.inspect', 'artifact.content', 'artifact.segment', 'delivery.exports']);
 const READ_PAGED = new Set(['workstreams.list', 'work.list', 'work.graph', 'work.search', 'events.list',
-  'work.next', 'work.inbox', 'task.assignees', 'delivery.exports', 'planning.candidates', 'sources.inspect', 'documents.list', 'review.rounds', 'handoff.list', 'dependencies.list']);
+  'work.next', 'work.inbox', 'task.assignees', 'delivery.exports', 'planning.candidates', 'sources.inspect', 'documents.list', 'decisions.list', 'review.rounds', 'handoff.list', 'dependencies.list']);
 const READ_CONTEXT_BUDGET = new Set(['work.prepare', 'work.snapshot', 'work.observe', 'work.inbox',
   'source.content', 'artifact.content', 'artifact.segment', 'review.inspect',
-  'delivery.neutral.inspect', 'delivery.submission.describe', 'planning.candidates', 'sources.inspect', 'documents.list', 'review.rounds', 'handoff.list', 'dependencies.list']);
+  'delivery.neutral.inspect', 'delivery.submission.describe', 'planning.candidates', 'sources.inspect', 'documents.list', 'decisions.list', 'review.rounds', 'handoff.list', 'dependencies.list']);
 const READ_REQUIRED_SELECTOR = {
   'command.inspect': 'request_id',
   'planning.outcome': 'request_id',
@@ -65,7 +65,7 @@ const READ_OPS = new Set([
 ]);
 const READ_ID_KEYS = new Set(['work_id', 'session_id', 'request_id', 'claim_id', 'execution_id',
   'handoff_id', 'evidence_id', 'review_round_id', 'artifact_id', 'export_id', 'workstream_id',
-  'change_id', 'member_actor_id', 'category', 'recipient_person_id']);
+  'change_id', 'member_actor_id', 'category', 'recipient_person_id', 'decision_id']);
 const READ_RESPONSE_LIMIT = { default: 1048576, 'artifact.content': 8388608, 'artifact.segment': 65536 };
 
 /**
@@ -147,6 +147,9 @@ function validateReadQuery(query) {
     allowIds('workstream_id');
   } else if (op === 'sources.inspect' || op === 'documents.list' || op === 'dependencies.list') {
     allowIds('work_id', 'workstream_id');
+  } else if (op === 'decisions.list') {
+    allowIds('work_id', 'workstream_id', 'decision_id');
+    allowed.add('decision_state');
   } else if (op === 'handoff.list') {
     allowIds('work_id', 'workstream_id', 'recipient_person_id');
     allowed.add('handoff_state');
@@ -182,6 +185,9 @@ function validateReadQuery(query) {
   if (READ_EXACT_WORK.has(op) && !query.work_id) return invalidRead(`${op} requires a work selector`);
   if ('handoff_state' in query && !['pending', 'history', 'all'].includes(query.handoff_state)) {
     return invalidRead('Handoff view is invalid');
+  }
+  if ('decision_state' in query && !['open', 'replied', 'cancelled', 'all'].includes(query.decision_state)) {
+    return invalidRead('Question view is invalid');
   }
   if ('search' in query) {
     const search = query.search;
@@ -252,6 +258,7 @@ function validReadResponse(reply, op) {
       || data.next_cursor.length > 4096)) return false;
   if (op === 'sources.inspect') return validRequiredSources(reply);
   if (op === 'documents.list') return validDocuments(reply);
+  if (op === 'decisions.list') return validDecisions(reply);
   if (op === 'review.rounds') return validReviewRounds(reply);
   if (op === 'handoff.list') return validHandoffs(reply);
   if (op === 'dependencies.list') return validDependencies(reply);
@@ -260,6 +267,44 @@ function validReadResponse(reply, op) {
       validDependency(item, data.delivery.work_id) && !('work_title' in item) && !('dependency_position' in item));
   }
   return true;
+}
+
+function validDecisions(reply) {
+  const data = reply.data;
+  const text = (value, bytes) => typeof value === 'string' && value.trim().length > 0
+    && !value.includes('\0') && Buffer.byteLength(value, 'utf8') <= bytes;
+  const name = (value) => value === null || typeof value === 'string' && Array.from(value).length <= 128;
+  const person = (value) => asObject(value) && isBoundedId(value.person_id) && name(value.display_name);
+  const actor = (value) => person(value) && isBoundedId(value.actor_id) && isBoundedId(value.client_id);
+  if (!Array.isArray(data.items) || typeof data.truncated !== 'boolean'
+    || data.truncated !== (data.next_cursor !== null) || data.execution_authorized !== false
+    || !(data.work_id === null || isBoundedId(data.work_id))
+    || !(data.decision_id === null || isBoundedId(data.decision_id))
+    || !['open', 'replied', 'cancelled', 'all'].includes(data.decision_state)
+    || !Number.isSafeInteger(data.as_of?.at_unix_ms) || data.as_of.at_unix_ms < 0
+    || data.as_of.source_snapshot_id !== reply.source_snapshot_id
+    || data.as_of.project_revision !== reply.project_revision) return false;
+  return data.items.every((item) => {
+    if (!asObject(item) || !isBoundedId(item.decision_id) || !isBoundedId(item.work_id)
+      || !isBoundedId(item.workstream_id) || !isBoundedId(item.session_id) || !isBoundedId(item.request_key)
+      || !text(item.work_title, 8192) || !text(item.question, 2048) || !text(item.impact, 2048)
+      || typeof item.decision_version !== 'string' || !/^[1-9]\d*$/.test(item.decision_version)
+      || typeof item.contract_hash !== 'string' || !/^[0-9a-f]{64}$/.test(item.contract_hash)
+      || typeof item.baseline_matches_current !== 'boolean' || !actor(item.requester)
+      || !isBoundedId(item.source_snapshot_id) || item.approval_granted !== false
+      || !Number.isSafeInteger(item.created_at_unix_ms) || item.created_at_unix_ms < 0
+      || !Array.isArray(item.allowed_responders) || item.allowed_responders.length < 1
+      || item.allowed_responders.length > 20 || !item.allowed_responders.every(person)
+      || !Array.isArray(item.allowed_responder_person_ids)
+      || item.allowed_responder_person_ids.length !== item.allowed_responders.length
+      || new Set(item.allowed_responder_person_ids).size !== item.allowed_responders.length
+      || !item.allowed_responders.every((responder, index) => responder.person_id === item.allowed_responder_person_ids[index])) return false;
+    if (item.state === 'open') return item.reply === null && item.resolution === null;
+    return ['replied', 'cancelled'].includes(item.state) && text(item.reply, 4096)
+      && actor(item.resolution) && item.resolution.kind === item.state
+      && isBoundedId(item.resolution.session_id) && isBoundedId(item.resolution.request_id)
+      && Number.isSafeInteger(item.resolution.at_unix_ms) && item.resolution.at_unix_ms >= item.created_at_unix_ms;
+  });
 }
 
 function validDocuments(reply) {
@@ -634,6 +679,22 @@ function readAttributionError(query, result, { strictWorkstream } = {}) {
     || data.work_id !== (query.work_id ?? null)
     || data.scope !== (query.work_id ? 'work' : 'authorized_workstreams'))) {
     return { code: 'BadGateway', message: 'Documents are not attributable to the requested scope' };
+  }
+  if (query.op === 'decisions.list' && (
+    data.items.length > (query.limit ?? 20)
+    || data.next_cursor !== null && data.items.length !== (query.limit ?? 20)
+    || data.work_id !== (query.work_id ?? null) || data.decision_id !== (query.decision_id ?? null)
+    || data.decision_state !== (query.decision_state ?? 'open')
+    || result.selection_basis !== (query.work_id ? 'work' : query.workstream_id ? 'explicit' : 'project')
+    || (query.work_id || query.workstream_id) && (!isBoundedId(result.workstream_id)
+      || typeof result.authority_version !== 'string' || !/^[1-9]\d*$/.test(result.authority_version))
+    || new Set(data.items.map((item) => item.decision_id)).size !== data.items.length
+    || data.items.some((item, index) => query.work_id && item.work_id !== query.work_id
+      || (query.work_id || query.workstream_id) && item.workstream_id !== result.workstream_id
+      || query.decision_id && item.decision_id !== query.decision_id
+      || data.decision_state !== 'all' && item.state !== data.decision_state
+      || index > 0 && data.items[index - 1].decision_id <= item.decision_id))) {
+    return { code: 'BadGateway', message: 'Questions are not attributable to the requested scope' };
   }
   if (query.op === 'review.rounds' && (!validPageCoverage(data, query, 'round_position')
     || !isBoundedId(result.workstream_id) || typeof result.authority_version !== 'string'

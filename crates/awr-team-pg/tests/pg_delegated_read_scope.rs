@@ -866,6 +866,53 @@ async fn handoff_discovery_unions_only_readable_exact_tasks_and_rechecks_revocat
 }
 
 #[tokio::test]
+async fn ordinary_question_discovery_filters_exact_tasks_before_pagination_and_rechecks_revocation()
+{
+    let (_guard, admin, db, store) = setup().await;
+    agent_identity(&admin).await;
+    grant(
+        &db,
+        AuthorizationScope::Task {
+            project_id: PROJECT.into(),
+            work_item_id: "a".into(),
+        },
+    )
+    .await;
+    for (id, work, session) in [
+        ("question-a", "a", "session-a"),
+        ("question-c", "c", "session-a"),
+        ("PRIVATE QUESTION", "b-private", "session-b"),
+    ] {
+        let metadata = json!({"basis":{"contract_hash":"a".repeat(64)},"impact":"The team is waiting for a scope decision.",
+            "requester":{"person_id":"alice","actor_id":"agent","client_id":"cli-a"},
+            "allowed_responder_person_ids":["alice"],"source_snapshot_id":"fixture"});
+        admin.execute("INSERT INTO awr_team.wait_items(tenant_id,project_id,id,session_id,work_id,question,state,
+            decision_key,decision_baseline_digest,decision_json,decision_version)
+            VALUES($1,$2,$3,$4,$5,$3,'open',$3,$6,$7,1)",
+            &[&TENANT,&PROJECT,&id,&session,&work,&"a".repeat(64),&metadata]).await.unwrap();
+    }
+    let mut q = query("decisions.list");
+    q.limit = Some(1);
+    let first = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    assert_eq!(first["data"]["items"].as_array().unwrap().len(), 1);
+    assert_eq!(first["data"]["items"][0]["work_id"], "a");
+    assert!(first["data"]["next_cursor"].is_null());
+    assert!(!first.to_string().contains("PRIVATE"));
+    assert!(!first.to_string().contains("question-c"));
+    q.work_id = Some("c".into());
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, q.clone()).await,
+        Err(PgError::Forbidden)
+    ));
+    q.work_id = None;
+    admin.execute("UPDATE awr_team.agent_authorizations SET status='revoked' WHERE id='read-authorization'",&[]).await.unwrap();
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, q).await,
+        Err(PgError::Forbidden)
+    ));
+}
+
+#[tokio::test]
 async fn dependency_discovery_keeps_task_scope_and_reauthorizes_upstream_metadata() {
     let (_guard, admin, db, store) = setup().await;
     agent_identity(&admin).await;

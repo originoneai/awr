@@ -996,7 +996,63 @@ fn add_remaining_closed_command_schemas(command: &mut Value) {
         .clone(),
     );
 
+    command["properties"]["args"]["properties"]
+        .as_object_mut()
+        .unwrap()
+        .extend(
+            json!({
+                "request_key":identity.clone(),
+                "question":{"type":"string","minLength":1,"maxLength":2048,"x-nonblank-utf8":true},
+                "impact":{"type":"string","minLength":1,"maxLength":2048,"x-nonblank-utf8":true},
+                "allowed_responder_person_ids":{"type":"array","minItems":1,"maxItems":20,
+                    "uniqueItems":true,"items":identity.clone()},
+                "decision_id":identity.clone(),
+                "expected_decision_version":positive_version.clone(),
+                "reply":{"type":"string","minLength":1,"maxLength":4096,"x-nonblank-utf8":true}
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+        );
+
     for (op, required, optional) in [
+        (
+            "decision.request",
+            vec![
+                "session_id",
+                "expected_session_version",
+                "claim_id",
+                "expected_fence",
+                "expected_lease_version",
+                "request_key",
+                "question",
+                "impact",
+                "allowed_responder_person_ids",
+            ],
+            vec![],
+        ),
+        (
+            "decision.respond",
+            vec![
+                "session_id",
+                "expected_session_version",
+                "decision_id",
+                "expected_decision_version",
+                "reply",
+            ],
+            vec![],
+        ),
+        (
+            "decision.cancel",
+            vec![
+                "session_id",
+                "expected_session_version",
+                "decision_id",
+                "expected_decision_version",
+                "reply",
+            ],
+            vec![],
+        ),
         (
             "admission.decide",
             vec![
@@ -1181,6 +1237,10 @@ fn catalog() -> Vec<Tool> {
             "description":"Optional recipient filter for handoff.list; current work visibility still applies."},
         "handoff_state":{"type":"string","enum":["pending","history","all"],
             "description":"handoff.list defaults to pending. History includes terminal and deadline-expired records; this read never receives or cancels a handoff."},
+        "decision_id":{"type":"string","minLength":1,"maxLength":128,
+            "description":"Optional exact ordinary question selector for decisions.list. Use a recorded decision_id, not an event or review ID."},
+        "decision_state":{"type":"string","enum":["open","replied","cancelled","all"],
+            "description":"decisions.list defaults to open. Replies are ordinary decisions and confer no execution permission or formal acceptance."},
         "category":{"type":"string","minLength":1,"maxLength":128,
             "description":"Optional category filter for audit.history, audit.export or audit.count."},
         "include_denies":{"type":"boolean",
@@ -1195,6 +1255,9 @@ fn catalog() -> Vec<Tool> {
         "expected_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"}
     }});
     query["allOf"] = json!([
+        {"if":{"properties":{"op":{"const":"decisions.list"}},"required":["op"]},
+            "then":{"not":{"required":["session_id"]}},
+            "else":{"not":{"anyOf":[{"required":["decision_id"]},{"required":["decision_state"]}]}}},
         {"if":{"properties":{"op":{"const":"documents.list"}},"required":["op"]},
             "then":{"not":{"required":["session_id"]}}},
         {"if":{"properties":{"op":{"const":"dependencies.list"}},"required":["op"]},
@@ -4563,6 +4626,8 @@ mod tests {
             handoff_id: None,
             recipient_person_id: Some("recipient".into()),
             handoff_state: Some("pending".into()),
+            decision_id: Some("question".into()),
+            decision_state: Some("open".into()),
             evidence_id: None,
             review_round_id: None,
             source_path: Some("spec.md".into()),

@@ -258,6 +258,10 @@ pub(super) async fn read_for_prepare(
         .await?
         .get::<_, bool>(0)
     );
+    if data["waiting_user"] == true {
+        data["ordinary_decisions"] =
+            super::decisions::context(tx, tenant, project, auth, work).await?;
+    }
     let owns_session = data["session"]["actor_id"] == auth.actor_id
         && data["session"]["client_id"] == auth.client_id;
     // Keep the added read futures on the heap. Preparation is nested inside
@@ -290,6 +294,7 @@ pub(super) async fn read_for_prepare(
         &data,
         super::guidance::with_collaboration(&data, true, owns_session, role_hint),
     );
+    let hint = super::decisions::guidance(&data, hint);
     let hint = super::guidance::authorized(auth, stream_id, work, hint);
     let expected_authority_version = auth.catalog.get(stream_id)?.authority_version.to_string();
     let command_inputs = super::guidance::NextCommandBaseInputs {
