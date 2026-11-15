@@ -551,6 +551,7 @@ pub(crate) async fn resolve_agent_read_delegation(
                 | "work.graph"
                 | "work.search"
                 | "planning.candidates"
+                | "sources.inspect"
                 | "events.list"
         );
     if !actor_requires_explicit_delegation(&auth.actor_kind) || !discovery {

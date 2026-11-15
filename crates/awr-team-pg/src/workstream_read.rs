@@ -22,6 +22,7 @@ mod list;
 mod navigation;
 mod observation;
 mod planning;
+mod sources;
 
 pub(crate) const QUERIES: &[&str] = &[
     "capabilities",
@@ -59,6 +60,7 @@ pub(crate) const QUERIES: &[&str] = &[
     "delivery.exports",
     "planning.outcome",
     "planning.candidates",
+    "sources.inspect",
     "audit.history",
     "audit.export",
     "audit.count",
@@ -112,6 +114,7 @@ impl WorkstreamQuery {
     /// Used by validation and MCP discovery; other queries must omit the budget.
     pub const CONTEXT_BUDGET_OPERATIONS: &'static [&'static str] = &[
         "planning.candidates",
+        "sources.inspect",
         "work.prepare",
         "work.snapshot",
         "work.observe",
@@ -227,6 +230,7 @@ impl WorkstreamQuery {
                 | "delivery.exports"
                 | "delivery.routes"
                 | "planning.candidates"
+                | "sources.inspect"
         );
         let audit = matches!(
             self.op.as_str(),
@@ -408,7 +412,11 @@ impl WorkstreamQuery {
             (
                 "session_id",
                 self.session_id.is_some()
-                    && (project_wide || work_list || activity_audit || exact_work),
+                    && (project_wide
+                        || work_list
+                        || activity_audit
+                        || exact_work
+                        || self.op == "sources.inspect"),
             ),
             (
                 "workstream_id",
@@ -1198,6 +1206,9 @@ pub(crate) async fn read(
     }
     if q.op == "planning.candidates" {
         return planning::read(tx, tenant, project, auth, q).await;
+    }
+    if q.op == "sources.inspect" {
+        return sources::read(tx, tenant, project, auth, q).await;
     }
     if matches!(q.op.as_str(), "audit.requests" | "audit.development") {
         return activity::read(tx, tenant, project, auth, q).await;
@@ -2084,15 +2095,13 @@ async fn controlled_prepare_context(
             reasons.push("spec_path_rejected");
             continue;
         }
+        // Missing bytes do not weaken the activated shared-document boundary.
+        if authorize_source_file_streams(auth, path).is_err() {
+            reasons.push("required_spec_forbidden");
+            continue;
+        }
         match by_path.get(path) {
             Some(file) => {
-                let text = file.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                // Inline context must obey the same shared-document boundary as
-                // source.content; a selected stream cannot expose a private peer.
-                if authorize_source_file_streams(auth, path, text).is_err() {
-                    reasons.push("required_spec_forbidden");
-                    continue;
-                }
                 let sha = file.get("sha256").and_then(|v| v.as_str()).unwrap_or("");
                 let bytes = file.get("bytes").and_then(|v| v.as_u64()).unwrap_or(0);
                 let text = file.get("text").and_then(|v| v.as_str()).unwrap_or("");
@@ -2145,6 +2154,8 @@ async fn read_controlled_source_content(
     max_bytes: Option<usize>,
 ) -> PgResult<Value> {
     safe_relative_source_path(path)?;
+    // Bind access before examining bytes or reporting their availability.
+    authorize_source_file_streams(auth, path)?;
     let files = active_source_files(tx, tenant, project).await?;
     let file = files
         .into_iter()
@@ -2154,11 +2165,6 @@ async fn read_controlled_source_content(
         .get("text")
         .and_then(|v| v.as_str())
         .ok_or_else(|| PgError::Protocol("source file text unavailable".into()))?;
-    // Require read grant over every workstream whose identity/content is exposed.
-    // Mixed-scope catalog files (e.g. workstreams.json) are refused unless the
-    // caller can read the entire file's stream set — never return a raw shared
-    // snapshot based only on nonempty visible streams.
-    authorize_source_file_streams(auth, path, text)?;
     let digest = crate::source::sha256_hex(text.as_bytes());
     let recorded = file.get("sha256").and_then(|v| v.as_str()).unwrap_or("");
     if !recorded.is_empty() && recorded != digest {
@@ -2187,39 +2193,16 @@ async fn read_controlled_source_content(
     }))
 }
 
-fn authorize_source_file_streams(auth: &ReaderAuthority, path: &str, text: &str) -> PgResult<()> {
+fn authorize_source_file_streams(auth: &ReaderAuthority, path: &str) -> PgResult<()> {
     use awr_core::Id;
     use std::collections::BTreeSet;
 
     let mut required: BTreeSet<Id> = BTreeSet::new();
     if path == "workstreams.json" || path.ends_with("/workstreams.json") {
-        let bundle: Value = serde_json::from_str(text).map_err(|e| {
-            PgError::Protocol(format!("workstreams.json unreadable for auth binding: {e}"))
-        })?;
-        let streams = bundle
-            .pointer("/catalog/workstreams")
-            .and_then(Value::as_array)
-            .or_else(|| bundle.get("workstreams").and_then(Value::as_array));
-        if let Some(streams) = streams {
-            for stream in streams {
-                if let Some(id_str) = stream.get("id").and_then(Value::as_str) {
-                    let id: Id = id_str.parse().map_err(|_| {
-                        PgError::Protocol("invalid workstream id in catalog".into())
-                    })?;
-                    required.insert(id);
-                }
-            }
-        }
-        if let Some(contracts) = bundle.get("contracts").and_then(Value::as_array) {
-            for c in contracts {
-                if let Some(id_str) = c.get("workstream_id").and_then(Value::as_str) {
-                    let id: Id = id_str.parse().map_err(|_| {
-                        PgError::Protocol("invalid workstream_id in contracts".into())
-                    })?;
-                    required.insert(id);
-                }
-            }
-        }
+        // Authorization follows the activated catalog, never source bytes whose
+        // integrity is still being checked. Missing or tampered text cannot
+        // reduce the scope of a shared catalog file.
+        required.extend(auth.catalog.workstreams.iter().map(|stream| stream.id));
     } else {
         // Spec / other snapshot files: only readable when referenced by a
         // workstream the caller can already read.
@@ -2239,12 +2222,9 @@ fn authorize_source_file_streams(auth: &ReaderAuthority, path: &str, text: &str)
         return Err(PgError::Forbidden);
     }
     for id in &required {
-        let Some(grant) = auth.access.grants.iter().find(|g| g.workstream_id == *id) else {
-            return Err(PgError::Forbidden);
-        };
-        if !grant.read {
-            return Err(PgError::Forbidden);
-        }
+        auth.access
+            .authorize(&auth.catalog, *id, WorkstreamAction::Read)
+            .map_err(|_| PgError::Forbidden)?;
     }
     Ok(())
 }

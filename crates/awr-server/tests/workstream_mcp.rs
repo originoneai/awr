@@ -1134,12 +1134,6 @@ async fn query_contract_diagnostics_match_http_and_mcp_and_corrected_reads_succe
         ),
         (
             json!({"op":"source.content","source_path":"docs/alpha.md"}),
-            "source_path",
-            json!("src/synthetic-private-value.rs"),
-            "registered_source_required",
-        ),
-        (
-            json!({"op":"source.content","source_path":"docs/alpha.md"}),
             "max_context_bytes",
             json!(262145),
             "bounds",
@@ -1201,8 +1195,9 @@ async fn query_contract_diagnostics_match_http_and_mcp_and_corrected_reads_succe
         let http: Value = response.json().await.unwrap();
         assert_eq!(http["data"], read["data"]);
     }
-    // A syntactically valid selector does not confer access. Invalid credentials
-    // and forged authority continue to fail without query guidance or values.
+    // A syntactically valid selector does not confer access. Unregistered source
+    // paths are refused before checking availability, preserving the same
+    // boundary as private sources. Denials reveal no path or query guidance.
     for (token, input) in [
         (
             "synthetic-private-credential",
@@ -1215,6 +1210,14 @@ async fn query_contract_diagnostics_match_http_and_mcp_and_corrected_reads_succe
         (
             A,
             json!({"protocol_version":1,"op":"completion.inspect","work_id":"b-private"}),
+        ),
+        (
+            A,
+            json!({"protocol_version":1,"op":"source.content","source_path":"src/synthetic-private-value.rs"}),
+        ),
+        (
+            A,
+            json!({"protocol_version":1,"op":"source.content","source_path":"docs/private-beta.md"}),
         ),
     ] {
         let response = http()
