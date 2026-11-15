@@ -170,6 +170,7 @@ describe('plan observation product views', () => {
       '{"reason":"clarify scope","candidate_id":"proposal-123"}',
       'candidate_id=proposal-123',
       'token: synthetic-session-value',
+      'client%5Bsecret%5D=synthetic-session-value',
       ...['client_secret', 'auth_token', 'session_token', 'private_key', 'x-api-key', 'clientSecret']
         .flatMap((field) => [`${field}=synthetic-session-value`, `Review https://example.com/guide?${field}=synthetic-session-value`]),
       'Review https://example.com/guide#%61%75%74%68%5f%74%6f%6b%65%6e=synthetic-session-value',

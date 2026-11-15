@@ -79,7 +79,7 @@ function removeDiagnosticAssignments(text: string): string {
 }
 
 function diagnosticContent(text: string): boolean {
-  return /[{}\[\]]|```/.test(text)
+  return /[{}\[\]]|```|%[a-f0-9]{2}/i.test(text)
     || [...text.matchAll(/["']?\b([a-z][a-z0-9_-]*)["']?\s*([:：=])/gi)]
       .some(([, field, separator]) => SENSITIVE_FIELD.test(field)
         || separator === '=' || /[_-]|[a-z][A-Z]/.test(field))

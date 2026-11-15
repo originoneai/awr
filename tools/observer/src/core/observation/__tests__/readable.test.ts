@@ -50,6 +50,7 @@ describe('readableNarrative', () => {
       }
       let encoded = field;
       for (let depth = 0; depth < 6; depth += 1) {
+        expect(readableNarrative(`${encoded}=synthetic-bracket-value`, language)).toBeNull();
         for (const url of [`https://example.com/${encoded}=synthetic-bracket-value`,
           `https://example.com/guide#${encoded}=synthetic-bracket-value`,
           `https://example.com/guide?${encoded}=synthetic-bracket-value`]) {
