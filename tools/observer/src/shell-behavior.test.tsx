@@ -50,7 +50,7 @@ describe('prototype shell behavior', () => {
     const user = userEvent.setup();
     const { router } = setup('/workbench');
     await user.click(screen.getByTestId('scope-switcher'));
-    await user.click(await screen.findByText('Docs stream (docs)'));
+    await user.click(await screen.findByText('Docs stream'));
     expect(router.state.location.search).toContain('scope=docs');
     expect(screen.getByTestId('scope-switcher').textContent).toContain('Docs stream');
 

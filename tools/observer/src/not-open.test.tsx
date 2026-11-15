@@ -1,5 +1,4 @@
 import { act, screen, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import i18n from './i18n';
 import { defaultVisibleText } from './lib/human-language-guard';
@@ -25,19 +24,14 @@ describe('pages whose feature is not open yet', () => {
     expect(screen.queryByText(/未观察到相关记录|尚未完成读取/)).toBeNull();
   });
 
-  it('the inbox says it is not open and points to the "needs me" tab of the workbench, instead of reading as an empty inbox', async () => {
-    const user = userEvent.setup();
+  it('the inbox asks for a project before observing questions', async () => {
     stubFetch({ '/api/team/projects': DEMO_PROJECTS });
-    const { router } = renderApp('/inbox');
+    renderApp('/inbox');
     const page = await screen.findByTestId('page-inbox');
-    expect(defaultVisibleText(page)).toBe('待处理\n这里暂时没有内容\n该功能尚未开放\n需要你处理的事项，现在请在工作台的“\n需要我处理\n”里查看');
+    expect(defaultVisibleText(page)).toContain('选择一个项目，查看它的问题与答复。');
     expect(page.textContent).not.toMatch(/未观察到相关记录|尚未完成读取|暂无数据/);
     expect(screen.queryByTestId('state-empty')).toBeNull();
-    const link = within(page).getByRole('link', { name: '需要我处理' });
-    expect(link.getAttribute('href')).toBe('/workbench?tab=needs-me');
-    await user.click(link);
-    expect(router.state.location.pathname).toBe('/workbench');
-    expect(router.state.location.search).toBe('?tab=needs-me');
+    expect(within(page).getByRole('link', { name: '选择项目' }).getAttribute('href')).toBe('/projects');
   });
 
   it('says the same in English', async () => {
@@ -45,7 +39,7 @@ describe('pages whose feature is not open yet', () => {
     stubFetch({ '/api/team/projects': DEMO_PROJECTS });
     renderApp('/inbox');
     const page = await screen.findByTestId('page-inbox');
-    expect(defaultVisibleText(page)).toBe('Inbox\nNothing here yet\nThis feature is not available yet\nFor now, find what needs you on the workbench, under "\nNeeds me\n"');
-    expect(within(page).getByRole('link', { name: 'Needs me' }).getAttribute('href')).toBe('/workbench?tab=needs-me');
+    expect(defaultVisibleText(page)).toContain('Choose a project to see its questions and answers.');
+    expect(within(page).getByRole('link', { name: 'Choose a project' }).getAttribute('href')).toBe('/projects');
   });
 });

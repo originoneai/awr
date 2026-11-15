@@ -6,6 +6,7 @@ import { ObservationForbidden } from '../components/states';
 import { ObservationValue } from '../components/ObservationValue';
 
 import { isAuthError } from '../lib/api';
+import { projectLabel } from '../lib/project-label';
 import { ProjectAcceptance } from './ProjectAcceptance';
 import { ProjectKnowledge } from './ProjectKnowledge';
 import { ProjectOverview } from './ProjectOverview';
@@ -39,7 +40,7 @@ export function ProjectShell() {
         <Flex align="start" justify="space-between" gap={12} wrap>
           <Flex align="center" gap={8} wrap style={{ flex: '1 1 240px', minWidth: 0 }}>
               <Typography.Title level={4} style={{ margin: 0 }} data-testid="project-title">
-                {meta?.title ?? project}
+                {meta ? projectLabel(meta) : projects.isPending ? t('common.loading') : t('shell.unnamedProject')}
               </Typography.Title>
               {meta?.role ? <Tag><ObservationValue value={meta.role} field="role" /></Tag> : null}
           </Flex>

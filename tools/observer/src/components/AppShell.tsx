@@ -65,19 +65,21 @@ function NavigationIcon({ icon: Icon }: { icon: LucideIcon }) {
 
 function useShellMenuItems() {
   const { t } = useTranslation();
+  const { projectKey } = useScope();
+  const scopeSearch = projectKey ? `?scope=${encodeURIComponent(projectKey)}` : '';
   const menuItems: MenuProps['items'] = [];
   for (const [index, item] of NAVIGATION.entries()) {
     if (index === 5) menuItems.push({ type: 'divider' });
     menuItems.push({
       key: item.path,
       icon: <NavigationIcon icon={item.icon} />,
-      label: <NavLink to={item.path}>{t(`nav.${item.label}`)}</NavLink>,
+      label: <NavLink to={`${item.path}${scopeSearch}`}>{t(`nav.${item.label}`)}</NavLink>,
     });
   }
   const advancedItems: MenuProps['items'] = [{
     key: '/advanced',
     icon: <NavigationIcon icon={Wrench} />,
-    label: <NavLink to="/advanced">{t('nav.advanced')}</NavLink>,
+    label: <NavLink to={`/advanced${scopeSearch}`}>{t('nav.advanced')}</NavLink>,
   }];
   return { menuItems, advancedItems };
 }
@@ -140,12 +142,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   const projectItems = revoked ? [] : (projects.data?.projects ?? []);
   const selectedProject = projectItems.find((project) => project.key === projectKey);
   const scopeLabel = selectedProject
-    ? projectLabel(selectedProject, true)
-    : (!revoked && projectKey) || t('shell.scope');
+    ? projectLabel(selectedProject)
+    : t('shell.scope');
   const scopeMenu: MenuProps = {
     items: [
       { key: '__org__', label: t('shell.scope') },
-      ...projectItems.map((project) => ({ key: project.key, label: projectLabel(project, true) })),
+      ...projectItems.map((project) => ({ key: project.key, label: projectLabel(project) })),
     ],
     selectedKeys: [projectKey ?? '__org__'],
     onClick: ({ key }) => setProjectKey(key === '__org__' ? null : key),

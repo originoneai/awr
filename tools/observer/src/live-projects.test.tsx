@@ -15,12 +15,12 @@ describe('live project discovery without display metadata', () => {
     });
     const { router } = renderApp('/projects');
 
-    const projectLink = await screen.findByRole('link', { name: 'support-workspace' });
+    const projectLink = await screen.findByRole('link', { name: '项目名称待补充' });
     expect(projectLink.getAttribute('href')).toBe('/projects/support-workspace');
     await user.click(projectLink);
 
     await waitFor(() => expect(router.state.location.pathname).toBe('/projects/support-workspace'));
-    expect(screen.getByTestId('scope-switcher').textContent).toBe('support-workspace');
+    expect(screen.getByTestId('scope-switcher').textContent).toBe('项目名称待补充');
     expect(document.body.textContent).not.toContain('undefined');
   });
 
@@ -32,9 +32,9 @@ describe('live project discovery without display metadata', () => {
     });
     const { router } = renderApp('/workbench');
     await user.click(screen.getByTestId('scope-switcher'));
-    await user.click(await screen.findByText('support-workspace'));
+    await user.click(await screen.findByText('项目名称待补充'));
 
     await waitFor(() => expect(router.state.location.search).toBe('?scope=support-workspace'));
-    expect(screen.getByTestId('scope-switcher').textContent).toBe('support-workspace');
+    expect(screen.getByTestId('scope-switcher').textContent).toBe('项目名称待补充');
   });
 });
