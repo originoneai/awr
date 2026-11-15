@@ -339,6 +339,7 @@ pub enum CandidateState {
     Approved,
     Published,
     Superseded,
+    Rejected,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -401,6 +402,28 @@ pub struct PlanningCandidate {
 }
 
 impl PlanningCandidate {
+    /// A planning decision may close a draft without changing the effective plan.
+    pub fn authorize_rejection(
+        &self,
+        scope: &AuthorityScope,
+        resource: &ResourceRef,
+        now_unix_ms: u64,
+        presented_digest: &str,
+    ) -> TeamResult<()> {
+        authorize_planning_action(scope, Action::PlanningApprove, resource, now_unix_ms)?;
+        if self.state != CandidateState::Drafting {
+            return Err(TeamError::InvalidInput(
+                "reject requires a drafting candidate".into(),
+            ));
+        }
+        if self.candidate_digest()? != presented_digest {
+            return Err(TeamError::InvalidInput(
+                "rejection digest does not match current candidate".into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub fn validate_structure(&self) -> TeamResult<()> {
         if self.codec != planning_codec_for_changes(&self.changes) {
             return Err(TeamError::InvalidInput("unsupported planning codec".into()));
@@ -993,10 +1016,10 @@ pub fn edit_candidate(
 ) -> TeamResult<PlanningCandidate> {
     if matches!(
         candidate.state,
-        CandidateState::Published | CandidateState::Superseded
+        CandidateState::Published | CandidateState::Superseded | CandidateState::Rejected
     ) {
         return Err(TeamError::InvalidInput(
-            "cannot edit published or superseded candidate".into(),
+            "cannot edit published, superseded or rejected candidate".into(),
         ));
     }
     candidate.codec = planning_codec_for_changes(&changes).into();
@@ -1687,6 +1710,61 @@ mod tests {
             work_id: None,
         };
         (scope, resource)
+    }
+
+    #[test]
+    fn rejection_requires_decision_authority_and_exact_draft_then_closes_edit_and_publication() {
+        let mut c = candidate(vec![DraftChange {
+            op: DraftOpKind::CreateTask,
+            before: None,
+            after: draft("A", &[]),
+        }]);
+        let digest = c.candidate_digest().unwrap();
+        let (scope, resource) = maintainer_scope();
+        c.authorize_rejection(&scope, &resource, 1, &digest)
+            .unwrap();
+        assert!(
+            c.authorize_rejection(&scope, &resource, 1, &"0".repeat(64))
+                .is_err()
+        );
+        let developer = authority_from_template(
+            RoleTemplate::Developer,
+            "tenant-a",
+            "project-a",
+            "developer",
+            "developer-client",
+        );
+        assert!(
+            c.authorize_rejection(&developer, &resource, 1, &digest)
+                .is_err()
+        );
+        for state in [
+            CandidateState::Approved,
+            CandidateState::Published,
+            CandidateState::Superseded,
+            CandidateState::Rejected,
+        ] {
+            c.state = state;
+            assert!(
+                c.authorize_rejection(&scope, &resource, 1, &digest)
+                    .is_err()
+            );
+        }
+        assert_eq!(c.candidate_digest().unwrap(), digest);
+        assert!(edit_candidate(c.clone(), c.changes.clone()).is_err());
+        assert!(
+            authorize_planning_approve(
+                &scope,
+                &resource,
+                1,
+                &c,
+                &digest,
+                &OrdinaryPlanningSelfApprovePolicy::ordinary_default(),
+                "independent_review"
+            )
+            .is_err()
+        );
+        assert!(authorize_planning_publish(&scope, &resource, 1, &c, &digest).is_err());
     }
 
     #[test]

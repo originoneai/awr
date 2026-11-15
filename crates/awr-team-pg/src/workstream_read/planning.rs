@@ -187,7 +187,7 @@ pub(super) async fn read(
         c.baseline_digest,c.baseline_epoch,c.candidate_digest,c.draft_revision,c.state,c.changes_json,
         (extract(epoch FROM c.created_at)*1000)::bigint,
         (extract(epoch FROM c.updated_at)*1000)::bigint,
-        approval.body,publication.body,activation.body
+        approval.body,publication.body,activation.body,rejection.body
         FROM awr_team.planning_candidates c
         LEFT JOIN awr_team.actors a ON a.tenant_id=c.tenant_id AND a.id=c.author_actor_id
         LEFT JOIN LATERAL (
@@ -213,6 +213,12 @@ pub(super) async fn read(
           WHERE p.tenant_id=c.tenant_id AND p.project_id=c.project_id AND p.candidate_id=c.id
             AND p.candidate_digest=c.candidate_digest AND p.publish_receipt_id=publication.id
           ORDER BY p.created_at DESC,p.id DESC LIMIT 1) activation ON true
+        LEFT JOIN LATERAL (
+          SELECT jsonb_build_object('actor_id',p.reviewer_actor_id,'display_name',a.display_name,
+            'at_unix_ms',(extract(epoch FROM p.decided_at)*1000)::bigint,'reason',p.reason) body
+          FROM awr_team.planning_rejections p LEFT JOIN awr_team.actors a ON a.tenant_id=p.tenant_id AND a.id=p.reviewer_actor_id
+          WHERE p.tenant_id=c.tenant_id AND p.project_id=c.project_id AND p.candidate_id=c.id
+            AND p.candidate_digest=c.candidate_digest AND p.draft_revision=c.draft_revision) rejection ON true
         WHERE {FILTER} AND c.id>$9 ORDER BY c.id LIMIT $10"),&page_params).await?;
     let changes: Vec<Vec<DraftChange>> = rows
         .iter()
@@ -289,7 +295,7 @@ pub(super) async fn read(
             "approval":nullable(r.get::<_,Option<Value>>(12).unwrap_or(Value::Null),"not_approved"),
             "publication":nullable(r.get::<_,Option<Value>>(13).unwrap_or(Value::Null),"not_published"),
             "activation":nullable(r.get::<_,Option<Value>>(14).unwrap_or(Value::Null),"not_applied"),
-            "rejection":nullable(Value::Null,"transition_not_supported")}))
+            "rejection":nullable(r.get::<_,Option<Value>>(15).unwrap_or(Value::Null),"not_rejected")}))
     }).collect::<PgResult<Vec<_>>>()?;
     let next = if rows.len() > limit as usize {
         next_cursor(

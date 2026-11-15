@@ -23,8 +23,8 @@ pub use oauth::OAuthConfig;
 
 use awr_team_pg::{
     AdminAccessPlan, PgError, PlanningApproveRequest, PlanningDraftRequest, PlanningPublishRequest,
-    PlanningSuggestRequest, WorkstreamCommand, WorkstreamCommandStore, WorkstreamQuery,
-    WorkstreamReadStore,
+    PlanningRejectRequest, PlanningSuggestRequest, WorkstreamCommand, WorkstreamCommandStore,
+    WorkstreamQuery, WorkstreamReadStore,
 };
 use axum::{
     Router,
@@ -215,6 +215,10 @@ pub fn router(
         .route(
             "/v1/projects/{project}/planning/approve",
             post(planning_approve),
+        )
+        .route(
+            "/v1/projects/{project}/planning/reject",
+            post(planning_reject),
         )
         .route(
             "/v1/projects/{project}/planning/publish",
@@ -726,6 +730,14 @@ async fn planning_approve(
 ) -> Response {
     planning_dispatch(state, key, headers, body, PlanningOp::Approve).await
 }
+async fn planning_reject(
+    State(state): State<Arc<StateData>>,
+    Path(key): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    planning_dispatch(state, key, headers, body, PlanningOp::Reject).await
+}
 async fn planning_publish(
     State(state): State<Arc<StateData>>,
     Path(key): Path<String>,
@@ -748,6 +760,7 @@ enum PlanningOp {
     Draft,
     Preview,
     Approve,
+    Reject,
     Publish,
     Outcome,
 }
@@ -781,6 +794,7 @@ async fn planning_dispatch(
         PlanningOp::Draft => "planning.draft",
         PlanningOp::Preview => "planning.preview",
         PlanningOp::Approve => "planning.approve",
+        PlanningOp::Reject => "planning.reject",
         PlanningOp::Publish => "planning.publish",
         PlanningOp::Outcome => "planning.outcome",
     };
@@ -823,6 +837,11 @@ async fn planning_dispatch(
                 source
                     .planning_approve(&project.tenant_id, &project.project_id, token, &req)
                     .await
+            }
+            PlanningOp::Reject => {
+                let req: PlanningRejectRequest = serde_json::from_slice(&body)
+                    .map_err(|_| PgError::Protocol("invalid planning rejection".into()))?;
+                source.planning_reject(&project.tenant_id, &project.project_id, token, &req).await
             }
             PlanningOp::Publish => {
                 let req: PlanningPublishRequest = serde_json::from_slice(&body)

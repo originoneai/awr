@@ -68,9 +68,49 @@ pub struct PlanningCommandBind {
 
 const PLANNING_RECEIPT_PROTOCOL: &str = "awr-planning-command-receipt-v1";
 
-pub(crate) enum PlanningApprovalAttempt {
-    Approved(Value),
+pub(crate) enum PlanningDecisionAttempt {
+    Recorded(Value),
     SourceBaselineChanged,
+    CandidateChanged,
+    CandidateClosed,
+}
+
+/// Keep a committed decision recoverable even if the candidate changes before
+/// the command layer receives the commit acknowledgement.
+async fn complete_decision_receipt(
+    tx: &Transaction<'_>,
+    tenant_id: &str,
+    project_id: &str,
+    auth: &ReaderAuthority,
+    bind: &PlanningCommandBind,
+    result: &Value,
+) -> PgResult<()> {
+    let wrapped = json!({
+        "protocol":super::planning_ops::RECEIPT_PROTOCOL,
+        "request_id":bind.request_id, "op":bind.op,
+        "request_hash":bind.request_hash, "result":result, "already_recorded":false
+    });
+    let updated = tx
+        .execute(
+            "UPDATE awr_team.planning_command_receipts
+         SET status='completed',result_json=$4,updated_at=clock_timestamp()
+         WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3 AND request_hash=$5
+           AND actor_id=$6 AND client_id=$7",
+            &[
+                &tenant_id,
+                &project_id,
+                &bind.request_id,
+                &wrapped,
+                &bind.request_hash,
+                &auth.actor_id,
+                &auth.client_id,
+            ],
+        )
+        .await?;
+    if updated != 1 {
+        return Err(PgError::IdempotencyConflict);
+    }
+    Ok(())
 }
 
 async fn bind_planning_receipt_and_ops_audit(
@@ -639,6 +679,7 @@ impl SourceStore {
                 CandidateState::Approved => "approved",
                 CandidateState::Published => "published",
                 CandidateState::Superseded => "superseded",
+                CandidateState::Rejected => "rejected",
             },
             "draft_revision": candidate.draft_revision,
             "diff": diff,
@@ -666,11 +707,18 @@ impl SourceStore {
                 candidate_id,
                 candidate_digest,
                 author_person_id,
+                None,
             )
             .await?
         {
-            PlanningApprovalAttempt::Approved(result) => Ok(result),
-            PlanningApprovalAttempt::SourceBaselineChanged => Err(PgError::PreconditionsChanged),
+            PlanningDecisionAttempt::Recorded(result) => Ok(result),
+            PlanningDecisionAttempt::SourceBaselineChanged => Err(PgError::PreconditionsChanged),
+            PlanningDecisionAttempt::CandidateChanged => Err(PgError::Protocol(
+                "approval digest does not match current candidate".into(),
+            )),
+            PlanningDecisionAttempt::CandidateClosed => Err(PgError::Protocol(
+                "approve requires a drafting candidate".into(),
+            )),
         }
     }
 
@@ -684,7 +732,8 @@ impl SourceStore {
         candidate_id: &str,
         candidate_digest: &str,
         author_person_id: Option<&str>,
-    ) -> PgResult<PlanningApprovalAttempt> {
+        bind: Option<&PlanningCommandBind>,
+    ) -> PgResult<PlanningDecisionAttempt> {
         let mut client = self.connect().await?;
         crate::check_schema(&client).await?;
         let tx = client
@@ -701,14 +750,14 @@ impl SourceStore {
         )
         .await?;
         let row = tx
-            .query_one(
+            .query_opt(
                 "SELECT self_approve_policy_json, delivery_completion_policy
                  FROM awr_team.planning_candidates
                  WHERE tenant_id=$1 AND project_id=$2 AND id=$3 FOR UPDATE",
                 &[&tenant_id, &project_id, &candidate_id],
             )
-            .await
-            .map_err(|_| PgError::Protocol("planning candidate not found".into()))?;
+            .await?
+            .ok_or_else(|| PgError::Protocol("planning candidate not found".into()))?;
         let policy_json: Value = row.get(0);
         let delivery_policy: String = row.get(1);
         let policy: OrdinaryPlanningSelfApprovePolicy =
@@ -718,6 +767,14 @@ impl SourceStore {
         // Do not copy a caller-supplied person into the approver scope. That
         // substitution both forges the receipt and clears the self-approve ban.
         attested_actor_person(&auth.actor_id, author_person_id).map_err(map_team)?;
+        if candidate.state != CandidateState::Drafting {
+            tx.rollback().await?;
+            return Ok(PlanningDecisionAttempt::CandidateClosed);
+        }
+        if candidate.candidate_digest().map_err(map_team)? != candidate_digest {
+            tx.rollback().await?;
+            return Ok(PlanningDecisionAttempt::CandidateChanged);
+        }
         let scope = crate::workstream_auth::authority_scope(&auth, None, None);
         let resource = ResourceRef {
             tenant_id: tenant_id.into(),
@@ -740,7 +797,7 @@ impl SourceStore {
             Ok(()) => {}
             Err(PgError::PreconditionsChanged) => {
                 tx.rollback().await?;
-                return Ok(PlanningApprovalAttempt::SourceBaselineChanged);
+                return Ok(PlanningDecisionAttempt::SourceBaselineChanged);
             }
             Err(error) => return Err(error),
         }
@@ -797,14 +854,149 @@ impl SourceStore {
                 "candidate",
             );
             audit.target_id = Some(candidate_id.to_string());
+            audit.request_id = bind.map(|command| command.request_id.clone());
             audit.change_id = Some(candidate_id.to_string());
             audit.source_version = Some(candidate_digest.to_string());
             audit.digest = Some(crate::ops_audit::digest_of(&summary));
             audit.summary = summary;
             crate::ops_audit::record_in_tx(&tx, tenant_id, project_id, &audit).await?;
         }
+        if let Some(bind) = bind {
+            complete_decision_receipt(&tx, tenant_id, project_id, &auth, bind, &result).await?;
+        }
         tx.commit().await?;
-        Ok(PlanningApprovalAttempt::Approved(result))
+        Ok(PlanningDecisionAttempt::Recorded(result))
+    }
+
+    /// Closing a draft records a decision without changing sources or live work.
+    pub(super) async fn reject_planning_attempt(
+        &self,
+        tenant_id: &str,
+        project_id: &str,
+        bearer: &str,
+        req: &super::planning_ops::PlanningRejectRequest,
+        request_hash: &str,
+    ) -> PgResult<PlanningDecisionAttempt> {
+        let mut client = self.connect().await?;
+        crate::check_schema(&client).await?;
+        let tx = client
+            .build_transaction()
+            .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
+            .start()
+            .await?;
+        let mut auth = authenticate_writer(&tx, tenant_id, project_id, bearer).await?;
+        crate::delegation_auth::authorize_project_action(
+            &tx,
+            &mut auth,
+            project_id,
+            awr_team::Action::PlanningApprove,
+        )
+        .await?;
+        lock_candidate(&tx, tenant_id, project_id, &req.candidate_id).await?;
+        let candidate = load_candidate(&tx, tenant_id, project_id, &req.candidate_id).await?;
+        authorize_candidate_readable_scope(&tx, &auth, tenant_id, project_id, &candidate).await?;
+        attested_actor_person(&auth.actor_id, req.author_person_id.as_deref()).map_err(map_team)?;
+        // Recover only this command's exact committed decision after a lost final receipt.
+        let previous = tx
+            .query_opt(
+                "SELECT id,candidate_digest,draft_revision,reviewer_person_id,reviewer_actor_id,
+                reviewer_client_id,reason,(extract(epoch FROM decided_at)*1000)::bigint,
+                request_id,request_hash FROM awr_team.planning_rejections
+             WHERE tenant_id=$1 AND project_id=$2 AND candidate_id=$3",
+                &[&tenant_id, &project_id, &req.candidate_id],
+            )
+            .await?;
+        if let Some(row) = previous {
+            if row.get::<_, String>(8) != req.request_id {
+                tx.rollback().await?;
+                return Ok(PlanningDecisionAttempt::CandidateClosed);
+            }
+            if candidate.state != CandidateState::Rejected
+                || row.get::<_, String>(9) != request_hash
+                || row.get::<_, String>(4) != auth.actor_id
+                || row.get::<_, String>(5) != auth.client_id
+            {
+                return Err(PgError::IdempotencyConflict);
+            }
+            let result = rejection_result(&req.candidate_id, &row);
+            tx.commit().await?;
+            return Ok(PlanningDecisionAttempt::Recorded(result));
+        }
+        if candidate.state != CandidateState::Drafting {
+            tx.rollback().await?;
+            return Ok(PlanningDecisionAttempt::CandidateClosed);
+        }
+        if candidate.candidate_digest().map_err(map_team)? != req.candidate_digest {
+            tx.rollback().await?;
+            return Ok(PlanningDecisionAttempt::CandidateChanged);
+        }
+        let scope = crate::workstream_auth::authority_scope(&auth, None, None);
+        let resource = ResourceRef {
+            tenant_id: tenant_id.into(),
+            project_id: project_id.into(),
+            workstream_id: None,
+            work_id: None,
+        };
+        candidate
+            .authorize_rejection(&scope, &resource, now_unix_ms(), &req.candidate_digest)
+            .map_err(map_team)?;
+        let id = new_id();
+        let row = tx
+            .query_one(
+                "INSERT INTO awr_team.planning_rejections(tenant_id,project_id,candidate_id,id,
+                candidate_digest,draft_revision,reviewer_person_id,reviewer_actor_id,
+                reviewer_client_id,reason,request_id,request_hash)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+             RETURNING id,candidate_digest,draft_revision,reviewer_person_id,reviewer_actor_id,
+                reviewer_client_id,reason,(extract(epoch FROM decided_at)*1000)::bigint",
+                &[
+                    &tenant_id,
+                    &project_id,
+                    &req.candidate_id,
+                    &id,
+                    &req.candidate_digest,
+                    &(candidate.draft_revision as i32),
+                    &scope.person_id,
+                    &auth.actor_id,
+                    &auth.client_id,
+                    &req.reason,
+                    &req.request_id,
+                    &request_hash,
+                ],
+            )
+            .await?;
+        tx.execute(
+            "UPDATE awr_team.planning_candidates SET state='rejected',updated_at=clock_timestamp()
+            WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+            &[&tenant_id, &project_id, &req.candidate_id],
+        )
+        .await?;
+        let result = rejection_result(&req.candidate_id, &row);
+        let bind = PlanningCommandBind {
+            request_id: req.request_id.clone(),
+            op: "planning.reject".into(),
+            request_hash: request_hash.into(),
+        };
+        let summary = json!({"candidate_id":req.candidate_id,"candidate_digest":req.candidate_digest,
+            "rejection_id":id,"reason_sha256":sha256_hex(req.reason.as_bytes())});
+        bind_planning_receipt_and_ops_audit(
+            &tx,
+            tenant_id,
+            project_id,
+            &auth,
+            Some(&bind),
+            "planning.reject",
+            "candidate",
+            Some(&req.candidate_id),
+            Some(&req.candidate_id),
+            Some(&req.candidate_digest),
+            summary,
+            &result,
+        )
+        .await?;
+        complete_decision_receipt(&tx, tenant_id, project_id, &auth, &bind, &result).await?;
+        tx.commit().await?;
+        Ok(PlanningDecisionAttempt::Recorded(result))
     }
 
     /// Publish is separate from approve and also digest-bound. Does not write
@@ -1018,12 +1210,8 @@ async fn authorize_candidate_writable_scope(
     if auth.access.grants.iter().all(|g| !g.write) {
         return Err(PgError::Forbidden);
     }
-    let mut seen = std::collections::BTreeSet::new();
     for change in &candidate.changes {
         let work_id = change.after.work_id.as_str();
-        if !seen.insert(work_id.to_owned()) {
-            continue;
-        }
         let row = tx
             .query_opt(
                 "SELECT workstream_id FROM awr_team.workstream_ownership
@@ -1042,6 +1230,25 @@ async fn authorize_candidate_writable_scope(
                     .map_err(|_| PgError::Forbidden)?;
             }
             None => {
+                if let Some(selector) = &change.after.workstream {
+                    let stream = auth
+                        .catalog
+                        .workstreams
+                        .iter()
+                        .find(|stream| {
+                            stream.id.to_string() == *selector || stream.external_key == *selector
+                        })
+                        .ok_or(PgError::Forbidden)?;
+                    auth.access
+                        .authorize(&auth.catalog, stream.id, WorkstreamAction::Write)
+                        .map_err(|_| PgError::Forbidden)?;
+                    authorize_domain_action(
+                        auth,
+                        awr_team::Action::PlanningEditDraft,
+                        Some(stream.id),
+                        Some(work_id),
+                    )?;
+                }
                 // Unbound/new draft work: require at least one live write grant
                 // (already checked) but do not invent stream authority.
                 if !auth.access.grants.iter().any(|g| g.write) {
@@ -1066,12 +1273,8 @@ pub(super) async fn authorize_candidate_readable_scope(
     if auth.access.grants.iter().all(|g| !g.read) {
         return Err(PgError::Forbidden);
     }
-    let mut seen = std::collections::BTreeSet::new();
     for change in &candidate.changes {
         let work_id = change.after.work_id.as_str();
-        if !seen.insert(work_id.to_owned()) {
-            continue;
-        }
         let row = tx
             .query_opt(
                 "SELECT workstream_id FROM awr_team.workstream_ownership
@@ -1096,6 +1299,25 @@ pub(super) async fn authorize_candidate_readable_scope(
                 )?;
             }
             None => {
+                if let Some(selector) = &change.after.workstream {
+                    let stream = auth
+                        .catalog
+                        .workstreams
+                        .iter()
+                        .find(|stream| {
+                            stream.id.to_string() == *selector || stream.external_key == *selector
+                        })
+                        .ok_or(PgError::Forbidden)?;
+                    auth.access
+                        .authorize(&auth.catalog, stream.id, WorkstreamAction::Read)
+                        .map_err(|_| PgError::Forbidden)?;
+                    authorize_domain_action(
+                        auth,
+                        awr_team::Action::WorkRead,
+                        Some(stream.id),
+                        Some(work_id),
+                    )?;
+                }
                 // Unbound/new draft work: require at least one live read grant
                 // (already checked) but do not invent stream authority.
                 if !auth.access.grants.iter().any(|g| g.read) {
@@ -1232,6 +1454,7 @@ pub(super) async fn load_candidate(
         "approved" => CandidateState::Approved,
         "published" => CandidateState::Published,
         "superseded" => CandidateState::Superseded,
+        "rejected" => CandidateState::Rejected,
         other => {
             return Err(PgError::Protocol(format!(
                 "unknown planning candidate state: {other}"
@@ -1268,10 +1491,23 @@ pub(super) async fn load_candidate(
         // approve/publish the stored digest is authoritative for binding.
         candidate.baseline_digest = row.get(2);
     }
-    if computed != stored && matches!(state, CandidateState::Approved | CandidateState::Published) {
+    if computed != stored
+        && matches!(
+            state,
+            CandidateState::Approved | CandidateState::Published | CandidateState::Rejected
+        )
+    {
         return Err(PgError::StaleApproval);
     }
     Ok(candidate)
+}
+
+fn rejection_result(candidate_id: &str, row: &tokio_postgres::Row) -> Value {
+    json!({"state":"rejected","candidate_id":candidate_id,"rejection_id":row.get::<_,String>(0),
+        "candidate_digest":row.get::<_,String>(1),"draft_revision":row.get::<_,i32>(2),
+        "reviewer_person_id":row.get::<_,String>(3),"reviewer_actor_id":row.get::<_,String>(4),
+        "reviewer_client_id":row.get::<_,String>(5),"reason":row.get::<_,String>(6),
+        "decided_at_unix_ms":row.get::<_,i64>(7)})
 }
 
 async fn load_impacts(

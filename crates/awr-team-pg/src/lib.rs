@@ -126,7 +126,8 @@ pub use selective_invalidation::{
 };
 pub use source::planning::{DraftCandidateCreate, PlanningCommandBind, SuggestionSubmit};
 pub use source::planning_ops::{
-    PlanningApproveRequest, PlanningDraftRequest, PlanningPublishRequest, PlanningSuggestRequest,
+    PlanningApproveRequest, PlanningDraftRequest, PlanningPublishRequest, PlanningRejectRequest,
+    PlanningSuggestRequest,
 };
 pub use source::writeback::operator::{AbandonRequest, OperatorWriteback};
 pub use source::writeback::{ActivationImpactGate, WritebackActivateRequest};
@@ -158,6 +159,6 @@ mod tests {
     #[test]
     fn schema_contract_is_stable() {
         assert_eq!(SCHEMA, "awr_team");
-        assert_eq!(EXPECTED_SCHEMA_VERSION, 62);
+        assert_eq!(EXPECTED_SCHEMA_VERSION, 63);
     }
 }

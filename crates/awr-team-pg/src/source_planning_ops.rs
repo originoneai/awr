@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
-const RECEIPT_PROTOCOL: &str = "awr-team-planning-command-v1";
+pub(super) const RECEIPT_PROTOCOL: &str = "awr-team-planning-command-v1";
 
 fn planning_protocol_v1() -> u32 {
     1
@@ -75,6 +75,19 @@ pub struct PlanningApproveRequest {
     pub request_id: String,
     pub candidate_id: String,
     pub candidate_digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author_person_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlanningRejectRequest {
+    #[serde(default = "planning_protocol_v1")]
+    pub protocol_version: u32,
+    pub request_id: String,
+    pub candidate_id: String,
+    pub candidate_digest: String,
+    pub reason: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub author_person_id: Option<String>,
 }
@@ -186,7 +199,7 @@ fn action_for_planning_op(op: &str) -> PgResult<awr_team::Action> {
     match op {
         "planning.propose" => Ok(awr_team::Action::PlanningPropose),
         "planning.edit_draft" => Ok(awr_team::Action::PlanningEditDraft),
-        "planning.approve" => Ok(awr_team::Action::PlanningApprove),
+        "planning.approve" | "planning.reject" => Ok(awr_team::Action::PlanningApprove),
         "planning.publish" | "planning.activate" => Ok(awr_team::Action::PlanningPublish),
         other => Err(PgError::Protocol(format!(
             "unsupported planning op '{other}'"
@@ -204,11 +217,48 @@ enum PlanningReservation {
     },
 }
 
+fn planning_decision_result(
+    attempt: super::planning::PlanningDecisionAttempt,
+    candidate_id: &str,
+    candidate_digest: &str,
+) -> Value {
+    use super::planning::PlanningDecisionAttempt;
+    let (code, reason) = match attempt {
+        PlanningDecisionAttempt::Recorded(result) => return result,
+        PlanningDecisionAttempt::SourceBaselineChanged => (
+            "PlanningBaselineChanged",
+            "the retained draft is bound to an earlier source baseline",
+        ),
+        PlanningDecisionAttempt::CandidateChanged => (
+            "PlanningCandidateChanged",
+            "the submitted digest does not match the current draft",
+        ),
+        PlanningDecisionAttempt::CandidateClosed => (
+            "PlanningCandidateClosed",
+            "the candidate already has a decision or is no longer a draft",
+        ),
+    };
+    json!({
+        "outcome":"known_rejection", "code":code,
+        "candidate_id":candidate_id, "candidate_digest":candidate_digest,
+        "decision_written":false, "approval_written":false,
+        "effect_basis":"this_planning_decision_attempt",
+        "guidance":{
+            "when":reason,
+            "because":["the authorized decision transaction rolled back before any decision write"],
+            "action":{"op":"planning.preview","candidate_id":candidate_id,
+                "note":"Review the current candidate. Create a fresh draft if a change is still needed, then use a new decision request. Do not retry this refused intent or treat it as a plan decision."},
+            "recheck_on":"a fresh draft, source change or authority change"
+        }
+    })
+}
+
 #[derive(Clone, Copy)]
 enum PlanningInput<'a> {
     Suggest(&'a PlanningSuggestRequest),
     Draft(&'a PlanningDraftRequest),
     Approve(&'a PlanningApproveRequest),
+    Reject(&'a PlanningRejectRequest),
 }
 
 impl PlanningDraftRequest {
@@ -452,6 +502,15 @@ impl SourceStore {
                 .await?;
         }
         bind_workstream_scope(&tx, tenant_id, project_id).await?;
+        if let Some(PlanningInput::Reject(req)) = input {
+            let candidate =
+                super::planning::load_candidate(&tx, tenant_id, project_id, &req.candidate_id)
+                    .await?;
+            super::planning::authorize_candidate_readable_scope(
+                &tx, &auth, tenant_id, project_id, &candidate,
+            )
+            .await?;
+        }
         let existing = tx
             .query_opt(
                 "SELECT request_hash, status, result_json, actor_id, client_id
@@ -498,6 +557,7 @@ impl SourceStore {
                 PlanningInput::Suggest(req) => req.author_person_id.as_deref(),
                 PlanningInput::Draft(req) => req.author_person_id.as_deref(),
                 PlanningInput::Approve(req) => req.author_person_id.as_deref(),
+                PlanningInput::Reject(req) => req.author_person_id.as_deref(),
             };
             awr_team::attested_actor_person(&auth.actor_id, asserted).map_err(|_| {
                 PgError::Protocol("planning_input/author_person_id/actor_mismatch".into())
@@ -925,13 +985,23 @@ impl SourceStore {
         req: &PlanningApproveRequest,
     ) -> PgResult<Value> {
         require_request_id(&req.request_id)?;
-        self.with_planning_command_lock(
-            tenant_id,
-            project_id,
-            &req.request_id,
-            self.planning_approve_locked(tenant_id, project_id, bearer, req),
-        )
-        .await
+        let mut attempts = 0;
+        loop {
+            attempts += 1;
+            let result = self
+                .with_planning_command_lock(
+                    tenant_id,
+                    project_id,
+                    &req.request_id,
+                    self.planning_approve_locked(tenant_id, project_id, bearer, req),
+                )
+                .await;
+            // Retry only a PostgreSQL-proven rollback. A connection loss keeps
+            // its unknown outcome and the original durable recovery path.
+            if attempts == 3 || !result.as_ref().is_err_and(|error| error.is_retryable()) {
+                return result;
+            }
+        }
     }
 
     async fn planning_approve_locked(
@@ -973,7 +1043,12 @@ impl SourceStore {
         {
             existing
         } else {
-            match self
+            let bind = super::planning::PlanningCommandBind {
+                request_id: req.request_id.clone(),
+                op: "planning.approve".into(),
+                request_hash: hash.clone(),
+            };
+            let attempt = self
                 .approve_planning_attempt(
                     tenant_id,
                     project_id,
@@ -981,26 +1056,10 @@ impl SourceStore {
                     &req.candidate_id,
                     &req.candidate_digest,
                     req.author_person_id.as_deref(),
+                    Some(&bind),
                 )
-                .await?
-            {
-                super::planning::PlanningApprovalAttempt::Approved(result) => result,
-                super::planning::PlanningApprovalAttempt::SourceBaselineChanged => json!({
-                    "outcome":"known_rejection",
-                    "code":"PlanningBaselineChanged",
-                    "candidate_id":req.candidate_id,
-                    "candidate_digest":req.candidate_digest,
-                    "approval_written":false,
-                    "effect_basis":"this_approval_attempt",
-                    "guidance":{
-                        "when":"the retained draft is bound to an earlier source baseline",
-                        "because":["the authorized approval transaction rolled back before any approval write"],
-                        "action":{"op":"planning.preview","candidate_id":req.candidate_id,
-                            "note":"Review the retained draft against current sources, then create a fresh draft before a new approval intent. Do not retry this rejected request or treat it as approval."},
-                        "recheck_on":"a fresh draft, source change or authority change"
-                    }
-                }),
-            }
+                .await?;
+            planning_decision_result(attempt, &req.candidate_id, &req.candidate_digest)
         };
         self.finalize_planning_receipt(
             tenant_id,
@@ -1008,6 +1067,87 @@ impl SourceStore {
             bearer,
             &req.request_id,
             "planning.approve",
+            &hash,
+            result,
+        )
+        .await
+    }
+
+    /// Explicitly reject an unchanged draft under the existing planning decision authority.
+    pub async fn planning_reject(
+        &self,
+        tenant_id: &str,
+        project_id: &str,
+        bearer: &str,
+        req: &PlanningRejectRequest,
+    ) -> PgResult<Value> {
+        require_request_id(&req.request_id)?;
+        require_protocol(req.protocol_version)?;
+        if !identity(&req.candidate_id)
+            || req.candidate_digest.len() != 64
+            || !req
+                .candidate_digest
+                .bytes()
+                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+            || req.reason.trim().is_empty()
+            || req.reason.len() > 4096
+            || req.reason.contains('\0')
+        {
+            return Err(PgError::Protocol("invalid planning rejection".into()));
+        }
+        let mut attempts = 0;
+        loop {
+            attempts += 1;
+            let result = self
+                .with_planning_command_lock(
+                    tenant_id,
+                    project_id,
+                    &req.request_id,
+                    self.planning_reject_locked(tenant_id, project_id, bearer, req),
+                )
+                .await;
+            if attempts == 3 || !result.as_ref().is_err_and(|error| error.is_retryable()) {
+                return result;
+            }
+        }
+    }
+
+    async fn planning_reject_locked(
+        &self,
+        tenant_id: &str,
+        project_id: &str,
+        bearer: &str,
+        req: &PlanningRejectRequest,
+    ) -> PgResult<Value> {
+        let intent = serde_json::to_value(req)
+            .map_err(|_| PgError::Protocol("invalid planning rejection".into()))?;
+        let hash = intent_hash("planning.reject", &intent)?;
+        let reserved = self
+            .reserve_planning_receipt(
+                tenant_id,
+                project_id,
+                bearer,
+                &req.request_id,
+                "planning.reject",
+                &hash,
+                &req.candidate_id,
+                &json!({}),
+                Some(PlanningInput::Reject(req)),
+            )
+            .await?;
+        if let PlanningReservation::Completed(existing) = reserved {
+            return Ok(existing);
+        }
+        let attempt = self
+            .reject_planning_attempt(tenant_id, project_id, bearer, req, &hash)
+            .await?;
+        let result = planning_decision_result(attempt, &req.candidate_id, &req.candidate_digest);
+        self.finalize_planning_receipt(
+            tenant_id,
+            project_id,
+            bearer,
+            &req.request_id,
+            "planning.reject",
             &hash,
             result,
         )

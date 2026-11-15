@@ -9,8 +9,8 @@ use awr_team::{
 };
 use awr_team_pg::{
     DraftCandidateCreate, PgError, PlanningApproveRequest, PlanningDraftRequest,
-    PlanningPublishRequest, PlanningSuggestRequest, SourceStore, WorkstreamQuery,
-    WorkstreamReadStore,
+    PlanningPublishRequest, PlanningRejectRequest, PlanningSuggestRequest, SourceStore,
+    WorkstreamQuery, WorkstreamReadStore,
 };
 use fixture::*;
 use serde_json::json;
@@ -220,6 +220,497 @@ fn create_req(request_id: &str, work_id: &str) -> PlanningDraftRequest {
         self_approve_policy: Some(OrdinaryPlanningSelfApprovePolicy::ordinary_default()),
         author_person_id: Some("agent".into()),
     }
+}
+
+async fn rejection_draft(store: &SourceStore, request: &str) -> PlanningRejectRequest {
+    let mut create = create_req(request, request);
+    create.changes[0].after.workstream = Some("00000000000000000000000001".into());
+    let created = store
+        .planning_draft(TENANT, PROJECT, A, &create)
+        .await
+        .unwrap();
+    PlanningRejectRequest {
+        protocol_version: 1,
+        request_id: format!("{request}-reject"),
+        candidate_id: created["result"]["candidate_id"].as_str().unwrap().into(),
+        candidate_digest: created["result"]["candidate_digest"]
+            .as_str()
+            .unwrap()
+            .into(),
+        reason: "Clarify the acceptance criteria before adding this work".into(),
+        author_person_id: None,
+    }
+}
+
+#[tokio::test]
+async fn planning_rejection_is_terminal_attributed_observable_and_exactly_recoverable() {
+    let (_g, admin, db, read) = setup().await;
+    elev_maintainer(&admin).await;
+    let store = SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let req = rejection_draft(&store, "reject-lifecycle").await;
+    let before: i64 = admin
+        .query_one("SELECT count(*) FROM awr_team.source_snapshots", &[])
+        .await
+        .unwrap()
+        .get(0);
+    let first = store
+        .planning_reject(TENANT, PROJECT, A, &req)
+        .await
+        .unwrap();
+    let result = &first["result"];
+    assert_eq!(result["state"], "rejected");
+    assert_eq!(result["reason"], req.reason);
+    assert_eq!(result["reviewer_actor_id"], "agent");
+    assert_eq!(result["reviewer_client_id"], "cli-a");
+    assert!(result["decided_at_unix_ms"].as_i64().unwrap() > 0);
+    let replay = store
+        .planning_reject(TENANT, PROJECT, A, &req)
+        .await
+        .unwrap();
+    assert_eq!(replay["already_recorded"], true);
+    assert_eq!(&replay["result"], result);
+    let mut changed = req.clone();
+    changed.reason = "Another decision".into();
+    assert!(matches!(
+        store.planning_reject(TENANT, PROJECT, A, &changed).await,
+        Err(PgError::IdempotencyConflict)
+    ));
+    changed = req.clone();
+    changed.request_id.push_str("-another");
+    let refused = store
+        .planning_reject(TENANT, PROJECT, A, &changed)
+        .await
+        .unwrap();
+    assert_eq!(refused["result"]["code"], "PlanningCandidateClosed");
+    assert_eq!(refused["result"]["decision_written"], false);
+
+    // Reproduce a committed domain decision whose final command response was lost.
+    admin
+        .execute(
+            "UPDATE awr_team.planning_command_receipts SET status='reserved',
+        result_json=jsonb_build_object('domain_id',$4::text,'status','reserved')
+        WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",
+            &[&TENANT, &PROJECT, &req.request_id, &req.candidate_id],
+        )
+        .await
+        .unwrap();
+    let recovered = store
+        .planning_reject(TENANT, PROJECT, A, &req)
+        .await
+        .unwrap();
+    assert_eq!(&recovered["result"], result);
+    let counts = admin
+        .query_one(
+            "SELECT (SELECT count(*) FROM awr_team.planning_rejections),
+        (SELECT count(*) FROM awr_team.ops_audit_records WHERE action='planning.reject'),
+        (SELECT count(*) FROM awr_team.planning_approvals),
+        (SELECT count(*) FROM awr_team.planning_publish_receipts),
+        (SELECT count(*) FROM awr_team.source_snapshots)",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(counts.get::<_, i64>(0), 1);
+    assert_eq!(counts.get::<_, i64>(1), 1);
+    assert_eq!(counts.get::<_, i64>(2), 0);
+    assert_eq!(counts.get::<_, i64>(3), 0);
+    assert_eq!(counts.get::<_, i64>(4), before);
+
+    let page = read
+        .query(
+            TENANT,
+            PROJECT,
+            A,
+            serde_json::from_value(json!({
+                "protocol_version":1,"op":"planning.candidates","workstream_id":"00000000000000000000000001"
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let item = &page["data"]["items"][0];
+    assert_eq!(item["state"], "rejected");
+    assert_eq!(item["rejection"]["value"]["reason"], req.reason);
+    assert_eq!(
+        item["rejection"]["value"]["actor_id"],
+        result["reviewer_actor_id"]
+    );
+    assert_eq!(
+        item["rejection"]["value"]["at_unix_ms"],
+        result["decided_at_unix_ms"]
+    );
+    assert!(item["rejection"]["reason"].is_null());
+    let approval = PlanningApproveRequest {
+        protocol_version: 1,
+        request_id: "reject-approve".into(),
+        candidate_id: req.candidate_id.clone(),
+        candidate_digest: req.candidate_digest.clone(),
+        author_person_id: None,
+    };
+    let refused = store
+        .planning_approve(TENANT, PROJECT, A, &approval)
+        .await
+        .unwrap();
+    assert_eq!(refused["result"]["code"], "PlanningCandidateClosed");
+    assert_eq!(refused["result"]["approval_written"], false);
+    assert!(
+        store
+            .edit_planning_candidate(
+                TENANT,
+                PROJECT,
+                A,
+                &req.candidate_id,
+                vec![DraftChange {
+                    op: DraftOpKind::CreateTask,
+                    before: None,
+                    after: task("another", "Another task")
+                }]
+            )
+            .await
+            .is_err()
+    );
+    let after = store
+        .preview_planning_candidate(TENANT, PROJECT, A, &req.candidate_id)
+        .await
+        .unwrap();
+    assert_eq!(after["state"], "rejected");
+    assert_eq!(after["diff"]["candidate_digest"], req.candidate_digest);
+    admin
+        .batch_execute(
+            "UPDATE awr_team.workstream_grants SET active=false,
+        grant_version=grant_version+1 WHERE client_id='cli-a'",
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.planning_reject(TENANT, PROJECT, A, &req).await,
+        Err(PgError::Forbidden)
+    ));
+    admin
+        .batch_execute(
+            "UPDATE awr_team.workstream_grants SET active=true,
+        grant_version=grant_version+1 WHERE client_id='cli-a'",
+        )
+        .await
+        .unwrap();
+    admin
+        .batch_execute(
+            "UPDATE awr_team.project_memberships SET role='developer',
+        membership_version=membership_version+1 WHERE actor_id='agent'",
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.planning_reject(TENANT, PROJECT, A, &req).await,
+        Err(PgError::Forbidden)
+    ));
+}
+
+#[tokio::test]
+async fn planning_rejection_checks_input_and_current_digest_without_recording_a_decision_on_refusal()
+ {
+    let (_g, admin, db, _) = setup().await;
+    elev_maintainer(&admin).await;
+    let store = SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let req = rejection_draft(&store, "reject-invalid").await;
+    let mut forged = req.clone();
+    forged.author_person_id = Some("another-person".into());
+    assert!(
+        store
+            .planning_reject(TENANT, PROJECT, A, &forged)
+            .await
+            .is_err()
+    );
+    let mut outside = req.clone();
+    outside.request_id.push_str("-outside");
+    assert!(matches!(
+        store.planning_reject(TENANT, PROJECT, B, &outside).await,
+        Err(PgError::Forbidden)
+    ));
+    for reason in [" ".into(), "x\0y".into(), "界".repeat(1366)] {
+        let mut invalid = req.clone();
+        invalid.reason = reason;
+        assert!(
+            store
+                .planning_reject(TENANT, PROJECT, A, &invalid)
+                .await
+                .is_err()
+        );
+    }
+    let mut stale = req.clone();
+    stale.candidate_digest = "0".repeat(64);
+    let refused = store
+        .planning_reject(TENANT, PROJECT, A, &stale)
+        .await
+        .unwrap();
+    assert_eq!(refused["result"]["outcome"], "known_rejection");
+    assert_eq!(refused["result"]["code"], "PlanningCandidateChanged");
+    assert_eq!(refused["result"]["decision_written"], false);
+    let outcome = store
+        .get_planning_command_receipt(TENANT, PROJECT, A, &stale.request_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(outcome["already_recorded"], true);
+    assert_eq!(outcome["result"]["result"], refused["result"]);
+    let replay = store
+        .planning_reject(TENANT, PROJECT, A, &stale)
+        .await
+        .unwrap();
+    assert_eq!(replay["result"], refused["result"]);
+    assert!(matches!(
+        store.planning_reject(TENANT, PROJECT, A, &req).await,
+        Err(PgError::IdempotencyConflict)
+    ));
+    let count: i64 = admin
+        .query_one("SELECT count(*) FROM awr_team.planning_rejections", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 0);
+    assert_eq!(
+        store
+            .preview_planning_candidate(TENANT, PROJECT, A, &req.candidate_id)
+            .await
+            .unwrap()["state"],
+        "drafting"
+    );
+}
+
+#[tokio::test]
+async fn approval_and_rejection_have_only_one_winner_and_duplicate_rejection_reuses_one_decision() {
+    let (_g, admin, db, _) = setup().await;
+    elev_maintainer(&admin).await;
+    let store = SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let req = rejection_draft(&store, "reject-race").await;
+    let approval = PlanningApproveRequest {
+        protocol_version: 1,
+        request_id: "approve-race".into(),
+        candidate_id: req.candidate_id.clone(),
+        candidate_digest: req.candidate_digest.clone(),
+        author_person_id: None,
+    };
+    let (approved, rejected) = tokio::join!(
+        store.planning_approve(TENANT, PROJECT, A, &approval),
+        store.planning_reject(TENANT, PROJECT, A, &req)
+    );
+    let approved = approved.unwrap();
+    let rejected = rejected.unwrap();
+    assert_ne!(
+        approved["result"]["state"] == "approved",
+        rejected["result"]["state"] == "rejected",
+        "exactly one decision must win"
+    );
+    assert_ne!(
+        approved["result"]["outcome"] == "known_rejection",
+        rejected["result"]["outcome"] == "known_rejection",
+        "the losing attempt must record a definitive refusal"
+    );
+    for (request, expected) in [
+        (&approval.request_id, &approved),
+        (&req.request_id, &rejected),
+    ] {
+        let outcome = store
+            .get_planning_command_receipt(TENANT, PROJECT, A, request)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(outcome["already_recorded"], true);
+        assert_eq!(outcome["result"]["result"], expected["result"]);
+    }
+    assert_eq!(
+        store
+            .planning_approve(TENANT, PROJECT, A, &approval)
+            .await
+            .unwrap()["result"],
+        approved["result"]
+    );
+    assert_eq!(
+        store
+            .planning_reject(TENANT, PROJECT, A, &req)
+            .await
+            .unwrap()["result"],
+        rejected["result"]
+    );
+    let req = rejection_draft(&store, "reject-replay-race").await;
+    let (left, right) = tokio::join!(
+        store.planning_reject(TENANT, PROJECT, A, &req),
+        store.planning_reject(TENANT, PROJECT, A, &req)
+    );
+    assert_eq!(left.unwrap()["result"], right.unwrap()["result"]);
+    let count: i64 = admin
+        .query_one(
+            "SELECT count(*) FROM awr_team.planning_rejections WHERE candidate_id=$1",
+            &[&req.candidate_id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn committed_planning_decisions_already_have_a_completed_command_receipt() {
+    let (_guard, admin, db, _) = setup().await;
+    elev_maintainer(&admin).await;
+    let store = SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    // The deferred assertion runs inside the decision commit, before the
+    // command layer can finalize a separate transaction or return a response.
+    admin
+        .batch_execute(
+            "CREATE FUNCTION awr_team.check_decision_receipt() RETURNS trigger
+             LANGUAGE plpgsql AS $$ BEGIN
+               IF EXISTS (SELECT 1 FROM awr_team.planning_command_receipts
+                          WHERE status='reserved' AND result_json->>'domain_id'=NEW.id) THEN
+                 RAISE EXCEPTION 'decision committed with an unresolved command';
+               END IF;
+               RETURN NEW;
+             END $$;
+             CREATE CONSTRAINT TRIGGER require_decision_receipt
+             AFTER UPDATE ON awr_team.planning_candidates DEFERRABLE INITIALLY DEFERRED
+             FOR EACH ROW WHEN (NEW.state IN ('approved','rejected'))
+             EXECUTE FUNCTION awr_team.check_decision_receipt()",
+        )
+        .await
+        .unwrap();
+    for approve in [true, false] {
+        let req = rejection_draft(&store, &format!("atomic-decision-{approve}")).await;
+        let result = if approve {
+            store
+                .planning_approve(
+                    TENANT,
+                    PROJECT,
+                    A,
+                    &PlanningApproveRequest {
+                        protocol_version: 1,
+                        request_id: req.request_id.clone(),
+                        candidate_id: req.candidate_id.clone(),
+                        candidate_digest: req.candidate_digest.clone(),
+                        author_person_id: None,
+                    },
+                )
+                .await
+        } else {
+            store.planning_reject(TENANT, PROJECT, A, &req).await
+        }
+        .unwrap();
+        assert_eq!(
+            result["result"]["state"],
+            if approve { "approved" } else { "rejected" }
+        );
+        let outcome = store
+            .get_planning_command_receipt(TENANT, PROJECT, A, &req.request_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(outcome["already_recorded"], true);
+        assert_eq!(outcome["result"]["result"], result["result"]);
+    }
+}
+
+#[tokio::test]
+async fn repeated_new_work_ids_authorize_every_declared_workstream() {
+    let (_guard, admin, db, _) = setup().await;
+    elev_maintainer(&admin).await;
+    let store = SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    for selectors in [["alpha", "private-beta"], ["private-beta", "alpha"]] {
+        let mut request = create_req(&format!("denied-{}", selectors[0]), "new-shared-id");
+        let mut other = request.changes[0].clone();
+        request.changes[0].after.workstream = Some(selectors[0].into());
+        other.after.workstream = Some(selectors[1].into());
+        request.changes.push(other);
+        assert!(matches!(
+            store.planning_draft(TENANT, PROJECT, A, &request).await,
+            Err(PgError::Forbidden)
+        ));
+    }
+    let counts = admin
+        .query_one(
+            "SELECT (SELECT count(*) FROM awr_team.planning_candidates),
+                    (SELECT count(*) FROM awr_team.planning_command_receipts)",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        counts.get::<_, i64>(0),
+        0,
+        "denied targets create no candidate"
+    );
+    assert_eq!(
+        counts.get::<_, i64>(1),
+        0,
+        "denied targets reserve no request"
+    );
+    admin
+        .batch_execute(
+            "INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,
+             workstream_id,authority_version,can_read,can_write,active)
+             VALUES('reader-tenant','reader-project','agent','cli-a',
+                    '00000000000000000000000002',1,true,true,true)",
+        )
+        .await
+        .unwrap();
+    let mut candidates = Vec::new();
+    for selectors in [["alpha", "private-beta"], ["private-beta", "alpha"]] {
+        let mut request = create_req(&format!("repeated-{}", selectors[0]), "new-shared-id");
+        let mut other = request.changes[0].clone();
+        request.changes[0].after.workstream = Some(selectors[0].into());
+        other.after.workstream = Some(selectors[1].into());
+        request.changes.push(other);
+        let created = store
+            .planning_draft(TENANT, PROJECT, A, &request)
+            .await
+            .unwrap();
+        candidates.push(PlanningRejectRequest {
+            protocol_version: 1,
+            request_id: format!("{}-decision", request.request_id),
+            candidate_id: created["result"]["candidate_id"].as_str().unwrap().into(),
+            candidate_digest: created["result"]["candidate_digest"]
+                .as_str()
+                .unwrap()
+                .into(),
+            reason: "Clarify the proposed work".into(),
+            author_person_id: None,
+        });
+    }
+    admin
+        .batch_execute(
+            "UPDATE awr_team.workstream_grants SET active=false, grant_version=grant_version+1
+             WHERE client_id='cli-a' AND workstream_id='00000000000000000000000002'",
+        )
+        .await
+        .unwrap();
+    for candidate in candidates {
+        assert!(matches!(
+            store
+                .preview_planning_candidate(TENANT, PROJECT, A, &candidate.candidate_id)
+                .await,
+            Err(PgError::Forbidden)
+        ));
+        assert!(matches!(
+            store.planning_reject(TENANT, PROJECT, A, &candidate).await,
+            Err(PgError::Forbidden)
+        ));
+        let count: i64 = admin
+            .query_one(
+                "SELECT count(*) FROM awr_team.planning_command_receipts WHERE request_id=$1",
+                &[&candidate.request_id],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(
+            count, 0,
+            "an unreadable candidate cannot reserve a decision"
+        );
+    }
+    let count: i64 = admin
+        .query_one("SELECT count(*) FROM awr_team.planning_rejections", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 0);
 }
 
 #[tokio::test]

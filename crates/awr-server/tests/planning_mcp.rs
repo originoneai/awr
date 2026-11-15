@@ -109,6 +109,126 @@ fn draft(id: &str) -> TaskDraft {
 }
 
 #[tokio::test]
+async fn planning_rejection_has_http_mcp_parity_and_retains_the_original_decision() {
+    let (_guard, admin, _db, store) = setup().await;
+    admin
+        .batch_execute(
+            "UPDATE awr_team.project_memberships SET role='maintainer',
+        membership_version=membership_version+1 WHERE actor_id='agent';
+        UPDATE awr_team.workstream_grants SET can_write=true,grant_version=grant_version+1
+        WHERE client_id='cli-a'",
+        )
+        .await
+        .unwrap();
+    let server = start(store).await;
+    let client = connect(&server, A).await;
+    let capabilities = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"capabilities"}),
+        false,
+    )
+    .await;
+    assert!(
+        capabilities["planning_mcp"]["tools"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("awr_team_planning_reject"))
+    );
+    let mut task = draft("rejection-parity-work");
+    task.workstream = Some("00000000000000000000000001".into());
+    let created=call(&client,"awr_team_planning_draft",json!({
+        "protocol_version":1,"request_id":"rejection-parity-draft","mode":"create",
+        "changes":[{"op":"create_task","after":task}],"allowed_spec_roots":["specs"],
+        "project_goal_keys":["delivery"],"self_approve_policy":OrdinaryPlanningSelfApprovePolicy::ordinary_default()
+    }),false).await;
+    let input = json!({"protocol_version":1,"request_id":"rejection-parity-decision",
+        "candidate_id":created["result"]["candidate_id"],
+        "candidate_digest":created["result"]["candidate_digest"],
+        "reason":"Describe the user-visible outcome before proposing this work"});
+    let mut stale = input.clone();
+    stale["request_id"] = json!("rejection-parity-stale");
+    stale["candidate_digest"] = json!("0".repeat(64));
+    let response = http()
+        .post(format!("{}/one/planning/reject", server.url))
+        .bearer_auth(A)
+        .json(&stale)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let refused = response.json::<Value>().await.unwrap();
+    assert_eq!(refused["result"]["outcome"], "known_rejection");
+    assert_eq!(refused["result"]["code"], "PlanningCandidateChanged");
+    assert_eq!(refused["result"]["decision_written"], false);
+    let replay = call(&client, "awr_team_planning_reject", stale.clone(), false).await;
+    assert_eq!(replay["result"], refused["result"]);
+    let outcome = call(
+        &client,
+        "awr_team_planning_outcome",
+        json!({
+            "protocol_version":1,"request_id":stale["request_id"]
+        }),
+        false,
+    )
+    .await;
+    assert_eq!(outcome["already_recorded"], true);
+    assert_eq!(outcome["result"]["result"], refused["result"]);
+    let response = http()
+        .post(format!("{}/one/planning/reject", server.url))
+        .bearer_auth(A)
+        .json(&input)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let first = response.json::<Value>().await.unwrap();
+    assert_eq!(first["result"]["state"], "rejected");
+    let second = call(&client, "awr_team_planning_reject", input.clone(), false).await;
+    assert_eq!(second["already_recorded"], true);
+    assert_eq!(second["result"], first["result"]);
+    let outcome = call(
+        &client,
+        "awr_team_planning_outcome",
+        json!({"protocol_version":1,
+        "request_id":"rejection-parity-decision"}),
+        false,
+    )
+    .await;
+    assert_eq!(outcome["result"]["result"], first["result"]);
+    let preview = call(
+        &client,
+        "awr_team_planning_preview",
+        json!({"protocol_version":1,
+        "candidate_id":input["candidate_id"]}),
+        false,
+    )
+    .await;
+    assert_eq!(preview["state"], "rejected");
+    let mut changed = input.clone();
+    changed["reason"] = json!("A changed decision");
+    let mcp = call(&client, "awr_team_planning_reject", changed.clone(), true).await;
+    let response = http()
+        .post(format!("{}/one/planning/reject", server.url))
+        .bearer_auth(A)
+        .json(&changed)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.json::<Value>().await.unwrap(), mcp);
+    admin
+        .batch_execute(
+            "UPDATE awr_team.project_memberships SET role='developer',
+        membership_version=membership_version+1 WHERE actor_id='agent'",
+        )
+        .await
+        .unwrap();
+    let denied = call(&client, "awr_team_planning_reject", input.clone(), true).await;
+    assert_eq!(denied["code"], "Forbidden");
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
 #[expect(
     clippy::await_holding_lock,
     reason = "The guard serializes the shared PostgreSQL fixture for this entire async test."
@@ -542,6 +662,7 @@ async fn planning_tools_catalog_and_suggest_idempotent_http_mcp_parity() {
         "awr_team_planning_preview",
         "awr_team_planning_approve",
         "awr_team_planning_publish",
+        "awr_team_planning_reject",
         "awr_team_planning_outcome",
     ] {
         assert!(names.iter().any(|n| n == expected), "{names:?}");
