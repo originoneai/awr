@@ -120,6 +120,65 @@ describe('plan observation product views', () => {
     expect(screen.getByText('提出此调整后，项目计划已有变化，需要 Agent 重新核对')).toBeTruthy();
   });
 
+  it.each(['zh-CN', 'en-US'])('explains a recorded returned plan and its next step in %s', async (language) => {
+    await i18n.changeLanguage(language);
+    const { container,calls } = mount((q) => response(q.op === 'sources.inspect' ? documents() : {
+      items: [candidate({ state:'rejected', approval:absent('not_approved'), publication:absent('not_published'),
+        baseline:{ matches_current:false }, rejection:recorded({ display_name:'Kai',
+          reason:'Clarify the acceptance criteria before adding this work' }) })],
+      total:1,next_cursor:null,as_of:{at_unix_ms:AT},
+    }));
+    await screen.findByText(language === 'zh-CN' ? '已退回，需调整' : 'Returned for revision');
+    expect(screen.getByText('Clarify the acceptance criteria before adding this work')).toBeTruthy();
+    const panel=screen.getByTestId('plan-changes');
+    expect(panel.textContent).toContain(language === 'zh-CN' ? 'Kai 退回' : 'Returned by Kai');
+    expect(panel.textContent).toContain(i18n.t('plan.changes.returnedNext'));
+    expect(screen.queryByText(i18n.t('plan.changes.planChanged'))).toBeNull();
+    expect(container.textContent).not.toMatch(new RegExp(`${INTERNAL}|${DIGEST}|candidate_digest|source_snapshot_id`));
+    expect(panel.querySelector('details,pre,code')).toBeNull();
+    expect(within(panel).queryByRole('button',{name:/退回|批准|发布|Reject|Approve|Publish/i})).toBeNull();
+    expect(calls.every((c)=>(c.query as Record<string,unknown>).op === 'planning.candidates'
+      || (c.query as Record<string,unknown>).op === 'sources.inspect')).toBe(true);
+  });
+
+  it('keeps a permitted returned state visible when decision details are restricted', async () => {
+    mount((q)=>response(q.op === 'sources.inspect' ? documents() : {
+      items:[candidate({state:'rejected',approval:absent('not_approved'),publication:absent('not_published'),
+        rejection:absent('permission_restricted')})],total:1,next_cursor:null,as_of:{at_unix_ms:AT},
+    }));
+    await screen.findByText('已退回，需调整');
+    expect(within(screen.getByTestId('plan-changes')).getByText(i18n.t('plan.changes.restricted'))).toBeTruthy();
+    expect(document.body.textContent).not.toContain('permission_restricted');
+  });
+
+  it('hides technical decision text without a disclosure or raw-copy control', async () => {
+    mount((q)=>response(q.op === 'sources.inspect' ? documents() : {
+      items:[candidate({state:'rejected',approval:absent('not_approved'),publication:absent('not_published'),
+        rejection:recorded({display_name:INTERNAL,reason:`candidate_digest=${DIGEST} source_snapshot_id=${INTERNAL}`})})],
+      total:1,next_cursor:null,as_of:{at_unix_ms:AT},
+    }));
+    await screen.findByText('已退回，需调整');
+    const panel=screen.getByTestId('plan-changes');
+    expect(panel.textContent).not.toMatch(new RegExp(`${INTERNAL}|${DIGEST}|candidate_digest|source_snapshot_id`));
+    expect(panel.querySelector('details,pre,code,[data-testid="technical-details"]')).toBeNull();
+  });
+
+  it.each([
+    {state:'rejected'},
+    {state:'rejected',rejection:recorded({display_name:'Kai',reason:' '})},
+    {state:'rejected',rejection:absent('not_rejected')},
+    {state:'rejected',rejection:absent('permission_restricted')},
+    {state:'rejected',rejection:recorded({display_name:'Kai',reason:'Clarify the outcome'})},
+    {state:'drafting',rejection:recorded({display_name:'Kai',reason:'Clarify the outcome'})},
+  ])('refuses missing or contradictory returned-plan records', async (change) => {
+    mount((q)=>response(q.op === 'sources.inspect' ? documents() : {
+      items:[candidate(change)],total:1,next_cursor:null,as_of:{at_unix_ms:AT},
+    }));
+    await screen.findByText('暂时无法读取计划变更',{}, {timeout:4000});
+    expect(screen.queryByText('已退回，需调整')).toBeNull();
+    expect(document.body.textContent).not.toMatch(/InvalidResponse|candidate_digest/);
+  });
+
   it.each(['changed', 'missing', 'forbidden', 'unverified'])('explains %s documents without exposing raw reasons or metadata', async (status) => {
     const { container } = mount((q) => response(q.op === 'sources.inspect' ? documents({
       items: [{ source_position: 1, path: null, status, reason: 'sensitive_backend_reason', current_sha256: DIGEST }],

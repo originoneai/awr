@@ -146,6 +146,7 @@ export interface PlanningCandidatesData {
     approval: { value: { actor_id: string; display_name: string | null; at_unix_ms: number; self_approved: boolean } | null; reason: string | null };
     publication: { value: { actor_id: string; at_unix_ms: number; source_writeback_pending: boolean } | null; reason: string | null };
     activation: { value: { actor_id: string; at_unix_ms: number; activated_snapshot_id: string; matches_current_snapshot: boolean } | null; reason: string | null };
+    rejection?: { value: { actor_id: string; display_name: string | null; at_unix_ms: number; reason: string } | null; reason: string | null };
   }>;
   total: number;
   next_cursor: string | null;

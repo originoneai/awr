@@ -175,7 +175,7 @@ function teamRead<T>(project: string, query: TeamReadQuery, signal?: AbortSignal
   return apiPost<TeamReadResponse<T>>('/api/team/read', { project, query }, signal);
 }
 
-function validPlanRecord(record: unknown, kind: 'approval' | 'publication' | 'activation'): boolean {
+function validPlanRecord(record: unknown, kind: 'approval' | 'publication' | 'activation' | 'rejection'): boolean {
   if (!record || typeof record !== 'object' || Array.isArray(record)) return false;
   const wrapper = record as Record<string, unknown>;
   if (wrapper.value === null) return typeof wrapper.reason === 'string' && wrapper.reason.length > 0;
@@ -186,6 +186,9 @@ function validPlanRecord(record: unknown, kind: 'approval' | 'publication' | 'ac
   if (kind === 'approval') return typeof value.self_approved === 'boolean'
     && (value.display_name === null || typeof value.display_name === 'string');
   if (kind === 'publication') return typeof value.source_writeback_pending === 'boolean';
+  if (kind === 'rejection') return typeof value.reason === 'string' && value.reason.trim().length > 0
+    && new TextEncoder().encode(value.reason).length <= 4096 && !value.reason.includes('\0')
+    && (value.display_name === null || typeof value.display_name === 'string');
   return typeof value.matches_current_snapshot === 'boolean'
     && typeof value.activated_snapshot_id === 'string' && value.activated_snapshot_id.length > 0;
 }
@@ -207,6 +210,10 @@ export function planningCandidatesQueryOptions(project: string, stream: string |
           && typeof item.baseline?.matches_current === 'boolean'
           && validPlanRecord(item.approval, 'approval') && validPlanRecord(item.publication, 'publication')
           && validPlanRecord(item.activation, 'activation')
+          && (item.rejection === undefined || validPlanRecord(item.rejection, 'rejection'))
+          && (!item.rejection?.value || item.state === 'rejected')
+          && (item.state !== 'rejected' || (Boolean(item.rejection?.value) || item.rejection?.reason === 'permission_restricted')
+            && !item.approval.value && !item.publication.value && !item.activation.value)
           && (!item.publication.value || Boolean(item.approval.value))
           && (!item.activation.value || item.publication.value?.source_writeback_pending === false)
           && Array.isArray(item.current_diff?.items) && item.current_diff.items.every((change) =>

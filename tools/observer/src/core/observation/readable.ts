@@ -50,7 +50,7 @@ export function readableSentence(text: string, language: string): string {
 const INTERNAL_FIELDS = new Set([
   'actor_id', 'client_id', 'session_id', 'execution_id', 'claim_id', 'receipt_id', 'credential_id',
   'source_snapshot_id', 'workstream_id', 'decision_id', 'request_id', 'request_key', 'contract_hash',
-  'baseline_digest', 'project_revision', 'decision_version', 'allowed_responder_person_ids',
+  'baseline_digest', 'candidate_digest', 'project_revision', 'decision_version', 'allowed_responder_person_ids',
 ]);
 const DIAGNOSTIC_FIELDS = new Set(['status', 'state', 'reason', 'actor', 'client', 'source', 'path']);
 const ERROR_CODE = /\b(?:Forbidden|Unauthenticated|SessionExpired|CursorExpired|ContextIncomplete|ResponseTooLarge|InvalidInput|BadGateway)\b/i;

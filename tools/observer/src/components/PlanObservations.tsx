@@ -2,7 +2,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Alert, Button, Card, Empty, Flex, List, Space, Spin, Typography } from 'antd';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { documentLabel, readableSentence } from '../core/observation';
+import { documentLabel, readableNarrative, readableSentence } from '../core/observation';
+import { readsAsName } from '../core/observation/owner';
 import { isAuthError } from '../lib/api';
 import { formatUnixMs } from '../lib/format';
 import { planningCandidatesQueryOptions, requiredSourcesQueryOptions } from '../lib/queries';
@@ -20,6 +21,7 @@ function PageButtons({ previous, next, refresh }: { previous?: () => void; next?
 }
 
 function proposalStatus(item: PlanningCandidatesData['items'][number]) {
+  if (item.state === 'rejected') return 'rejected';
   if (item.activation.value) return item.activation.value.matches_current_snapshot ? 'applied' : 'previouslyApplied';
   if (item.state === 'superseded') return 'superseded';
   if (item.publication.value) return 'applying';
@@ -109,7 +111,18 @@ export function PlanningChanges({ project, stream }: { project: string; stream: 
               <Typography.Text>{t(`plan.changes.status.${proposalStatus(item)}`)}</Typography.Text>
             </Flex>
             <Typography.Text type="secondary">{readableSentence(item.author.display_name ?? t('plan.changes.authorUnknown'), i18n.language)} · {formatUnixMs(item.updated_at_unix_ms, i18n.language)}</Typography.Text>
-            {!item.baseline.matches_current && !item.activation.value ? <Alert type="info" showIcon message={t('plan.changes.planChanged')} /> : null}
+            {!item.baseline.matches_current && !item.activation.value && item.state !== 'rejected' ? <Alert type="info" showIcon message={t('plan.changes.planChanged')} /> : null}
+            {item.state === 'rejected' ? <Flex vertical gap={4}>
+              {item.rejection?.value ? <>
+                <Typography.Text type="secondary">{t('plan.changes.returnedBy', {
+                  name: item.rejection.value.display_name && readsAsName(item.rejection.value.display_name)
+                    ? item.rejection.value.display_name : t('plan.changes.reviewerUnknown'),
+                  time: formatUnixMs(item.rejection.value.at_unix_ms, i18n.language),
+                })}</Typography.Text>
+                <Typography.Text>{readableNarrative(item.rejection.value.reason, i18n.language) ?? t('plan.changes.returnedReasonUnavailable')}</Typography.Text>
+              </> : <Typography.Text type="secondary">{t('plan.changes.restricted')}</Typography.Text>}
+              <Typography.Text type="secondary">{t('plan.changes.returnedNext')}</Typography.Text>
+            </Flex> : null}
             <Typography.Text type="secondary">{t('plan.changes.summary', item.current_diff.counts)}</Typography.Text>
             {item.current_diff.items.map((change) => <div key={change.work_id}>
               <Typography.Text>{readableSentence(change.title, i18n.language)}</Typography.Text>
