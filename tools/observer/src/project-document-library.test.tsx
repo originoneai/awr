@@ -105,6 +105,21 @@ describe('project document library', () => {
     ]);
   });
 
+  it('carries the authorized task selector into the controlled document read', async () => {
+    await i18n.changeLanguage('en-US');
+    const selected = catalog([document(1, { content_work_id: 'task-read-one' })]);
+    selected.result.data.scope = 'authorized_works';
+    const { calls } = setup((query) => query.op === 'source.content'
+      ? { ok: true, result: { data: { text: TEXT, sha256: DIGEST, byte_length: Buffer.byteLength(TEXT) } } }
+      : selected);
+    await userEvent.click(await screen.findByRole('button', { name: 'Read the full text' }));
+    await screen.findByTestId('library-document-text');
+    expect(calls.filter((query) => query.op === 'source.content')).toEqual([
+      { protocol_version: 1, op: 'source.content', work_id: 'task-read-one', source_path: 'docs/delivery-guide.md', expected_sha256: DIGEST, max_context_bytes: 262144 },
+    ]);
+    expect(defaultVisibleText(globalThis.document.body)).not.toContain('task-read-one');
+  });
+
   it.each(['zh-CN', 'en-US'])('keeps raw source headings and excerpts behind the explicit content read in %s', async (language) => {
     await i18n.changeLanguage(language);
     setup(() => catalog([document(1, { name: '/var/lib/awr-beta/sources/private/customer-plan',

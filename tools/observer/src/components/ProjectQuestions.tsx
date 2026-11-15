@@ -71,7 +71,7 @@ export function ProjectQuestions({ project, confirmedOnly = false }: { project: 
   const [paging, setPaging] = useState<{ cursor: string | null; previous: Array<string | null> }>({ cursor: null, previous: [] });
   const questions = useQuery(ordinaryDecisionsQueryOptions(project, view, paging.cursor, revoked));
   const expired = questions.error instanceof ApiError && questions.error.code === 'CursorExpired';
-  const data = expired ? undefined : questions.data?.result.data;
+  const data = questions.isFetchedAfterMount && !questions.isError ? questions.data?.result.data : undefined;
   useEffect(() => {
     if (!expired || !paging.cursor) return;
     const queryKey = ['team', 'decisions.list', project];
@@ -97,7 +97,7 @@ export function ProjectQuestions({ project, confirmedOnly = false }: { project: 
       <Button aria-label={t(labels.refresh)} loading={questions.isFetching} onClick={refresh}>{t(labels.refresh)}</Button>
     </Flex>
     {questions.isError ? <Alert type="warning" showIcon title={t(labels.failed)} action={<Button onClick={refresh}>{t('inbox.retry')}</Button>} /> : null}
-    {questions.isPending ? <Typography.Text type="secondary">{t('common.loading')}</Typography.Text> : null}
+    {questions.isPending || !questions.isFetchedAfterMount && !questions.isError ? <Typography.Text type="secondary">{t('common.loading')}</Typography.Text> : null}
     {data?.items.length === 0 ? <Empty description={t(labels.empty)} /> : null}
     {data?.items.map((item) => <QuestionCard key={item.decision_id} project={project} item={item} />)}
     {data ? <Flex justify="space-between" align="center" gap={12} wrap>

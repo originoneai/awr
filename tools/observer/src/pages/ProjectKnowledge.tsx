@@ -1,6 +1,6 @@
 import { ProjectQuestions } from '../components/ProjectQuestions';
 import { ObservationValue } from '../components/ObservationValue';
-import { useQuery } from '@tanstack/react-query';
+import { useQueries, useQuery } from '@tanstack/react-query';
 import { Button, Card, Col, Input, List, Pagination, Row, Space, Tabs, Tag, Typography, theme } from 'antd';
 import { useState } from 'react';
 import { Stamp } from 'lucide-react';
@@ -17,11 +17,10 @@ import {
 import { isAuthError } from '../lib/api';
 import { OBSERVATION_PAGE_SIZE, validObservationPage } from '../lib/pagination';
 import { contractGroups } from '../lib/contract-groups';
-import { overviewQueryOptions, readableSourceRef, sourceContentQueryOptions } from '../lib/queries';
+import { overviewQueryOptions, readableSourceRef, sourceContentQueryOptions, workSnapshotQueryOptions } from '../lib/queries';
 import { ProjectDocumentLibrary } from './ProjectDocumentLibrary';
 import { useRevocation } from '../lib/revocation';
 import { useTextDigest, type DigestCheck } from '../lib/text-digest';
-import { useWorkSnapshots } from '../lib/work-snapshots';
 import { craftSelectionStyle } from '../theme';
 import type { WorkContractValue } from '../lib/types';
 
@@ -81,14 +80,19 @@ function WorkDocumentReferences({ project }: { project: string }) {
     Math.max(1, Math.ceil(works.length / OBSERVATION_PAGE_SIZE)),
   );
   const visibleWorks = works.slice((page - 1) * OBSERVATION_PAGE_SIZE, page * OBSERVATION_PAGE_SIZE);
-  const snapshots = useWorkSnapshots(project, visibleWorks, revoked);
+  const snapshots = useQueries({
+    queries: visibleWorks.map((work) => ({
+      ...workSnapshotQueryOptions(project, work.key, work.workstream_id, revoked, 'list'),
+      refetchOnMount: 'always' as const,
+    })),
+  });
   const [filter, setFilter] = useState('');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
   const failedReads = snapshots.filter((query) => query.isError).length;
   const entries = new Map<string, SourceEntry>();
   snapshots.forEach((query, index) => {
-    const data = query.data?.result.data;
+    const data = query.isFetchedAfterMount && !query.isError ? query.data?.result.data : undefined;
     const work = visibleWorks[index];
     if (!data || !work) return;
     const sources: Array<{
@@ -156,7 +160,7 @@ function WorkDocumentReferences({ project }: { project: string }) {
     (entry.path ?? '').toLowerCase().includes(needle) || (names.get(entry.key) ?? '').toLowerCase().includes(needle)
   ));
   const selected = visibleEntries.find((entry) => entry.key === selectedKey) ?? visibleEntries[0];
-  const loadedCount = snapshots.filter((query) => query.data).length;
+  const loadedCount = snapshots.filter((query) => query.isFetchedAfterMount && !query.isError && query.data).length;
   const otherVersions = selected ? allEntries.filter((entry) => entry.path === selected.path) : [];
   const groups = [
     { id: 'specs', title: t('knowledge.groupSpecs'), entries: visibleEntries.filter((entry) => entry.isSpec) },
@@ -239,8 +243,10 @@ function WorkDocumentReferences({ project }: { project: string }) {
         }}
         style={{ display: 'flex', justifyContent: 'flex-end' }}
       />
-      {allEntries.length === 0 ? (
-        <ObservationEmpty />
+      {allEntries.length === 0 && (overview.isPending || snapshots.some((query) => query.isPending || !query.isFetchedAfterMount && !query.isError)) ? (
+        <Typography.Text type="secondary">{t('common.loading')}</Typography.Text>
+      ) : allEntries.length === 0 ? (
+        failedReads > 0 ? null : <ObservationEmpty />
       ) : (
         <Row gutter={[16, 16]} style={{ width: '100%' }}>
           <Col xs={24} lg={8}>

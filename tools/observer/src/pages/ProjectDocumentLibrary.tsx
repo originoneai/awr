@@ -19,7 +19,7 @@ function DocumentText({ project, document }: { project: string; document: Projec
   const { revoked } = useRevocation();
   const [requested, setRequested] = useState(false);
   const content = useQuery({
-    ...sourceContentQueryOptions(project, document.path ?? '', document.sha256 ?? '', revoked),
+    ...sourceContentQueryOptions(project, document.path ?? '', document.sha256 ?? '', revoked, document.content_work_id),
     enabled: requested && document.readable && !revoked,
   });
   const data = content.data?.result.data;
@@ -59,7 +59,7 @@ export function ProjectDocumentLibrary({ project, unsupportedFallback }: { proje
   const library = useQuery(projectDocumentsQueryOptions(project, search, paging.cursor, revoked));
   const expired = library.error instanceof ApiError && library.error.code === 'CursorExpired';
   // A cursor can expire after permission narrowing. Hide retained data in the same render.
-  const data = expired ? undefined : library.data?.result.data;
+  const data = library.isFetchedAfterMount && !library.isError ? library.data?.result.data : undefined;
   useEffect(() => {
     if (!expired || !paging.cursor) return;
     for (const resource of ['documents.list', 'source.content']) {
@@ -98,7 +98,7 @@ export function ProjectDocumentLibrary({ project, unsupportedFallback }: { proje
       </Typography.Paragraph> : null}
     </Card>
     {library.isError ? <Alert type="warning" showIcon title={t('knowledge.libraryFailed')} /> : null}
-    {library.isPending ? <Typography.Text type="secondary">{t('common.loading')}</Typography.Text> : null}
+    {library.isPending || !library.isFetchedAfterMount && !library.isError ? <Typography.Text type="secondary">{t('common.loading')}</Typography.Text> : null}
     {data && documents.length === 0 ? <ObservationEmpty readAtUnixMs={data.as_of.at_unix_ms} /> : null}
     {documents.length > 0 ? <Row gutter={[16, 16]} style={{ width: '100%' }}>
       <Col xs={24} lg={8}>
