@@ -133,6 +133,7 @@ function setupKnowledge({
     if (url.includes('/api/team/read')) {
       const query = JSON.parse(String(init?.body)).query;
       if (query.op === 'capabilities') return json({ ok: true, result: { queries: [] } });
+      if (query.op === 'documents.list') return json({ ok: false, error: { code: 'Unsupported', message: 'Document discovery is unavailable' } });
       if (query.op === 'work.snapshot') {
         const response = snapshots[query.work_id];
         if (response) return json(response);

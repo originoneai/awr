@@ -1,6 +1,7 @@
+import { ProjectQuestions } from '../components/ProjectQuestions';
 import { ObservationValue } from '../components/ObservationValue';
 import { useQuery } from '@tanstack/react-query';
-import { Alert, Button, Card, Col, Input, List, Pagination, Row, Space, Tag, Typography, theme } from 'antd';
+import { Button, Card, Col, Input, List, Pagination, Row, Space, Tabs, Tag, Typography, theme } from 'antd';
 import { useState } from 'react';
 import { Stamp } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -16,7 +17,7 @@ import {
 import { isAuthError } from '../lib/api';
 import { OBSERVATION_PAGE_SIZE, validObservationPage } from '../lib/pagination';
 import { contractGroups } from '../lib/contract-groups';
-import { capabilitiesQueryOptions, overviewQueryOptions, readableSourceRef, sourceContentQueryOptions } from '../lib/queries';
+import { overviewQueryOptions, readableSourceRef, sourceContentQueryOptions } from '../lib/queries';
 import { ProjectDocumentLibrary } from './ProjectDocumentLibrary';
 import { useRevocation } from '../lib/revocation';
 import { useTextDigest, type DigestCheck } from '../lib/text-digest';
@@ -54,18 +55,17 @@ const DIGEST_LABEL = {
 
 export function ProjectKnowledge({ project }: { project: string }) {
   const { t } = useTranslation();
-  const { revoked } = useRevocation();
-  const capabilities = useQuery(capabilitiesQueryOptions(project, revoked));
-  if (revoked || isAuthError(capabilities.error)) return <ObservationForbidden />;
-  if (capabilities.isPending) return <Typography.Text type="secondary">{t('common.loading')}</Typography.Text>;
-  if (capabilities.isError) return <Space orientation="vertical" size={12}>
-    <Alert type="warning" title={t('knowledge.libraryFailed')} />
-    <Button onClick={() => void capabilities.refetch()}>{t('knowledge.retry')}</Button>
-  </Space>;
-  if (capabilities.data?.result.queries?.includes('documents.list')) {
-    return <ProjectDocumentLibrary key={project} project={project} />;
-  }
-  return <WorkDocumentReferences project={project} />;
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('knowledge') === 'confirmations' ? 'confirmations' : 'documents';
+  return <Tabs destroyOnHidden activeKey={activeTab} onChange={(key) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('knowledge', key);
+    next.delete('page');
+    setSearchParams(next);
+  }} items={[
+    { key: 'documents', label: t('knowledge.sources'), children: <ProjectDocumentLibrary key={project} project={project} unsupportedFallback={<WorkDocumentReferences project={project} />} /> },
+    { key: 'confirmations', label: t('knowledge.confirmations'), children: <ProjectQuestions key={project} project={project} confirmedOnly /> },
+  ]} />;
 }
 
 /** Compatibility for services that have not published project document discovery. */

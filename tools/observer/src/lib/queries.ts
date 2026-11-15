@@ -15,6 +15,7 @@ import type {
   PlanningCandidatesData,
   RequiredSourcesData,
   ProjectDocumentsData,
+  OrdinaryDecision,
   OrdinaryDecisionsData,
 } from './types';
 
@@ -137,10 +138,10 @@ interface TeamReadQuery {
   search?: string;
   limit?: number;
   max_context_bytes?: number;
-  decision_state?: 'open' | 'all';
+  decision_state?: OrdinaryDecision['state'] | 'all';
 }
 
-export function ordinaryDecisionsQueryOptions(project: string, state: 'open' | 'all', cursor: string | null, revoked: boolean) {
+export function ordinaryDecisionsQueryOptions(project: string, state: OrdinaryDecision['state'] | 'all', cursor: string | null, revoked: boolean) {
   return {
     queryKey: ['team', 'decisions.list', project, state, cursor],
     queryFn: ({ signal }: { signal: AbortSignal }) => teamRead<OrdinaryDecisionsData>(project, {
@@ -163,6 +164,7 @@ export function projectDocumentsQueryOptions(project: string, search: string, cu
     }, signal),
     enabled: Boolean(project) && !revoked,
     ...readQueryDefaults,
+    retry: (count, error) => !(error instanceof ApiError && error.code === 'Unsupported') && retryRead(count, error),
     refetchInterval: SNAPSHOT_POLL_INTERVAL_MS,
   } satisfies UseQueryOptions<TeamReadResponse<ProjectDocumentsData>>;
 }

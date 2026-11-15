@@ -99,6 +99,7 @@ function setup({ sourceContent, specs }: {
     if (url.includes('/api/team/read')) {
       const query = JSON.parse(String(init?.body)).query;
       if (query.op === 'capabilities') return json({ ok: true, result: { queries: [] } });
+      if (query.op === 'documents.list') return json({ ok: false, error: { code: 'Unsupported', message: 'Document discovery is unavailable' } });
       if (query.op === 'work.snapshot') return json(snapshots[query.work_id as keyof typeof snapshots]);
       if (query.op === 'source.content') return json(await sourceContent(query));
     }
@@ -145,6 +146,7 @@ describe('knowledge read: the text never appears before its check finishes', () 
       if (url.includes('/api/team/read')) {
         const query = JSON.parse(String(init?.body)).query;
         if (query.op === 'capabilities') return json({ ok: true, result: { queries: [] } });
+      if (query.op === 'documents.list') return json({ ok: false, error: { code: 'Unsupported', message: 'Document discovery is unavailable' } });
         if (query.op === 'work.snapshot') return json(snapshotsFor(specA, specB)[query.work_id as 'W1' | 'W2']);
         if (query.op === 'source.content') {
           return json(await (async () => ({

@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Card, Col, Input, List, Row, Space, Tag, Typography, theme } from 'antd';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ObservationEmpty, ObservationForbidden } from '../components/states';
 import { documentTitle, judgeContentRead, utf8ByteLength } from '../core/observation';
@@ -48,7 +48,7 @@ function DocumentText({ project, document }: { project: string; document: Projec
 }
 
 /** A project-wide library, independent of how many work summaries are loaded. */
-export function ProjectDocumentLibrary({ project }: { project: string }) {
+export function ProjectDocumentLibrary({ project, unsupportedFallback }: { project: string; unsupportedFallback?: ReactNode }) {
   const { t, i18n } = useTranslation();
   const { token } = theme.useToken();
   const queryClient = useQueryClient();
@@ -82,6 +82,7 @@ export function ProjectDocumentLibrary({ project }: { project: string }) {
   };
 
   if (revoked || isAuthError(library.error)) return <ObservationForbidden />;
+  if (library.error instanceof ApiError && library.error.code === 'Unsupported' && unsupportedFallback) return unsupportedFallback;
   return <Space orientation="vertical" size={16} style={{ width: '100%' }} data-testid="project-document-library">
     <Card size="small">
       <Space size={16} wrap>
