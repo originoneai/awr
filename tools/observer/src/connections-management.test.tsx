@@ -15,8 +15,9 @@ const rows = [
     expires_at_ms: null, can_revoke: true, revocation_scope: 'shared_account_access' },
 ];
 
-function setup(options: { unconfirmed?: boolean; currentEnds?: boolean; denied?: boolean; paged?: boolean } = {}) {
+function setup(options: { unconfirmed?: boolean; currentEnds?: boolean; denied?: boolean; paged?: boolean; clientName?: string } = {}) {
   let items = structuredClone(rows);
+  if (options.clientName) items[0].client_name = options.clientName;
   const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -39,6 +40,14 @@ function setup(options: { unconfirmed?: boolean; currentEnds?: boolean; denied?:
 }
 
 describe('connection management', () => {
+  it.each(['OAuth client', 'MCP client', 'snapshot cache', 'private_protocol_error'])('keeps the technical connection label %s out of the product view', async (clientName) => {
+    setup({ clientName });
+    renderApp('/account?scope=demo');
+    expect(await screen.findByText('Agent 连接')).toBeTruthy();
+    const visible = defaultVisibleText(screen.getByTestId('account-connections'));
+    expect(visible).not.toContain(clientName);
+    expect(findForbiddenVisibleText(visible)).toEqual([]);
+  });
   it('keeps the connection actions directly available in a narrow viewport', async () => {
     setup();
     const viewport = mockViewport(390);

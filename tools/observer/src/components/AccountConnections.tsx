@@ -3,6 +3,7 @@ import { Alert, App, Button, Card, Descriptions, Empty, Grid, List, Popconfirm, 
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { readsAsName } from '../core/observation/owner';
+import { FORBIDDEN_VISIBLE_PATTERNS } from '../i18n/human-language';
 import { ApiError, apiPost } from '../lib/api';
 import { formatUnixMs } from '../lib/format';
 import { projectsQueryOptions } from '../lib/queries';
@@ -83,7 +84,11 @@ function ProjectConnections({ project, projectsLoading }: { project: string | nu
   function name(connection: Connection) {
     if (connection.kind === 'browser') return t(connection.is_current ? 'connections.currentBrowser' : 'connections.browser');
     if (connection.kind === 'shared_access') return t('connections.sharedAccess');
-    return connection.client_name && readsAsName(connection.client_name) ? connection.client_name : t('connections.agent');
+    const candidate = connection.client_name;
+    if (!candidate || !readsAsName(candidate)
+      || FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(candidate))
+      || /\bMCP\b/i.test(candidate)) return t('connections.agent');
+    return candidate;
   }
 
   function disconnectButton(connection: Connection) {
