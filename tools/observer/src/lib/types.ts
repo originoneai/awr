@@ -376,3 +376,52 @@ export interface ReviewData {
     bundle_hash: string;
   } | null;
 }
+
+export interface DependencyVersion {
+  receipt_id: string | null;
+  contract_hash: string;
+  source_snapshot_id: string | null;
+}
+
+export interface DependencyObservation {
+  work_id: string;
+  work_title: string;
+  provider_work_id: string;
+  provider_title: string | null;
+  dependency_position: number;
+  version_policy: 'current_contract' | 'fixed_delivery';
+  review_assurance: string | { cross_workstream: { review_assurance: string; version_policy: string } } | null;
+  required_version: DependencyVersion | null;
+  available_version: DependencyVersion | null;
+  adopted_version: DependencyVersion | null;
+  consumed_version: DependencyVersion | null;
+  adoption_valid: boolean | null;
+  validity: 'valid' | 'upstream_changed' | 'unavailable';
+  reason: string | null;
+  missing: Record<string, string | null>;
+}
+
+export interface DependencyListData {
+  work_id: string | null;
+  items: DependencyObservation[];
+  total: number;
+  next_cursor: string | null;
+  as_of: { at_unix_ms: number };
+}
+
+export interface HandoffListData {
+  items: Array<{
+    handoff_id: string;
+    kind: 'execution' | 'responsibility';
+    effective_status: string;
+    pending: boolean;
+    expired: boolean;
+    from_display_name: string | null;
+    to_display_name: string | null;
+    updated_at_unix_ms: number;
+    expires_at_unix_ms: number | null;
+  }>;
+  total: number;
+  next_cursor: string | null;
+  as_of: { at_unix_ms: number };
+}

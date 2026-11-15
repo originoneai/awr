@@ -113,9 +113,9 @@ describe('project workstream progress', () => {
     expect(screen.getByTestId('workstream-group-WS1').textContent).toContain('Backend workstream');
     expect(screen.getByTestId('workstream-group-WS2').textContent).toContain('Frontend workstream');
     expect(screen.getByTestId('project-status-W1').textContent).toBe('已认领');
-    // The row carries no owner; the work's own read says 'lin' is responsible.
-    expect(screen.getByTestId('project-owner-W1').textContent).toBe('lin');
-    expect(screen.getByTestId('project-owner-W1').getAttribute('data-owner-source')).toBe('snapshot');
+    // A responsibility identifier does not supply the missing display name.
+    expect(screen.getByTestId('project-owner-W1').textContent).toBe('未提供');
+    expect(screen.getByTestId('project-owner-W1').getAttribute('data-owner-source')).toBe('none');
     expect(screen.getByTestId('project-next-W1').textContent).toBe('未报告下一步');
     expect(screen.getByTestId('last-report-W1').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN'));
     expect(screen.getByTestId('last-report-W1').textContent).not.toBe(formatUnixMs(1761839900000, 'zh-CN'));
@@ -979,7 +979,7 @@ describe('overview goals and delivery blocks (read from the page\'s own snapshot
     expect(loading.getAttribute('data-owner-source')).toBe('none');
     release();
     await waitFor(() => expect(screen.getByTestId('project-status-W1').textContent).not.toBe('加载中…'));
-    expect(screen.getByTestId('project-owner-W1').textContent).toBe('lin');
+    expect(screen.getByTestId('project-owner-W1').textContent).toBe('未提供');
 
     cleanup();
     const snapshot = () => ({ ok: false, error: { code: 'ReadFailed', message: 'synthetic read failure' } });

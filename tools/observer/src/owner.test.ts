@@ -23,10 +23,10 @@ describe('deriveOwner', () => {
     expect(result.source).toBe('snapshot');
   });
 
-  it('falls back further to the owner id as written when it reads as a name', () => {
+  it('never substitutes a short person identifier for a missing display name', () => {
     const result = deriveOwner({ rowOwner: null, snapshot: snapshot(null, 'mei'), readState: 'ready' });
-    expect(result.name).toBe('mei');
-    expect(result.source).toBe('snapshot');
+    expect(result.name).toBeNull();
+    expect(result.source).toBe('none');
   });
 
   it('never shows a machine identifier from the owner field, whatever shape it takes', () => {
@@ -59,10 +59,10 @@ describe('deriveOwner', () => {
     expect(readsAsName('2026')).toBe(false);
   });
 
-  it('shows owner values that read as names in any script', () => {
+  it('recognizes names in any script while requiring an explicit display-name field', () => {
     for (const owner of ['mei', 'Lin', '周宁', 'Zhou Ning', "O'Brien", 'Jean-Luc']) {
       expect(readsAsName(owner), owner).toBe(true);
-      const result = deriveOwner({ rowOwner: null, snapshot: snapshot(null, owner), readState: 'ready' });
+      const result = deriveOwner({ rowOwner: null, snapshot: snapshot(owner, 'internal-person'), readState: 'ready' });
       expect(result.name, owner).toBe(owner);
     }
   });

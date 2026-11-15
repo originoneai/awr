@@ -9,7 +9,7 @@ import { isAuthError } from '../lib/api';
 import { ProjectAcceptance } from './ProjectAcceptance';
 import { ProjectKnowledge } from './ProjectKnowledge';
 import { ProjectOverview } from './ProjectOverview';
-import { ProjectMaps } from './ProjectMaps';
+import { ProjectDependencies } from './ProjectDependencies';
 import { WorkPlanPage } from './WorkPlanPage';
 import { projectsQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
@@ -69,7 +69,7 @@ export function ProjectShell() {
                   ? <ProjectKnowledge project={project} />
                   : key === 'acceptance'
                     ? <ProjectAcceptance project={project} />
-                    : <ProjectMaps project={project} />,
+                    : <ProjectDependencies project={project} />,
           }))}
         />
       </Card>

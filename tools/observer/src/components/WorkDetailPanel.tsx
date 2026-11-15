@@ -20,6 +20,8 @@ import { NotReportedYet, ObservationEmpty, ObservationForbidden, PartialFailure 
 import { FieldLabel, ObservationValue } from './ObservationValue';
 import { deriveWorkState, describeProgressReport, documentLabel } from '../core/observation';
 import { RecentChanges } from './RecentChanges';
+import { WorkResponsibility } from './WorkResponsibility';
+import { DependencyObservations } from './DependencyObservations';
 import { isAuthError } from '../lib/api';
 import { activityQueryOptions, reviewQueryOptions, workSnapshotQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
@@ -280,6 +282,18 @@ export function WorkDetailPanel({
                 key: 'requirements',
                 label: t('plan.detail.requirements'),
                 children: <Requirements query={snapshot} />,
+              },
+              {
+                key: 'responsibility',
+                label: t('collaboration.people'),
+                children: snapshot.isPending ? <Spin /> : snapshot.isError || !snapshot.data
+                  ? <PartialFailure><div /></PartialFailure>
+                  : <WorkResponsibility key={work.key} project={project} workId={work.key} snapshot={snapshot.data.result.data} />,
+              },
+              {
+                key: 'dependencies',
+                label: t('collaboration.list'),
+                children: <DependencyObservations key={work.key} project={project} workId={work.key} />,
               },
               {
                 key: 'outcomes',
