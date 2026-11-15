@@ -33,22 +33,30 @@ pub(super) async fn read(
         )
         .await?
         .get(0);
+    // Bound the contract page before joining live metadata. Otherwise a stale
+    // cardinality estimate can expand those joins across the entire workstream.
     let rows = tx
         .query(
-            "SELECT c.work_id,c.title,c.contract_json,c.contract_hash,c.definition_state,
+            "WITH page AS MATERIALIZED (
+           SELECT c.work_id,c.title,c.contract_json,c.contract_hash,c.definition_state,
+             c.tenant_id,c.project_id,c.scope_id
+           FROM awr_team.work_contracts c
+           JOIN awr_team.workstream_snapshot_ownership o
+             USING(tenant_id,project_id,snapshot_id,scope_id,work_id)
+           WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.snapshot_id=$3
+             AND o.workstream_id=$4 AND c.work_id>$5 ORDER BY c.work_id LIMIT $6
+         )
+         SELECT c.work_id,c.title,c.contract_json,c.contract_hash,c.definition_state,
            r.state,p.display_name,
            (SELECT (extract(epoch FROM max(e.created_at))*1000)::bigint FROM awr_team.events e
              WHERE e.tenant_id=c.tenant_id AND e.project_id=c.project_id AND e.work_id=c.work_id)
-         FROM awr_team.work_contracts c
-         JOIN awr_team.workstream_snapshot_ownership o
-           USING(tenant_id,project_id,snapshot_id,scope_id,work_id)
+         FROM page c
          LEFT JOIN awr_team.work_runtime r USING(tenant_id,project_id,scope_id,work_id)
          LEFT JOIN awr_team.task_responsibilities t
            ON t.tenant_id=c.tenant_id AND t.project_id=c.project_id AND t.work_id=c.work_id
          LEFT JOIN awr_team.persons p
            ON p.tenant_id=t.tenant_id AND p.project_id=t.project_id AND p.id=t.owner_person_id
-         WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.snapshot_id=$3
-           AND o.workstream_id=$4 AND c.work_id>$5 ORDER BY c.work_id LIMIT $6",
+         ORDER BY c.work_id",
             &[
                 &tenant,
                 &project,
