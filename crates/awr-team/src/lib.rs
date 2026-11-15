@@ -7,6 +7,7 @@ mod canonical;
 mod completion;
 mod contract;
 pub mod delivery;
+mod directory;
 mod error;
 mod findings;
 mod governance;
@@ -32,6 +33,7 @@ pub use contract::{
     CrossWorkstreamDependencyPolicy, CrossWorkstreamReviewAssurance, DependencyAcceptanceMode,
     ExecutionSettlementMode, ExecutionSettlementPolicy, WorkContract, WorkDefinitionState,
 };
+pub use directory::{DirectoryMember, DirectoryUnit, ProjectDirectoryPlan, directory_id};
 pub use error::{TeamError, TeamResult};
 pub use findings::{JudgedFinding, ReviewFinding, ReviewScope, judge_finding};
 pub use governance::{

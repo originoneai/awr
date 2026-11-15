@@ -1650,6 +1650,22 @@ fn catalog() -> Vec<Tool> {
             "End an authorized connection or connection family by its listed non-secret reference. Repeat the same reference safely; inspect after an uncertain response. Shared access can only be ended for your own client here, affecting every connection using it, including other projects for account-wide access. Member administration retains its preview/apply entry. No claim that external host processes or repository effects stop.",
             super::connections::schema(true).as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(false).destructive(true).idempotent(true).open_world(false)),
+        Tool::new("awr_team_directory_read",
+            "Read the registered project's organization, departments and project-qualified member relationships. Requires a current project read delegation and full readable project scope. Grouping grants no access and does not merge people across projects. Refresh after a directory or permission change.",
+            super::directory::schema(super::directory::Operation::Read).as_object().unwrap().clone())
+            .with_annotations(ToolAnnotations::new().read_only(true).destructive(false).idempotent(true).open_world(false)),
+        Tool::new("awr_team_directory_preview",
+            "Preview organization and department relationships for this project. Requires project-management authority covering the project. Reference existing project persons. Keep expected_version and plan_digest for apply; re-preview after any directory, member or permission change.",
+            super::directory::schema(super::directory::Operation::Preview).as_object().unwrap().clone())
+            .with_annotations(ToolAnnotations::new().read_only(true).destructive(false).idempotent(true).open_world(false)),
+        Tool::new("awr_team_directory_apply",
+            "Apply the previewed project directory with expected_version, expected_plan_digest and a stable request_id. Exact replay returns the original receipt. Grouping leaves permissions and task responsibility unchanged. On an uncertain response query directory_outcome before retrying the same intent; after conflict re-preview.",
+            super::directory::schema(super::directory::Operation::Apply).as_object().unwrap().clone())
+            .with_annotations(ToolAnnotations::new().read_only(false).destructive(true).idempotent(true).open_world(false)),
+        Tool::new("awr_team_directory_outcome",
+            "Inspect your original directory_apply request_id under current project-management authority. Recorded returns its historical receipt; absent leaves the change unconfirmed. Retry only the original unchanged request after inspection. This query changes no relationships.",
+            super::directory::schema(super::directory::Operation::Outcome).as_object().unwrap().clone())
+            .with_annotations(ToolAnnotations::new().read_only(true).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_access_inspect",
             "Project-admin only. Omit both subject selectors to list a bounded member directory (cursor/limit); supply both to inspect one actor/client. Returns permitted memberships, grants and credential metadata, never raw secrets. Requires access.manage_project and explicit manage grants.",
             access_inspect.as_object().unwrap().clone())
@@ -1899,6 +1915,10 @@ impl ServerHandler for Endpoint {
                 "awr_team_connections_list" | "awr_team_connections_revoke" => {
                     let req = serde_json::from_value(args).map_err(|_| PgError::Protocol("invalid connection request".into()))?;
                     super::connections::operate(&self.state, &self.project, &access.bearer, req, request.name == "awr_team_connections_revoke", None).await
+                }
+                "awr_team_directory_read" | "awr_team_directory_preview" | "awr_team_directory_apply" | "awr_team_directory_outcome" => {
+                    let operation = request.name.strip_prefix("awr_team_directory_").and_then(super::directory::Operation::parse).ok_or_else(|| PgError::Protocol("invalid project directory operation".into()))?;
+                    super::directory::operate(&self.state, &self.project, &access.bearer, args, operation).await
                 }
                 "awr_team_access_inspect" => {
                     let req: super::AccessInspectBody = serde_json::from_value(args)

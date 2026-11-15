@@ -21,7 +21,8 @@
     "review.decide",
     "delivery.finalize",
     "access.manage_project",
-    "audit.read_project"
+    "audit.read_project",
+    "directory.manage_project"
   ],
   "action_role_matrix": {
     "work.read": [
@@ -78,7 +79,10 @@
     "audit.read_project": [
       "project_admin"
     ],
-    "work.assign": []
+    "work.assign": [],
+    "directory.manage_project": [
+      "project_admin"
+    ]
   },
   "unknown_action_default": "deny",
   "independent_review": {

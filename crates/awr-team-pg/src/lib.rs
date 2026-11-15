@@ -9,6 +9,7 @@ mod delegation_auth;
 mod delivery_adoption;
 mod delivery_guidance;
 mod delivery_sync;
+mod directory;
 mod error;
 mod execution;
 mod governance;
@@ -60,6 +61,7 @@ pub use delivery_sync::{
     RejectPreparedDeliveryIntegration, RenewDeliveryPublicationLease, ReserveDeliveryInspection,
     ReuseDeliveryRouteTemplate, SelectDeliveryCandidate,
 };
+pub use directory::{DirectoryApplyRequest, DirectoryStore};
 pub use error::{BindingStage, PgError, PgResult};
 pub use execution::{
     ExecutionRecord, ExecutionStore, OutboxDelivery, admit_live_fence, exactly_once_supported,
@@ -156,6 +158,6 @@ mod tests {
     #[test]
     fn schema_contract_is_stable() {
         assert_eq!(SCHEMA, "awr_team");
-        assert_eq!(EXPECTED_SCHEMA_VERSION, 61);
+        assert_eq!(EXPECTED_SCHEMA_VERSION, 62);
     }
 }

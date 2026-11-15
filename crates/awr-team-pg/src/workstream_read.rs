@@ -1047,6 +1047,10 @@ impl WorkstreamReadStore {
         crate::ConnectionStore::from_pool(self.pool.clone())
     }
 
+    pub fn directory(&self) -> crate::DirectoryStore {
+        crate::DirectoryStore::from_pool(self.pool.clone())
+    }
+
     /// Transport admission accepts one live readable scope. Each domain read
     /// and mutation retains its own transaction and authority checks.
     pub async fn authorize_project_entry(

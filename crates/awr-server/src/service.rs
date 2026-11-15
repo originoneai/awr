@@ -4,6 +4,7 @@ mod action_auth;
 mod connections;
 pub mod delivery_sync;
 pub mod delivery_workers;
+mod directory;
 pub mod github_webhook;
 pub mod github_worker;
 pub mod local_git_worker;
@@ -182,6 +183,10 @@ pub fn router(
     let mut router = Router::new()
         .route("/v1/projects/{project}/query", post(query))
         .route("/v1/projects/{project}/command", post(command))
+        .route(
+            "/v1/projects/{project}/directory/{operation}",
+            post(directory::dispatch),
+        )
         .route(
             "/v1/projects/{project}/access/inspect",
             post(access_inspect),

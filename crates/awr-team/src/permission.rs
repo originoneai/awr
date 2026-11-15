@@ -83,6 +83,8 @@ pub enum Action {
     AccessManageProject,
     #[serde(rename = "audit.read_project")]
     AuditReadProject,
+    #[serde(rename = "directory.manage_project")]
+    DirectoryManageProject,
 }
 
 impl Action {
@@ -102,6 +104,7 @@ impl Action {
             Self::DeliveryFinalize => "delivery.finalize",
             Self::AccessManageProject => "access.manage_project",
             Self::AuditReadProject => "audit.read_project",
+            Self::DirectoryManageProject => "directory.manage_project",
         }
     }
 
@@ -121,13 +124,14 @@ impl Action {
             "delivery.finalize" => Ok(Self::DeliveryFinalize),
             "access.manage_project" => Ok(Self::AccessManageProject),
             "audit.read_project" => Ok(Self::AuditReadProject),
+            "directory.manage_project" => Ok(Self::DirectoryManageProject),
             _ => Err(TeamError::PermissionDenied(format!(
                 "unknown action denied by default: {name}"
             ))),
         }
     }
 
-    pub fn all() -> [Self; 14] {
+    pub fn all() -> [Self; 15] {
         [
             Self::WorkRead,
             Self::WorkAssign,
@@ -143,10 +147,11 @@ impl Action {
             Self::DeliveryFinalize,
             Self::AccessManageProject,
             Self::AuditReadProject,
+            Self::DirectoryManageProject,
         ]
     }
 
-    pub fn new_privileged_actions() -> [Self; 7] {
+    pub fn new_privileged_actions() -> [Self; 8] {
         [
             Self::WorkAssign,
             Self::PlanningPropose,
@@ -155,6 +160,7 @@ impl Action {
             Self::PlanningPublish,
             Self::AccessManageProject,
             Self::ReviewDecide,
+            Self::DirectoryManageProject,
         ]
     }
 }
@@ -274,6 +280,7 @@ pub fn template_actions(role: RoleTemplate) -> BTreeSet<Action> {
                 DeliveryFinalize,
                 AccessManageProject,
                 AuditReadProject,
+                DirectoryManageProject,
             ]);
         }
     }
@@ -325,11 +332,15 @@ impl BusinessRole {
                 PlanningApprove,
                 PlanningPublish,
                 AuditReadProject,
+                DirectoryManageProject,
             ]),
             Self::Deliverer => BTreeSet::from([WorkRead, SessionMaintainOwn, DeliveryFinalize]),
-            Self::Administrator => {
-                BTreeSet::from([WorkRead, AccessManageProject, AuditReadProject])
-            }
+            Self::Administrator => BTreeSet::from([
+                WorkRead,
+                AccessManageProject,
+                AuditReadProject,
+                DirectoryManageProject,
+            ]),
         }
     }
 }
@@ -395,6 +406,7 @@ mod business_role_tests {
                     PlanningApprove,
                     PlanningPublish,
                     AuditReadProject,
+                    DirectoryManageProject,
                 ]),
             ),
             (
@@ -403,7 +415,12 @@ mod business_role_tests {
             ),
             (
                 BusinessRole::Administrator,
-                BTreeSet::from([WorkRead, AccessManageProject, AuditReadProject]),
+                BTreeSet::from([
+                    WorkRead,
+                    AccessManageProject,
+                    AuditReadProject,
+                    DirectoryManageProject,
+                ]),
             ),
         ];
         for (role, expected) in cases {
