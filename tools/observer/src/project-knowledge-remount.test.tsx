@@ -78,7 +78,7 @@ describe('knowledge-view authorization on remount', () => {
     const textId = view === 'legacy' ? 'read-text' : 'library-document-text';
     expect((await screen.findByTestId(textId)).textContent).toBe(PRIVATE_BODY);
     expect(bodyReads).toHaveLength(1);
-    if (view === 'library') expect(bodyReads[0]?.work_id).toBe('launch');
+    expect(bodyReads[0]?.work_id).toBe('launch');
     await userEvent.click(screen.getByRole('tab', { name: 'Confirmed decisions' }));
     await waitFor(() => expect(document.body.textContent).not.toContain(PRIVATE_BODY));
     rechecking = true;
@@ -89,6 +89,7 @@ describe('knowledge-view authorization on remount', () => {
     try {
       await userEvent.click(await screen.findByRole('button', { name: 'Read the full text' }));
       await waitFor(() => expect(bodyReads).toHaveLength(2));
+      expect(bodyReads[1]?.work_id).toBe('launch');
       expect(document.body.textContent).not.toContain(PRIVATE_BODY);
       expect(exposures.every((text) => !text.includes(PRIVATE_BODY))).toBe(true);
       await act(async () => { finish({ ok: false, error: { code: 'Forbidden', message: 'private-body-permission-change' } }); });

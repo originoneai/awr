@@ -186,6 +186,7 @@ function WorkDocumentReferences({ project }: { project: string }) {
       selected?.path ?? '',
       selected?.sha256 ?? '',
       revoked,
+      selected?.citingWorks[0]?.key,
     ),
     enabled: readRequested && refReadable && !revoked,
     staleTime: 0,
