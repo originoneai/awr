@@ -62,11 +62,11 @@ describe('deriveWorkState: next step', () => {
     expect(deriveWorkState({ ...zh, snapshot: withProgress('  Review the contract \n'), workNextStep: 'row text' }).next.text).toBe('Review the contract');
     expect(deriveWorkState({ ...zh, snapshot: IN_PROGRESS, workNextStep: 'row text' }).next)
       .toMatchObject({ kind: 'reported', text: 'row text' });
-    for (const blank of ['', '   ', null, 7, { text: 'x' }]) {
+    for (const blank of ['', '   ', null]) {
       const state = deriveWorkState({ ...zh, snapshot: withProgress(blank), workNextStep: 'row text' });
       expect(state.next, JSON.stringify(blank)).toMatchObject({ kind: 'reported', text: 'row text' });
     }
-    expect(deriveWorkState({ ...zh, snapshot: withProgress({ text: 'x' }) }).next).toMatchObject({ kind: 'missing', text: '未报告下一步' });
+    expect(deriveWorkState({ ...zh, snapshot: withProgress({ text: 'x' }) }).next).toMatchObject({ kind: 'reported', text: '已收到汇报，详细内容暂时无法显示' });
     expect(deriveWorkState({ ...zh, snapshot: withProgress({ text: 'x' }) }).next.technical.nextAction).toBe('{"text":"x"}');
   });
 
@@ -359,5 +359,15 @@ describe('product-safe next action', () => {
     expect(state.next.technical.nextAction).toBe(next_action);
     expect(state.progress.text).toBe(language === 'zh-CN' ? '受阻' : 'Blocked');
     expect(state.lastReport.atUnixMs).toBe(1793534400000);
+  });
+});
+
+
+describe('non-prose next actions', () => {
+  it.each([{ reason: 'synthetic-next-object' }, 7, false])('retains receipt of the next action for %j', (next_action) => {
+    const state = deriveWorkState({ language: 'en-US', readState: 'ready', workNextStep: 'Earlier instruction', snapshot: { observation: { progress: { next_action } } } });
+    expect(state.next.kind).toBe('reported');
+    expect(state.next.text).toBe('A report was received, but its details cannot be displayed');
+    expect(state.next.fullText).toBeNull();
   });
 });

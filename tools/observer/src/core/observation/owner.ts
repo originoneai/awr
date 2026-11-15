@@ -1,5 +1,5 @@
 import { FORBIDDEN_VISIBLE_PATTERNS, humanText } from '../../i18n/human-language';
-import { statementText } from './values';
+import { hasObservationValue, rawObservationText, statementText } from './values';
 import { readableNarrative } from './readable';
 import type { WorkStateInput } from './types';
 
@@ -50,17 +50,19 @@ export function deriveOwner(input: {
 }): OwnerResult {
   const row = statementText(input.rowOwner);
   const technical = {
-    row,
-    snapshotOwnerName: statementText(input.snapshot?.observation?.responsibility?.owner_name) ?? null,
+    row: rawObservationText(input.rowOwner).text,
+    snapshotOwnerName: rawObservationText(input.snapshot?.observation?.responsibility?.owner_name).text,
     snapshotOwner: statementText(input.snapshot?.observation?.responsibility?.owner) ?? null,
   };
-  if (row != null) return { name: readsAsName(row) ? row : null, source: 'row', loading: false, technical };
+  if (hasObservationValue(input.rowOwner)) return { name: row != null && readsAsName(row) ? row : null, source: 'row', loading: false, technical };
   if (input.readState === 'loading') {
     return { name: null, source: 'none', loading: true, technical };
   }
   if (input.readState === 'ready') {
-    if (technical.snapshotOwnerName != null) {
-      return { name: readsAsName(technical.snapshotOwnerName) ? technical.snapshotOwnerName : null, source: 'snapshot', loading: false, technical };
+    const ownerName = input.snapshot?.observation?.responsibility?.owner_name;
+    if (hasObservationValue(ownerName)) {
+      const name = statementText(ownerName);
+      return { name: name != null && readsAsName(name) ? name : null, source: 'snapshot', loading: false, technical };
     }
   }
   return { name: null, source: 'none', loading: false, technical };

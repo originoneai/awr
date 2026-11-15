@@ -3,7 +3,7 @@ import { artifactLabel, checkLabel } from './labels';
 import { readableNarrative } from './readable';
 import { readsAsName } from './owner';
 import { absoluteTimeText } from './time';
-import { rawObservationText, statementText, statusWord } from './values';
+import { hasObservationValue, rawObservationText, statementText, statusWord } from './values';
 import type { CappedList, ProgressReportArtifact, ProgressReportResult, ProgressReportTest } from './types';
 
 /** How many entries of one list a person is shown. Original reports remain in service history. */
@@ -17,11 +17,17 @@ function capped<T>(items: T[]): CappedList<T> {
   return { shown: items.slice(0, REPORT_LIST_LIMIT), more: Math.max(0, items.length - REPORT_LIST_LIMIT) };
 }
 
+function reportedSentence(value: unknown, language: string): string | null {
+  if (!hasObservationValue(value)) return null;
+  const text = statementText(value);
+  return (text == null ? null : readableNarrative(text, language)) ?? humanText('reportedContentUnavailable', language);
+}
+
 function sentences(value: unknown, language: string): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((entry) => {
-    const text = statementText(entry);
-    return text == null ? [] : [readableNarrative(text, language) ?? humanText('reportedContentUnavailable', language)];
+  const entries = Array.isArray(value) ? value : [value];
+  return entries.flatMap((entry) => {
+    const text = reportedSentence(entry, language);
+    return text == null ? [] : [text];
   });
 }
 
@@ -52,10 +58,10 @@ export function describeProgressReport(progress: unknown, options: { language: s
   const report = asRecord(progress);
   if (report == null) return MISSING;
 
-  const summaryText = statementText(report.summary);
-  const summary = summaryText == null ? null : readableNarrative(summaryText, language) ?? humanText('reportedContentUnavailable', language);
+  const summary = reportedSentence(report.summary, language);
   const completed = capped(sentences(report.completed, language));
-  const blockers = { ...capped(sentences(report.blockers, language)), reported: Array.isArray(report.blockers) };
+  const blockerSentences = sentences(report.blockers, language);
+  const blockers = { ...capped(blockerSentences), reported: Array.isArray(report.blockers) || blockerSentences.length > 0 };
   const tests = capped(
     (Array.isArray(report.tests) ? report.tests : []).flatMap((entry, index): ProgressReportTest[] => {
       const test = asRecord(entry);

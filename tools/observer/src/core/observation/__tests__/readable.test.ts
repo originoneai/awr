@@ -152,3 +152,15 @@ describe('readableSentence', () => {
     expect(readableSentence('', 'zh-CN')).toBe('');
   });
 });
+
+
+describe('protocol fields and numbered identities', () => {
+  it.each(['zh-CN', 'en-US'])('withholds colon-form diagnostic records in %s', (language) => {
+    expect(readableNarrative('reason: database unavailable', language)).toBe('database unavailable');
+    for (const text of ['status: custom failure', 'state: degraded', 'path: private route']) {
+      expect(readableNarrative(text, language)).toBeNull();
+    }
+    for (const text of ['agent7', 'dev42', 'client9']) expect(readableNarrative(text, language)).toBeNull();
+    expect(readableNarrative('Review https://github.com/dev42/example', language)).toBe('Review https://github.com/dev42/example');
+  });
+});

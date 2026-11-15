@@ -108,3 +108,19 @@ describe('deriveOwner', () => {
     expect(ownerCellText(deriveOwner({ rowOwner: null, snapshot: {}, readState: 'ready' }), { language: 'en-US' })).toBe('Not provided');
   });
 });
+
+
+describe('supplied non-name values', () => {
+  it.each([{ token: 'synthetic-name-object' }, [], 7, false, 'agent7', 'dev42', 'client9'])(
+    'keeps a supplied unsafe name distinct from no name for %j', (value) => {
+      for (const input of [
+        { rowOwner: value, snapshot: null, readState: 'ready' as const },
+        { rowOwner: null, snapshot: { observation: { responsibility: { owner_name: value } } }, readState: 'ready' as const },
+      ]) {
+        const result = deriveOwner(input);
+        expect(result.name).toBeNull();
+        expect(ownerCellText(result, { language: 'en-US' })).toBe('Name cannot be displayed');
+      }
+    },
+  );
+});

@@ -55,6 +55,7 @@ const INTERNAL_FIELDS = new Set([
 const DIAGNOSTIC_FIELDS = new Set(['status', 'state', 'reason', 'actor', 'client', 'source', 'path']);
 const ERROR_CODE = /\b(?:Forbidden|Unauthenticated|SessionExpired|CursorExpired|ContextIncomplete|ResponseTooLarge|InvalidInput|BadGateway)\b/i;
 const INTERNAL_TOKEN = /\b(?:client|actor|session|execution|claim|receipt|credential|snapshot|workstream|decision|request|agent)[_-](?=[a-z0-9_-]*\d)[a-z0-9_-]+\b/i;
+const NUMBERED_ROLE = /\b(?:client|actor|session|execution|claim|receipt|credential|snapshot|workstream|decision|request|agent|dev)\d+\b/i;
 const SYSTEM_PATH = /(?:[A-Za-z]:\\|\/(?:Users|home|var|private|tmp|opt|etc|srv)\/|~\/|\b(?:crates|tools|src|target|\.local)\/)[^\s<>"']+/;
 const OPAQUE_URL_COMPONENT = new RegExp([UUID.source, LONG_HEX.source, ULID.source, INTERNAL_TOKEN.source].join('|'), 'i');
 const SENSITIVE_FIELD = /(?:^payload$|(?:authorization|cookie|credential|password|passwd|passphrase|secret|token|(?:api|private|access|signing)[_-]?key)\d*(?:$|[_-]))/i;
@@ -65,7 +66,7 @@ function internalField(field: string): boolean {
 
 function diagnosticValue(field: string, value: string): boolean {
   const scalar = value.replace(/^["']|["']$/g, '').replace(/[.!?]+$/, '');
-  return ERROR_CODE.test(scalar) || INTERNAL_TOKEN.test(scalar) || SYSTEM_PATH.test(scalar)
+  return ERROR_CODE.test(scalar) || INTERNAL_TOKEN.test(scalar) || NUMBERED_ROLE.test(scalar) || SYSTEM_PATH.test(scalar)
     || ['status', 'state'].includes(field) && Object.hasOwn(STATUS_LABELS, scalar.toLowerCase());
 }
 
@@ -73,8 +74,8 @@ function removeDiagnosticAssignments(text: string): string {
   return text.replace(/["']?\b([a-z][a-z0-9_]*)["']?\s*([:：=])\s*("[^"\n]*"|'[^'\n]*'|[^\s,;]+)/gi,
     (original, rawField: string, separator: string, value: string) => {
       const field = rawField.toLowerCase();
-      return internalField(field) || DIAGNOSTIC_FIELDS.has(field) && (separator === '=' || diagnosticValue(field, value))
-        ? '' : original;
+      if (internalField(field) || DIAGNOSTIC_FIELDS.has(field) && (separator === '=' || diagnosticValue(field, value))) return '';
+      return field === 'reason' ? value.replace(/^["']|["']$/g, '') : original;
     });
 }
 
@@ -82,7 +83,7 @@ function diagnosticContent(text: string): boolean {
   return /[{}\[\]]|```|%[a-f0-9]{2}/i.test(text)
     || [...text.matchAll(/["']?\b([a-z][a-z0-9_-]*)["']?\s*([:：=])/gi)]
       .some(([, field, separator]) => SENSITIVE_FIELD.test(field)
-        || separator === '=' || /[_-]|[a-z][A-Z]/.test(field))
+        || DIAGNOSTIC_FIELDS.has(field.toLowerCase()) || separator === '=' || /[_-]|[a-z][A-Z]/.test(field))
     || /\bBearer\s+\S+|-----BEGIN [A-Z ]*PRIVATE KEY-----|^\s*(?:Traceback\b|at\s+\S+\s*\([^\n]+:\d+)/im.test(text);
 }
 
@@ -132,7 +133,7 @@ function businessUrl(text: string, reference: string): string {
 export function containsDiagnosticContent(text: string): boolean {
   return text.split(/(https?:\/\/[^\s()]+)/gi).some((part) => /^https?:\/\//i.test(part)
     ? businessUrl(part, '') !== part
-    : diagnosticContent(part) || INTERNAL_TOKEN.test(part) || SYSTEM_PATH.test(part) || ERROR_CODE.test(part));
+    : diagnosticContent(part) || INTERNAL_TOKEN.test(part) || NUMBERED_ROLE.test(part) || SYSTEM_PATH.test(part) || ERROR_CODE.test(part));
 }
 
 /** Preserve business prose and public references while removing internal diagnostic values. */
@@ -150,6 +151,7 @@ export function readableNarrative(text: string, language: string): string | null
     const redacted = removeDiagnosticAssignments(part)
       .replace(new RegExp(SYSTEM_PATH.source, 'g'), file)
       .replace(new RegExp(INTERNAL_TOKEN.source, 'gi'), record)
+      .replace(new RegExp(NUMBERED_ROLE.source, 'gi'), record)
       .replace(new RegExp(ERROR_CODE.source, 'gi'), zh ? '处理问题' : 'a processing issue');
     return readableSentence(redacted, language);
   }).join('').trim();

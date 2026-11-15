@@ -136,3 +136,17 @@ describe('structured diagnostics stay outside all product text', () => {
     expect(findHumanLanguageViolations(page('<p data-reporter-text>Review https://example.com/guide?topic=release</p>'))).toEqual([]);
   });
 });
+
+
+describe('colon-form protocol content', () => {
+  it.each(['reason: database unavailable', 'status: custom failure', 'state: degraded', 'path: private route'])(
+    'checks reporter prose for %s', (text) => {
+      const root = document.createElement('div');
+      const paragraph = document.createElement('p');
+      paragraph.setAttribute('data-reporter-text', '');
+      paragraph.textContent = text;
+      root.append(paragraph);
+      expect(findHumanLanguageViolations(root).map((item) => item.id)).toContain('diagnostic_content');
+    },
+  );
+});
