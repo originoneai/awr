@@ -120,6 +120,13 @@ async fn issue(
 async fn an_explicit_agent_can_manage_grouping_without_member_administration() {
     let (_guard, admin, db, store) = setup().await;
     seed_agent(&admin).await;
+    admin
+        .batch_execute(
+            "UPDATE awr_team.project_memberships SET business_roles='[\"supervisor\"]'
+        WHERE tenant_id='reader-tenant' AND project_id='reader-project' AND actor_id='agent'",
+        )
+        .await
+        .unwrap();
     let grants =
         AuthorizationStore::from_config(common::with_app_role(&common::test_config(), &db));
     let project = AuthorizationScope::Project {

@@ -46,18 +46,33 @@ async fn authorize(
         Action::WorkRead
     };
     crate::delegation_auth::authorize_project_action(tx, auth, project, action).await?;
-    let required = if manage {
-        WorkstreamAction::Manage
-    } else {
-        WorkstreamAction::Read
-    };
     if auth.catalog.workstreams.is_empty() {
         return Err(PgError::Forbidden);
     }
+    // Directory management has its own business action. The shared access.manage
+    // projection intentionally narrows generic Manage to member administrators.
+    let management_grants = if manage {
+        tx.query(
+            "SELECT workstream_id,authority_version FROM awr_team.workstream_grants
+             WHERE tenant_id=$1 AND project_id=$2 AND actor_id=$3 AND client_id=$4
+               AND active AND can_read AND can_manage ORDER BY workstream_id FOR SHARE",
+            &[&auth.tenant_id, &project, &auth.actor_id, &auth.client_id],
+        )
+        .await?
+        .iter()
+        .map(|row| (row.get::<_, String>(0), row.get::<_, i64>(1)))
+        .collect()
+    } else {
+        std::collections::BTreeMap::new()
+    };
     for stream in &auth.catalog.workstreams {
         auth.access
-            .authorize(&auth.catalog, stream.id, required)
+            .authorize(&auth.catalog, stream.id, WorkstreamAction::Read)
             .map_err(|_| PgError::Forbidden)?;
+        let expected = i64::try_from(stream.authority_version).map_err(|_| PgError::Forbidden)?;
+        if manage && management_grants.get(&stream.id.to_string()) != Some(&expected) {
+            return Err(PgError::Forbidden);
+        }
     }
     Ok(())
 }
@@ -251,7 +266,8 @@ impl DirectoryStore {
         validate_people(&tx, tenant, project, &plan).await?;
         let provenance = json!({"actor_id":auth.actor_id,"client_id":auth.client_id,
             "delegation_id":auth.delegation_id,"membership_version":auth.membership_version.to_string(),
-            "authorization_binding":auth.binding,"source_snapshot_id":auth.snapshot});
+            "authorization_binding":auth.binding,"source_snapshot_id":auth.snapshot,
+            "grant_versions":auth.grant_versions});
         let value = serde_json::to_value(&plan).map_err(|_| invalid())?;
         tx.execute(
             "INSERT INTO awr_team.project_directories(tenant_id,project_id,version,plan_json,provenance)

@@ -381,3 +381,74 @@ async fn the_same_actor_and_member_names_keep_project_qualified_identity() {
         second["provenance"]["actor_id"]
     );
 }
+
+#[tokio::test]
+async fn a_human_supervisor_manages_grouping_with_live_scope_without_member_administration() {
+    let (_guard, admin, _, store) = setup().await;
+    prepare_directory(&admin).await;
+    admin
+        .batch_execute(
+            "UPDATE awr_team.project_memberships SET business_roles='[\"supervisor\"]'
+        WHERE tenant_id='reader-tenant' AND project_id='reader-project' AND actor_id='agent'",
+        )
+        .await
+        .unwrap();
+    let directory = store.directory();
+    let preview = directory
+        .preview(TENANT, PROJECT, A, &plan())
+        .await
+        .unwrap();
+    assert_eq!(preview["expected_version"], "0");
+    directory
+        .apply(
+            TENANT,
+            PROJECT,
+            A,
+            &request("supervisor-grouping", "0", plan()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        directory
+            .outcome(TENANT, PROJECT, A, "supervisor-grouping")
+            .await
+            .unwrap()["outcome"],
+        "recorded"
+    );
+    assert!(matches!(
+        store
+            .project_access()
+            .members(TENANT, PROJECT, A, None, 50)
+            .await,
+        Err(PgError::Forbidden)
+    ));
+    admin
+        .execute(
+            "UPDATE awr_team.workstream_grants SET can_manage=false,grant_version=grant_version+1
+        WHERE tenant_id=$1 AND project_id=$2 AND client_id='cli-a' AND workstream_id=$3",
+            &[&TENANT, &PROJECT, &awr_core::Id::from(1).to_string()],
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        directory.preview(TENANT, PROJECT, A, &plan()).await,
+        Err(PgError::Forbidden)
+    ));
+    assert!(matches!(
+        directory
+            .outcome(TENANT, PROJECT, A, "supervisor-grouping")
+            .await,
+        Err(PgError::Forbidden)
+    ));
+    assert_eq!(
+        directory.read(TENANT, PROJECT, A).await.unwrap()["version"],
+        "1"
+    );
+    admin.execute("UPDATE awr_team.workstream_grants SET can_manage=true,authority_version=2,grant_version=grant_version+1
+        WHERE tenant_id=$1 AND project_id=$2 AND client_id='cli-a' AND workstream_id=$3",
+        &[&TENANT,&PROJECT,&awr_core::Id::from(1).to_string()]).await.unwrap();
+    assert!(matches!(
+        directory.preview(TENANT, PROJECT, A, &plan()).await,
+        Err(PgError::Forbidden)
+    ));
+}
