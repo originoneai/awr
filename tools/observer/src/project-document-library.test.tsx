@@ -121,9 +121,14 @@ describe('project document library', () => {
   it.each(PROJECT_DOCUMENT_STATUSES.flatMap((status) => ['zh-CN', 'en-US'].map((language) => ({ status, language }))))(
     'keeps the declared document state $status out of automatic titles in $language', async ({ status, language }) => {
       await i18n.changeLanguage(language);
-      setup(() => catalog([document(1, { name: `status ${status} actor member`, path: `docs/${status}.md` })]));
+      const headings = [`${status}.`, `status ${status}, actor member`, `status (${status}) actor member`, null];
+      setup(() => catalog(headings.map((name, index) => document(index + 1, {
+        name, path: `docs/${status}${index % 2 ? '_' : '-'}.md`,
+      }))));
       const page = await screen.findByTestId('project-document-library');
-      await screen.findByRole('button', { name: new RegExp(language === 'zh-CN' ? '文档 1' : 'Document 1') });
+      for (let index = 1; index <= headings.length; index += 1) {
+        await screen.findByRole('button', { name: new RegExp(language === 'zh-CN' ? `文档 ${index}` : `Document ${index}`) });
+      }
       expect(defaultVisibleText(page)).not.toContain(status);
       expect(defaultVisibleText(page)).not.toContain('actor member');
     },

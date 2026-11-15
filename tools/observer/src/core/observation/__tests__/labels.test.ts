@@ -21,13 +21,18 @@ describe('documentTitle', () => {
       expect(label).toBe('guide');
       expect(findForbiddenVisibleText(label)).toEqual([]);
     }
-    for (const title of ['claimed', 'clientobs657', 'status claimed actor clientobs657', 'status claimed actor member']) {
+    for (const title of ['claimed', 'claimed.', 'clientobs657', 'status claimed actor clientobs657', 'status claimed actor member', 'restric\u200bted']) {
       expect(documentTitle(title, 'docs/clientobs657.md', options).text).toBe(language === 'zh-CN' ? '文档 3' : 'Document 3');
     }
     expect(documentTitle(null, 'docs/client-obs-657.md', options).text).toBe(language === 'zh-CN' ? '文档 3' : 'Document 3');
     for (const status of PROJECT_DOCUMENT_STATUSES) {
-      expect(documentTitle(status, 'docs/guide.md', options).text).toBe('guide');
-      expect(documentTitle(`status ${status} actor member`, `docs/${status}.md`, options).text).toBe(language === 'zh-CN' ? '文档 3' : 'Document 3');
+      const fullWidth = status.replace(/[!-~]/g, (character) => String.fromCharCode(character.charCodeAt(0) + 0xFEE0));
+      for (const title of [status, `${status}.`, `status ${status}, actor member`, `status (${status}) actor member`, fullWidth]) {
+        expect(documentTitle(title, 'docs/guide.md', options).text).toBe('guide');
+      }
+      for (const file of [`${status}.md`, `${status}-.md`, `${status}_.md`]) {
+        expect(documentTitle(null, `docs/${file}`, options).text).toBe(language === 'zh-CN' ? '文档 3' : 'Document 3');
+      }
     }
   });
 });
