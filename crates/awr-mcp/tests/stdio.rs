@@ -13,6 +13,118 @@ const CRITERION: &str = "Deliver the reviewed analysis";
 const WORK: &str = "work_items:\n- id: W\n  title: Prepare customer analysis\n  status: ready\n  owner: business-coordinator\n  next_action: Draft the analysis\n  depends_on: [D]\n  acceptance: [Deliver the reviewed analysis]\n  verification:\n    evidence_level: none\n  evidence: []\n- id: D\n  title: Required input\n  status: completed\n- id: NEXT\n  title: Prepare follow-up\n  status: ready\n  next_action: Review next steps\n  acceptance: [Follow-up is available]\n";
 const MANIFEST: &str = "[project]\nname='MCP fixture'\nexternal_key='mcp-fixture'\n[[sources]]\ndomain='ledger'\nrole='primary'\npath='work.yaml'\nadapter='yaml-ledger-v1'\n[[sources]]\ndomain='rules'\nrole='primary'\npath='rules.md'\nadapter='markdown-rules-v1'\n[[sources]]\ndomain='goal'\nrole='primary'\npath='goal.md'\nadapter='markdown-heading-v1'\n[sources.options]\nstatus='active'\n[[sources]]\ndomain='decisions'\nrole='supporting'\npath='decisions'\nadapter='markdown-directory-v1'\n";
 
+fn usage_record_input(f: &Fixture, key: &str) -> Value {
+    let project = f.store().1;
+    json!({"expected_revision":project.project_revision,"request_key":key,
+        "record":{"kind":"receipt","data":{"receipt_id":"observed-call","project_id":project.id,
+            "provider_namespace":"fixture-account","provider":"fixture-provider","call_id":"provider-call",
+            "model":"fixture-model","session_id":"fixture-session","occurred_at_ms":10,"channel":"model",
+            "attribution":{"work_id":"W","execution_id":"E","workstream_id":null},
+            "tokens":{"input":100,"output":20,"cached_input":10},
+            "cost":{"actual":{"currency":"USD","micros":100}}}}})
+}
+
+#[tokio::test]
+async fn usage_mcp_reuses_the_runtime_codec_with_discovery_and_read_only_queries() {
+    let f = Fixture::new();
+    let client = f.client().await;
+    assert_eq!(client.list_all_tools().await.unwrap().len(), 8);
+    let manifest = success(call(&client, "awr_evidence", json!({})).await);
+    assert!(
+        manifest["children"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|child| child["name"] == "awr_usage_record")
+    );
+    let arguments = usage_record_input(&f, "observed-intake");
+    let recorded = success(
+        call(
+            &client,
+            "awr_evidence",
+            json!({"child_tool":"awr_usage_record","arguments":arguments}),
+        )
+        .await,
+    );
+    assert_eq!(recorded["receipt"]["replayed"], false);
+    let replay = success(call(&client, "awr_usage_record", arguments).await);
+    assert_eq!(replay["receipt"]["replayed"], true);
+    let revision = f.rev();
+    let query = json!({"kind":"summary"});
+    let through_mcp = success(call(&client, "awr_usage_query", query.clone()).await);
+    let (store, project) = f.store();
+    let binding = awr_runtime::AttestedUsageProject {
+        project_id: project.id.to_string(),
+        project: project.id,
+        attested: true,
+    };
+    assert_eq!(through_mcp, binding.query(&store, query).unwrap());
+    assert_eq!(through_mcp["data"]["costs"]["actual_micros"]["USD"], 100);
+    assert!(through_mcp["data"]["time"].is_null());
+    assert!(through_mcp["data"]["coverage"]["expected_calls"].is_null());
+    assert_eq!(f.rev(), revision);
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn usage_mcp_recovers_missing_responses_for_new_and_replayed_ledger_records() {
+    for preexisting in [false, true] {
+        let f = Fixture::new();
+        let (mut store, project) = f.store();
+        let binding = awr_runtime::AttestedUsageProject {
+            project_id: project.id.to_string(),
+            project: project.id,
+            attested: true,
+        };
+        let mut input = usage_record_input(&f, "recoverable-intake");
+        if preexisting {
+            binding.record(&mut store, input.clone()).unwrap();
+        }
+        let revision = store.project(project.id).unwrap().project_revision;
+        let operation = store
+            .begin_mcp_operation(
+                project.id,
+                revision,
+                "stdio",
+                "missing-usage-response",
+                "awr_usage_record",
+                &"a".repeat(64),
+            )
+            .unwrap();
+        input["expected_revision"] = json!(operation.started_revision);
+        awr_store::with_mcp_operation(project.id, operation.id, || {
+            binding.record(&mut store, input)
+        })
+        .unwrap();
+        drop(store);
+        let client = f.client().await;
+        let unknown = success(
+            call(
+                &client,
+                "awr_operation_get",
+                json!({"request_id":"missing-usage-response"}),
+            )
+            .await,
+        );
+        assert_eq!(unknown["outcome"], "unknown");
+        let recovered = success(
+            call(
+                &client,
+                "awr_operation_recover",
+                json!({
+            "request_id":"missing-usage-response","expected_revision":f.rev()}),
+            )
+            .await,
+        );
+        assert_eq!(recovered["recovered"], true);
+        assert_eq!(recovered["write_outcome"], "committed");
+        let summary = success(call(&client, "awr_usage_query", json!({"kind":"summary"})).await);
+        assert_eq!(summary["data"]["costs"]["unique_calls"], 1);
+        assert_eq!(summary["data"]["costs"]["actual_micros"]["USD"], 100);
+        client.cancel().await.unwrap();
+    }
+}
+
 fn mcp_check_fixture() -> Fixture {
     let f = Fixture::new();
     fs::write(

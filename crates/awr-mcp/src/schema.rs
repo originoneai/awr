@@ -1,7 +1,7 @@
 use rmcp::model::{Tool, ToolAnnotations};
 use serde_json::{Value, json};
 
-pub const TOOL_NAMES: [&str; 39] = [
+pub const TOOL_NAMES: [&str; 41] = [
     "awr_project_status",
     "awr_work_ready",
     "awr_work_get",
@@ -41,6 +41,8 @@ pub const TOOL_NAMES: [&str; 39] = [
     "awr_work_gap",
     "awr_work_finding",
     "awr_work_check",
+    "awr_usage_record",
+    "awr_usage_query",
 ];
 
 fn compaction_tools() -> Vec<Tool> {
@@ -543,6 +545,7 @@ pub fn tools() -> Vec<Tool> {
     catalog.extend(workflow_tools());
     catalog.extend(change_tools());
     catalog.extend(compaction_tools());
+    catalog.extend(crate::usage::tools());
     catalog.push(crate::team_handoff::tool());
     for entry in &mut catalog {
         if matches!(

@@ -27,6 +27,19 @@ struct Capability {
 fn catalog() -> Vec<Capability> {
     [
         (
+            "usage.local_ledger",
+            true,
+            &["usage record", "usage list", "usage summary", "usage query"][..],
+            &[
+                "caller_supplied_provenance",
+                "atomic_idempotent_recording",
+                "actual_estimate_unknown_separated",
+                "occurrence_time_attribution",
+                "observed_time_and_coverage",
+                "personal_store_only",
+            ][..],
+        ),
+        (
             "gates.checks",
             true,
             &[

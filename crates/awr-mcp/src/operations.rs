@@ -61,6 +61,7 @@ pub(crate) fn is_read_only(name: &str) -> bool {
             | "awr_session_list"
             | "awr_operation_get"
             | "awr_compaction_get"
+            | "awr_usage_query"
     )
 }
 
@@ -241,7 +242,9 @@ fn call_as_full(
         }
     }
     let apply = |args: JsonObject| {
-        if crate::compaction::NAMES.contains(&name) {
+        if crate::usage::NAMES.contains(&name) {
+            crate::usage::call(root, name, Value::Object(args))
+        } else if crate::compaction::NAMES.contains(&name) {
             crate::compaction::call(root, name, Value::Object(args))
         } else if crate::lifecycle::NAMES.contains(&name) {
             crate::lifecycle::call(root, name, Value::Object(args), client)

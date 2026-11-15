@@ -83,11 +83,18 @@ pub const DOMAINS: &[DomainDef] = &[
     },
     DomainDef {
         name: "awr_evidence",
-        description: "Append bounded generic events and record evidence bindings.",
-        children: &["awr_event_append", "awr_evidence_record"],
+        description: "Append bounded events and record evidence and observed usage.",
+        children: &[
+            "awr_event_append",
+            "awr_evidence_record",
+            "awr_usage_record",
+            "awr_usage_query",
+        ],
         limits: &[
             "Reserved lifecycle events require their domain operation. Event payloads are stored data and are never executed.",
             "Evidence verification fields are caller assertions; recording evidence never executes a report command.",
+            "Usage records retain supplied provenance, occurrence-time ownership and separate actual, estimated and unknown costs. Detail queries are bounded.",
+            "Usage access uses the personal store through owner stdio or unisolated shared project grants. Team and scoped workstream adapters retain their own contracts.",
         ],
     },
     DomainDef {

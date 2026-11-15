@@ -18,6 +18,7 @@ Commands:
   recovery      Inspect saved work and verify execution evidence before resuming
   source        List, scan or index authoritative project sources
   nav           Read-only mainline navigation across scope, dependencies, accounting and blockers
+  usage         Observe project usage, costs and execution time
   status        Refresh source projections and summarize current project work
   ready         List dependency-ready work with explicit reasons for excluded work
   assessment    Offline assessment replay, shadow compare, and advice kill-switch
