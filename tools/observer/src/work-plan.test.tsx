@@ -424,10 +424,12 @@ describe('work detail requirements and source state', () => {
     expect(card.textContent).not.toContain('已同步');
   });
 
-  it('keeps candidate and source-set blocks as later-slice placeholders', async () => {
+  it('uses the recorded plan and document views instead of later-slice placeholders', async () => {
     setupPlan();
-    expect((await screen.findByTestId('plan-candidates-placeholder')).textContent).toContain('尚未开放');
-    expect((await screen.findByTestId('plan-source-set-placeholder')).textContent).toContain('尚未开放');
+    expect((await screen.findByTestId('plan-changes')).textContent).toContain('计划变更');
+    expect((await screen.findByTestId('plan-materials')).textContent).toContain('资料准备情况');
+    expect(screen.queryByTestId('plan-candidates-placeholder')).toBeNull();
+    expect(screen.queryByTestId('plan-source-set-placeholder')).toBeNull();
   });
 });
 
