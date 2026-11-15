@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Card, Descriptions, Empty, Flex, Grid, Input, List, Select, Space, Table, Tag, Typography } from 'antd';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -13,16 +13,21 @@ import { projectsQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
 import { useScope } from '../lib/scope';
 
+interface Department {
+  key: string;
+  name: string;
+}
+
 interface Member {
   name: string | null;
   available: boolean;
-  departments: string[];
+  departments: Department[];
 }
 
 interface Directory {
   configured: boolean;
   organization: string | null;
-  departments: string[];
+  departments: Department[];
   updated_at_ms: number | null;
   members: Member[];
 }
@@ -31,12 +36,20 @@ interface Directory {
 function ProjectMembers({ project }: { project: string }) {
   const { t, i18n } = useTranslation();
   const { revoked } = useRevocation();
+  const queryClient = useQueryClient();
   const screens = Grid.useBreakpoint();
   const [search, setSearch] = useState('');
   const [department, setDepartment] = useState<string | null>(null);
   const query = useQuery({
     queryKey: ['team', 'directory', project],
-    queryFn: ({ signal }) => apiPost<{ data: Directory }>('/api/team/directory', { project }, signal),
+    queryFn: async ({ signal }) => {
+      try {
+        return await apiPost<{ data: Directory }>('/api/team/directory', { project }, signal);
+      } catch (error) {
+        if (isAuthError(error)) queryClient.setQueryData(['team', 'directory', project], null);
+        throw error;
+      }
+    },
     enabled: !revoked,
     meta: { failureScope: 'object' },
     gcTime: 0,
@@ -46,26 +59,36 @@ function ProjectMembers({ project }: { project: string }) {
     retry: false,
   });
   if (revoked) return <ObservationForbidden />;
-  const directory = query.isFetchedAfterMount && !query.isError ? query.data?.data : undefined;
+  const directory = query.isFetchedAfterMount && !isAuthError(query.error) ? query.data?.data : undefined;
   const label = (value: string, fallback: string) => readableNarrative(value, i18n.language) ?? fallback;
+  const departments = [...new Map([
+    ...(directory?.departments ?? []), ...(directory?.members.flatMap((member) => member.departments) ?? []),
+  ].map((item) => [item.key, item])).values()].map((item, index) => ({
+    key: item.key, name: label(item.name, t('members.departmentUnnamed', { number: index + 1 })),
+  }));
+  const departmentLabels = new Map(departments.map((item, index) => [item.key,
+    departments.filter((other) => other.name === item.name).length > 1
+      ? t('members.sameNameDepartment', { name: item.name, number: index + 1 }) : item.name,
+  ]));
   const members = (directory?.members ?? []).map((member, index) => ({
     ...member,
     key: index,
     name: member.name && readsAsName(member.name) ? member.name : t('members.unnamed', { number: index + 1 }),
-    departments: member.departments.map((name, position) => label(name, t('members.departmentUnnamed', { number: position + 1 }))),
   }));
-  const departments = [...new Set(members.flatMap((member) => member.departments))];
-  const selectedDepartment = department && departments.includes(department) ? department : null;
-  const filtered = members.filter((member) => (!selectedDepartment || member.departments.includes(selectedDepartment))
-    && [member.name, ...member.departments].some((value) => value.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())));
+  const selectedDepartment = department && departmentLabels.has(department) ? department : null;
+  const filtered = members.filter((member) => (!selectedDepartment || member.departments.some((item) => item.key === selectedDepartment))
+    && [member.name, ...member.departments.map((item) => departmentLabels.get(item.key) ?? '')]
+      .some((value) => value.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())));
   const state = (member: Member) => <Tag>{t(member.available ? 'members.available' : 'members.unavailableMember')}</Tag>;
-  const departmentNames = (member: Member) => member.departments.join(' · ') || t('members.noDepartment');
+  const departmentNames = (member: Member) => member.departments.map((item) => departmentLabels.get(item.key)).join(' · ') || t('members.noDepartment');
 
   return <Space orientation="vertical" size={16} style={{ width: '100%', overflowWrap: 'anywhere' }} data-testid="project-members">
     <Card title={t('members.directory')} extra={<Button aria-label={t('members.refresh')} loading={query.isFetching} onClick={() => void query.refetch()}>{t('members.refresh')}</Button>}>
       {isAuthError(query.error) ? <ObservationForbidden />
-        : query.isError ? <Alert type="warning" showIcon title={t(query.error instanceof ApiError && query.error.code === 'Unsupported' ? 'members.notEnabled' : 'members.readFailed')} />
-        : query.isPending || !directory ? <Typography.Text type="secondary">{t('common.loading')}</Typography.Text>
+        : <Space orientation="vertical" size={16} style={{ width: '100%' }}>
+          {query.isError && <Alert type="warning" showIcon title={t(directory ? 'members.refreshFailed' : query.error instanceof ApiError && query.error.code === 'Unsupported' ? 'members.notEnabled' : 'members.readFailed')} />}
+          {query.isPending ? <Typography.Text type="secondary">{t('common.loading')}</Typography.Text>
+          : !directory ? null
           : !directory.configured ? <Space orientation="vertical" size={12} style={{ width: '100%' }}>
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('members.notRegistered')} />
               <Typography.Text type="secondary">{t('members.registrationHelp')}</Typography.Text>
@@ -73,14 +96,14 @@ function ProjectMembers({ project }: { project: string }) {
             : <Space orientation="vertical" size={16} style={{ width: '100%' }}>
               <Descriptions size="small" column={{ xs: 1, sm: 2, lg: 3 }} items={[
                 { key: 'organization', label: t('members.organization'), children: directory.organization ? label(directory.organization, t('members.organizationUnnamed')) : t('members.noOrganization') },
-                { key: 'departments', label: t('members.projectDepartments'), children: directory.departments.map((name, index) => label(name, t('members.departmentUnnamed', { number: index + 1 }))).join(' · ') || t('members.noDepartment') },
+                { key: 'departments', label: t('members.projectDepartments'), children: directory.departments.map((item) => departmentLabels.get(item.key)).join(' · ') || t('members.noDepartment') },
                 { key: 'updated', label: t('members.updated'), children: directory.updated_at_ms !== null ? formatUnixMs(directory.updated_at_ms, i18n.language) : t('common.notProvided') },
               ]} />
               <Typography.Text type="secondary">{t('members.coverage', { count: members.length })}</Typography.Text>
               <Flex gap={12} wrap>
                 <Input aria-label={t('members.search')} placeholder={t('members.search')} value={search} onChange={(event) => setSearch(event.target.value)} allowClear style={{ flex: '1 1 200px', minWidth: 0 }} />
                 <Select aria-label={t('members.departmentFilter')} placeholder={t('members.allDepartments')} value={selectedDepartment} onChange={(value) => setDepartment(value ?? null)}
-                  allowClear options={departments.map((name) => ({ value: name, label: name }))} style={{ flex: '1 1 160px', minWidth: 0 }} />
+                  allowClear options={departments.map((item) => ({ value: item.key, label: departmentLabels.get(item.key) }))} style={{ flex: '1 1 160px', minWidth: 0 }} />
               </Flex>
               {screens.md === false ? <List data-testid="member-list" dataSource={filtered} locale={{ emptyText: t(members.length ? 'members.noMatch' : 'members.empty') }} renderItem={(member) => <List.Item key={member.key}>
                 <Space orientation="vertical" size={8} style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
@@ -97,6 +120,7 @@ function ProjectMembers({ project }: { project: string }) {
                 ]} />}
               <Typography.Paragraph type="secondary" style={{ margin: 0 }}>{t('members.guidance')}</Typography.Paragraph>
             </Space>}
+        </Space>}
     </Card>
     <Card title={t('members.agents')}>
       <Space orientation="vertical" size={12}>

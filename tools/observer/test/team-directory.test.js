@@ -18,8 +18,8 @@ function directory() {
 
 test('the directory projection preserves same-name members and omits service metadata', () => {
   assert.deepEqual(projectDirectory(directory()), {
-    configured: true, organization: 'Example company', departments: ['Engineering'], updated_at_ms: 1794600000000,
-    members: [{ name: 'Taylor', available: true, departments: ['Engineering'] }, { name: 'Taylor', available: true, departments: ['Research'] }],
+    configured: true, organization: 'Example company', departments: [{ key: 'eng', name: 'Engineering' }], updated_at_ms: 1794600000000,
+    members: [{ name: 'Taylor', available: true, departments: [{ key: 'eng', name: 'Engineering' }] }, { name: 'Taylor', available: true, departments: [{ key: 'research', name: 'Research' }] }],
   });
   const source = directory();
   source.members[1].available = false;
@@ -51,6 +51,17 @@ test('incomplete, mismatched and contradictory relationship sets fail closed', (
     plan: { organization: null, departments: [], project_department_ids: [], members: [] }, members: [] }), {
     configured: false, organization: null, departments: [], updated_at_ms: null, members: [],
   });
+});
+
+test('same-name departments keep separate references in every relationship', () => {
+  const source = directory();
+  source.plan.departments[1].name = 'Engineering';
+  source.plan.project_department_ids.push('research');
+  const result = projectDirectory(source);
+  assert.deepEqual(result.departments, [
+    { key: 'eng', name: 'Engineering' }, { key: 'research', name: 'Engineering' },
+  ]);
+  assert.notEqual(result.members[0].departments[0].key, result.members[1].departments[0].key);
 });
 
 test('the bridge forwards only the signed-in read and returns product fields', async (t) => {

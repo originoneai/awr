@@ -4,6 +4,8 @@ type Messages = typeof zhCN;
 
 const enUS: Messages = {
   members: {
+    sameNameDepartment: '{{name}} (department {{number}})',
+    refreshFailed: 'Refresh failed. Showing the last loaded member details; refresh to try again',
     directory: 'Project members', organization: 'Organization', projectDepartments: 'Project departments',
     updated: 'Last maintained', name: 'Member', department: 'Department', status: 'Member record',
     available: 'Available', unavailableMember: 'Currently unavailable',

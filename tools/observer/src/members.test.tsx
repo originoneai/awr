@@ -6,10 +6,10 @@ import { findHumanLanguageViolations } from './lib/human-language-guard';
 import { DEMO_PROJECTS, mockViewport, renderApp } from './test-utils';
 
 const DIRECTORY = {
-  configured: true, organization: 'Example company', departments: ['Engineering'], updated_at_ms: 1794600000000,
+  configured: true, organization: 'Example company', departments: [{ key: 'engineering', name: 'Engineering' }], updated_at_ms: 1794600000000,
   members: [
-    { name: 'Taylor', available: true, departments: ['Engineering'] },
-    { name: 'Taylor', available: true, departments: ['Research'] },
+    { name: 'Taylor', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] },
+    { name: 'Taylor', available: true, departments: [{ key: 'research', name: 'Research' }] },
     { name: null, available: false, departments: [] },
   ],
 };
@@ -69,6 +69,63 @@ describe('project member observation', () => {
     expect(screen.getAllByText('Taylor')).toHaveLength(1);
     await userEvent.setup().clear(search);
     expect(screen.getAllByText('Taylor')).toHaveLength(2);
+  });
+
+  it.each(['zh-CN', 'en-US'])('filters same-name departments separately in %s without showing their references', async (language) => {
+    const { setResponse } = setup();
+    await act(async () => { await i18n.changeLanguage(language); });
+    setResponse({ ok: true, data: { ...DIRECTORY, members: [
+      { name: 'Taylor', available: true, departments: [{ key: 'private-first', name: 'Engineering' }] },
+      { name: 'Morgan', available: true, departments: [{ key: 'private-second', name: 'Engineering' }] },
+    ], departments: [] } });
+    renderApp('/members?scope=demo');
+    await screen.findByText('Example company');
+    const user = userEvent.setup();
+    const filter = screen.getByRole('combobox', { name: i18n.t('members.departmentFilter') });
+    await user.click(filter);
+    await user.click(await screen.findByTitle(i18n.t('members.sameNameDepartment', { name: 'Engineering', number: 1 })));
+    expect(screen.getByText('Taylor')).toBeTruthy();
+    expect(screen.queryByText('Morgan')).toBeNull();
+    await user.click(filter);
+    await user.click(await screen.findByTitle(i18n.t('members.sameNameDepartment', { name: 'Engineering', number: 2 })));
+    expect(screen.getByText('Morgan')).toBeTruthy();
+    expect(screen.queryByText('Taylor')).toBeNull();
+    expect(screen.getByTestId('page-members').textContent).not.toMatch(/private-first|private-second/);
+  });
+
+  it('retains confirmed member facts after a failed refresh and replaces them after recovery', async () => {
+    const { setResponse } = setup();
+    renderApp('/members?scope=demo');
+    await screen.findByText('Example company');
+    setResponse({ ok: false, error: { code: 'BadGateway', message: 'private-diagnostics' } });
+    await userEvent.setup().click(screen.getByRole('button', { name: '刷新成员' }));
+    expect(await screen.findByText(i18n.t('members.refreshFailed'))).toBeTruthy();
+    expect(screen.getByText('Example company')).toBeTruthy();
+    expect(screen.getAllByText('Taylor')).toHaveLength(2);
+    expect(screen.getByText('已登记 3 名成员')).toBeTruthy();
+    expect(screen.queryByText('private-diagnostics')).toBeNull();
+    setResponse({ ok: true, data: { ...DIRECTORY, organization: 'Updated company' } });
+    await userEvent.setup().click(screen.getByRole('button', { name: '刷新成员' }));
+    expect(await screen.findByText('Updated company')).toBeTruthy();
+    expect(screen.queryByText(i18n.t('members.refreshFailed'))).toBeNull();
+  });
+
+  it('does not restore denied member facts when a later retry fails temporarily', async () => {
+    const { setResponse } = setup();
+    renderApp('/members?scope=demo');
+    await screen.findByText('Example company');
+    const refresh = () => userEvent.setup().click(screen.getByRole('button', { name: '刷新成员' }));
+    setResponse({ ok: false, error: { code: 'Forbidden' } });
+    await refresh();
+    await screen.findByTestId('state-forbidden');
+    setResponse({ ok: false, error: { code: 'BadGateway' } });
+    await refresh();
+    await screen.findByText(i18n.t('members.readFailed'));
+    expect(screen.queryByText('Example company')).toBeNull();
+    expect(screen.queryByText('Taylor')).toBeNull();
+    setResponse({ ok: true, data: DIRECTORY });
+    await refresh();
+    expect(await screen.findByText('Example company')).toBeTruthy();
   });
 
   it.each(['zh-CN', 'en-US'].flatMap((language) => [

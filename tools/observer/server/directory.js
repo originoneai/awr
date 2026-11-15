@@ -17,7 +17,7 @@ function projectDirectory(value) {
     || !unique(plan.departments.map((item) => item.id))
     || !Array.isArray(plan.members) || plan.members.length > 256
     || !Array.isArray(value.members) || value.members.length !== plan.members.length) return null;
-  const departments = new Map(plan.departments.map((item) => [item.id, item.name]));
+  const departments = new Map(plan.departments.map((item) => [item.id, { key: item.id, name: item.name }]));
   const references = (items) => Array.isArray(items) && unique(items) && items.every((id) => departments.has(id));
   if (!references(plan.project_department_ids) || !plan.members.every((member) => object(member)
     && text(member.person_id) && references(member.department_ids)) || !unique(plan.members.map((member) => member.person_id))) return null;

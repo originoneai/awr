@@ -1,5 +1,7 @@
 const zhCN = {
   members: {
+    sameNameDepartment: '{{name}}（部门 {{number}}）',
+    refreshFailed: '刷新未完成，当前保留上次读取的成员资料，可再次刷新',
     directory: '项目成员', organization: '所属组织', projectDepartments: '项目所属部门',
     updated: '最近维护', name: '成员', department: '所属部门', status: '成员资料',
     available: '资料有效', unavailableMember: '资料暂不可用',
