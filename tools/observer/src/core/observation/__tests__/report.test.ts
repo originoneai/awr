@@ -250,7 +250,7 @@ describe('product-safe reported content', () => {
     const visible = { ...product, artifacts: report.artifacts.shown.map((artifact) => artifact.text) };
     expect(JSON.stringify(visible)).not.toMatch(/synthetic-report-value|synthetic-name|payload|token/);
     expect(JSON.stringify(technical)).toContain('synthetic-report-value');
-    expect(report.declaration[0]).toContain(language === 'zh-CN' ? '汇报者' : 'the reporter');
+    expect(report.declaration[0]).toContain(language === 'zh-CN' ? '名称暂时无法显示' : 'Name cannot be displayed');
     expect(describeProgressReport({ summary: 'The sign-in page is ready', origin: { actor_name: 'Grok4' } }, { language }).declaration[0]).toContain('Grok4');
   });
 });
@@ -268,5 +268,27 @@ describe('supplied non-prose report fields', () => {
       expect(report.blockers.shown).toEqual(Array.isArray(value) ? [] : [hidden]);
     }
     expect(describeProgressReport({}, { language }).kind).toBe('missing');
+  });
+});
+
+
+describe('malformed verification-only reports', () => {
+  it.each([{ tests: { outcome: 'synthetic-state' } }, { artifacts: { token: 'synthetic-output' } }, { tests: [42] }, { artifacts: [42] }])(
+    'preserves receipt of %j without asserting a verification result', (value) => {
+      const report = describeProgressReport(value, { language: 'en-US' });
+      expect(report.kind).toBe('reported');
+      expect(report.summary).toBe('A report was received, but its details cannot be displayed');
+      expect(report.tests.shown).toEqual([]);
+      expect(report.artifacts.shown).toEqual([]);
+    },
+  );
+});
+
+
+describe('supplied unreadable reporter names', () => {
+  it.each([7, false, { token: 'synthetic-reporter-name' }, 'agent7a'])('distinguishes %j from an absent reporter name', (actor_name) => {
+    const report = describeProgressReport({ summary: 'Prepared the customer review', origin: { actor_name } }, { language: 'en-US' });
+    expect(report.declaration[0]).toBe('Reported by Name cannot be displayed');
+    expect(describeProgressReport({ summary: 'Prepared the customer review' }, { language: 'en-US' }).declaration[0]).toBe('Reported by the reporter');
   });
 });

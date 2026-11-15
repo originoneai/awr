@@ -111,7 +111,7 @@ describe('deriveOwner', () => {
 
 
 describe('supplied non-name values', () => {
-  it.each([{ token: 'synthetic-name-object' }, [], 7, false, 'agent7', 'dev42', 'client9'])(
+  it.each([{ token: 'synthetic-name-object' }, [], 7, false, 'agent7', 'dev42', 'client9', 'agent7a', 'client9x', 'dev42beta'])(
     'keeps a supplied unsafe name distinct from no name for %j', (value) => {
       for (const input of [
         { rowOwner: value, snapshot: null, readState: 'ready' as const },

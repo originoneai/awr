@@ -55,7 +55,9 @@ const INTERNAL_FIELDS = new Set([
 const DIAGNOSTIC_FIELDS = new Set(['status', 'state', 'reason', 'actor', 'client', 'source', 'path']);
 const ERROR_CODE = /\b(?:Forbidden|Unauthenticated|SessionExpired|CursorExpired|ContextIncomplete|ResponseTooLarge|InvalidInput|BadGateway)\b/i;
 const INTERNAL_TOKEN = /\b(?:client|actor|session|execution|claim|receipt|credential|snapshot|workstream|decision|request|agent)[_-](?=[a-z0-9_-]*\d)[a-z0-9_-]+\b/i;
-const NUMBERED_ROLE = /\b(?:client|actor|session|execution|claim|receipt|credential|snapshot|workstream|decision|request|agent|dev)\d+\b/i;
+const NUMBERED_ROLE = /\b(?:client|actor|session|execution|claim|receipt|credential|snapshot|workstream|decision|request|agent|dev)\d[a-z0-9]*\b/i;
+const NETWORK_ADDRESS = /\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b/;
+const DIAGNOSTIC_RECORD = new RegExp(`^\\s*["']?(?:${[...DIAGNOSTIC_FIELDS].join('|')})["']?\\s*[:：=]`, 'im');
 const SYSTEM_PATH = /(?:[A-Za-z]:\\|\/(?:Users|home|var|private|tmp|opt|etc|srv)\/|~\/|\b(?:crates|tools|src|target|\.local)\/)[^\s<>"']+/;
 const OPAQUE_URL_COMPONENT = new RegExp([UUID.source, LONG_HEX.source, ULID.source, INTERNAL_TOKEN.source].join('|'), 'i');
 const SENSITIVE_FIELD = /(?:^payload$|(?:authorization|cookie|credential|password|passwd|passphrase|secret|token|(?:api|private|access|signing)[_-]?key)\d*(?:$|[_-]))/i;
@@ -72,10 +74,12 @@ function diagnosticValue(field: string, value: string): boolean {
 
 function removeDiagnosticAssignments(text: string): string {
   return text.replace(/["']?\b([a-z][a-z0-9_]*)["']?\s*([:：=])\s*("[^"\n]*"|'[^'\n]*'|[^\s,;]+)/gi,
-    (original, rawField: string, separator: string, value: string) => {
+    (original, rawField: string, separator: string, value: string, offset: number) => {
       const field = rawField.toLowerCase();
       if (internalField(field) || DIAGNOSTIC_FIELDS.has(field) && (separator === '=' || diagnosticValue(field, value))) return '';
-      return field === 'reason' ? value.replace(/^["']|["']$/g, '') : original;
+      const lineStart = text.lastIndexOf('\n', offset - 1) + 1;
+      return field === 'reason' && text.slice(lineStart, offset).trim() !== ''
+        ? value.replace(/^["']|["']$/g, '') : original;
     });
 }
 
@@ -133,7 +137,8 @@ function businessUrl(text: string, reference: string): string {
 export function containsDiagnosticContent(text: string): boolean {
   return text.split(/(https?:\/\/[^\s()]+)/gi).some((part) => /^https?:\/\//i.test(part)
     ? businessUrl(part, '') !== part
-    : diagnosticContent(part) || INTERNAL_TOKEN.test(part) || NUMBERED_ROLE.test(part) || SYSTEM_PATH.test(part) || ERROR_CODE.test(part));
+    : diagnosticContent(part) || INTERNAL_TOKEN.test(part) || NUMBERED_ROLE.test(part)
+      || NETWORK_ADDRESS.test(part) || SYSTEM_PATH.test(part) || ERROR_CODE.test(part));
 }
 
 /** Preserve business prose and public references while removing internal diagnostic values. */
@@ -141,8 +146,11 @@ export function readableNarrative(text: string, language: string): string | null
   // Diagnostic payloads stay in protected service history. A partial scrub of
   // structured content cannot establish that the remaining values are prose.
   const parts = text.split(/(https?:\/\/[^\s()]+)/gi);
-  if (parts.some((part) => !/^https?:\/\//i.test(part)
-    && diagnosticContent(removeDiagnosticAssignments(part)))) return null;
+  if (parts.some((part) => {
+    if (/^https?:\/\//i.test(part)) return false;
+    const prose = removeDiagnosticAssignments(part);
+    return DIAGNOSTIC_RECORD.test(prose) || NETWORK_ADDRESS.test(prose) || diagnosticContent(prose);
+  })) return null;
   const zh = language.toLowerCase().startsWith('zh');
   const record = zh ? '相关记录' : 'the related record';
   const file = zh ? '相关文件' : 'the related file';

@@ -77,10 +77,14 @@ export function describeProgressReport(progress: unknown, options: { language: s
     }),
   );
   const hasContent = summary != null || completed.shown.length > 0 || blockers.reported || tests.shown.length > 0 || artifacts.shown.length > 0;
-  if (!hasContent) return MISSING;
+  const receivedContent = [report.summary, report.completed, report.blockers, report.tests, report.artifacts]
+    .some((value) => Array.isArray(value) ? value.some(hasObservationValue) : hasObservationValue(value));
+  if (!hasContent && !receivedContent) return MISSING;
 
-  const rawName = statementText(asRecord(report.origin)?.actor_name);
-  const name = rawName != null && readsAsName(rawName) ? rawName : humanText('reporterUnnamed', language);
+  const actorName = asRecord(report.origin)?.actor_name;
+  const rawName = statementText(actorName);
+  const name = !hasObservationValue(actorName) ? humanText('reporterUnnamed', language)
+    : rawName != null && readsAsName(rawName) ? rawName : humanText('nameUnavailable', language);
   const at = typeof report.reported_at_unix_ms === 'number' && Number.isFinite(report.reported_at_unix_ms)
     ? absoluteTimeText(report.reported_at_unix_ms, { language }).text
     : null;
@@ -92,7 +96,7 @@ export function describeProgressReport(progress: unknown, options: { language: s
 
   return {
     kind: 'reported',
-    summary,
+    summary: summary ?? (!hasContent ? humanText('reportedContentUnavailable', language) : null),
     completed,
     blockers,
     tests,
