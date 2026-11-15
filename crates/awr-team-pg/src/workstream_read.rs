@@ -15,6 +15,7 @@ mod activity;
 mod artifact_segments;
 mod assignees;
 mod delivery;
+mod dependencies;
 mod graph;
 mod guidance;
 mod handoffs;
@@ -47,6 +48,7 @@ pub(crate) const QUERIES: &[&str] = &[
     "execution.inspect",
     "handoff.inspect",
     "handoff.list",
+    "dependencies.list",
     "evidence.inspect",
     "review.inspect",
     "review.rounds",
@@ -133,6 +135,7 @@ impl WorkstreamQuery {
         "review.inspect",
         "review.rounds",
         "handoff.list",
+        "dependencies.list",
         "delivery.neutral.inspect",
         "delivery.routes",
         "delivery.submission.describe",
@@ -245,6 +248,7 @@ impl WorkstreamQuery {
                 | "sources.inspect"
                 | "review.rounds"
                 | "handoff.list"
+                | "dependencies.list"
         );
         let audit = matches!(
             self.op.as_str(),
@@ -445,7 +449,10 @@ impl WorkstreamQuery {
                         || work_list
                         || activity_audit
                         || exact_work
-                        || matches!(self.op.as_str(), "sources.inspect" | "handoff.list")),
+                        || matches!(
+                            self.op.as_str(),
+                            "sources.inspect" | "handoff.list" | "dependencies.list"
+                        )),
             ),
             (
                 "workstream_id",
@@ -1239,6 +1246,9 @@ pub(crate) async fn read(
     if q.op == "sources.inspect" {
         return sources::read(tx, tenant, project, auth, q).await;
     }
+    if q.op == "dependencies.list" {
+        return dependencies::read(tx, tenant, project, auth, q).await;
+    }
     if q.op == "handoff.list" {
         return handoffs::read(tx, tenant, project, auth, q).await;
     }
@@ -1750,7 +1760,24 @@ pub(crate) async fn read(
         "delivery.inspect" => {
             let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
             let _ = work_binding(tx, tenant, project, auth, work).await?;
-            crate::workstream_command::reviews::inspect_delivery(tx, tenant, project, work).await?
+            let mut value =
+                crate::workstream_command::reviews::inspect_delivery(tx, tenant, project, work)
+                    .await?;
+            let row = tx.query_one("SELECT contract_json,contract_hash FROM awr_team.work_contracts
+                WHERE tenant_id=$1 AND project_id=$2 AND snapshot_id=$3 AND scope_id='main' AND work_id=$4",
+                &[&tenant,&project,&auth.snapshot,&work]).await?;
+            let contract: WorkContract =
+                serde_json::from_value(row.get(0)).map_err(|_| PgError::SourceDivergence)?;
+            if contract.work_id.as_str() != work
+                || contract.hash().map_err(|_| PgError::SourceDivergence)?
+                    != row.get::<_, String>(1)
+            {
+                return Err(PgError::SourceDivergence);
+            }
+            value["delivery"]["dependencies"] = json!(
+                dependencies::for_work(tx, tenant, project, auth, work, &stream, &contract).await?
+            );
+            value
         }
         "command.inspect" => {
             let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;

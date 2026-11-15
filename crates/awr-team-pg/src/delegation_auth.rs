@@ -553,6 +553,7 @@ pub(crate) async fn resolve_agent_read_delegation(
                 | "planning.candidates"
                 | "sources.inspect"
                 | "handoff.list"
+                | "dependencies.list"
                 | "events.list"
         );
     if !actor_requires_explicit_delegation(&auth.actor_kind) || !discovery {
@@ -593,7 +594,7 @@ pub(crate) async fn resolve_agent_read_delegation(
         .collect();
     if matches!(
         request.op.as_str(),
-        "work.next" | "work.inbox" | "handoff.list"
+        "work.next" | "work.inbox" | "handoff.list" | "dependencies.list"
     ) {
         let mut scope = NavigationReadScope::default();
         for stream in &auth.catalog.workstreams {

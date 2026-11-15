@@ -131,6 +131,7 @@ asking anyway is refused as `Unsupported`. The lists name operations of this pro
 | `sources.inspect` | Required document integrity in the active snapshot; optional `work_id`, `workstream_id`, `limit`, `cursor`, `max_context_bytes`; no document bodies |
 | `review.rounds` | Read-only ordered review history for a required work/session selection with bounded `limit`, `cursor`, `max_context_bytes` and transaction `as_of` |
 | `handoff.list` | Read-only authorized handoff discovery with optional `work_id`, `workstream_id`, `recipient_person_id`, `handoff_state`, `limit`, `cursor`, `max_context_bytes` |
+| `dependencies.list` | Read-only authorized dependency edges with required, available, adopted and consumed versions; optional `work_id`, `workstream_id`, `limit`, `cursor`, `max_context_bytes` |
 | `work.prepare` | Required `work_id` or `session_id`; optional `max_context_bytes`; returns published contract, required_specs and authorized_readable_refs (TMCP-023) |
 | `work.admission` | Required `work_id`; whether the work is governed, its admission state and diagnostics, the scope a decision will be checked against and its `binding_fingerprint`; see [Team governance](team-governance.md) |
 | `work.observe` | Required `work_id` or `session_id`; returns bounded session/checkpoint, claim lease, execution and PR delivery observations under current WorkRead authority |
@@ -925,6 +926,50 @@ acceptance contract). Team PG schema 27.
 
 Artifact/contract changes invalidate prior open/approved rounds for other
 bundles; reject/return/rework keep historical rounds.
+
+## Dependency version observations
+
+`dependencies.list` uses the current authenticated project scope. A reader may
+narrow it to one work or workstream. Each page contains at most 100 edges,
+ordered by consumer work and declared predecessor order. It carries contiguous
+`dependency_position` values, `total`, `next_cursor`, and transaction `as_of`.
+The cursor binds the current reader, grants, source snapshot and project revision.
+A changed binding requires a fresh first page. Counts cover authorized consumers
+and explicitly retain `count_limited=true` with `hidden_count=null`.
+
+Each edge retains its consumer-owned predecessor reference. Upstream titles and
+version metadata require current upstream read authority or a valid exact artifact
+disclosure. Missing fields carry reasons such as `permission_restricted` and
+`not_recorded`. The read returns no document bodies, export proof bundles or
+execution payloads. It performs no adoption, claim, handoff or execution effects.
+
+`required_version` describes the declared current-contract requirement or the
+verified original fixed delivery. `available_version` describes the receipt that
+currently satisfies that requirement. Same-workstream `adopted_version` comes
+from the latest committed execution admission for the consumer's current contract.
+Cross-workstream `adopted_version` comes from its selected, revalidated export.
+`consumed_version` separately describes the inputs recorded at execution admission.
+An unstarted consumer can therefore have an available result and null adopted
+and consumed versions. A later adoption preserves the earlier execution inputs.
+
+Fixed deliveries retain their original contract and source snapshot. Cross-stream
+disclosures reuse the existing proof and artifact validation, including revocation.
+Invalid or unreadable disclosure metadata becomes a reasoned null. Same-stream
+availability reuses the exact current-receipt assurance gate used by admission.
+
+`validity` is `valid`, `upstream_changed` or `unavailable`. A valid edge can still
+have no recorded consumption. Reasons identify changed execution inputs, invalidated
+bindings, unavailable completion, missing adoption, invalidated disclosure or
+restricted access. The observation supplies coordination facts for a later Agent
+decision. It grants no execution or completion authority.
+
+`delivery.inspect` exposes the identical per-edge projection under
+`data.delivery.dependencies`. Collection-only position and consumer-title fields
+are added by `dependencies.list`. PostgreSQL and bridge fixtures compare every
+shared field, including missing-value reasons. The Observer adapter exposes
+`GET /api/team/dependencies` and preserves these fields through its bounded read
+route. Product pages translate the states and reasons into their localized
+progress and recovery vocabulary.
 
 ## Limits and errors
 
