@@ -8,6 +8,7 @@ import { DeliverySteps, type DeliveryStep } from '../components/DeliverySteps';
 import { FreshnessBadge } from '../components/FreshnessBadge';
 import { RecordedTime } from '../components/RecordedTime';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
+import { OutcomeActivity, OutcomeReviewHistory } from '../components/OutcomeObservations';
 import { checkLabel, deriveOwner, ownerCellText } from '../core/observation';
 import { ApiError, isAuthError } from '../lib/api';
 import { formatObservationValue, notProvided } from '../i18n/craft';
@@ -62,7 +63,11 @@ export function ProjectAcceptance({ project }: { project: string }) {
   const review = useQuery(outcomeQueryOptions(project, 'review.inspect', {
     work_id: workId, review_round_id: selectedRound ?? '',
   }, revoked, enabled && Boolean(selectedRound)));
+  const currentReview = useQuery(outcomeQueryOptions(project, 'review.inspect', {
+    work_id: workId, review_round_id: currentRound ?? '',
+  }, revoked, enabled && Boolean(currentRound)));
   const reviewObject = asObject(at(review.data?.result.data, ['review']));
+  const currentReviewObject = asObject(at(currentReview.data?.result.data, ['review']));
   const evidenceId = asText(reviewObject?.evidence_id);
   const executionId = asText(reviewObject?.execution_id);
   const evidence = useQuery(outcomeQueryOptions(project, 'evidence.inspect', {
@@ -109,30 +114,61 @@ export function ProjectAcceptance({ project }: { project: string }) {
   if (works.length === 0) return <ObservationEmpty />;
 
   const reviewCandidateCurrent = reviewObject?.candidate_current ?? at(reviewObject, ['submission', 'candidate_current']);
-  const reviewIsCurrent = reviewCandidateCurrent === true
-    && at(reviewObject, ['evidence_provenance', 'review_contract_matches_current']) !== false;
-  const completionData = completion.data?.result.data;
+  const currentCandidateCurrent = currentReviewObject?.candidate_current ?? at(currentReviewObject, ['submission', 'candidate_current']);
+  const reportOnly = collaboration?.delivery_required === false
+    && at(currentReviewObject, ['submission', 'delivery_required']) === false
+    && !collaboration?.candidate && !integrationId;
+  const reviewIsCurrent = (currentCandidateCurrent === true
+      || reportOnly && at(currentReviewObject, ['evidence_provenance', 'review_contract_matches_current']) === true)
+    && at(currentReviewObject, ['evidence_provenance', 'review_contract_matches_current']) === true;
+  const completionData = selectedCompletionId ? completion.data?.result.data : undefined;
   const completionObject = asObject(completionData?.completion);
   const completionReceipt = asText(completionObject?.receipt_id);
   const completionSelected = asText(completionData?.selected_completion_id);
-  const completionReviewRound = asText(at(completionObject, ['approved_by', 'review_round_id']));
+  const completionReviewRound = at(completionObject, ['approved_by', 'review_round_id']) ?? completionObject?.review_round_id;
+  const completionReviewKind = asText(at(completionObject, ['approved_by', 'independence_kind']));
+  const completionReviewLabels: Record<string, string> = {
+    team_independent: t('outcomeReviews.roles.independent_reviewer'),
+    personal_self_review: t('outcomeReviews.roles.author_reviewer'),
+    agent_review: t('outcomeReviews.roles.agent_reviewer'),
+    simulated_member_independent: value('simulated_member_independent', 'independence_kind'),
+  };
 
   const deliveryObject = asObject(at(delivery.data?.result.data, ['delivery']));
   const deliverySelected = asText(at(deliveryObject, ['awr_acceptance', 'selected_completion_id']));
-  const completionConflict = Boolean(completionData && (
-    completionReceipt !== completionSelected
-    || completionSelected !== selectedCompletionId
-    || (deliverySelected != null && deliverySelected !== completionSelected)
-    || (completionObject?.evidence_id != null && completionObject.evidence_id !== evidenceId)
-    || (completionObject?.execution_id != null && completionObject.execution_id !== executionId)
-    || (completionObject?.contract_hash != null && completionObject.contract_hash !== snapshotData?.contract_hash)
-    || (completionReviewRound != null && completionReviewRound !== selectedRound)
-  ));
+  const completionBindingsPresent = [
+    completionObject?.receipt_id, completionData?.selected_completion_id, selectedCompletionId,
+    at(deliveryObject, ['awr_acceptance', 'selected_completion_id']),
+    completionObject?.contract_hash, snapshotData?.contract_hash, currentReviewObject?.contract_hash,
+    completionObject?.evidence_id, currentReviewObject?.evidence_id,
+    completionReviewRound, currentRound, currentReviewObject?.round_id,
+  ].every(binding => typeof binding === 'string' && binding.trim() !== '')
+    // Human-reviewed reports can explicitly record a null execution.
+    && completionObject != null && Object.hasOwn(completionObject, 'execution_id')
+    && currentReviewObject != null && Object.hasOwn(currentReviewObject, 'execution_id');
+  const completionBindingsMatch = completionReceipt === completionSelected
+    && completionSelected === selectedCompletionId && deliverySelected === completionSelected
+    && completionObject?.contract_hash === snapshotData?.contract_hash
+    && currentReviewObject?.contract_hash === snapshotData?.contract_hash
+    && completionObject?.evidence_id === currentReviewObject?.evidence_id
+    && completionObject?.execution_id === currentReviewObject?.execution_id
+    && completionReviewRound === currentRound && currentReviewObject?.round_id === currentRound
+    && (completionObject?.review_round_id == null || completionObject.review_round_id === completionReviewRound);
+  const completionConflict = Boolean(completionData && completionBindingsPresent && !completionBindingsMatch);
+  const completionBindingMissing = Boolean(completionData && !completionBindingsPresent);
   const integrationData = integration.data?.result.data;
   const observedAt = at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'provenance', 'observed_at_unix_ms']);
   const recordedAt = at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'provenance', 'recorded_at_unix_ms']);
 
-  const artifacts = asArray(at(reviewObject, ['submission', 'artifacts']));
+  const submittedArtifacts = asArray(at(reviewObject, ['submission', 'artifacts']));
+  const primaryEvidence = asObject(at(evidence.data?.result.data, ['evidence']));
+  const primaryArtifactId = asText(primaryEvidence?.artifact_id);
+  const primaryArtifactDigest = asText(primaryEvidence?.artifact_digest);
+  const artifacts = submittedArtifacts.length > 0 ? submittedArtifacts
+    : primaryArtifactId && primaryArtifactDigest && primaryEvidence?.evidence_id === evidenceId ? [{
+      query: { op: 'artifact.content', work_id: workId, artifact_id: primaryArtifactId, expected_sha256: primaryArtifactDigest },
+      segment_query: { op: 'artifact.segment', work_id: workId, artifact_id: primaryArtifactId, expected_sha256: primaryArtifactDigest },
+    }] : [];
 
   const verification = asArray(collaboration?.verification);
   const reviewDecisions = asArray(reviewObject?.decisions);
@@ -154,17 +190,29 @@ export function ProjectAcceptance({ project }: { project: string }) {
     setSearchParams(next);
   }
 
+  function selectRound(round: string) {
+    const next = new URLSearchParams(searchParams);
+    next.set('work', workId);
+    if (round === currentRound) next.delete('round');
+    else next.set('round', round);
+    setSearchParams(next);
+  }
+
   function snapshotForWork(key: string) {
     return snapshots.find((query) => query.data?.result.data.work_id === key)?.data?.result.data;
   }
 
   function versionOf(data: typeof snapshotData) {
-    const selection = data?.observation?.collaboration?.candidate?.selection_version;
-    return selection == null ? null : t(data?.observation?.collaboration?.candidate?.current === true ? 'acceptance.currentVersion' : 'acceptance.historical');
+    const facts = data?.observation?.collaboration;
+    if (facts?.candidate?.current === false) return t('acceptance.historyVersions');
+    if (facts?.candidate?.current === true || facts?.delivery_required === false && facts.review) return t('acceptance.currentVersion');
+    return null;
   }
 
   function isCurrentVersion(key: string) {
-    return snapshotForWork(key)?.observation?.collaboration?.candidate?.current === true;
+    const facts = snapshotForWork(key)?.observation?.collaboration;
+    // Unread or unreported work stays visible while its version is unknown.
+    return facts?.candidate?.current !== false;
   }
 
   const filteredWorks = visibleWorks.filter((work) => (
@@ -172,10 +220,10 @@ export function ProjectAcceptance({ project }: { project: string }) {
     || (versionFilter === 'current' && isCurrentVersion(work.key))
     || (versionFilter === 'history' && !isCurrentVersion(work.key))
   ));
-  const candidatePresent = collaboration?.candidate != null || collaboration?.review != null || reviewObject != null;
-  const reviewState = asText(reviewObject?.state ?? collaboration?.review?.state);
+  const candidatePresent = collaboration?.candidate != null || collaboration?.review != null || currentReviewObject != null;
+  const reviewState = asText(currentReviewObject?.state ?? collaboration?.review?.state);
   const reviewApproved = reviewState === 'approved' && reviewIsCurrent;
-  const reviewIsHistorical = reviewCandidateCurrent === false
+  const reviewIsHistorical = (reviewCandidateCurrent === false && at(reviewObject, ['submission', 'delivery_required']) !== false)
     || at(reviewObject, ['evidence_provenance', 'review_contract_matches_current']) === false;
   const integrationState = asText(integrationData?.state ?? collaboration?.integration?.state);
   const integrationOutcome = asText(at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'outcome']));
@@ -198,14 +246,16 @@ export function ProjectAcceptance({ project }: { project: string }) {
   );
   const deliveryComplete = at(deliveryObject, ['awr_acceptance', 'complete']) === true
     && at(deliveryObject, ['awr_acceptance', 'runtime_state']) === 'completed';
-  const completionKnown = completionSelected != null && completionReceipt != null;
+  const completionKnown = completionBindingsPresent && completionBindingsMatch;
   const snapshotLoading = Boolean(selectedWork) && (selectedSnapshot == null || selectedSnapshot.isPending);
   const snapshotFailed = selectedSnapshot?.isError === true;
-  const reviewLoading = Boolean(selectedRound) && review.isPending;
+  const reviewLoading = Boolean(currentRound) && currentReview.isPending;
   const integrationLoading = Boolean(integrationId) && integration.isPending;
   const completionLoading = Boolean(selectedCompletionId) && completion.isPending;
   const acceptanceLoading = snapshotLoading || reviewLoading || integrationLoading || completionLoading || delivery.isPending;
-  const acceptanceUnknown = snapshotFailed || review.isError || integration.isError || completion.isError || delivery.isError;
+  const acceptanceUnknown = snapshotFailed || currentReview.isError || integration.isError || completion.isError || delivery.isError || completionBindingMissing;
+  const integrationSatisfied = integrationConfirmed || reportOnly;
+  const completionConfirmed = deliveryComplete && completionKnown && integrationSatisfied && reviewApproved;
   const steps: DeliveryStep[] = [
     {
       key: 'candidate', title: t('acceptance.stepCandidate'),
@@ -229,19 +279,19 @@ export function ProjectAcceptance({ project }: { project: string }) {
       key: 'review', title: t('acceptance.stepReview'),
       text: snapshotLoading || reviewLoading
         ? t('common.loading')
-        : snapshotFailed || review.isError
+        : snapshotFailed || currentReview.isError
           ? t('acceptance.statusUnknown')
           : reviewApproved
             ? t('acceptance.statusApproved')
-            : reviewState === 'approved' && reviewCandidateCurrent == null
+            : reviewState === 'approved' && currentCandidateCurrent == null
               ? t('acceptance.statusUnknown')
               : reviewState === 'open'
                 ? t('acceptance.statusReviewPending')
                 : reviewState
                   ? t('acceptance.statusNotApproved')
                   : t('acceptance.statusNotStarted'),
-      tone: snapshotFailed || review.isError ? 'warning' : snapshotLoading || reviewLoading ? 'neutral' : reviewApproved ? 'positive' : reviewState === 'open' ? 'warning' : reviewState ? 'negative' : 'neutral',
-      testId: reviewApproved && !review.isError ? 'acceptance-current-approval' : reviewIsHistorical ? 'acceptance-review-history' : undefined,
+      tone: snapshotFailed || currentReview.isError ? 'warning' : snapshotLoading || reviewLoading ? 'neutral' : reviewApproved ? 'positive' : reviewState === 'open' ? 'warning' : reviewState ? 'negative' : 'neutral',
+      testId: reviewApproved && !currentReview.isError ? 'acceptance-current-approval' : reviewIsHistorical ? 'acceptance-review-history' : undefined,
     },
     {
       key: 'integration', title: t('acceptance.stepIntegration'),
@@ -249,6 +299,8 @@ export function ProjectAcceptance({ project }: { project: string }) {
         ? t('common.loading')
         : snapshotFailed || integration.isError || integrationUnknown
           ? t('acceptance.statusUnknown')
+          : reportOnly
+            ? t('acceptance.integrationNotRequired')
           : integrationConfirmed
             ? t('acceptance.statusIntegrated')
             : integrationRejected
@@ -256,7 +308,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
               : integrationPrepared
                 ? t('acceptance.statusIntegrationPending')
                 : t('acceptance.statusIntegrationNotPrepared'),
-      tone: snapshotLoading || integrationLoading ? 'neutral' : snapshotFailed || integration.isError || integrationUnknown ? 'warning' : integrationConfirmed ? 'positive' : integrationRejected ? 'negative' : integrationPrepared ? 'warning' : 'neutral',
+      tone: snapshotLoading || integrationLoading ? 'neutral' : snapshotFailed || integration.isError || integrationUnknown ? 'warning' : reportOnly ? 'neutral' : integrationConfirmed ? 'positive' : integrationRejected ? 'negative' : integrationPrepared ? 'warning' : 'neutral',
       testId: integrationRejected && !snapshotFailed && !integration.isError ? 'acceptance-integration-rejected' : undefined,
     },
     {
@@ -267,20 +319,28 @@ export function ProjectAcceptance({ project }: { project: string }) {
           ? t('common.loading')
           : acceptanceUnknown
             ? t('acceptance.statusUnknown')
-            : deliveryComplete && completionKnown && integrationConfirmed
+            : completionConfirmed
               ? t('acceptance.statusCompleted')
               : deliveryComplete
                 ? t('acceptance.statusCompletionUnconfirmed')
                 : completionKnown
                   ? t('acceptance.statusIntegrationPending')
                   : t('acceptance.noCompletionReceipt'),
-      tone: completionConflict ? 'negative' : acceptanceUnknown ? 'warning' : acceptanceLoading ? 'neutral' : deliveryComplete && completionKnown && integrationConfirmed ? 'positive' : deliveryComplete || completionKnown ? 'warning' : 'neutral',
+      tone: completionConflict ? 'negative' : acceptanceUnknown ? 'warning' : acceptanceLoading ? 'neutral' : completionConfirmed ? 'positive' : deliveryComplete || completionKnown ? 'warning' : 'neutral',
       testId: completionConflict ? 'acceptance-completion-conflict' : undefined,
     },
   ];
 
   const currentVersion = versionOf(snapshotData);
   const currentVersionText = currentVersion ?? t('acceptance.currentVersion');
+  const selectedReviewState = asText(reviewObject?.state);
+  const selectedReviewStatus = selectedReviewState === 'open' || selectedReviewState === 'approved'
+    || selectedReviewState === 'rejected' || selectedReviewState === 'invalidated' ? selectedReviewState : 'unknown';
+  const selectedReviewLabel = t(`outcomeReviews.states.${selectedReviewStatus}`);
+  const acceptanceCriteria = snapshotData?.visible_contract?.acceptance ?? snapshotData?.published_contract?.acceptance;
+  const sourceData = source.data?.result.data;
+  const sourceUpdated = sourceData?.source_synchronized === true
+    && sourceData?.cursor_current === true && sourceData?.projection_current === true;
   const verificationRows = verification.map((entry, index) => ({
     key: index,
     check: checkLabel(at(entry, ['check']), { language: i18n.language, position: index + 1 }).text,
@@ -344,13 +404,14 @@ export function ProjectAcceptance({ project }: { project: string }) {
                   return (
                     <List.Item data-testid={`acceptance-work-${work.key}`} onClick={() => selectWork(work.key)} style={craftSelectionStyle(token, selectedWork?.key === work.key)}>
                       <Space direction="vertical" size={2} style={{ width: '100%' }}>
-                        <Space style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
-                          <Typography.Text strong style={{ overflowWrap: 'anywhere' }}>{work.title}{version ? ` ${version}` : ''}</Typography.Text>
+                        <Typography.Text strong style={{ overflowWrap: 'anywhere' }}>{value(work.title)}</Typography.Text>
+                        <Space wrap size={4}>
+                          {version ? <Tag>{version}</Tag> : null}
                           <Tag color={state === 'approved' ? 'success' : state === 'rejected' ? 'error' : state === 'open' ? 'warning' : 'default'}>{label}</Tag>
                         </Space>
                         <Typography.Text type="secondary">
-                          {author}
-                          {reportedAt != null ? ` · ${formatUnixMs(Number(reportedAt), i18n.language)}` : ` · ${missing}`}
+                          {t('acceptance.responsible', { name: author })}
+                          {reportedAt != null ? ` · ${formatUnixMs(Number(reportedAt), i18n.language)}` : ''}
                         </Typography.Text>
                       </Space>
                     </List.Item>
@@ -377,7 +438,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
         </Col>
         <Col xs={24} lg={17}>
           <Space direction="vertical" size={16} style={{ width: '100%' }}>
-            <Card size="small" title={selectedWork?.title ?? t('acceptance.title')}>
+            <Card size="small" title={selectedWork ? value(selectedWork.title) : t('acceptance.title')}>
               <DeliverySteps steps={steps} testId="acceptance-evidence-chain" />
               {integrationId ? (
                 <Space wrap data-testid="acceptance-times">
@@ -388,7 +449,15 @@ export function ProjectAcceptance({ project }: { project: string }) {
               {integrationIsHistorical ? (
                 <Typography.Text type="secondary" data-testid="acceptance-integration-history">{t('acceptance.integrationHistorical')}</Typography.Text>
               ) : null}
+              {acceptanceCriteria && acceptanceCriteria.length > 0 ? <div style={{ marginTop: token.margin }} data-testid="outcome-acceptance-requirements">
+                <Typography.Text strong>{t('acceptance.currentRequirements')}</Typography.Text>
+                <List size="small" dataSource={acceptanceCriteria} renderItem={(criterion) => <List.Item>{value(criterion)}</List.Item>} />
+              </div> : null}
             </Card>
+
+            {selectedWork ? <OutcomeReviewHistory key={`${project}:${workId}`} project={project} workId={workId}
+              stream={selectedWork.workstream_id} currentRound={currentRound} selectedRound={selectedRound ?? undefined}
+              onSelect={selectRound} revoked={revoked} /> : null}
 
             {verificationRows.length > 0 ? (
               <Card size="small" title={t('acceptance.verificationTitle')} data-testid="acceptance-verification">
@@ -410,17 +479,18 @@ export function ProjectAcceptance({ project }: { project: string }) {
             <Card size="small" title={t('acceptance.reviewChanges')} data-testid={`acceptance-review-${selectedRound ?? 'none'}`}>
               <Space direction="vertical" size={8} style={{ width: '100%' }}>
                 <Space style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
-                  <Typography.Text>{t('acceptance.currentVersion')}</Typography.Text>
-                  <Typography.Text>{currentVersionText} · {steps[2].text}</Typography.Text>
+                  <Typography.Text>{t('outcomeReviews.selected')}</Typography.Text>
+                  <Typography.Text>{selectedRound === currentRound ? currentVersionText : t('acceptance.historyVersions')} · {selectedReviewLabel}</Typography.Text>
                 </Space>
+                {selectedRound && selectedRound !== currentRound ? <Typography.Text type="secondary">{t('outcomeReviews.browsingEarlier')}</Typography.Text> : null}
                 {reviewCandidateCurrent == null ? (
                   <Typography.Text type="secondary" data-testid="acceptance-review-currentness">{missing}</Typography.Text>
                 ) : null}
                 {reviewIsHistorical ? <Tag color="warning">{t('acceptance.historical')}</Tag> : null}
                 <Typography.Text type="secondary">{t('acceptance.reviewChangeNote')}</Typography.Text>
-                {selectedCompletionId && !completionConflict && at(completionObject, ['approved_by', 'independence_kind']) ? (
+                {selectedRound === currentRound && completionKnown && at(completionObject, ['approved_by', 'independence_kind']) ? (
                   <Typography.Text type="secondary" data-testid="completion-independence">
-                    {value(at(completionObject, ['approved_by', 'independence_kind']), 'independence_kind')}
+                    {completionReviewLabels[completionReviewKind ?? ''] ?? t('outcomeReviews.methodUnknown')}
                   </Typography.Text>
                 ) : null}
                 {at(reviewObject, ['evidence_provenance', 'author_self_report']) === true ? <Typography.Text type="secondary">{t('acceptance.selfReport')}</Typography.Text> : null}
@@ -430,7 +500,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
                     : reviewObject ? (
                       <>
                         {reviewDecisions.map((decision, index) => (
-                          <div key={asText(at(decision, ['decision_id'])) ?? index} data-testid="review-explanation" style={{ width: '100%' }}>
+                          <Space direction="vertical" size={4} key={asText(at(decision, ['decision_id'])) ?? index} data-testid="review-explanation" style={{ width: '100%' }}>
                             {typeof at(decision, ['human_approval']) === 'boolean' ? (
                               <Typography.Text type="secondary" data-testid="decision-human-approval">
                                 {t(at(decision, ['human_approval']) === true ? 'acceptance.humanApproved' : 'acceptance.noHumanApproval')}
@@ -440,7 +510,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
                             <Typography.Paragraph ellipsis={{ rows: 4, expandable: true, symbol: t('acceptance.readMore') }} style={{ marginBottom: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
                               {value(at(decision, ['reason']))}
                             </Typography.Paragraph>
-                          </div>
+                          </Space>
                         ))}
                         {reviewFindings.map((finding, index) => (
                           <Space key={asText(at(finding, ['finding_key'])) ?? index} direction="vertical" size={4} style={{ width: '100%', overflowWrap: 'anywhere' }} data-testid="review-finding">
@@ -469,7 +539,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
             </Card>
 
             {requiredDependencies.length > 0 ? (
-              <Card size="small" title={t('acceptance.downstream')}>
+              <Card size="small" title={t('acceptance.requiredWork')}>
                 <List
                   size="small"
                   dataSource={requiredDependencies}
@@ -478,7 +548,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
                     const related = works.find((work) => work.key === key);
                     return (
                       <List.Item>
-                        <Typography.Text>{related?.title ?? t('acceptance.relatedWork')}</Typography.Text>
+                        <Typography.Text>{related ? value(related.title) : t('acceptance.relatedWork')}</Typography.Text>
                       </List.Item>
                     );
                   }}
@@ -499,7 +569,19 @@ export function ProjectAcceptance({ project }: { project: string }) {
               </Card>
             ) : null}
 
+            {collaboration?.source_state ? <Card size="small" title={t('acceptance.projectRecords')} data-testid="outcome-project-records">
+              <Space direction="vertical" size={8}>
+                <Typography.Text>{source.isError ? t('acceptance.readFailed') : source.isPending ? t('common.loading')
+                  : sourceUpdated ? t('acceptance.recordsUpdated') : sourceData?.source_synchronized === false
+                    ? t('acceptance.recordsPending') : t('acceptance.notObserved')}</Typography.Text>
+                <Typography.Text type="secondary">{t('acceptance.recordsNote')}</Typography.Text>
+              </Space>
+            </Card> : null}
+
+            {selectedWork ? <OutcomeActivity key={`activity:${project}:${workId}`} project={project} workId={workId} revoked={revoked} /> : null}
+
             {review.isError ? readError('acceptance-review-error') : null}
+            {selectedRound !== currentRound && currentReview.isError ? readError('acceptance-current-review-error') : null}
             {evidence.isError ? readError('acceptance-evidence-error') : null}
             {execution.isError ? readError('acceptance-execution-error') : null}
             {claim.isError ? readError('acceptance-claim-error') : null}
@@ -511,7 +593,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
             {exports.isError ? readError('acceptance-exports-error') : null}
             {selectedSnapshot?.isError ? readError('acceptance-snapshot-error') : null}
             {selectedSnapshot?.isPending || reviewLoading || (Boolean(evidenceId) && evidence.isPending) || (Boolean(executionId) && execution.isPending) || (Boolean(claimId) && claim.isPending) || completionLoading || integrationLoading || delivery.isPending || neutral.isPending || submission.isPending || (Boolean(collaboration?.source_state) && source.isPending) || exports.isPending ? loading : null}
-            {!acceptanceLoading && !acceptanceUnknown && (!selectedRound || !evidenceId || !executionId || !claimId || !selectedCompletionId) ? empty : null}
+            {!acceptanceLoading && !acceptanceUnknown && !selectedRound && !selectedCompletionId ? empty : null}
           </Space>
         </Col>
       </Row>

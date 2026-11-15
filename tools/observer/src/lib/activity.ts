@@ -20,6 +20,7 @@ export function activityListQueryOptions(
 ) {
   return {
     queryKey: ['team', 'activity-list', project, kind, filters],
+    meta: { failureScope: 'object' },
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }: { pageParam?: string }) => {
       const params = new URLSearchParams({ project, kind, limit: String(filters.limit) });

@@ -46,9 +46,15 @@ describe('craft source scanner self-test', () => {
       'transition: color 160ms cubic-bezier(0.22, 1, 0.36, 1)',
       'fontWeight: 500', 'font-weight: 400', 'letterSpacing: 0', 'borderRadius: 8', 'border-radius: 12px',
       'const next = !current;',
+      "typeof binding === 'string' && binding.trim() !== ''",
       't("common.notProvided")',
     ].join('\n');
     expect(scanCraftSource(legal, 'tsx')).toEqual([]);
+  });
+
+  it('reads quoted literals before checking their copy punctuation', () => {
+    expect(scanCraftSource("const empty = ''; const valid = empty !== 'missing';", 'tsx')).toEqual([]);
+    expect(scanCraftSource('const label = "It\'s ready!";', 'tsx').map(violation => violation.rule)).toContain('copy-exclamation');
   });
 
   it('rejects raw freshness keys even in formerly exempt files', () => {

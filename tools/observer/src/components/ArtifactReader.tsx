@@ -39,6 +39,7 @@ export function ArtifactReader({
   } : null;
   const read = useQuery({
     queryKey: ['team', 'artifact-read', project, selector],
+    meta: { failureScope: 'object' },
     queryFn: async ({ signal }: { signal: AbortSignal }) => {
       try {
         return await fetchArtifactContent(project, selector as ArtifactSelector, signal);
@@ -61,9 +62,6 @@ export function ArtifactReader({
 
   return (
     <Space direction="vertical" size={6} style={{ width: '100%' }}>
-      <Typography.Text strong style={{ overflowWrap: 'anywhere' }}>
-        {t('acceptance.artifacts')}
-      </Typography.Text>
       <Space size={8} wrap>
         {status ? (
           <Tag data-testid={`artifact-digest-${artifactId}`} color={status === 'verified' ? 'success' : status === 'mismatch' ? 'error' : 'default'}>

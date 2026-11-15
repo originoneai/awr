@@ -110,6 +110,7 @@ export function capabilitiesQueryOptions(project: string, revoked = false) {
 export function activityQueryOptions(project: string | null, revoked = false, workId?: string) {
   return {
     queryKey: queryKeys.activity(project, workId),
+    meta: { failureScope: 'object' },
     queryFn: () => apiGet<TeamActivityResponse>(
       `/api/team/activity?project=${encodeURIComponent(project ?? '')}&kind=development${workId ? `&work_id=${encodeURIComponent(workId)}` : ''}`,
     ),
@@ -227,6 +228,7 @@ export function reviewQueryOptions(
 ) {
   return {
     queryKey: queryKeys.review(project, workId, roundId),
+    meta: { failureScope: 'object' },
     queryFn: ({ signal }: { signal: AbortSignal }) => teamRead<ReviewData>(project ?? '', {
       protocol_version: 1,
       op: 'review.inspect',
@@ -371,14 +373,13 @@ export function createAppQueryClient(overrides?: { retry?: number | boolean }) {
   const queryClient = new QueryClient({
     queryCache: new QueryCache({
       onError: (error, query) => {
-        // Object-scoped sub-reads (a review round of another work, the
-        // activity log) can be denied per object: a Forbidden there is a
-        // partial failure in their own tab, not a session revocation. Only
-        // work-level reads revoke the whole observation session.
+        // Object-scoped denials stay local. Authentication expiry always clears
+        // the session. Retain the original namespaces for existing callers.
         const kind = query.queryKey[1];
         const sessionExpired = error instanceof ApiError
           && (error.code === 'Unauthenticated' || error.code === 'SessionExpired');
-        if ((kind === 'review.inspect' || kind === 'activity') && !sessionExpired) return;
+        const objectScoped = query.meta?.failureScope === 'object' || kind === 'review.inspect' || kind === 'activity';
+        if (objectScoped && !sessionExpired) return;
         if (isAuthError(error)) revokeObservationReads(queryClient);
       },
     }),

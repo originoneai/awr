@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ApiError } from './api';
+import { activityListQueryOptions } from './activity';
+import { outcomeQueryOptions, reviewRoundsQueryOptions } from './outcome';
 import {
   activityQueryOptions,
   createAppQueryClient,
@@ -65,6 +67,34 @@ describe('TanStack Query read configuration (observation contract bounds)', () =
 });
 
 describe('auth revocation clears restricted content', () => {
+  it.each(['Unauthenticated', 'SessionExpired'])('clears object reads and other cached data on %s', async (code) => {
+    const queryClient = createAppQueryClient({ retry: false });
+    const options = reviewRoundsQueryOptions('demo', 'W1', 'WS1', null, false);
+    queryClient.setQueryData(queryKeys.overview('demo'), { ok: true });
+    await expect(queryClient.fetchQuery({ ...options,
+      queryFn: () => Promise.reject(new ApiError(code, 'authentication ended')),
+      retry: false,
+    })).rejects.toThrow('authentication ended');
+    expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
+  });
+
+  it.each([
+    ['review history', () => reviewRoundsQueryOptions('demo', 'W1', 'WS1', null, false)],
+    ['activity list', () => activityListQueryOptions('demo', 'development', { workId: 'W1', limit: 20 }, false)],
+    ['exact review', () => outcomeQueryOptions('demo', 'review.inspect', { work_id: 'W1', review_round_id: 'R1' }, false)],
+  ] as const)('keeps an object Forbidden local for %s', async (_label, optionsForRead) => {
+    const options = optionsForRead();
+    const queryClient = createAppQueryClient({ retry: false });
+    queryClient.setQueryData(queryKeys.overview('demo'), { ok: true, readable: true });
+    await expect(queryClient.fetchQuery({
+      queryKey: options.queryKey,
+      meta: Reflect.get(options, 'meta'),
+      queryFn: () => Promise.reject(new ApiError('Forbidden', 'object denied')),
+      retry: false,
+    })).rejects.toThrow('object denied');
+    expect(queryClient.getQueryData(queryKeys.overview('demo'))).toEqual({ ok: true, readable: true });
+  });
+
   it('clears every cached query on auth error codes', async () => {
     const queryClient = createAppQueryClient({ retry: false });
     queryClient.setQueryData(queryKeys.projects, { ok: true });

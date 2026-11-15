@@ -28,7 +28,9 @@ export function scanCraftSource(source: string, fileType: CraftFileType, filePat
   add('negative-letter-spacing', /\bletterSpacing\s*:\s*-\d/g);
   add('negative-letter-spacing', /\bletter-spacing\s*:\s*-\d/g);
   add('emoji', /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/gu);
-  add('copy-exclamation', /(['"`])[^'"`\n]*![^'"`\n]*\1/g);
+  for (const match of source.matchAll(/(['"`])(?:\\.|(?!\1)[^\\\r\n])*\1/g)) {
+    if (match[0].includes('!')) violations.push({ rule: 'copy-exclamation', match: match[0] });
+  }
   add('copy-exclamation', />\s*[A-Za-z\u4e00-\u9fff][^<{\n()&|=;]*![^<{\n()&|=;]*</g);
 
   for (const match of source.matchAll(/\bcolor\s*=\s*\{?['"]([A-Za-z]+)['"]\}?/g)) {
