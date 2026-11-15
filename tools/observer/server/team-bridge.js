@@ -311,7 +311,8 @@ function validDependency(item, work) {
         || !sameVersion(item.available_version, item.adopted_version)
         || item.version_policy === 'fixed_delivery' && item.adopted_version.source_snapshot_id === null) return false;
     } else if (item.adopted_version !== null || item.available_version !== null || item.validity === 'valid'
-      || item.version_policy === 'fixed_delivery' && item.validity !== 'unavailable') return false;
+      || (item.adoption_valid === null || item.version_policy === 'fixed_delivery')
+        && item.validity !== 'unavailable') return false;
   } else if (item.adoption_valid !== null || item.version_policy !== 'current_contract'
     || !sameVersion(item.adopted_version, item.consumed_version)) return false;
   if (item.validity === 'valid' && item.consumed_version !== null

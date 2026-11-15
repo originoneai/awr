@@ -149,6 +149,11 @@ test('dependency mapping refuses invalid adoption and contradictory ready-state 
     },
     (item) => { item.validity = 'unavailable'; item.reason = 'completion_unavailable'; },
     (item) => {
+      item.review_assurance = { cross_workstream: { review_assurance: 'team_independent', version_policy: 'current_contract' } };
+      item.available_version = null; item.missing.available_version = 'adoption_not_recorded';
+      item.validity = 'upstream_changed'; item.reason = 'upstream_contract_changed';
+    },
+    (item) => {
       item.version_policy = 'fixed_delivery';
       item.review_assurance = { cross_workstream: { review_assurance: 'team_independent', version_policy: 'fixed_delivery' } };
       item.adoption_valid = false; item.available_version = null; item.missing.available_version = 'adoption_unavailable';
