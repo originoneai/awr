@@ -327,7 +327,10 @@ async fn both_delivery_reads_preserve_legacy_facts_and_explicit_missing_proof() 
     q.work_id = Some("a".into());
     let empty = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
     let empty_legacy = legacy_fixture_read(&admin, &review).await;
-    assert_eq!(empty["data"]["delivery"], empty_legacy);
+    assert_eq!(
+        empty["data"]["delivery"],
+        with_empty_dependencies(&empty_legacy)
+    );
     assert!(empty_legacy["pr"].is_null());
     assert!(empty_legacy["neutral_observation"].is_null());
 
@@ -354,7 +357,7 @@ async fn both_delivery_reads_preserve_legacy_facts_and_explicit_missing_proof() 
     .await;
     let read = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
     let legacy = legacy_fixture_read(&admin, &review).await;
-    assert_eq!(read["data"]["delivery"], legacy);
+    assert_eq!(read["data"]["delivery"], with_empty_dependencies(&legacy));
     assert_eq!(legacy["pr"]["delivery_id"], registered["delivery_id"]);
     assert_eq!(legacy["pr"]["pr_number"], 42);
     assert_eq!(legacy["pr"]["head_sha"], HEAD);
@@ -423,7 +426,17 @@ async fn both_delivery_reads_preserve_legacy_facts_and_explicit_missing_proof() 
     .await;
     let cleared = store.query(TENANT, PROJECT, A, q).await.unwrap();
     let cleared_legacy = legacy_fixture_read(&admin, &review).await;
-    assert_eq!(cleared["data"]["delivery"], cleared_legacy);
+    assert_eq!(
+        cleared["data"]["delivery"],
+        with_empty_dependencies(&cleared_legacy)
+    );
     assert!(cleared_legacy["pr"].is_null());
     assert!(cleared_legacy["neutral_observation"].is_null());
+}
+
+fn with_empty_dependencies(legacy: &serde_json::Value) -> serde_json::Value {
+    assert!(legacy.get("dependencies").is_none());
+    let mut expected = legacy.clone();
+    expected["dependencies"] = json!([]);
+    expected
 }
