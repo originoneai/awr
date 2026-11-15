@@ -56,6 +56,7 @@ const DIAGNOSTIC_FIELDS = new Set(['status', 'state', 'reason', 'actor', 'client
 const ERROR_CODE = /\b(?:Forbidden|Unauthenticated|SessionExpired|CursorExpired|ContextIncomplete|ResponseTooLarge|InvalidInput|BadGateway)\b/i;
 const INTERNAL_TOKEN = /\b(?:client|actor|session|execution|claim|receipt|credential|snapshot|workstream|decision|request|agent)[_-](?=[a-z0-9_-]*\d)[a-z0-9_-]+\b/i;
 const SYSTEM_PATH = /(?:[A-Za-z]:\\|\/(?:Users|home|var|private|tmp|opt|etc|srv)\/|~\/|\b(?:crates|tools|src|target|\.local)\/)[^\s<>"']+/;
+const OPAQUE_URL_COMPONENT = new RegExp([UUID.source, LONG_HEX.source, ULID.source, INTERNAL_TOKEN.source].join('|'), 'i');
 
 function diagnosticValue(field: string, value: string): boolean {
   const scalar = value.replace(/^["']|["']$/g, '').replace(/[.!?]+$/, '');
@@ -77,17 +78,22 @@ function businessUrl(text: string, reference: string): string {
   try { url = new URL(text); } catch { return reference; }
   if (/^(?:(?:[a-z0-9-]+\.)*localhost|127(?:\.\d+){3}|\[::1\]|0\.0\.0\.0)$/.test(url.hostname.replace(/\.$/, ''))
     || url.username || url.password || /^\/v\d+\/(?:projects|web)(?:\/|$)/.test(url.pathname)) return reference;
+  let pathname: string;
+  try { pathname = decodeURIComponent(url.pathname); } catch { return reference; }
+  if (OPAQUE_URL_COMPONENT.test(url.hostname) || OPAQUE_URL_COMPONENT.test(pathname) || SYSTEM_PATH.test(pathname)) return reference;
   let changed = false;
   for (const [rawField, value] of [...url.searchParams]) {
     const field = rawField.toLowerCase();
     if (INTERNAL_FIELDS.has(field) || DIAGNOSTIC_FIELDS.has(field) && diagnosticValue(field, value)) {
       url.searchParams.delete(rawField);
       changed = true;
+    } else if (OPAQUE_URL_COMPONENT.test(field) || OPAQUE_URL_COMPONENT.test(value)) {
+      return reference;
     }
   }
   let fragment: string;
   try { fragment = decodeURIComponent(url.hash); } catch { return reference; }
-  if (removeDiagnosticAssignments(fragment) !== fragment || INTERNAL_TOKEN.test(fragment)) {
+  if (removeDiagnosticAssignments(fragment) !== fragment || OPAQUE_URL_COMPONENT.test(fragment)) {
     url.hash = ''; changed = true;
   }
   return changed ? url.toString() : text;

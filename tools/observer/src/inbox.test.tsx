@@ -207,6 +207,25 @@ describe('ordinary project questions', () => {
     }
   });
 
+  it.each([
+    ['https://example.com/customer/client_obs_658', 'client_obs_658'],
+    ['https://example.com/?customer=client_obs_658', 'client_obs_658'],
+    ['https://example.com/customer/01M7F3XWDGSJFQJKFRAQ8T82CS', '01M7F3XWDGSJFQJKFRAQ8T82CS'],
+    ['https://example.com/?customer_id=4bd70c66-41a8-45ec-803b-b5ee3e8c0d91', '4bd70c66-41a8-45ec-803b-b5ee3e8c0d91'],
+    [`https://example.com/?customer=${'a'.repeat(64)}`, 'a'.repeat(64)],
+    ['https://example.com/customer/%63lient_obs_658', 'client_obs_658'],
+    ['https://client-658.example.com/plan', 'client-658'],
+    ['https://example.com/plan#4bd70c66-41a8-45ec-803b-b5ee3e8c0d91', '4bd70c66-41a8-45ec-803b-b5ee3e8c0d91'],
+  ])('applies the shared identifier policy to URL components in %s', async (url, internal) => {
+    await i18n.changeLanguage('en-US');
+    setup(() => page([question({ impact: `Decision: Keep the launch date.\n${url}` })]));
+    const card = await screen.findByTestId('ordinary-question');
+    expect(defaultVisibleText(card)).toContain('Decision: Keep the launch date.');
+    expect(defaultVisibleText(card)).not.toContain(internal);
+    expect(defaultVisibleText(card)).not.toContain(url);
+    expect(within(card).queryAllByRole('button')).toHaveLength(0);
+  });
+
   it('navigates bounded pages, resets pages on tab changes and refreshes from the beginning', async () => {
     await i18n.changeLanguage('en-US');
     const { calls } = setup((query) => query.cursor ? page([question({ question: 'Can support proceed?' })])
