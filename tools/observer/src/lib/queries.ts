@@ -15,6 +15,7 @@ import type {
   PlanningCandidatesData,
   RequiredSourcesData,
   ProjectDocumentsData,
+  OrdinaryDecision,
   OrdinaryDecisionsData,
 } from './types';
 
@@ -53,8 +54,8 @@ export const queryKeys = {
   workInbox: (project: string | null) => ['team', 'work.inbox', project] as const,
   workSnapshot: (project: string | null, workId: string, workstreamId: string) =>
     ['team', 'work.snapshot', project, workId, workstreamId] as const,
-  sourceContent: (project: string, sourcePath: string, expectedSha256: string) =>
-    ['team', 'source.content', project, sourcePath, expectedSha256] as const,
+  sourceContent: (project: string, sourcePath: string, expectedSha256: string, workId?: string) =>
+    ['team', 'source.content', project, sourcePath, expectedSha256, ...(workId ? [workId] : [])] as const,
 };
 
 /**
@@ -137,10 +138,10 @@ interface TeamReadQuery {
   search?: string;
   limit?: number;
   max_context_bytes?: number;
-  decision_state?: 'open' | 'all';
+  decision_state?: OrdinaryDecision['state'] | 'all';
 }
 
-export function ordinaryDecisionsQueryOptions(project: string, state: 'open' | 'all', cursor: string | null, revoked: boolean) {
+export function ordinaryDecisionsQueryOptions(project: string, state: OrdinaryDecision['state'] | 'all', cursor: string | null, revoked: boolean) {
   return {
     queryKey: ['team', 'decisions.list', project, state, cursor],
     queryFn: ({ signal }: { signal: AbortSignal }) => teamRead<OrdinaryDecisionsData>(project, {
@@ -149,6 +150,7 @@ export function ordinaryDecisionsQueryOptions(project: string, state: 'open' | '
     }, signal),
     enabled: Boolean(project) && !revoked,
     ...readQueryDefaults,
+    refetchOnMount: 'always',
     retry: (count, error) => !(error instanceof ApiError && error.code === 'Unsupported') && retryRead(count, error),
     refetchInterval: SNAPSHOT_POLL_INTERVAL_MS,
   } satisfies UseQueryOptions<TeamReadResponse<OrdinaryDecisionsData>>;
@@ -163,6 +165,8 @@ export function projectDocumentsQueryOptions(project: string, search: string, cu
     }, signal),
     enabled: Boolean(project) && !revoked,
     ...readQueryDefaults,
+    refetchOnMount: 'always',
+    retry: (count, error) => !(error instanceof ApiError && error.code === 'Unsupported') && retryRead(count, error),
     refetchInterval: SNAPSHOT_POLL_INTERVAL_MS,
   } satisfies UseQueryOptions<TeamReadResponse<ProjectDocumentsData>>;
 }
@@ -278,9 +282,10 @@ export function sourceContentQueryOptions(
   sourcePath: string,
   expectedSha256: string,
   revoked = false,
+  workId?: string,
 ) {
   return {
-    queryKey: queryKeys.sourceContent(project, sourcePath, expectedSha256),
+    queryKey: queryKeys.sourceContent(project, sourcePath, expectedSha256, workId),
     queryFn: ({ signal, client }: { signal: AbortSignal; client: QueryClient }) => {
       // Scheduled observers can retain options from before the revocation render.
       if (isObservationReadRevoked(client)) throw new DOMException('Observation access revoked', 'AbortError');
@@ -288,6 +293,7 @@ export function sourceContentQueryOptions(
       return teamRead<SourceContentData>(project, {
         protocol_version: 1,
         op: 'source.content',
+        ...(workId ? { work_id: workId } : {}),
         source_path: sourcePath,
         expected_sha256: expectedSha256,
         max_context_bytes: 262144,

@@ -2,6 +2,7 @@ import { createHash, webcrypto } from 'node:crypto';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from './i18n';
 import { defaultVisibleText, findForbiddenVisibleText } from './lib/human-language-guard';
@@ -43,27 +44,27 @@ function setup(respond: (query: Record<string, unknown>) => unknown = () => cata
   }));
   const client = createAppQueryClient();
   client.setDefaultOptions({ queries: { retry: false } });
-  render(<QueryClientProvider client={client}><RevocationProvider>
+  render(<QueryClientProvider client={client}><RevocationProvider><MemoryRouter>
     <ProjectKnowledge project="portal" />
-  </RevocationProvider></QueryClientProvider>);
+  </MemoryRouter></RevocationProvider></QueryClientProvider>);
   return { calls, client };
 }
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe('project document library', () => {
-  it('reports discovery failures and retries without issuing work reads', async () => {
+  it('reports document read failures and retries without issuing work reads', async () => {
     await i18n.changeLanguage('en-US');
     let failed = true;
-    const { calls } = setup(() => catalog(), () => failed
+    const { calls } = setup(() => failed
       ? { ok: false, error: { code: 'InternalError', message: 'private-discovery-error' } }
-      : { ok: true, result: { queries: ['documents.list'] } });
+      : catalog());
     await screen.findByText(i18n.t('knowledge.libraryFailed'));
     expect(calls.length).toBeGreaterThan(0);
-    expect(calls.every((query) => query.op === 'capabilities')).toBe(true);
+    expect(calls.every((query) => query.op === 'documents.list')).toBe(true);
     expect(globalThis.document.body.textContent).not.toContain('private-discovery-error');
     failed = false;
-    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await userEvent.click(screen.getByRole('button', { name: i18n.t('knowledge.refreshLibrary') }));
     await screen.findByRole('button', { name: /Delivery guide/ });
     expect(calls.some((query) => query.op === 'work.snapshot')).toBe(false);
   });
@@ -72,7 +73,7 @@ describe('project document library', () => {
     const { calls } = setup();
     const page = await screen.findByTestId('project-document-library');
     await screen.findByRole('button', { name: /Delivery guide/ });
-    expect(calls.map((query) => query.op)).toEqual(['capabilities', 'documents.list']);
+    expect(calls.map((query) => query.op)).toEqual(['documents.list']);
     expect(calls.some((query) => 'work_id' in query)).toBe(false);
     const visible = defaultVisibleText(page);
     expect(findForbiddenVisibleText(visible)).toEqual([]);
@@ -81,6 +82,14 @@ describe('project document library', () => {
       expect(page.innerHTML).not.toContain(`title="${value}"`);
     }
     expect(screen.queryByTestId('library-document-text')).toBeNull();
+  });
+
+  it('reads authorized documents without a project-wide capability query', async () => {
+    await i18n.changeLanguage('en-US');
+    const { calls } = setup(() => catalog(), () => ({ ok: false, error: { code: 'Forbidden', message: 'Task scope only' } }));
+    await screen.findByRole('button', { name: /Delivery guide/ });
+    expect(calls.map((query) => query.op)).toEqual(['documents.list']);
+    expect(screen.queryByTestId('state-forbidden')).toBeNull();
   });
 
   it('reads the chosen document on request and verifies content before displaying it', async () => {
@@ -94,6 +103,21 @@ describe('project document library', () => {
     expect(calls.filter((query) => query.op === 'source.content')).toEqual([
       { protocol_version: 1, op: 'source.content', source_path: 'docs/delivery-guide.md', expected_sha256: DIGEST, max_context_bytes: 262144 },
     ]);
+  });
+
+  it('carries the authorized task selector into the controlled document read', async () => {
+    await i18n.changeLanguage('en-US');
+    const selected = catalog([document(1, { content_work_id: 'task-read-one' })]);
+    selected.result.data.scope = 'authorized_works';
+    const { calls } = setup((query) => query.op === 'source.content'
+      ? { ok: true, result: { data: { text: TEXT, sha256: DIGEST, byte_length: Buffer.byteLength(TEXT) } } }
+      : selected);
+    await userEvent.click(await screen.findByRole('button', { name: 'Read the full text' }));
+    await screen.findByTestId('library-document-text');
+    expect(calls.filter((query) => query.op === 'source.content')).toEqual([
+      { protocol_version: 1, op: 'source.content', work_id: 'task-read-one', source_path: 'docs/delivery-guide.md', expected_sha256: DIGEST, max_context_bytes: 262144 },
+    ]);
+    expect(defaultVisibleText(globalThis.document.body)).not.toContain('task-read-one');
   });
 
   it.each(['zh-CN', 'en-US'])('keeps raw source headings and excerpts behind the explicit content read in %s', async (language) => {

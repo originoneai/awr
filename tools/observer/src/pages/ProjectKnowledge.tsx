@@ -1,6 +1,7 @@
+import { ProjectQuestions } from '../components/ProjectQuestions';
 import { ObservationValue } from '../components/ObservationValue';
-import { useQuery } from '@tanstack/react-query';
-import { Alert, Button, Card, Col, Input, List, Pagination, Row, Space, Tag, Typography, theme } from 'antd';
+import { useQueries, useQuery } from '@tanstack/react-query';
+import { Button, Card, Col, Input, List, Pagination, Row, Space, Tabs, Tag, Typography, theme } from 'antd';
 import { useState } from 'react';
 import { Stamp } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -16,11 +17,10 @@ import {
 import { isAuthError } from '../lib/api';
 import { OBSERVATION_PAGE_SIZE, validObservationPage } from '../lib/pagination';
 import { contractGroups } from '../lib/contract-groups';
-import { capabilitiesQueryOptions, overviewQueryOptions, readableSourceRef, sourceContentQueryOptions } from '../lib/queries';
+import { overviewQueryOptions, readableSourceRef, sourceContentQueryOptions, workSnapshotQueryOptions } from '../lib/queries';
 import { ProjectDocumentLibrary } from './ProjectDocumentLibrary';
 import { useRevocation } from '../lib/revocation';
 import { useTextDigest, type DigestCheck } from '../lib/text-digest';
-import { useWorkSnapshots } from '../lib/work-snapshots';
 import { craftSelectionStyle } from '../theme';
 import type { WorkContractValue } from '../lib/types';
 
@@ -54,18 +54,17 @@ const DIGEST_LABEL = {
 
 export function ProjectKnowledge({ project }: { project: string }) {
   const { t } = useTranslation();
-  const { revoked } = useRevocation();
-  const capabilities = useQuery(capabilitiesQueryOptions(project, revoked));
-  if (revoked || isAuthError(capabilities.error)) return <ObservationForbidden />;
-  if (capabilities.isPending) return <Typography.Text type="secondary">{t('common.loading')}</Typography.Text>;
-  if (capabilities.isError) return <Space orientation="vertical" size={12}>
-    <Alert type="warning" title={t('knowledge.libraryFailed')} />
-    <Button onClick={() => void capabilities.refetch()}>{t('knowledge.retry')}</Button>
-  </Space>;
-  if (capabilities.data?.result.queries?.includes('documents.list')) {
-    return <ProjectDocumentLibrary key={project} project={project} />;
-  }
-  return <WorkDocumentReferences project={project} />;
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('knowledge') === 'confirmations' ? 'confirmations' : 'documents';
+  return <Tabs destroyOnHidden activeKey={activeTab} onChange={(key) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('knowledge', key);
+    next.delete('page');
+    setSearchParams(next);
+  }} items={[
+    { key: 'documents', label: t('knowledge.sources'), children: <ProjectDocumentLibrary key={project} project={project} unsupportedFallback={<WorkDocumentReferences project={project} />} /> },
+    { key: 'confirmations', label: t('knowledge.confirmations'), children: <ProjectQuestions key={project} project={project} confirmedOnly /> },
+  ]} />;
 }
 
 /** Compatibility for services that have not published project document discovery. */
@@ -81,14 +80,19 @@ function WorkDocumentReferences({ project }: { project: string }) {
     Math.max(1, Math.ceil(works.length / OBSERVATION_PAGE_SIZE)),
   );
   const visibleWorks = works.slice((page - 1) * OBSERVATION_PAGE_SIZE, page * OBSERVATION_PAGE_SIZE);
-  const snapshots = useWorkSnapshots(project, visibleWorks, revoked);
+  const snapshots = useQueries({
+    queries: visibleWorks.map((work) => ({
+      ...workSnapshotQueryOptions(project, work.key, work.workstream_id, revoked, 'list'),
+      refetchOnMount: 'always' as const,
+    })),
+  });
   const [filter, setFilter] = useState('');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
   const failedReads = snapshots.filter((query) => query.isError).length;
   const entries = new Map<string, SourceEntry>();
   snapshots.forEach((query, index) => {
-    const data = query.data?.result.data;
+    const data = query.isFetchedAfterMount && !query.isError ? query.data?.result.data : undefined;
     const work = visibleWorks[index];
     if (!data || !work) return;
     const sources: Array<{
@@ -156,7 +160,7 @@ function WorkDocumentReferences({ project }: { project: string }) {
     (entry.path ?? '').toLowerCase().includes(needle) || (names.get(entry.key) ?? '').toLowerCase().includes(needle)
   ));
   const selected = visibleEntries.find((entry) => entry.key === selectedKey) ?? visibleEntries[0];
-  const loadedCount = snapshots.filter((query) => query.data).length;
+  const loadedCount = snapshots.filter((query) => query.isFetchedAfterMount && !query.isError && query.data).length;
   const otherVersions = selected ? allEntries.filter((entry) => entry.path === selected.path) : [];
   const groups = [
     { id: 'specs', title: t('knowledge.groupSpecs'), entries: visibleEntries.filter((entry) => entry.isSpec) },
@@ -167,8 +171,8 @@ function WorkDocumentReferences({ project }: { project: string }) {
   // not checked, never verified.
   const digestCheck = useTextDigest(selected?.contentIncluded ? selected.text : null, selected?.sha256);
 
-  // Read the full text only after a person asks for it, only once per (project, path, digest),
-  // never polled, never refetched on focus, and silently gone once access is revoked.
+  // Explicit full-text requests recheck authorization after remount or selection.
+  // Bodies are never polled or refetched on focus.
   const [requestedKeys, setRequestedKeys] = useState<ReadonlySet<string>>(() => new Set());
   const selectedTruncated = Boolean(
     selected?.text && selected.byteLength != null && utf8ByteLength(selected.text) !== selected.byteLength,
@@ -182,17 +186,22 @@ function WorkDocumentReferences({ project }: { project: string }) {
       selected?.path ?? '',
       selected?.sha256 ?? '',
       revoked,
+      selected?.citingWorks[0]?.key,
     ),
     enabled: readRequested && refReadable && !revoked,
+    staleTime: 0,
+    refetchOnMount: 'always',
   });
-  const readData = contentRead.data?.result?.data;
+  const readData = contentRead.isFetchedAfterMount && !contentRead.isError ? contentRead.data?.result?.data : undefined;
   const readText = typeof readData?.text === 'string' ? readData.text : null;
   const readVerdict = useTextDigest(readRequested && readText != null ? readText : null, selected?.sha256);
   // A 503 is a failed read, never a confirmed change: only the two digests in hand can say changed,
   // and only when the held extent does not already explain the difference.
   // While the digest check is still running the text is not shown at all: a text that turns
   // out not to match must never be on the page, not even for one render.
-  const readStatus: ContentReadStatus | 'not-text' | 'checking' | null = contentRead.data
+  const readStatus: ContentReadStatus | 'not-text' | 'checking' | null = readRequested && !contentRead.isFetchedAfterMount && !contentRead.isError
+    ? 'checking'
+    : readData
     ? (readText == null
         ? 'not-text'
         : readVerdict === 'pending'
@@ -204,9 +213,9 @@ function WorkDocumentReferences({ project }: { project: string }) {
             more: false,
           }))
     : null;
-  const showingReadResult = readRequested && (contentRead.data != null || contentRead.isError);
+  const showingReadResult = readRequested && (readData != null || contentRead.isError);
 
-  if (revoked || isAuthError(overview.error)) return <ObservationForbidden />;
+  if (revoked || isAuthError(overview.error) || isAuthError(contentRead.error)) return <ObservationForbidden />;
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }} data-testid="page-knowledge">
@@ -239,8 +248,10 @@ function WorkDocumentReferences({ project }: { project: string }) {
         }}
         style={{ display: 'flex', justifyContent: 'flex-end' }}
       />
-      {allEntries.length === 0 ? (
-        <ObservationEmpty />
+      {allEntries.length === 0 && (overview.isPending || snapshots.some((query) => query.isPending || !query.isFetchedAfterMount && !query.isError)) ? (
+        <Typography.Text type="secondary">{t('common.loading')}</Typography.Text>
+      ) : allEntries.length === 0 ? (
+        failedReads > 0 ? null : <ObservationEmpty />
       ) : (
         <Row gutter={[16, 16]} style={{ width: '100%' }}>
           <Col xs={24} lg={8}>
@@ -331,7 +342,7 @@ function WorkDocumentReferences({ project }: { project: string }) {
                           data-testid="read-full"
                           // A not-yet-requested read is also "pending" in the query cache;
                           // only a request actually in flight shows as loading.
-                          loading={readRequested && contentRead.isPending}
+                          loading={readRequested && contentRead.isFetching}
                           onClick={() => {
                             setRequestedKeys((keys) => new Set(keys).add(selected.key));
                           }}

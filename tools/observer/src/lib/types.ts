@@ -346,6 +346,7 @@ export interface SourceContentData {
 }
 
 export interface ProjectDocument {
+  content_work_id?: string;
   document_position: number;
   path: string | null;
   name: string | null;
@@ -367,7 +368,7 @@ export interface ProjectDocumentsData {
   truncated: boolean;
   read_only: true;
   execution_authorized: false;
-  scope: 'work' | 'authorized_workstreams';
+  scope: 'work' | 'authorized_workstreams' | 'authorized_works';
   content_read_limit_bytes: number;
   as_of: { at_unix_ms: number; source_snapshot_id: string; project_revision: string };
 }

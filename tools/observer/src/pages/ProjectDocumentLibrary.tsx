@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Card, Col, Input, List, Row, Space, Tag, Typography, theme } from 'antd';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ObservationEmpty, ObservationForbidden } from '../components/states';
 import { documentTitle, judgeContentRead, utf8ByteLength } from '../core/observation';
@@ -19,10 +19,12 @@ function DocumentText({ project, document }: { project: string; document: Projec
   const { revoked } = useRevocation();
   const [requested, setRequested] = useState(false);
   const content = useQuery({
-    ...sourceContentQueryOptions(project, document.path ?? '', document.sha256 ?? '', revoked),
+    ...sourceContentQueryOptions(project, document.path ?? '', document.sha256 ?? '', revoked, document.content_work_id),
     enabled: requested && document.readable && !revoked,
+    staleTime: 0,
+    refetchOnMount: 'always',
   });
-  const data = content.data?.result.data;
+  const data = content.isFetchedAfterMount && !content.isError ? content.data?.result.data : undefined;
   const text = typeof data?.text === 'string' ? data.text : null;
   const verdict = useTextDigest(text, document.sha256);
   const status = text === null || verdict === 'pending' ? null : judgeContentRead({
@@ -34,7 +36,7 @@ function DocumentText({ project, document }: { project: string; document: Projec
     <Typography.Text type="warning">{t('knowledge.readFailed')}</Typography.Text>
     <Button onClick={() => void content.refetch()}>{t('knowledge.retry')}</Button>
   </Space>;
-  if (content.isPending || verdict === 'pending') return <Typography.Text type="secondary">{t('common.loading')}</Typography.Text>;
+  if (content.isPending || !content.isFetchedAfterMount || verdict === 'pending') return <Typography.Text type="secondary">{t('common.loading')}</Typography.Text>;
   if (text === null) return <Typography.Text type="secondary">{t('knowledge.notPlainText')}</Typography.Text>;
   if (verdict === 'mismatch' || status === 'partial') return <Typography.Text type="warning">{t('knowledge.digestMismatch')}</Typography.Text>;
   return <Space orientation="vertical" size={12} style={{ width: '100%' }}>
@@ -48,7 +50,7 @@ function DocumentText({ project, document }: { project: string; document: Projec
 }
 
 /** A project-wide library, independent of how many work summaries are loaded. */
-export function ProjectDocumentLibrary({ project }: { project: string }) {
+export function ProjectDocumentLibrary({ project, unsupportedFallback }: { project: string; unsupportedFallback?: ReactNode }) {
   const { t, i18n } = useTranslation();
   const { token } = theme.useToken();
   const queryClient = useQueryClient();
@@ -59,7 +61,7 @@ export function ProjectDocumentLibrary({ project }: { project: string }) {
   const library = useQuery(projectDocumentsQueryOptions(project, search, paging.cursor, revoked));
   const expired = library.error instanceof ApiError && library.error.code === 'CursorExpired';
   // A cursor can expire after permission narrowing. Hide retained data in the same render.
-  const data = expired ? undefined : library.data?.result.data;
+  const data = library.isFetchedAfterMount && !library.isError ? library.data?.result.data : undefined;
   useEffect(() => {
     if (!expired || !paging.cursor) return;
     for (const resource of ['documents.list', 'source.content']) {
@@ -82,6 +84,7 @@ export function ProjectDocumentLibrary({ project }: { project: string }) {
   };
 
   if (revoked || isAuthError(library.error)) return <ObservationForbidden />;
+  if (library.error instanceof ApiError && library.error.code === 'Unsupported' && unsupportedFallback) return unsupportedFallback;
   return <Space orientation="vertical" size={16} style={{ width: '100%' }} data-testid="project-document-library">
     <Card size="small">
       <Space size={16} wrap>
@@ -97,7 +100,7 @@ export function ProjectDocumentLibrary({ project }: { project: string }) {
       </Typography.Paragraph> : null}
     </Card>
     {library.isError ? <Alert type="warning" showIcon title={t('knowledge.libraryFailed')} /> : null}
-    {library.isPending ? <Typography.Text type="secondary">{t('common.loading')}</Typography.Text> : null}
+    {library.isPending || !library.isFetchedAfterMount && !library.isError ? <Typography.Text type="secondary">{t('common.loading')}</Typography.Text> : null}
     {data && documents.length === 0 ? <ObservationEmpty readAtUnixMs={data.as_of.at_unix_ms} /> : null}
     {documents.length > 0 ? <Row gutter={[16, 16]} style={{ width: '100%' }}>
       <Col xs={24} lg={8}>
