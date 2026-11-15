@@ -1230,6 +1230,25 @@ async fn authorize_candidate_writable_scope(
                     .map_err(|_| PgError::Forbidden)?;
             }
             None => {
+                if let Some(selector) = &change.after.workstream {
+                    let stream = auth
+                        .catalog
+                        .workstreams
+                        .iter()
+                        .find(|stream| {
+                            stream.id.to_string() == *selector || stream.external_key == *selector
+                        })
+                        .ok_or(PgError::Forbidden)?;
+                    auth.access
+                        .authorize(&auth.catalog, stream.id, WorkstreamAction::Write)
+                        .map_err(|_| PgError::Forbidden)?;
+                    authorize_domain_action(
+                        auth,
+                        awr_team::Action::PlanningEditDraft,
+                        Some(stream.id),
+                        Some(work_id),
+                    )?;
+                }
                 // Unbound/new draft work: require at least one live write grant
                 // (already checked) but do not invent stream authority.
                 if !auth.access.grants.iter().any(|g| g.write) {
