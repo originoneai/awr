@@ -918,6 +918,113 @@ async fn dependency_discovery_keeps_task_scope_and_reauthorizes_upstream_metadat
     ));
 }
 
+async fn dependency_selector_parity(store: &awr_team_pg::WorkstreamReadStore) {
+    let mut expected = None;
+    for (work, stream) in [(false, false), (true, false), (false, true), (true, true)] {
+        let mut q = query("dependencies.list");
+        if work {
+            q.work_id = Some("c".into());
+        }
+        if stream {
+            q.workstream_id = Some(Id::from(1));
+        }
+        let response = store.query(TENANT, PROJECT, A, q).await.unwrap();
+        assert_eq!(response["data"]["total"], 1);
+        let mut item = response["data"]["items"][0].clone();
+        assert_eq!(
+            item["provider_title"], "b-private",
+            "work={work} stream={stream}"
+        );
+        item.as_object_mut().unwrap().remove("dependency_position");
+        item.as_object_mut().unwrap().remove("work_title");
+        if let Some(expected) = &expected {
+            assert_eq!(&item, expected);
+        } else {
+            expected = Some(item);
+        }
+    }
+    for stream in [false, true] {
+        let mut q = query("delivery.inspect");
+        q.work_id = Some("c".into());
+        if stream {
+            q.workstream_id = Some(Id::from(1));
+        }
+        let inspected = store.query(TENANT, PROJECT, A, q).await.unwrap();
+        assert_eq!(
+            inspected["data"]["delivery"]["dependencies"],
+            json!([expected.as_ref().unwrap()])
+        );
+    }
+}
+
+#[tokio::test]
+async fn dependency_narrowed_selectors_preserve_separate_task_grants_without_promoting_consumer_access()
+ {
+    let (_guard, admin, db, store) = setup().await;
+    agent_identity(&admin).await;
+    grant(
+        &db,
+        AuthorizationScope::Task {
+            project_id: PROJECT.into(),
+            work_item_id: "c".into(),
+        },
+    )
+    .await;
+    grant_task(
+        &db,
+        "upstream-read",
+        "b-private",
+        &[AuthorizedAction::Inspect],
+    )
+    .await;
+    dependency_selector_parity(&store).await;
+    for op in ["dependencies.list", "delivery.inspect"] {
+        let mut q = query(op);
+        q.work_id = Some("a".into());
+        q.workstream_id = Some(Id::from(1));
+        assert!(
+            matches!(
+                store.query(TENANT, PROJECT, A, q).await,
+                Err(PgError::Forbidden)
+            ),
+            "{op}"
+        );
+    }
+    admin
+        .batch_execute(
+            "UPDATE awr_team.agent_authorizations SET status='revoked' WHERE id='upstream-read'",
+        )
+        .await
+        .unwrap();
+    let mut q = query("dependencies.list");
+    q.work_id = Some("c".into());
+    q.workstream_id = Some(Id::from(1));
+    let restricted = store.query(TENANT, PROJECT, A, q).await.unwrap();
+    assert!(restricted["data"]["items"][0]["provider_title"].is_null());
+}
+
+#[tokio::test]
+async fn dependency_narrowed_workstream_reads_preserve_upstream_task_grants() {
+    let (_guard, admin, db, store) = setup().await;
+    agent_identity(&admin).await;
+    grant(
+        &db,
+        AuthorizationScope::Workstream {
+            project_id: PROJECT.into(),
+            workstream_id: Id::from(1).to_string(),
+        },
+    )
+    .await;
+    grant_task(
+        &db,
+        "upstream-read",
+        "b-private",
+        &[AuthorizedAction::Inspect],
+    )
+    .await;
+    dependency_selector_parity(&store).await;
+}
+
 #[tokio::test]
 async fn agent_authentication_defaults_to_no_product_actions_even_on_separate_audit_surface() {
     let (_g, admin, db, store) = setup().await;

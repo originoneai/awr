@@ -971,6 +971,17 @@ shared field, including missing-value reasons. The Observer adapter exposes
 route. Product pages translate the states and reasons into their localized
 progress and recovery vocabulary.
 
+Dependency reads preserve separate current grants for consumer and upstream
+objects, including task grants during workstream-filtered reads. Every selected
+consumer still needs its own covering read grant. Delivery inspection uses the
+same rule for work-selected reads. Command authorization continues to resolve
+its own single covering grant.
+
+Older supported services may omit the new dependency field in delivery
+inspection. The adapter preserves their existing delivery facts. Callers treat
+the absent observation as unknown and never convert it to an empty dependency
+set. A present array receives full shape, binding and adoption-state validation.
+
 ## Limits and errors
 
 Requests are limited to 64 KiB, pages to 100 items, search to 512 bytes, and

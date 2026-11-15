@@ -372,6 +372,12 @@ pub(super) async fn read(
 ) -> PgResult<Value> {
     let bound = if let Some(work) = q.work_id.as_deref() {
         let (binding, _) = work_binding(tx, tenant, project, auth, work).await?;
+        crate::delegation_auth::authorize_navigation_action(
+            auth,
+            awr_team::Action::WorkRead,
+            binding.workstream_id,
+            work,
+        )?;
         if q.workstream_id
             .is_some_and(|id| id != binding.workstream_id)
         {

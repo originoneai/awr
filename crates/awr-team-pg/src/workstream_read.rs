@@ -1760,6 +1760,12 @@ pub(crate) async fn read(
         "delivery.inspect" => {
             let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
             let _ = work_binding(tx, tenant, project, auth, work).await?;
+            crate::delegation_auth::authorize_navigation_action(
+                auth,
+                awr_team::Action::WorkRead,
+                stream.parse().map_err(|_| PgError::SourceDivergence)?,
+                work,
+            )?;
             let mut value =
                 crate::workstream_command::reviews::inspect_delivery(tx, tenant, project, work)
                     .await?;

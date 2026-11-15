@@ -254,7 +254,8 @@ function validReadResponse(reply, op) {
   if (op === 'handoff.list') return validHandoffs(reply);
   if (op === 'dependencies.list') return validDependencies(reply);
   if (op === 'delivery.inspect' && data.delivery?.dependencies !== undefined) {
-    return Array.isArray(data.delivery.dependencies) && data.delivery.dependencies.every((item) => validDependency(item, data.delivery.work_id));
+    return Array.isArray(data.delivery.dependencies) && data.delivery.dependencies.every((item) =>
+      validDependency(item, data.delivery.work_id) && !('work_title' in item) && !('dependency_position' in item));
   }
   return true;
 }
@@ -292,6 +293,26 @@ function validDependency(item, work) {
       || !['team_independent', 'simulated_member_independent'].includes(policy.review_assurance)
       || policy.version_policy !== item.version_policy) return false;
   }
+  for (const field of ['available_version', 'adopted_version', 'consumed_version']) {
+    if (item[field] !== null && !isBoundedId(item[field].receipt_id)) return false;
+  }
+  const sameVersion = (left, right) => {
+    if (left === null || right === null) return left === right;
+    return ['receipt_id', 'contract_hash', 'source_snapshot_id'].every((field) => left[field] === right[field]);
+  };
+  const sameReceipt = (left, right) => left !== null && right !== null
+    && left.receipt_id === right.receipt_id && left.contract_hash === right.contract_hash;
+  if (asObject(assurance)?.cross_workstream) {
+    if (item.adoption_valid === true) {
+      if (item.adopted_version === null || !sameVersion(item.required_version, item.adopted_version)
+        || !sameVersion(item.available_version, item.adopted_version)
+        || item.validity === 'unavailable'
+        || item.version_policy === 'fixed_delivery' && item.adopted_version.source_snapshot_id === null) return false;
+    } else if (item.adopted_version !== null || item.available_version !== null || item.validity === 'valid') return false;
+  } else if (item.adoption_valid !== null || item.version_policy !== 'current_contract'
+    || !sameVersion(item.adopted_version, item.consumed_version)) return false;
+  if (item.validity === 'valid' && (item.required_version.contract_hash !== item.available_version.contract_hash
+    || item.consumed_version !== null && !sameReceipt(item.consumed_version, item.available_version))) return false;
   return true;
 }
 

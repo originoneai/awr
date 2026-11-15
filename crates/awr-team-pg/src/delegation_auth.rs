@@ -539,23 +539,31 @@ pub(crate) async fn resolve_agent_read_delegation(
     request: &crate::WorkstreamQuery,
     now_ms: i64,
 ) -> PgResult<()> {
-    let discovery = request.work_id.is_none()
-        && request.session_id.is_none()
+    // An edge can need separate grants for its consumer and upstream. Narrowing
+    // consumers retains those read grants, with one covering grant per object.
+    let dependency_observation = request.session_id.is_none()
         && matches!(
             request.op.as_str(),
-            "capabilities"
-                | "workstreams.list"
-                | "work.next"
-                | "work.inbox"
-                | "work.list"
-                | "work.graph"
-                | "work.search"
-                | "planning.candidates"
-                | "sources.inspect"
-                | "handoff.list"
-                | "dependencies.list"
-                | "events.list"
+            "dependencies.list" | "delivery.inspect"
         );
+    let discovery = dependency_observation
+        || (request.work_id.is_none()
+            && request.session_id.is_none()
+            && matches!(
+                request.op.as_str(),
+                "capabilities"
+                    | "workstreams.list"
+                    | "work.next"
+                    | "work.inbox"
+                    | "work.list"
+                    | "work.graph"
+                    | "work.search"
+                    | "planning.candidates"
+                    | "sources.inspect"
+                    | "handoff.list"
+                    | "dependencies.list"
+                    | "events.list"
+            ));
     if !actor_requires_explicit_delegation(&auth.actor_kind) || !discovery {
         resolve_agent_delegation(
             tx,
@@ -570,7 +578,7 @@ pub(crate) async fn resolve_agent_read_delegation(
         return restrict_read_scope(tx, auth, project, request).await;
     }
     let candidates = effective_delegations(tx, auth, project, None, now_ms).await?;
-    if let Some(stream) = request.workstream_id {
+    if let Some(stream) = request.workstream_id.filter(|_| !dependency_observation) {
         let chosen = candidates.iter().find(|candidate| {
             candidate.actions.contains(&Action::WorkRead) && covers_stream(&candidate.grant, stream)
         });
@@ -592,10 +600,12 @@ pub(crate) async fn resolve_agent_read_delegation(
                 )
         })
         .collect();
-    if matches!(
-        request.op.as_str(),
-        "work.next" | "work.inbox" | "handoff.list" | "dependencies.list"
-    ) {
+    if dependency_observation
+        || matches!(
+            request.op.as_str(),
+            "work.next" | "work.inbox" | "handoff.list" | "dependencies.list"
+        )
+    {
         let mut scope = NavigationReadScope::default();
         for stream in &auth.catalog.workstreams {
             if readers

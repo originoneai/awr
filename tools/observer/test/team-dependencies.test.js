@@ -134,10 +134,61 @@ test('dependency metadata excludes raw payloads at all response levels', async (
   }
 });
 
+test('dependency mapping refuses invalid adoption and contradictory ready-state bindings', async (t) => {
+  let body;
+  const { read } = await fixture(t, () => ({ body }));
+  for (const mutate of [
+    (item) => {
+      item.review_assurance = { cross_workstream: { review_assurance: 'team_independent', version_policy: 'current_contract' } };
+      item.adoption_valid = false;
+    },
+    (item) => { item.adoption_valid = true; },
+    (item) => { item.required_version.contract_hash = 'b'.repeat(64); },
+    (item) => {
+      item.adopted_version = version('different-output', 'b'); item.missing.adopted_version = null;
+    },
+  ]) {
+    body = reply(); mutate(body.data.items[0]);
+    const result = await read(scope);
+    assert.equal(result.ok, false, JSON.stringify(body.data.items[0]));
+    assert.equal(result.error.code, 'BadGateway'); assert.equal(result.result, undefined);
+  }
+});
+
 test('dependency query validation refuses writes and unsupported selectors before contacting Team', async (t) => {
   const { read, calls } = await fixture(t, () => ({ body: reply() }));
   for (const suffix of ['&session_id=other', '&limit=101', '&limit=1&limit=2', '&request_id=write', '&max_context_bytes=0']) {
     const result = await read(scope + suffix); assert.equal(result.ok, false); assert.equal(result.error.code, 'InvalidInput');
   }
   assert.equal(calls.length, 0);
+});
+
+test('a newly adopted result preserves earlier execution inputs as needing another check', async (t) => {
+  const item = dependency();
+  item.review_assurance = { cross_workstream: { review_assurance: 'team_independent', version_policy: 'current_contract' } };
+  for (const field of ['required_version', 'available_version', 'adopted_version']) {
+    item[field] = version(); item.missing[field] = null;
+  }
+  item.consumed_version = version('earlier-output', 'b'); item.missing.consumed_version = null;
+  item.adoption_valid = true; item.validity = 'upstream_changed'; item.reason = 'execution_inputs_changed';
+  const { read } = await fixture(t, () => ({ body: reply([item]) }));
+  const result = await read(scope); assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.result.data.items[0].consumed_version.receipt_id, 'earlier-output');
+});
+
+test('older delivery reads keep existing facts while absent dependency observations stay unknown', async (t) => {
+  const response = reply();
+  const { inspect } = await fixture(t, () => ({ body: { ...response, data: {
+    delivery: { work_id: 'customer-portal', awr_acceptance: { complete: false } } } } }));
+  const result = await inspect(); assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.result.data.delivery.dependencies, undefined);
+  assert.equal(result.result.data.delivery.awr_acceptance.complete, false);
+});
+
+test('delivery dependency observations refuse collection-only positions and titles', async (t) => {
+  const response = reply();
+  const { inspect } = await fixture(t, () => ({ body: { ...response, data: {
+    delivery: { work_id: 'customer-portal', dependencies: [dependency()] } } } }));
+  const result = await inspect(); assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'BadGateway'); assert.equal(result.result, undefined);
 });
