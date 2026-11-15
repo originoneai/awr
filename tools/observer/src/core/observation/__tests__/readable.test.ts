@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { OPERATION_VOCABULARY } from '../../../i18n/human-language';
 import REPORTS from '../../../test-fixtures/work-state/progress-reports-run09.json';
 import { abbreviateIds, readableNarrative, readableSentence } from '../index';
+import { containsDiagnosticContent } from '../readable';
 
 describe('readableNarrative', () => {
   it.each(['zh-CN', 'en-US'])('withholds diagnostic payloads and sensitive assignments in %s', (language) => {
@@ -162,5 +163,27 @@ describe('protocol fields and numbered identities', () => {
     }
     for (const text of ['agent7', 'dev42', 'client9', 'agent7a', 'client9x', 'dev42beta']) expect(readableNarrative(text, language)).toBeNull();
     expect(readableNarrative('Review https://github.com/dev42/example', language)).toBe('Review https://github.com/dev42/example');
+  });
+
+  it.each(['zh-CN', 'en-US'])('removes diagnostic URL fields and network details in %s', (language) => {
+    for (const [field, value] of [['reason', 'postgres connection refused at 10.0.0.8'], ['status', 'custom failure'], ['state', 'degraded']]) {
+      const url = `https://example.com/plan?customer=ACME&${field}=${encodeURIComponent(value)}`;
+      expect(containsDiagnosticContent(url)).toBe(true);
+      const projected = readableNarrative(`Review ${url}`, language);
+      expect(projected).toBe('Review https://example.com/plan?customer=ACME');
+      expect(containsDiagnosticContent(projected!)).toBe(false);
+    }
+    for (const url of ['https://example.com/postgres%20connection%20refused%20at%2010.0.0.8',
+      'https://example.com/plan#postgres%20connection%20refused%20at%2010.0.0.8',
+      'https://example.com/plan?detail=10.0.0.8', 'https://10.0.0.8/plan']) {
+      expect(containsDiagnosticContent(url)).toBe(true);
+      expect(readableNarrative(`Review ${url}`, language)).not.toContain('10.0.0.8');
+    }
+  });
+
+  it.each(['Release 1.2.3.4 passed customer validation.', 'Version 1.2.3.4 is ready.', '版本 1.2.3.4 已通过验证。',
+    'Review https://example.com/releases/1.2.3.4'])('preserves explicit release versions in %s', (text) => {
+    expect(readableNarrative(text, 'en-US')).toBe(text);
+    expect(containsDiagnosticContent(text)).toBe(false);
   });
 });

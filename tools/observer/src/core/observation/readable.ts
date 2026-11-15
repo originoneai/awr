@@ -57,6 +57,7 @@ const ERROR_CODE = /\b(?:Forbidden|Unauthenticated|SessionExpired|CursorExpired|
 const INTERNAL_TOKEN = /\b(?:client|actor|session|execution|claim|receipt|credential|snapshot|workstream|decision|request|agent)[_-](?=[a-z0-9_-]*\d)[a-z0-9_-]+\b/i;
 const NUMBERED_ROLE = /\b(?:client|actor|session|execution|claim|receipt|credential|snapshot|workstream|decision|request|agent|dev)\d[a-z0-9]*\b/i;
 const NETWORK_ADDRESS = /\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b/;
+const RELEASE_VERSION = /(?:\b(?:releases?|version)[\s/_-]+v?|版本\s*v?)\d+(?:\.\d+){3}(?:[-+][\w.-]+)?/gi;
 const DIAGNOSTIC_RECORD = new RegExp(`^\\s*["']?(?:${[...DIAGNOSTIC_FIELDS].join('|')})["']?\\s*[:：=]`, 'im');
 const SYSTEM_PATH = /(?:[A-Za-z]:\\|\/(?:Users|home|var|private|tmp|opt|etc|srv)\/|~\/|\b(?:crates|tools|src|target|\.local)\/)[^\s<>"']+/;
 const OPAQUE_URL_COMPONENT = new RegExp([UUID.source, LONG_HEX.source, ULID.source, INTERNAL_TOKEN.source].join('|'), 'i');
@@ -64,6 +65,10 @@ const SENSITIVE_FIELD = /(?:^payload$|(?:authorization|cookie|credential|passwor
 
 function internalField(field: string): boolean {
   return INTERNAL_FIELDS.has(field) || /_(?:id|hash|digest)$/.test(field);
+}
+
+function hasNetworkAddress(text: string): boolean {
+  return NETWORK_ADDRESS.test(text.replace(RELEASE_VERSION, ''));
 }
 
 function diagnosticValue(field: string, value: string): boolean {
@@ -105,11 +110,12 @@ function businessUrl(text: string, reference: string): string {
   let url: URL;
   try { url = new URL(text); } catch { return reference; }
   if (/^(?:(?:[a-z0-9-]+\.)*localhost|127(?:\.\d+){3}|\[::1\]|0\.0\.0\.0)$/.test(url.hostname.replace(/\.$/, ''))
-    || url.username || url.password || /^\/v\d+\/(?:projects|web)(?:\/|$)/.test(url.pathname)) return reference;
+    || NETWORK_ADDRESS.test(url.hostname) || url.username || url.password || /^\/v\d+\/(?:projects|web)(?:\/|$)/.test(url.pathname)) return reference;
   const pathname = decodeReferencePart(url.pathname);
   if (pathname === null || diagnosticContent(pathname)
     || /^\/v\d+\/(?:projects|web)(?:\/|$)/.test(pathname)
-    || OPAQUE_URL_COMPONENT.test(url.hostname) || OPAQUE_URL_COMPONENT.test(pathname) || SYSTEM_PATH.test(pathname)) return reference;
+    || OPAQUE_URL_COMPONENT.test(url.hostname) || OPAQUE_URL_COMPONENT.test(pathname)
+    || hasNetworkAddress(pathname) || SYSTEM_PATH.test(pathname)) return reference;
   let changed = false;
   for (const [rawField, rawValue] of [...url.searchParams]) {
     const decodedField = decodeReferencePart(rawField);
@@ -117,16 +123,16 @@ function businessUrl(text: string, reference: string): string {
     if (decodedField === null || value === null) return reference;
     const field = decodedField.toLowerCase();
     if (SENSITIVE_FIELD.test(field) || diagnosticContent(decodedField) || diagnosticContent(value)) return reference;
-    if (internalField(field) || DIAGNOSTIC_FIELDS.has(field) && diagnosticValue(field, value)) {
+    if (internalField(field) || DIAGNOSTIC_FIELDS.has(field)) {
       url.searchParams.delete(rawField);
       changed = true;
     } else if (/[_-]|[a-z][A-Z]/.test(decodedField)
-      || OPAQUE_URL_COMPONENT.test(field) || OPAQUE_URL_COMPONENT.test(value)) {
+      || OPAQUE_URL_COMPONENT.test(field) || OPAQUE_URL_COMPONENT.test(value) || hasNetworkAddress(value)) {
       return reference;
     }
   }
   const fragment = decodeReferencePart(url.hash);
-  if (fragment === null || diagnosticContent(removeDiagnosticAssignments(fragment))) return reference;
+  if (fragment === null || hasNetworkAddress(fragment) || diagnosticContent(removeDiagnosticAssignments(fragment))) return reference;
   if (removeDiagnosticAssignments(fragment) !== fragment || OPAQUE_URL_COMPONENT.test(fragment)) {
     url.hash = ''; changed = true;
   }
@@ -138,7 +144,7 @@ export function containsDiagnosticContent(text: string): boolean {
   return text.split(/(https?:\/\/[^\s()]+)/gi).some((part) => /^https?:\/\//i.test(part)
     ? businessUrl(part, '') !== part
     : diagnosticContent(part) || INTERNAL_TOKEN.test(part) || NUMBERED_ROLE.test(part)
-      || NETWORK_ADDRESS.test(part) || SYSTEM_PATH.test(part) || ERROR_CODE.test(part));
+      || hasNetworkAddress(part) || SYSTEM_PATH.test(part) || ERROR_CODE.test(part));
 }
 
 /** Preserve business prose and public references while removing internal diagnostic values. */
@@ -149,7 +155,7 @@ export function readableNarrative(text: string, language: string): string | null
   if (parts.some((part) => {
     if (/^https?:\/\//i.test(part)) return false;
     const prose = removeDiagnosticAssignments(part);
-    return DIAGNOSTIC_RECORD.test(prose) || NETWORK_ADDRESS.test(prose) || diagnosticContent(prose);
+    return DIAGNOSTIC_RECORD.test(prose) || hasNetworkAddress(prose) || diagnosticContent(prose);
   })) return null;
   const zh = language.toLowerCase().startsWith('zh');
   const record = zh ? '相关记录' : 'the related record';
