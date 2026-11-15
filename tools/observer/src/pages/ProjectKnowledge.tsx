@@ -171,8 +171,8 @@ function WorkDocumentReferences({ project }: { project: string }) {
   // not checked, never verified.
   const digestCheck = useTextDigest(selected?.contentIncluded ? selected.text : null, selected?.sha256);
 
-  // Read the full text only after a person asks for it, only once per (project, path, digest),
-  // never polled, never refetched on focus, and silently gone once access is revoked.
+  // Explicit full-text requests recheck authorization after remount or selection.
+  // Bodies are never polled or refetched on focus.
   const [requestedKeys, setRequestedKeys] = useState<ReadonlySet<string>>(() => new Set());
   const selectedTruncated = Boolean(
     selected?.text && selected.byteLength != null && utf8ByteLength(selected.text) !== selected.byteLength,
@@ -188,15 +188,19 @@ function WorkDocumentReferences({ project }: { project: string }) {
       revoked,
     ),
     enabled: readRequested && refReadable && !revoked,
+    staleTime: 0,
+    refetchOnMount: 'always',
   });
-  const readData = contentRead.data?.result?.data;
+  const readData = contentRead.isFetchedAfterMount && !contentRead.isError ? contentRead.data?.result?.data : undefined;
   const readText = typeof readData?.text === 'string' ? readData.text : null;
   const readVerdict = useTextDigest(readRequested && readText != null ? readText : null, selected?.sha256);
   // A 503 is a failed read, never a confirmed change: only the two digests in hand can say changed,
   // and only when the held extent does not already explain the difference.
   // While the digest check is still running the text is not shown at all: a text that turns
   // out not to match must never be on the page, not even for one render.
-  const readStatus: ContentReadStatus | 'not-text' | 'checking' | null = contentRead.data
+  const readStatus: ContentReadStatus | 'not-text' | 'checking' | null = readRequested && !contentRead.isFetchedAfterMount && !contentRead.isError
+    ? 'checking'
+    : readData
     ? (readText == null
         ? 'not-text'
         : readVerdict === 'pending'
@@ -208,9 +212,9 @@ function WorkDocumentReferences({ project }: { project: string }) {
             more: false,
           }))
     : null;
-  const showingReadResult = readRequested && (contentRead.data != null || contentRead.isError);
+  const showingReadResult = readRequested && (readData != null || contentRead.isError);
 
-  if (revoked || isAuthError(overview.error)) return <ObservationForbidden />;
+  if (revoked || isAuthError(overview.error) || isAuthError(contentRead.error)) return <ObservationForbidden />;
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }} data-testid="page-knowledge">
@@ -337,7 +341,7 @@ function WorkDocumentReferences({ project }: { project: string }) {
                           data-testid="read-full"
                           // A not-yet-requested read is also "pending" in the query cache;
                           // only a request actually in flight shows as loading.
-                          loading={readRequested && contentRead.isPending}
+                          loading={readRequested && contentRead.isFetching}
                           onClick={() => {
                             setRequestedKeys((keys) => new Set(keys).add(selected.key));
                           }}

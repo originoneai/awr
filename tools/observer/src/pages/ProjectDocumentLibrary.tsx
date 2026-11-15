@@ -21,8 +21,10 @@ function DocumentText({ project, document }: { project: string; document: Projec
   const content = useQuery({
     ...sourceContentQueryOptions(project, document.path ?? '', document.sha256 ?? '', revoked, document.content_work_id),
     enabled: requested && document.readable && !revoked,
+    staleTime: 0,
+    refetchOnMount: 'always',
   });
-  const data = content.data?.result.data;
+  const data = content.isFetchedAfterMount && !content.isError ? content.data?.result.data : undefined;
   const text = typeof data?.text === 'string' ? data.text : null;
   const verdict = useTextDigest(text, document.sha256);
   const status = text === null || verdict === 'pending' ? null : judgeContentRead({
@@ -34,7 +36,7 @@ function DocumentText({ project, document }: { project: string; document: Projec
     <Typography.Text type="warning">{t('knowledge.readFailed')}</Typography.Text>
     <Button onClick={() => void content.refetch()}>{t('knowledge.retry')}</Button>
   </Space>;
-  if (content.isPending || verdict === 'pending') return <Typography.Text type="secondary">{t('common.loading')}</Typography.Text>;
+  if (content.isPending || !content.isFetchedAfterMount || verdict === 'pending') return <Typography.Text type="secondary">{t('common.loading')}</Typography.Text>;
   if (text === null) return <Typography.Text type="secondary">{t('knowledge.notPlainText')}</Typography.Text>;
   if (verdict === 'mismatch' || status === 'partial') return <Typography.Text type="warning">{t('knowledge.digestMismatch')}</Typography.Text>;
   return <Space orientation="vertical" size={12} style={{ width: '100%' }}>
