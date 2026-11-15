@@ -2758,6 +2758,19 @@ pub(crate) async fn inspect_evidence(
     }}))
 }
 
+pub(crate) const REVIEW_EVIDENCE_SCOPE_UNAVAILABLE: &str = "not_in_review_work_scope";
+
+/// The recorded decision describes a role in this review, not current membership permissions.
+pub(crate) fn review_decision_role(approval_basis: &str) -> Option<&'static str> {
+    match approval_basis {
+        "human_independent_review" => Some("independent_reviewer"),
+        "human_author_self_review" => Some("author_reviewer"),
+        "agent_review" => Some("agent_reviewer"),
+        "simulated_member_independent_review" => Some("simulated_member_reviewer"),
+        _ => None,
+    }
+}
+
 async fn inspect_review_evidence_provenance(
     tx: &Transaction<'_>,
     tenant: &str,
@@ -2825,7 +2838,7 @@ async fn inspect_review_evidence_provenance(
             "author_self_report":Value::Null,
             "review_contract_matches_current":contract_matches_current,
             "currentness":if contract_matches_current {"current_contract"} else {"stale_contract"},
-            "evidence_inspection":unavailable("not_in_review_work_scope"),
+            "evidence_inspection":unavailable(REVIEW_EVIDENCE_SCOPE_UNAVAILABLE),
             "execution_inspection":unavailable("no_exact_bound_evidence"),
             "boundary":boundary,
         }));
@@ -2967,11 +2980,19 @@ pub(crate) async fn inspect_review(
     let decisions = tx
         .query(
             "SELECT decision, reviewer_actor_id, reviewer_person_id, independence_kind, reason,
-                    approval_basis, reviewer_client_id, id, member_review_basis_json
+                    approval_basis, reviewer_client_id, id, member_review_basis_json,
+                    (extract(epoch FROM created_at)*1000)::bigint
              FROM awr_team.review_decisions
              WHERE tenant_id=$1 AND project_id=$2 AND review_round_id=$3
-             ORDER BY created_at ASC",
-            &[&tenant, &project, &round_id],
+               AND work_id=$4 AND bundle_hash=$5
+             ORDER BY created_at ASC,id ASC",
+            &[
+                &tenant,
+                &project,
+                &round_id,
+                &expected_work,
+                &row.get::<_, String>(3),
+            ],
         )
         .await?;
     let mut data = json!({"review":{
@@ -2998,6 +3019,8 @@ pub(crate) async fn inspect_review(
             "approval_basis": d.get::<_,String>(5),
             "reviewer_client_id": d.get::<_,Option<String>>(6),
             "decision_id": d.get::<_,String>(7),
+            "decided_at_unix_ms":d.get::<_,i64>(9),
+            "reviewer_role":review_decision_role(&d.get::<_,String>(5)),
             "human_approval": matches!(d.get::<_,String>(5).as_str(), "human_independent_review" | "human_author_self_review") && d.get::<_,String>(0)=="approve",
             "team_independent_acceptance": d.get::<_,String>(3)=="team_independent" && d.get::<_,String>(0)=="approve",
             });

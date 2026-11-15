@@ -38,13 +38,13 @@ const READ_EXACT_WORK = new Set(['task.assignees', 'delivery.neutral.inspect',
   'delivery.integration.inspect']);
 const READ_WORK_SELECTION = new Set(['work.prepare', 'work.admission', 'work.snapshot',
   'work.observe', 'work.recovery', 'command.inspect', 'claim.inspect', 'execution.inspect',
-  'handoff.inspect', 'evidence.inspect', 'review.inspect', 'completion.inspect',
+  'handoff.inspect', 'evidence.inspect', 'review.inspect', 'review.rounds', 'completion.inspect',
   'delivery.inspect', 'artifact.content', 'artifact.segment', 'delivery.exports']);
 const READ_PAGED = new Set(['workstreams.list', 'work.list', 'work.graph', 'work.search', 'events.list',
-  'work.next', 'work.inbox', 'task.assignees', 'delivery.exports', 'planning.candidates', 'sources.inspect']);
+  'work.next', 'work.inbox', 'task.assignees', 'delivery.exports', 'planning.candidates', 'sources.inspect', 'review.rounds']);
 const READ_CONTEXT_BUDGET = new Set(['work.prepare', 'work.snapshot', 'work.observe', 'work.inbox',
   'source.content', 'artifact.content', 'artifact.segment', 'review.inspect',
-  'delivery.neutral.inspect', 'delivery.submission.describe', 'planning.candidates', 'sources.inspect']);
+  'delivery.neutral.inspect', 'delivery.submission.describe', 'planning.candidates', 'sources.inspect', 'review.rounds']);
 const READ_REQUIRED_SELECTOR = {
   'command.inspect': 'request_id',
   'planning.outcome': 'request_id',
@@ -81,6 +81,7 @@ const READ_ECHOES = {
   'work.snapshot': [{ path: ['work_id'], selector: 'work_id' }],
   'work.observe': [{ path: ['work_id'], selector: 'work_id' }],
   'sources.inspect': [{ path: ['work_id'], selector: 'work_id' }],
+  'review.rounds': [{ path: ['work_id'], selector: 'work_id' }],
   'review.inspect': [
     { path: ['review', 'work_id'], selector: 'work_id' },
     { path: ['review', 'round_id'], selector: 'review_round_id' },
@@ -241,6 +242,54 @@ function validReadResponse(reply, op) {
     && (typeof data.next_cursor !== 'string' || data.next_cursor.length === 0
       || data.next_cursor.length > 4096)) return false;
   if (op === 'sources.inspect') return validRequiredSources(reply);
+  if (op === 'review.rounds') return validReviewRounds(reply);
+  return true;
+}
+
+const REVIEW_SUMMARY_FIELDS = ['state', 'bundle_hash', 'contract_hash', 'contract_matches_current',
+  'artifact_digest', 'reviewer_role', 'role_basis', 'reviewer_actor_id', 'reviewer_person_id',
+  'decision', 'decided_at_unix_ms', 'reason_first_line'];
+
+function validReviewRounds(reply) {
+  const data = reply.data, asOf = asObject(data.as_of);
+  const digest = (value) => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+  if (!isBoundedId(data.work_id) || !Array.isArray(data.items) || data.items.length > 100
+    || data.execution_authorized !== false || !Number.isSafeInteger(data.total) || data.total < data.items.length
+    || !(data.next_cursor === null || isBoundedCursor(data.next_cursor))
+    || data.truncated !== (data.next_cursor !== null) || !asOf
+    || !Number.isSafeInteger(asOf.at_unix_ms) || asOf.at_unix_ms < 0
+    || asOf.source_snapshot_id !== reply.source_snapshot_id || asOf.project_revision !== reply.project_revision
+    || typeof asOf.rounds_revision !== 'string' || !/^[0-9a-f]{32}$/.test(asOf.rounds_revision)) return false;
+  const ids = new Set();
+  let previousIndex = 0;
+  for (const item of data.items) {
+    if (!asObject(item) || !isBoundedId(item.round_id) || ids.has(item.round_id)
+      || !Number.isSafeInteger(item.round_index) || item.round_index <= previousIndex
+      || !Number.isSafeInteger(item.round_position) || item.round_position < 1 || item.round_position > data.total
+      || typeof item.readable !== 'boolean' || !asObject(item.missing)) return false;
+    ids.add(item.round_id);
+    previousIndex = item.round_index;
+    if (!item.readable) {
+      if (item.reason !== 'not_in_review_work_scope'
+        || !REVIEW_SUMMARY_FIELDS.every((field) => item[field] === null && item.missing[field] === item.reason)) return false;
+      continue;
+    }
+    if (item.reason !== null || !['open', 'approved', 'rejected', 'invalidated'].includes(item.state)
+      || !digest(item.bundle_hash) || !digest(item.contract_hash) || typeof item.contract_matches_current !== 'boolean'
+      || !(item.artifact_digest === null || digest(item.artifact_digest))
+      || !(item.reviewer_role === null || ['independent_reviewer', 'author_reviewer', 'agent_reviewer', 'simulated_member_reviewer'].includes(item.reviewer_role))
+      || item.role_basis !== (item.reviewer_role === null ? null : 'recorded_approval_basis')
+      || !(item.reviewer_actor_id === null || isBoundedId(item.reviewer_actor_id))
+      || !(item.reviewer_person_id === null || isBoundedId(item.reviewer_person_id))
+      || !(item.decision === null || ['approve', 'reject'].includes(item.decision))
+      || !(item.decided_at_unix_ms === null || Number.isSafeInteger(item.decided_at_unix_ms) && item.decided_at_unix_ms >= 0)
+      || !(item.reason_first_line === null || typeof item.reason_first_line === 'string' && !/[\r\n\u0085\u2028\u2029]/.test(item.reason_first_line))
+      || !REVIEW_SUMMARY_FIELDS.every((field) => item.missing[field] === (item[field] === null ? 'not_recorded' : null))) return false;
+    const noDecision = item.decision === null;
+    if (noDecision !== (item.decided_at_unix_ms === null) || noDecision !== (item.reviewer_actor_id === null)
+      || noDecision !== (item.reason_first_line === null)
+      || noDecision && (item.reviewer_role !== null || item.reviewer_person_id !== null)) return false;
+  }
   return true;
 }
 
@@ -304,14 +353,14 @@ function isBoundedCursor(value) {
   return typeof value === 'string' && value.length > 0 && value.length <= 4096;
 }
 
-function validSourceCoverage(data, query) {
+function validPageCoverage(data, query, positionField) {
   const items = data.items, limit = query.limit ?? 20;
   if (!Array.isArray(items) || items.length > limit) return false;
   if (data.total === 0) return items.length === 0 && data.next_cursor === null;
   if (items.length === 0) return false;
-  const first = items[0]?.source_position;
+  const first = items[0]?.[positionField];
   if (!Number.isSafeInteger(first) || !query.cursor && first !== 1
-    || !items.every((item, index) => item?.source_position === first + index)) return false;
+    || !items.every((item, index) => item?.[positionField] === first + index)) return false;
   const last = first + items.length - 1;
   return data.next_cursor === null ? last === data.total : last < data.total && items.length === limit;
 }
@@ -369,13 +418,18 @@ function readAttributionError(query, result, { strictWorkstream } = {}) {
     return { code: 'BadGateway', message: 'Invalid Team read response' };
   }
   if (query.op === 'sources.inspect' && (
-    !validSourceCoverage(data, query)
+    !validPageCoverage(data, query, 'source_position')
     || ((query.work_id || query.workstream_id) && (!isBoundedId(result.workstream_id)
       || typeof result.authority_version !== 'string' || !/^\d+$/.test(result.authority_version)))
     || query.workstream_id && result.workstream_id !== query.workstream_id
     || !query.work_id && data.work_id !== null
     || data.collection?.scope !== (query.work_id ? 'work' : 'authorized_workstreams'))) {
     return { code: 'BadGateway', message: 'Source observations are not attributable to the requested scope' };
+  }
+  if (query.op === 'review.rounds' && (!validPageCoverage(data, query, 'round_position')
+    || !isBoundedId(result.workstream_id) || typeof result.authority_version !== 'string'
+    || !/^\d+$/.test(result.authority_version))) {
+    return { code: 'BadGateway', message: 'Review history is not attributable to the requested scope' };
   }
   if (data.execution_authorized === true) {
     return { code: 'BadGateway', message: 'A Team read response never authorizes execution' };
@@ -1247,6 +1301,25 @@ function createTeamBridge(opts) {
       }
       const query = { protocol_version: 1, op: 'sources.inspect' };
       for (const key of ['work_id', 'workstream_id', 'cursor']) {
+        if (url.searchParams.has(key)) query[key] = url.searchParams.get(key);
+      }
+      for (const key of ['limit', 'max_context_bytes']) {
+        if (url.searchParams.has(key)) {
+          const value = url.searchParams.get(key);
+          query[key] = /^[1-9]\d*$/.test(value) ? Number(value) : null;
+        }
+      }
+      return routes['POST /api/team/read'](url, { project: url.searchParams.get('project'), query }, req, res);
+    },
+
+    'GET /api/team/reviews': async (url, _body, req, res) => {
+      const allowed = new Set(['project', 'work_id', 'session_id', 'workstream_id', 'cursor', 'limit', 'max_context_bytes']);
+      if ([...url.searchParams.keys()].some((key) => !allowed.has(key) || url.searchParams.getAll(key).length !== 1)) {
+        return { ok: false, error: { code: 'InvalidInput', message: 'One bounded review history read required' },
+          freshness: unmeasuredFreshness(Date.now()) };
+      }
+      const query = { protocol_version: 1, op: 'review.rounds' };
+      for (const key of ['work_id', 'session_id', 'workstream_id', 'cursor']) {
         if (url.searchParams.has(key)) query[key] = url.searchParams.get(key);
       }
       for (const key of ['limit', 'max_context_bytes']) {
