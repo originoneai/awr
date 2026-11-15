@@ -539,17 +539,9 @@ async fn consent(State(state): State<Arc<StateData>>, headers: HeaderMap, body: 
         .values()
         .find(|p| oauth.resource(&p.key) == view.request.resource)
         .expect("registered project resource");
-    let capabilities: WorkstreamQuery =
-        serde_json::from_value(json!({"protocol_version":1,"op":"capabilities"}))
-            .expect("static query");
     if let Err(error) = state
         .store
-        .query(
-            &project.tenant_id,
-            &project.project_id,
-            credential,
-            capabilities,
-        )
+        .authorize_project_entry(&project.tenant_id, &project.project_id, credential)
         .await
     {
         return if matches!(error, PgError::Forbidden) {
@@ -626,17 +618,9 @@ async fn token(State(state): State<Arc<StateData>>, headers: HeaderMap, body: By
         else {
             return oauth_error(OAuthError::InvalidGrant);
         };
-        let capabilities: WorkstreamQuery =
-            serde_json::from_value(json!({"protocol_version":1,"op":"capabilities"}))
-                .expect("static query");
         if let Err(error) = state
             .store
-            .query(
-                &project.tenant_id,
-                &project.project_id,
-                &access.bearer,
-                capabilities,
-            )
+            .authorize_project_entry(&project.tenant_id, &project.project_id, &access.bearer)
             .await
         {
             return oauth_error(if matches!(error, PgError::Forbidden) {

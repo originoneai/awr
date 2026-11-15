@@ -87,6 +87,140 @@ async fn sdk_call(
     result.structured_content.unwrap()
 }
 
+#[tokio::test]
+async fn task_scoped_agent_uses_mcp_web_and_oauth_without_project_wide_discovery() {
+    let (_guard, admin, db, store) = setup().await;
+    admin.batch_execute("UPDATE awr_team.actors SET kind='agent' WHERE tenant_id='reader-tenant' AND id='agent';
+        INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status)
+          VALUES('reader-tenant','reader-project','connection-owner','Connection owner','active');
+        INSERT INTO awr_team.person_agent_bindings(tenant_id,project_id,id,person_id,agent_id,status)
+          VALUES('reader-tenant','reader-project','connection-binding','connection-owner','agent','active');").await.unwrap();
+    let authorization = serde_json::from_value(json!({
+        "id":"task-connection-access","authorizer_person_id":"connection-owner","responsible_person_id":"connection-owner",
+        "subject_kind":"agent","subject_id":"agent","client_id":"cli-a","session_id":null,"model_id":null,
+        "scope":{"kind":"task","project_id":PROJECT,"work_item_id":"a"},"actions":["inspect","start_work"],
+        "expires_at_ms":null,"status":"active","revoked_at_ms":null,"revoked_by":null,
+        "verifiable_capabilities":[],"self_reported_skill_hints":[],"parent_authorization_id":null,
+        "maintainer_person_id":null,"created_at_ms":1000,"binding_id":"connection-binding"
+    })).unwrap();
+    awr_team_pg::AuthorizationStore::from_config(common::with_app_role(
+        &common::test_config(),
+        &db,
+    ))
+    .issue(
+        TENANT,
+        PROJECT,
+        &awr_core::IssueAuthorizationRequest {
+            request_key: "task-connection-access".into(),
+            authorization,
+        },
+    )
+    .await
+    .unwrap();
+    let server = start(store, true).await;
+    let direct = sdk_client(&server, A).await;
+    for query in [
+        json!({"protocol_version":1,"op":"capabilities"}),
+        json!({"protocol_version":1,"op":"work.prepare","work_id":"b-private"}),
+    ] {
+        let denied = direct
+            .call_tool(
+                CallToolRequestParams::new("awr_team_query".to_owned())
+                    .with_arguments(query.as_object().unwrap().clone()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(denied.is_error, Some(true));
+    }
+    let next = sdk_call(
+        &direct,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"work.next"}),
+    )
+    .await;
+    assert_eq!(next["data"]["items"].as_array().unwrap().len(), 1);
+    assert_eq!(next["data"]["items"][0]["work_id"], "a");
+    let login = server
+        .post("/v1/web/login")
+        .header("origin", ISSUER)
+        .header("x-awr-web", "1")
+        .json(&json!({"bearer":A}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(login.status(), 200);
+    let cookie = login.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let (client, issued) = tokens(&server, A).await;
+    let refresh = encode(&[
+        ("grant_type", "refresh_token"),
+        ("client_id", &client),
+        ("refresh_token", issued["refresh_token"].as_str().unwrap()),
+        ("resource", RESOURCE),
+    ]);
+    let refreshed = exchange(&server, refresh).send().await.unwrap();
+    assert_eq!(refreshed.status(), 200);
+    let refreshed: Value = refreshed.json().await.unwrap();
+    let oauth = sdk_client(&server, refreshed["access_token"].as_str().unwrap()).await;
+    let list = sdk_call(
+        &oauth,
+        "awr_team_connections_list",
+        json!({"protocol_version":1}),
+    )
+    .await;
+    let items = list["items"].as_array().unwrap();
+    let agent = items.iter().find(|item| item["kind"] == "agent").unwrap()["connection_id"].clone();
+    let browser =
+        items.iter().find(|item| item["kind"] == "browser").unwrap()["connection_id"].clone();
+    let listed = server
+        .post("/v1/web/projects/one/connections/list")
+        .header("origin", ISSUER)
+        .header("x-awr-web", "1")
+        .header("cookie", &cookie)
+        .json(&json!({"protocol_version":1}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(listed.status(), 200);
+    sdk_call(
+        &direct,
+        "awr_team_connections_revoke",
+        json!({"protocol_version":1,"connection_id":agent}),
+    )
+    .await;
+    assert_eq!(
+        initialize(&server, "one", refreshed["access_token"].as_str().unwrap())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    sdk_call(
+        &direct,
+        "awr_team_connections_revoke",
+        json!({"protocol_version":1,"connection_id":browser}),
+    )
+    .await;
+    let denied = server
+        .post("/v1/web/projects/one/connections/list")
+        .header("origin", ISSUER)
+        .header("x-awr-web", "1")
+        .header("cookie", &cookie)
+        .json(&json!({"protocol_version":1}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), 401);
+    let _ = oauth.cancel().await;
+    direct.cancel().await.unwrap();
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn connection_management_works_through_mcp_and_restores_browser_cutoffs_after_restart() {
