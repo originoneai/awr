@@ -22,6 +22,83 @@ const READER: &str = "synthetic-reader-credential-for-http-fixtures";
 const COLLEAGUE: &str = "synthetic-colleague-credential-for-http-fixtures";
 
 #[tokio::test]
+async fn usage_http_enforces_project_grants_and_recovers_exact_replay_after_restart() {
+    let a = ProjectFixture::new("Recorded project usage");
+    let b = ProjectFixture::new("Separate project usage");
+    let config = registry(&a, &b);
+    let mut server = Server::start(&config).await;
+    let arguments = json!({"project":"alpha","expected_revision":a.revision(),"request_id":"usage-import",
+        "request_key":"provider-call","record":{"kind":"receipt","data":{"receipt_id":"first-observation",
+        "project_id":a.id,"provider_namespace":"fixture-account","provider":"fixture-provider",
+        "call_id":"provider-call","model":"fixture-model","session_id":"fixture-session","occurred_at_ms":10,
+        "channel":"model","attribution":{"work_id":"W","execution_id":"E","workstream_id":null},
+        "tokens":{"input":100,"output":20,"cached_input":10},"cost":{"actual":{"currency":"USD","micros":100}}}}});
+    error(
+        server
+            .raw_call(READER, "awr_usage_record", arguments.clone())
+            .await,
+        "RuleViolation",
+    );
+    let first = ok(server
+        .raw_call(WRITER, "awr_usage_record", arguments.clone())
+        .await);
+    assert_eq!(first["receipt"]["replayed"], false);
+    let revision = a.revision();
+    let summary = ok(server
+        .raw_call(
+            READER,
+            "awr_usage_query",
+            json!({"project":"alpha","kind":"summary"}),
+        )
+        .await);
+    assert_eq!(summary["data"]["costs"]["actual_micros"]["USD"], 100);
+    assert_eq!(a.revision(), revision);
+    error(
+        server
+            .raw_call(
+                READER,
+                "awr_usage_query",
+                json!({"project":"beta","kind":"summary"}),
+            )
+            .await,
+        "RuleViolation",
+    );
+    server.stop().await;
+    server = Server::start(&config).await;
+    let replay = ok(server.raw_call(WRITER, "awr_usage_record", arguments).await);
+    assert_eq!(replay["operation"]["replayed"], true);
+    assert_eq!(replay["record"], first["record"]);
+    assert_eq!(a.revision(), revision);
+    assert_eq!(
+        Store::open_readonly(&b.root.join(".awr/state.db"))
+            .unwrap()
+            .list_usage_receipts(b.id)
+            .unwrap()
+            .len(),
+        0
+    );
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn usage_http_keeps_scoped_workstream_projects_on_their_supported_adapter() {
+    let a = ProjectFixture::workstreams();
+    let b = ProjectFixture::new("Separate ledger");
+    let mut server = Server::start(&registry(&a, &b)).await;
+    error(
+        server
+            .raw_call(
+                WRITER,
+                "awr_usage_query",
+                json!({"project":"alpha","kind":"summary"}),
+            )
+            .await,
+        "Unsupported",
+    );
+    server.stop().await;
+}
+
+#[tokio::test]
 async fn mcp_check_shared_enforces_write_access_session_ownership_and_durable_replay() {
     let a = ProjectFixture::new("Check the toolchain");
     let b = ProjectFixture::new("Separate project");

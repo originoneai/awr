@@ -206,6 +206,7 @@ pub(crate) fn recover(root: &Path, args: Value, client: &str) -> Result<CallTool
         "awr_work_finding" => event.event_type == "work.finding",
         "awr_compaction_observe" => event.event_type == "client.compaction_observed",
         "awr_compaction_defer" => event.event_type == "client.compaction_deferred",
+        "awr_usage_record" => event.event_type == "usage.recorded",
         "awr_event_append" => !is_domain_event_type(&event.event_type),
         "awr_work_transition" => matches!(
             event.event_type.as_str(),

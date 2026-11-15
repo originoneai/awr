@@ -101,6 +101,7 @@ static COMMAND_GROUPS: &[Group] = &[
             ("recovery", "Inspect saved work and execution evidence"),
             ("assessment", "Replay assessments and compare advice"),
             ("nav", "Navigate scope, dependencies and blockers"),
+            ("usage", "Record usage and inspect costs, time and coverage"),
         ],
     },
     Group {

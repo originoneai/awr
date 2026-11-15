@@ -67,6 +67,7 @@ pub fn is_domain_event_type(kind: &str) -> bool {
                 | "claim.expired"
                 | "artifact.recorded"
                 | "evidence.recorded"
+                | "usage.recorded"
         )
 }
 
@@ -160,6 +161,7 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
     } else {
         match kind {
             "workstream.conversation_selected" => "binding workstream_id",
+            "usage.recorded" => "version request_key usage_op usage_subject",
             "secrets.warned" => "mode findings enabled_by enabled_at",
             "client.compaction_observed" => "observation policy",
             "client.compaction_deferred" => "observation_event_id",
@@ -235,6 +237,7 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
     // Optional fields and nested snapshots still come from the typed domain constructors.
     let required = match kind {
         "workstream.conversation_selected" => "binding workstream_id",
+        "usage.recorded" => "version request_key usage_op usage_subject",
         "secrets.warned" => "mode findings",
         "client.compaction_observed" => "observation policy",
         "client.compaction_deferred" => "observation_event_id",
@@ -329,6 +332,25 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
             continue;
         }
         let valid = match key.as_str() {
+            "version" if kind == "usage.recorded" => value.as_u64() == Some(1),
+            "request_key" if kind == "usage.recorded" => value.as_str().is_some_and(|key| {
+                !key.trim().is_empty() && key.len() <= 256 && !key.chars().any(char::is_control)
+            }),
+            "usage_op" => matches!(
+                value.as_str(),
+                Some(
+                    "ingest_receipt"
+                        | "record_correction"
+                        | "record_allocation"
+                        | "record_counter"
+                        | "record_interval"
+                )
+            ),
+            "usage_subject" => value.as_str().is_some_and(|subject| {
+                !subject.is_empty()
+                    && subject.len() <= 4096
+                    && !subject.chars().any(char::is_control)
+            }),
             "mode" if kind == "secrets.warned" => matches!(value.as_str(), Some("warn")),
             "findings" if kind == "secrets.warned" => value.as_array().is_some_and(|v| {
                 !v.is_empty()
@@ -633,4 +655,39 @@ pub fn generic_event_payload_schema() -> Value {
     fields.insert("metrics".into(), json!({"type":"object","maxProperties":32,"propertyNames":{"type":"string","minLength":1,"maxLength":64,"pattern":"^[A-Za-z0-9_.-]+$"},"additionalProperties":{"type":"number"}}));
     json!({"type":"object","properties":fields,"additionalProperties":false,
            "description":"Generic payload schema v1. Encoded JSON is limited to 1 MiB. Fields are observations, never lifecycle authority; body/stdout/stderr are excluded from default context and search."})
+}
+
+#[cfg(test)]
+mod usage_event_tests {
+    use super::*;
+
+    #[test]
+    fn usage_receipts_require_a_reserved_versioned_domain_event() {
+        assert!(is_domain_event_type("usage.recorded"));
+        let valid = json!({"version":1,"request_key":"observed-call","usage_op":"ingest_receipt","usage_subject":"receipt-one"});
+        assert!(
+            checked_event_payload(
+                "usage.recorded",
+                "normal",
+                "Usage observation recorded",
+                &valid
+            )
+            .is_ok()
+        );
+        for invalid in [
+            json!({"version":2,"request_key":"observed-call","usage_op":"ingest_receipt","usage_subject":"receipt-one"}),
+            json!({"version":1,"request_key":"observed-call","usage_op":"unsupported","usage_subject":"receipt-one"}),
+            json!({"version":1,"request_key":"observed-call","usage_op":"ingest_receipt"}),
+        ] {
+            assert!(
+                checked_event_payload(
+                    "usage.recorded",
+                    "normal",
+                    "Usage observation recorded",
+                    &invalid
+                )
+                .is_err()
+            );
+        }
+    }
 }

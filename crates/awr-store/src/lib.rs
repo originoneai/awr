@@ -79,7 +79,7 @@ pub use source_terminal::{
 use std::{path::Path, time::Duration};
 pub use work::{ScopedDependencyGraph, UnavailableDependency};
 pub use workstream_eta::EtaIngestReceipt;
-pub use workstream_usage::UsageIngestReceipt;
+pub use workstream_usage::{UsageIngestReceipt, UsageRecord};
 
 const APPLICATION_ID: i64 = 0x41575231;
 /// Schema written by this build. Exposed for offline host compatibility negotiation.

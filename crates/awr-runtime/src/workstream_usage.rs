@@ -14,9 +14,11 @@ use awr_core::workstream_usage::{
     UsageCoverageObservation, UsageError, UsageExecutionInterval, UsageOccurrenceBinding,
     UsageReceipt, UsageTimeObservationHandoff, UsageTimeTotals,
 };
-use awr_core::{Error, Id};
+use awr_core::{Error, Id, Revision};
+pub use awr_store::UsageRecord;
 use awr_store::{Store, UsageIngestReceipt};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -38,6 +40,227 @@ pub struct AttestedUsageProject {
     pub project_id: String,
     pub project: Id,
     pub attested: bool,
+}
+
+impl AttestedUsageProject {
+    /// Shared JSON boundary used by the project-bound CLI and MCP adapters.
+    pub fn record(
+        &self,
+        store: &mut Store,
+        input: Value,
+    ) -> std::result::Result<Value, UsageRuntimeError> {
+        awr_core::ensure_public_value(&input)?;
+        let request = serde_json::from_value(input).map_err(|_| {
+            Error::InvalidInput("usage record does not match the published schema".into())
+        })?;
+        record_usage(store, self, &request)
+    }
+
+    pub fn query(
+        &self,
+        store: &Store,
+        input: Value,
+    ) -> std::result::Result<Value, UsageRuntimeError> {
+        awr_core::ensure_public_value(&input)?;
+        let query = serde_json::from_value(input).map_err(|_| {
+            Error::InvalidInput("usage query does not match the published schema".into())
+        })?;
+        query_usage(store, self, &query)
+    }
+}
+
+/// CLI and MCP use the same input and immutable record codec.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecordUsageRequest {
+    pub expected_revision: Revision,
+    pub request_key: String,
+    pub record: UsageRecord,
+}
+
+fn page_limit() -> usize {
+    20
+}
+
+fn corrected() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum UsageQuery {
+    Receipts {
+        #[serde(default)]
+        offset: usize,
+        #[serde(default = "page_limit")]
+        limit: usize,
+        #[serde(default = "corrected")]
+        apply_corrections: bool,
+    },
+    Corrections {
+        #[serde(default)]
+        offset: usize,
+        #[serde(default = "page_limit")]
+        limit: usize,
+    },
+    Allocations {
+        #[serde(default)]
+        offset: usize,
+        #[serde(default = "page_limit")]
+        limit: usize,
+    },
+    Counters {
+        #[serde(default)]
+        offset: usize,
+        #[serde(default = "page_limit")]
+        limit: usize,
+    },
+    Intervals {
+        #[serde(default)]
+        offset: usize,
+        #[serde(default = "page_limit")]
+        limit: usize,
+    },
+    Bindings {
+        #[serde(default)]
+        offset: usize,
+        #[serde(default = "page_limit")]
+        limit: usize,
+    },
+    Summary {
+        #[serde(default = "corrected")]
+        apply_corrections: bool,
+    },
+    Observation {
+        expected_calls: Option<usize>,
+        expected_time_ms: Option<u64>,
+    },
+}
+
+/// The adapter supplies authorization from its bound project, never a caller boolean.
+fn record_usage(
+    store: &mut Store,
+    project: &AttestedUsageProject,
+    request: &RecordUsageRequest,
+) -> std::result::Result<Value, UsageRuntimeError> {
+    assert_attested(project)?;
+    awr_core::ensure_public_value(&serde_json::to_value(request).map_err(Error::from)?)?;
+    let (record, receipt, event) = store.record_usage_at_revision(
+        project.project,
+        request.expected_revision,
+        &request.request_key,
+        &request.record,
+    )?;
+    Ok(
+        json!({"ok":true,"protocol":"awr-usage-ledger-v1","project_id":project.project_id,
+        "project_revision":store.project(project.project)?.project_revision,
+        "record":record,"receipt":{"id":receipt.event_id,"request_key":receipt.request_key,
+            "subject_id":receipt.subject_id,"operation":receipt.op,"replayed":receipt.replayed,
+            "recorded_at_ms":receipt.created_at_ms},
+        "event":event.map(|event| json!({"id":event.id,"event_type":event.event_type,
+            "project_revision":event.project_revision})),"provenance":"caller_supplied"}),
+    )
+}
+
+fn usage_page<T: Serialize>(items: Vec<T>, offset: usize, limit: usize) -> awr_core::Result<Value> {
+    if !(1..=100).contains(&limit) {
+        return Err(Error::InvalidInput(
+            "usage page limit must be 1..100".into(),
+        ));
+    }
+    let total = items.len();
+    let end = offset.saturating_add(limit).min(total);
+    let page: Vec<_> = items.into_iter().skip(offset).take(limit).collect();
+    Ok(json!({"items":page,"total":total,"offset":offset,
+        "next_offset":(end < total).then_some(end)}))
+}
+
+/// Read one coherent caller-selected store snapshot. The adapters bound its lifetime.
+fn query_usage(
+    store: &Store,
+    project: &AttestedUsageProject,
+    query: &UsageQuery,
+) -> std::result::Result<Value, UsageRuntimeError> {
+    assert_attested(project)?;
+    let id = project.project;
+    let data = match *query {
+        UsageQuery::Receipts {
+            offset,
+            limit,
+            apply_corrections,
+        } => {
+            let records = if apply_corrections {
+                store.usage_receipts_corrected(id)?
+            } else {
+                store.list_usage_receipts(id)?
+            };
+            let mut page = usage_page(records, offset, limit)?;
+            page["corrections_applied"] = json!(apply_corrections);
+            page
+        }
+        UsageQuery::Corrections { offset, limit } => {
+            usage_page(store.list_usage_corrections(id)?, offset, limit)?
+        }
+        UsageQuery::Allocations { offset, limit } => {
+            usage_page(store.list_usage_allocations(id)?, offset, limit)?
+        }
+        UsageQuery::Counters { offset, limit } => {
+            usage_page(store.list_usage_counter_snapshots(id)?, offset, limit)?
+        }
+        UsageQuery::Intervals { offset, limit } => {
+            usage_page(store.list_usage_execution_intervals(id)?, offset, limit)?
+        }
+        UsageQuery::Bindings { offset, limit } => {
+            usage_page(store.usage_occurrence_bindings(id)?, offset, limit)?
+        }
+        UsageQuery::Summary { apply_corrections } => {
+            let costs = store.usage_cost_totals(id, apply_corrections)?;
+            let time = store.usage_time_totals(id)?;
+            let corrections = if apply_corrections {
+                store.list_usage_corrections(id)?
+            } else {
+                Vec::new()
+            };
+            let correction_ids: Vec<_> = corrections
+                .iter()
+                .take(20)
+                .map(|row| &row.correction_id)
+                .collect();
+            let coverage = workstream_usage::usage_coverage_report(&UsageCoverageObservation {
+                observed_calls: costs.unique_calls,
+                expected_calls: None,
+                observed_time_ms: time.map(|value| value.observed_wall_clock_ms).unwrap_or(0),
+                expected_time_ms: None,
+            })?;
+            json!({"costs":costs,"time":time,"coverage":coverage,
+                "corrections_applied":apply_corrections,
+                "corrections":{"ids":correction_ids,"total":corrections.len(),
+                    "next_query":(corrections.len()>20).then_some(json!({"kind":"corrections","offset":20,"limit":20}))},
+                "missing":{"time":time.is_none().then_some("no_recorded_intervals"),
+                    "expected_calls":"not_reported","expected_time_ms":"not_reported"}})
+        }
+        UsageQuery::Observation {
+            expected_calls,
+            expected_time_ms,
+        } => {
+            let costs = store.usage_cost_totals(id, true)?;
+            let time = store.usage_time_totals(id)?;
+            let coverage = UsageCoverageObservation {
+                observed_calls: costs.unique_calls,
+                expected_calls,
+                observed_time_ms: time.map(|value| value.observed_wall_clock_ms).unwrap_or(0),
+                expected_time_ms,
+            };
+            serde_json::to_value(usage_observation_for_ws043(store, project, &coverage)?)
+                .map_err(Error::from)?
+        }
+    };
+    Ok(
+        json!({"ok":true,"protocol":"awr-usage-ledger-v1","project_id":project.project_id,
+        "project_revision":store.project(id)?.project_revision,"read_only":true,
+        "source_refresh_performed":false,"freshness_basis":"runtime_usage_ledger",
+        "provenance":"caller_supplied","data":data}),
+    )
 }
 
 fn assert_attested(project: &AttestedUsageProject) -> std::result::Result<(), UsageRuntimeError> {

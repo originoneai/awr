@@ -42,6 +42,7 @@ mod source_relocation;
 mod specification;
 mod takeover;
 mod team;
+mod usage;
 mod verify;
 mod work_action;
 mod work_activate;
@@ -128,6 +129,11 @@ enum Command {
     },
     /// Read-only mainline navigation across scope, dependencies, accounting and blockers.
     Nav(nav::NavArgs),
+    /// Observe project usage, costs and execution time.
+    Usage {
+        #[command(subcommand)]
+        command: usage::UsageCommand,
+    },
     /// Refresh source projections and summarize current project work.
     Status {
         /// Return one page of current queue items (does not include terminal history).
@@ -283,6 +289,7 @@ fn run(cli: &Cli) -> cli_failure::CliResult<()> {
         Some(Command::Recovery { command }) => recovery::run(&cli.project, command, cli.json),
         Some(Command::Source { command }) => source::run(&cli.project, command, cli.json),
         Some(Command::Nav(args)) => nav::run(&cli.project, &args, cli.json),
+        Some(Command::Usage { command }) => usage::run(&cli.project, &command, cli.json),
         Some(Command::Status {
             queue,
             offset,
