@@ -108,6 +108,13 @@ afterEach(async () => {
 });
 
 describe('object activity page (AWR-OBS-006 PR-A)', () => {
+  it('reads the selected project scope when entering from another project page', async () => {
+    const { calls } = setupActivity();
+    renderApp('/activity?scope=docs');
+    await screen.findByTestId('activity-row');
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((call) => call.params.get('project') === 'docs')).toBe(true);
+  });
   it.each([undefined, SELF_ACTOR])('renders flat capabilities with actor filter %s', async (actor) => {
     const { calls } = setupActivity();
     renderApp(`/activity?project=demo${actor ? `&actor=${actor}` : ''}`);

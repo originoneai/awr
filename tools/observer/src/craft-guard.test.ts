@@ -57,6 +57,13 @@ describe('craft source scanner self-test', () => {
     expect(scanCraftSource('const label = "It\'s ready!";', 'tsx').map(violation => violation.rule)).toContain('copy-exclamation');
   });
 
+  it('distinguishes regular-expression punctuation from actual interface copy', () => {
+    const source = "const scalar = value.replace(/^[\"']|[\"']$/g, '').replace(/[.!?]+$/, '');";
+    expect(scanCraftSource(source, 'tsx')).toEqual([]);
+    expect(scanCraftSource(source + ' const label = "Ready!";', 'tsx').map((violation) => violation.rule)).toContain('copy-exclamation');
+    expect(scanCraftSource('const label = `Ready ${name}!`;', 'tsx').map((violation) => violation.rule)).toContain('copy-exclamation');
+  });
+
   it('rejects raw freshness keys even in formerly exempt files', () => {
     for (const file of [
       'components/FreshnessBadge.tsx',

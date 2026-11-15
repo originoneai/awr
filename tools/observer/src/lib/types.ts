@@ -240,6 +240,35 @@ export interface WorkInboxData {
 
 export type WorkContractValue = string | number | boolean | Record<string, unknown> | null;
 
+export interface OrdinaryDecisionPerson {
+  person_id: string;
+  display_name: string | null;
+}
+
+export interface OrdinaryDecision {
+  decision_id: string;
+  work_id: string;
+  workstream_id: string;
+  work_title: string;
+  question: string;
+  impact: string;
+  reply: string | null;
+  state: 'open' | 'replied' | 'cancelled';
+  baseline_matches_current: boolean;
+  requester: OrdinaryDecisionPerson;
+  allowed_responders: OrdinaryDecisionPerson[];
+  resolution: (OrdinaryDecisionPerson & { at_unix_ms: number }) | null;
+  created_at_unix_ms: number;
+}
+
+export interface OrdinaryDecisionsData {
+  items: OrdinaryDecision[];
+  next_cursor: string | null;
+  truncated: boolean;
+  execution_authorized: false;
+  as_of: { at_unix_ms: number };
+}
+
 export interface WorkContract {
   goals?: WorkContractValue[];
   acceptance?: WorkContractValue[];

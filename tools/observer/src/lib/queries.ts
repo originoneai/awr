@@ -15,6 +15,7 @@ import type {
   PlanningCandidatesData,
   RequiredSourcesData,
   ProjectDocumentsData,
+  OrdinaryDecisionsData,
 } from './types';
 
 // AWR-前后端能力审查完整清单.md:212 and reviewer-web.md:22 require a 5 s
@@ -126,7 +127,7 @@ export function activityQueryOptions(project: string | null, revoked = false, wo
 
 interface TeamReadQuery {
   protocol_version: 1;
-  op: 'work.next' | 'work.inbox' | 'work.snapshot' | 'review.inspect' | 'source.content' | 'planning.candidates' | 'sources.inspect' | 'documents.list';
+  op: 'work.next' | 'work.inbox' | 'work.snapshot' | 'review.inspect' | 'source.content' | 'planning.candidates' | 'sources.inspect' | 'documents.list' | 'decisions.list';
   work_id?: string;
   workstream_id?: string;
   review_round_id?: string;
@@ -136,6 +137,21 @@ interface TeamReadQuery {
   search?: string;
   limit?: number;
   max_context_bytes?: number;
+  decision_state?: 'open' | 'all';
+}
+
+export function ordinaryDecisionsQueryOptions(project: string, state: 'open' | 'all', cursor: string | null, revoked: boolean) {
+  return {
+    queryKey: ['team', 'decisions.list', project, state, cursor],
+    queryFn: ({ signal }: { signal: AbortSignal }) => teamRead<OrdinaryDecisionsData>(project, {
+      protocol_version: 1, op: 'decisions.list', decision_state: state, limit: 10, max_context_bytes: 262144,
+      ...(cursor ? { cursor } : {}),
+    }, signal),
+    enabled: Boolean(project) && !revoked,
+    ...readQueryDefaults,
+    retry: (count, error) => !(error instanceof ApiError && error.code === 'Unsupported') && retryRead(count, error),
+    refetchInterval: SNAPSHOT_POLL_INTERVAL_MS,
+  } satisfies UseQueryOptions<TeamReadResponse<OrdinaryDecisionsData>>;
 }
 
 export function projectDocumentsQueryOptions(project: string, search: string, cursor: string | null, revoked: boolean) {

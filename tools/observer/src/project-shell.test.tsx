@@ -27,7 +27,7 @@ describe('ProjectShell', () => {
   it('renders the project name, role and settings without an internal project key', async () => {
 
     setup('/projects/demo');
-    await screen.findByText('Team mainline');
+    await waitFor(() => expect(screen.getByTestId('project-title').textContent).toBe('Team mainline'));
     const header = screen.getByTestId('project-header');
     expect(defaultVisibleText(header)).toBe('Team mainline\n项目管理员\n项目设置');
     expect(defaultVisibleText(header)).not.toMatch(/项目键|demo/);

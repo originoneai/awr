@@ -22,6 +22,7 @@ import { activityListQueryOptions, capabilitiesQueryOptions, type ActivityKind }
 import { isAuthError } from '../lib/api';
 import { projectsQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
+import { useScope } from '../lib/scope';
 import { craftSelectionStyle } from '../theme';
 
 type ActivityTab = ActivityKind | 'access';
@@ -46,9 +47,10 @@ export function ActivityPage() {
   const { t, i18n } = useTranslation();
   const { token } = theme.useToken();
   const { revoked } = useRevocation();
+  const { projectKey } = useScope();
   const [searchParams, setSearchParams] = useSearchParams();
   const projects = useQuery(projectsQueryOptions(revoked));
-  const project = searchParams.get('project') ?? projects.data?.projects[0]?.key ?? '';
+  const project = projectKey ?? searchParams.get('project') ?? projects.data?.projects[0]?.key ?? '';
   const tab = tabOf(searchParams.get('kind'));
   const kind: ActivityKind = tab === 'requests' ? 'requests' : 'development';
   const limit = limitOf(searchParams.get('limit'));

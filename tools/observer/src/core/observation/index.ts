@@ -5,7 +5,7 @@ export { actionWords, actorAliases, artifactLabel, checkLabel, documentLabel, do
 export { groupWorks } from './groups';
 export { deriveWorkState } from './work-state';
 export { claimState } from './claim';
-export { abbreviateIds, readableSentence } from './readable';
+export { abbreviateIds, readableSentence, readableNarrative } from './readable';
 export { utf8ByteLength, verifyTextDigest } from './digest';
 export { assembleSegments, judgeContentRead } from './content';
 export { IDENTIFIER_PATTERN_IDS, deriveOwner, ownerCellText, readsAsName } from './owner';

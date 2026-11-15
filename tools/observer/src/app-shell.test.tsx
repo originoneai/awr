@@ -66,4 +66,28 @@ describe('AppShell navigation', () => {
     renderApp('/workbench');
     expect(screen.getByTestId('language-switcher')).toBeTruthy();
   });
+
+  it('preserves the selected project when opening the inbox from a project page', async () => {
+    stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW,
+      '/api/team/read': { ok: true, result: { queries: [] } } });
+    const user = userEvent.setup();
+    const { router } = renderApp('/projects/demo');
+    await waitFor(() => expect(screen.getByTestId('scope-switcher').textContent).toBe('Team mainline'));
+    const inbox = screen.getByRole('link', { name: '待处理' });
+    expect(inbox.getAttribute('href')).toBe('/inbox?scope=demo');
+    await user.click(inbox);
+    expect(router.state.location.pathname).toBe('/inbox');
+    expect(router.state.location.search).toBe('?scope=demo');
+  });
+
+  it('keeps diagnostic project labels and unknown route keys out of the header and selector', async () => {
+    stubFetch({ '/api/team/projects': { ...DEMO_PROJECTS, projects: [{ key: 'private-key', title: 'client_obs_658' }] },
+      '/api/team/overview': DEMO_OVERVIEW });
+    const user = userEvent.setup();
+    renderApp('/projects/private-key');
+    await waitFor(() => expect(screen.getByTestId('scope-switcher').textContent).toBe('项目 1 · 名称待补充'));
+    await user.click(screen.getByTestId('scope-switcher'));
+    expect(screen.queryByText('private-key')).toBeNull();
+    expect(screen.queryByText('client_obs_658')).toBeNull();
+  });
 });

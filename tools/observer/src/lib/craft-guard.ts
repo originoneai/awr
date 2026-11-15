@@ -1,3 +1,5 @@
+import * as ts from 'typescript';
+
 export type CraftFileType = 'tsx' | 'css';
 
 export interface CraftViolation {
@@ -7,6 +9,22 @@ export interface CraftViolation {
 
 const ALLOWED_ANTD_COLORS = new Set(['success', 'error', 'warning', 'processing', 'default', 'currentColor', 'inherit']);
 const ALLOWED_RADII = new Set([4, 8, 12, 16]);
+
+function copyLiterals(source: string, fileType: CraftFileType, filePath: string): Array<{ text: string; source: string }> {
+  if (fileType === 'css') return [...source.matchAll(/(['"`])(?:\\.|(?!\1)[^\\\r\n])*\1/g)]
+    .map((match) => ({ text: match[0], source: match[0] }));
+  const kind = filePath.endsWith('.ts') ? ts.ScriptKind.TS : ts.ScriptKind.TSX;
+  const file = ts.createSourceFile(filePath || 'interface.tsx', source, ts.ScriptTarget.Latest, true, kind);
+  const literals: Array<{ text: string; source: string }> = [];
+  function visit(node: ts.Node) {
+    const text = ts.isStringLiteralLike(node) ? node.text : ts.isTemplateExpression(node)
+      ? [node.head.text, ...node.templateSpans.map((span) => span.literal.text)].join('') : null;
+    if (text !== null) literals.push({ text, source: node.getText(file) });
+    ts.forEachChild(node, visit);
+  }
+  visit(file);
+  return literals;
+}
 
 /** Pure source scanner used by both the self-test and the full workspace guard. */
 export function scanCraftSource(source: string, fileType: CraftFileType, filePath = ''): CraftViolation[] {
@@ -28,8 +46,8 @@ export function scanCraftSource(source: string, fileType: CraftFileType, filePat
   add('negative-letter-spacing', /\bletterSpacing\s*:\s*-\d/g);
   add('negative-letter-spacing', /\bletter-spacing\s*:\s*-\d/g);
   add('emoji', /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/gu);
-  for (const match of source.matchAll(/(['"`])(?:\\.|(?!\1)[^\\\r\n])*\1/g)) {
-    if (match[0].includes('!')) violations.push({ rule: 'copy-exclamation', match: match[0] });
+  for (const literal of copyLiterals(source, fileType, filePath)) {
+    if (literal.text.includes('!')) violations.push({ rule: 'copy-exclamation', match: literal.source });
   }
   add('copy-exclamation', />\s*[A-Za-z\u4e00-\u9fff][^<{\n()&|=;]*![^<{\n()&|=;]*</g);
 
