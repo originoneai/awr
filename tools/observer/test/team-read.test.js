@@ -173,7 +173,8 @@ test('read adapter forwards every registered read op with its exact selectors, u
         return;
       }
       if (parsed.op === 'decisions.list') {
-        response.end(JSON.stringify({ ...ENVELOPE, workstream_id: parsed.workstream_id, authority_version: '1', data: {
+        response.end(JSON.stringify({ ...ENVELOPE, workstream_id: parsed.workstream_id, authority_version: '1',
+          selection_basis: parsed.work_id ? 'work' : parsed.workstream_id ? 'explicit' : 'project', data: {
           work_id: parsed.work_id ?? null, decision_id: parsed.decision_id ?? null, decision_state: parsed.decision_state ?? 'open',
           items: [], next_cursor: null, truncated: false, execution_authorized: false,
           as_of: { at_unix_ms: 1793534400000, source_snapshot_id: ENVELOPE.source_snapshot_id,
@@ -671,7 +672,7 @@ function questionPage(state = 'open') {
     item.decision_version = '2';
     item.resolution = { ...actor, kind: state, session_id: 'later-session', request_id: 'reply', at_unix_ms: 2000 };
   }
-  return { ...ENVELOPE, workstream_id: 'stream', authority_version: '1', data: {
+  return { ...ENVELOPE, workstream_id: 'stream', authority_version: '1', selection_basis: 'work', data: {
     work_id: 'WORK', decision_id: 'question', decision_state: state, items: [item], next_cursor: null,
     truncated: false, execution_authorized: false, as_of: { at_unix_ms: 3000,
       source_snapshot_id: ENVELOPE.source_snapshot_id, project_revision: ENVELOPE.project_revision },
@@ -699,6 +700,7 @@ test('ordinary question reads preserve confirmed responses and refuse malformed 
       (page) => { page.data.work_id = null; },
       (page) => { page.data.decision_state = 'all'; },
       (page) => { delete page.authority_version; },
+      (page) => { page.selection_basis = 'project'; },
       (page) => { page.data.execution_authorized = true; },
       (page) => { page.data.items[0].approval_granted = true; },
       (page) => { page.data.items[0].baseline_matches_current = null; },

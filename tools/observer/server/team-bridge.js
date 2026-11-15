@@ -685,6 +685,7 @@ function readAttributionError(query, result, { strictWorkstream } = {}) {
     || data.next_cursor !== null && data.items.length !== (query.limit ?? 20)
     || data.work_id !== (query.work_id ?? null) || data.decision_id !== (query.decision_id ?? null)
     || data.decision_state !== (query.decision_state ?? 'open')
+    || result.selection_basis !== (query.work_id ? 'work' : query.workstream_id ? 'explicit' : 'project')
     || (query.work_id || query.workstream_id) && (!isBoundedId(result.workstream_id)
       || typeof result.authority_version !== 'string' || !/^[1-9]\d*$/.test(result.authority_version))
     || new Set(data.items.map((item) => item.decision_id)).size !== data.items.length

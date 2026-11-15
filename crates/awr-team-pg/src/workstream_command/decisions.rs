@@ -310,7 +310,7 @@ pub(super) async fn apply(
         .ok_or(PgError::SourceDivergence)?
         .to_owned();
     let mut data = data;
-    data["decision"] = record(tx, tenant, project, &command.work_id, &id, &current_digest).await?;
+    data["decision"] = record(tx, tenant, project, &command.work_id, &id, &current).await?;
     data["execution_authorized"] = json!(false);
     data["approval_granted"] = json!(false);
     Ok(Applied {
@@ -325,8 +325,9 @@ pub(crate) async fn record(
     project: &str,
     work: &str,
     id: &str,
-    current_digest: &str,
+    current: &Value,
 ) -> PgResult<Value> {
+    let current_digest = basis_digest(current)?;
     let row = tx.query_one("SELECT id,session_id,question,reply,state,decision_key,
         decision_version,decision_json,decision_baseline_digest,
         (extract(epoch FROM created_at)*1000)::bigint AS created_at
@@ -383,7 +384,7 @@ pub(crate) async fn record(
         .collect::<Vec<_>>();
     Ok(
         json!({"decision_id":row.get::<_,String>("id"),"work_id":work,
-        "workstream_id":metadata["basis"]["workstream_id"],
+        "workstream_id":current["workstream_id"],
         "session_id":row.get::<_,String>("session_id"),"request_key":row.get::<_,String>("decision_key"),
         "question":row.get::<_,String>("question"),"impact":metadata["impact"],
         "reply":row.get::<_,Option<String>>("reply"),"state":row.get::<_,String>("state"),

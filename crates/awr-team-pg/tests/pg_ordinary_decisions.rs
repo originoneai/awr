@@ -721,6 +721,7 @@ async fn question_pages_are_bounded_and_bound_to_the_current_permissions() {
     let stream = awr_core::Id::from(1).to_string();
     assert_eq!(first["workstream_id"], stream);
     assert_eq!(first["authority_version"], "1");
+    assert_eq!(first["selection_basis"], "work");
     assert_eq!(first["data"]["items"][0]["workstream_id"], stream);
     assert_eq!(first["data"]["items"].as_array().unwrap().len(), 1);
     q.cursor = first["data"]["next_cursor"].as_str().map(str::to_owned);
@@ -735,6 +736,63 @@ async fn question_pages_are_bounded_and_bound_to_the_current_permissions() {
         store.query(TENANT, PROJECT, A, q).await,
         Err(PgError::CursorExpired)
     ));
+}
+
+#[tokio::test]
+async fn question_history_uses_current_scope_after_a_workstream_rebind() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let c = claim(&store).await;
+    let opened = store
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            request(&store, &c, "rebound-question", &["agent"]).await,
+        )
+        .await
+        .unwrap();
+    let id = opened["receipt"]["data"]["decision_id"].clone();
+    let next_stream = awr_core::Id::from(2).to_string();
+    admin
+        .execute(
+            "INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,
+        workstream_id,authority_version,can_read) VALUES($1,$2,'agent','cli-a',$3,1,true)",
+            &[&TENANT, &PROJECT, &next_stream],
+        )
+        .await
+        .unwrap();
+    admin
+        .execute(
+            "UPDATE awr_team.workstream_snapshot_ownership SET workstream_id=$3,
+        ownership_version=ownership_version+1 WHERE tenant_id=$1 AND project_id=$2 AND work_id='a'",
+            &[&TENANT, &PROJECT, &next_stream],
+        )
+        .await
+        .unwrap();
+    let mut selected = query("decisions.list");
+    selected.work_id = Some("a".into());
+    let work = store
+        .query(TENANT, PROJECT, A, selected.clone())
+        .await
+        .unwrap();
+    assert_eq!(work["selection_basis"], "work");
+    assert_eq!(work["workstream_id"], next_stream);
+    assert_eq!(work["data"]["items"][0]["decision_id"], id);
+    assert_eq!(work["data"]["items"][0]["workstream_id"], next_stream);
+    assert_eq!(work["data"]["items"][0]["baseline_matches_current"], false);
+    selected.work_id = None;
+    selected.workstream_id = Some(awr_core::Id::from(2));
+    let stream = store.query(TENANT, PROJECT, A, selected).await.unwrap();
+    assert_eq!(stream["selection_basis"], "explicit");
+    assert_eq!(stream["data"]["items"], work["data"]["items"]);
+    let project = store
+        .query(TENANT, PROJECT, A, query("decisions.list"))
+        .await
+        .unwrap();
+    assert_eq!(project["selection_basis"], "project");
+    assert_eq!(project["data"]["items"], work["data"]["items"]);
 }
 
 #[tokio::test]

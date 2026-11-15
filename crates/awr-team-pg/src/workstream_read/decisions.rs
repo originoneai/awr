@@ -1,6 +1,6 @@
 //! Scoped ordinary questions and their recorded answers, including session-independent continuation.
 use super::*;
-use crate::workstream_command::decisions::{basis, basis_digest, record};
+use crate::workstream_command::decisions::{basis, record};
 
 pub(super) fn guidance(data: &Value, previous: Value) -> Value {
     if !matches!(
@@ -72,7 +72,7 @@ pub(super) async fn read(
         let id: String = row.get(0);
         let work: String = row.get(1);
         let current = basis(tx, tenant, project, auth, &work).await?;
-        let mut item = record(tx, tenant, project, &work, &id, &basis_digest(&current)?).await?;
+        let mut item = record(tx, tenant, project, &work, &id, &current).await?;
         item["work_title"] = json!(row.get::<_, String>(2));
         items.push(item);
     }
@@ -104,6 +104,11 @@ pub(super) async fn read(
         result["workstream_id"] = json!(stream);
         result["authority_version"] =
             json!(auth.catalog.get(stream)?.authority_version.to_string());
+        result["selection_basis"] = json!(if q.work_id.is_some() {
+            "work"
+        } else {
+            "explicit"
+        });
     }
     if serde_json::to_vec(&result)
         .map_err(|_| PgError::SourceDivergence)?
@@ -134,7 +139,7 @@ pub(super) async fn context(
     if rows.is_empty() {
         return Ok(json!({"items":[],"truncated":false}));
     }
-    let current = basis_digest(&basis(tx, tenant, project, auth, work).await?)?;
+    let current = basis(tx, tenant, project, auth, work).await?;
     let mut items = Vec::new();
     for row in rows.iter().take(3) {
         items.push(
