@@ -612,6 +612,36 @@ async fn committed_planning_decisions_already_have_a_completed_command_receipt()
 async fn repeated_new_work_ids_authorize_every_declared_workstream() {
     let (_guard, admin, db, _) = setup().await;
     elev_maintainer(&admin).await;
+    let store = SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    for selectors in [["alpha", "private-beta"], ["private-beta", "alpha"]] {
+        let mut request = create_req(&format!("denied-{}", selectors[0]), "new-shared-id");
+        let mut other = request.changes[0].clone();
+        request.changes[0].after.workstream = Some(selectors[0].into());
+        other.after.workstream = Some(selectors[1].into());
+        request.changes.push(other);
+        assert!(matches!(
+            store.planning_draft(TENANT, PROJECT, A, &request).await,
+            Err(PgError::Forbidden)
+        ));
+    }
+    let counts = admin
+        .query_one(
+            "SELECT (SELECT count(*) FROM awr_team.planning_candidates),
+                    (SELECT count(*) FROM awr_team.planning_command_receipts)",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        counts.get::<_, i64>(0),
+        0,
+        "denied targets create no candidate"
+    );
+    assert_eq!(
+        counts.get::<_, i64>(1),
+        0,
+        "denied targets reserve no request"
+    );
     admin
         .batch_execute(
             "INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,
@@ -621,7 +651,6 @@ async fn repeated_new_work_ids_authorize_every_declared_workstream() {
         )
         .await
         .unwrap();
-    let store = SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
     let mut candidates = Vec::new();
     for selectors in [["alpha", "private-beta"], ["private-beta", "alpha"]] {
         let mut request = create_req(&format!("repeated-{}", selectors[0]), "new-shared-id");
