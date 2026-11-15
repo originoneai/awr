@@ -123,11 +123,12 @@ describe('agent-connect page (AWR-OBS-008)', () => {
     expect(written[0]).not.toContain(FULL_SESSION_ID);
   });
 
-  it('declares independent-connection revocation unavailable without a fake button', async () => {
+  it('links to connection management without putting account actions into the connect guide', async () => {
     setupAccount();
     renderApp('/agent-connect?scope=demo');
     await screen.findByTestId('page-agent-connect');
-    expect((await screen.findByTestId('connect-revocation-note')).textContent).toBe('暂时不能单独让某个 Agent 的连接失效；需要时请联系管理员。');
+    expect((await screen.findByTestId('connect-revocation-note')).textContent).toBe('在账户与连接中查看和断开已有连接。');
+    expect(screen.getAllByRole('link', { name: '账户与连接' }).some((link) => link.getAttribute('href') === '/account?scope=demo')).toBe(true);
     expect(screen.queryByRole('button', { name: /撤销独立连接|撤销代理连接|失效/ })).toBeNull();
   });
 
@@ -174,7 +175,7 @@ describe('account page (AWR-OBS-008)', () => {
     const user = userEvent.setup();
     renderApp('/account?scope=demo');
     await screen.findByTestId('account-session-card');
-    await user.click(screen.getByRole('button', { name: '退出本设备上的所有登录' }));
+    await user.click(screen.getByRole('button', { name: '退出浏览器登录' }));
     await waitFor(() => {
       const call = calls.find((entry) => entry.url === '/api/team/session/revoke' && entry.init?.method === 'POST');
       expect(call).toBeTruthy();
@@ -192,7 +193,7 @@ describe('account page (AWR-OBS-008)', () => {
     setupAccount();
     renderApp('/account?scope=demo');
     await screen.findByTestId('account-session-card');
-    expect(document.body.textContent).toContain('退出登录只影响这台设备上的登录');
+    expect(document.body.textContent).toContain('退出使用同一口令的浏览器登录');
     expect(document.body.textContent).toContain('请联系管理员');
     expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
   });
@@ -271,7 +272,7 @@ describe('agent-connect and account review round 2', () => {
     await act(() => i18n.changeLanguage('en-US'));
     await waitFor(() => expect(screen.getByTestId('connect-allowed').textContent).toBe('View authorized work'));
     expect(screen.getByTestId('connect-not-included').textContent).toBe('Approve plans, Decide reviews, Manage project members and access, Read project activity and audit');
-    expect(screen.getByTestId('connect-revocation-note').textContent).toContain('cannot be revoked on its own yet');
+    expect(screen.getByTestId('connect-revocation-note').textContent).toContain('View and disconnect existing connections');
     expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('page-agent-connect')))).toEqual([]);
     await act(() => i18n.changeLanguage('zh-CN'));
   });
@@ -315,10 +316,10 @@ describe('agent-connect and account review round 2', () => {
     }
   });
 
-  it('the account page also declares independent revocation unavailable, with no single-connection revoke button', async () => {
+  it('a service without connection support shows an unavailable state without inventing connections', async () => {
     setupAccount();
     renderApp('/account?scope=demo');
-    expect((await screen.findByTestId('independent-revoke-unavailable')).textContent).toContain('如需断开单个 Agent 的访问，请联系管理员');
+    expect(await screen.findByText('暂时无法读取连接，请稍后刷新')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /撤销独立连接|撤销代理连接|撤销单个连接/ })).toBeNull();
   });
 

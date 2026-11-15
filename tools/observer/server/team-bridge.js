@@ -1838,6 +1838,57 @@ function createTeamBridge(opts) {
       return { ok: true, data: upstream.json.data || upstream.json };
     },
 
+    'POST /api/team/connections/list': async (_url, body, req, res) => {
+      const parsed = asObject(body);
+      if (!parsed || typeof parsed.project !== 'string' || !parsed.project
+        || Object.keys(parsed).some((key) => !['project', 'cursor', 'limit'].includes(key))) {
+        return { ok: false, error: { code: 'InvalidInput' } };
+      }
+      if (!TEAM.live) return { ok: false, error: { code: 'Unsupported' } };
+      const { project, ...page } = parsed;
+      const upstream = await proxyTeam(`/v1/web/projects/${encodeURIComponent(project)}/connections/list`, req,
+        { protocol_version: 1, ...page }, 'POST');
+      if (!upstream || upstream.status >= 400) return liveError(upstream);
+      const data = upstream.json?.data;
+      const reference = /^(agent|browser|access)_[a-f0-9]{64}$/;
+      const limit = Number.isInteger(page.limit) ? page.limit : 50;
+      const validItems = Array.isArray(data?.items) && data.items.length <= limit && data.items.every((item) =>
+        item && reference.test(item.connection_id) && ['agent', 'browser', 'shared_access'].includes(item.kind)
+        && ['active', 'revoked'].includes(item.state) && typeof item.can_revoke === 'boolean'
+        && ['connection', 'connection_family', 'shared_project_access', 'shared_account_access'].includes(item.revocation_scope)
+        && ['created_at_ms', 'expires_at_ms', 'last_seen_ms', 'revoked_at_ms'].every((field) =>
+          item[field] == null || (Number.isSafeInteger(item[field]) && item[field] >= 0)));
+      if (!validItems || !(data.next_cursor === null || reference.test(data.next_cursor))) {
+        return { ok: false, error: { code: 'BadGateway' } };
+      }
+      const fields = ['connection_id', 'kind', 'client_name', 'state', 'can_revoke', 'revocation_scope',
+        'created_at_ms', 'expires_at_ms', 'last_seen_ms', 'revoked_at_ms', 'is_current'];
+      const items = data.items.map((item) => Object.fromEntries(fields.filter((key) => Object.hasOwn(item, key)).map((key) => [key, item[key]])));
+      applyProxiedCookies(res, upstream.setCookie);
+      return { ok: true, data: { items, next_cursor: data.next_cursor } };
+    },
+
+    'POST /api/team/connections/revoke': async (_url, body, req, res) => {
+      const parsed = asObject(body);
+      if (!parsed || typeof parsed.project !== 'string' || !parsed.project
+        || typeof parsed.connection_id !== 'string' || !/^(agent|browser|access)_[a-f0-9]{64}$/.test(parsed.connection_id)
+        || Object.keys(parsed).some((key) => !['project', 'connection_id'].includes(key))) {
+        return { ok: false, error: { code: 'InvalidInput' } };
+      }
+      if (!TEAM.live) return { ok: false, error: { code: 'Unsupported' } };
+      clearOverviewCache(req);
+      const upstream = await proxyTeam(`/v1/web/projects/${encodeURIComponent(parsed.project)}/connections/revoke`, req,
+        { protocol_version: 1, connection_id: parsed.connection_id }, 'POST');
+      if (!upstream || upstream.status >= 400) return liveError(upstream);
+      const data = upstream.json?.data;
+      if (data?.connection_id !== parsed.connection_id || data.state !== 'revoked'
+        || (data.ends_current != null && typeof data.ends_current !== 'boolean')) {
+        return { ok: false, error: { code: 'BadGateway' } };
+      }
+      applyProxiedCookies(res, upstream.setCookie);
+      return { ok: true, data: { connection_id: data.connection_id, state: data.state, ends_current: data.ends_current === true } };
+    },
+
     'POST /api/team/login': async (_url, body, req, res) => {
       if (TEAM.live) {
         const proxied = await proxyTeam('/v1/web/login', req, body, 'POST');
