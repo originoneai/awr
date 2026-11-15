@@ -12,6 +12,7 @@ describe('documentTitle', () => {
   it.each(['zh-CN', 'en-US'])('uses readable source headings and replaces technical headings in %s', (language) => {
     const options = { language, position: 3 };
     expect(documentTitle('Delivery guide', 'docs/guide.md', options).text).toBe('Delivery guide');
+    expect(documentTitle('Delivery guide v2', 'docs/guide.md', options).text).toBe('Delivery guide v2');
     for (const title of ['/var/lib/awr-beta/sources/private/customer-plan', 'C:\\private\\customer-plan',
       'status=claimed reason=Forbidden', 'Source /private/project', 'client_id=private-client',
       'CursorExpired', 'a'.repeat(64), 'AWR-OBS-657', 'client-obs-657', 'docs/guide.md', 'Review docs/private/guide']) {
@@ -19,6 +20,10 @@ describe('documentTitle', () => {
       expect(label).toBe('guide');
       expect(findForbiddenVisibleText(label)).toEqual([]);
     }
+    for (const title of ['claimed', 'clientobs657', 'status claimed actor clientobs657', 'status claimed actor member']) {
+      expect(documentTitle(title, 'docs/clientobs657.md', options).text).toBe(language === 'zh-CN' ? '文档 3' : 'Document 3');
+    }
+    expect(documentTitle(null, 'docs/client-obs-657.md', options).text).toBe(language === 'zh-CN' ? '文档 3' : 'Document 3');
   });
 });
 

@@ -108,6 +108,15 @@ describe('project document library', () => {
     }
   });
 
+  it.each(['zh-CN', 'en-US'])('uses numbered labels for diagnostic headings and opaque filenames in %s', async (language) => {
+    await i18n.changeLanguage(language);
+    setup(() => catalog([document(1, { name: 'status claimed actor clientobs657',
+      path: 'docs/clientobs657.md', summary: 'reason Forbidden actor clientobs657' })]));
+    const page = await screen.findByTestId('project-document-library');
+    await screen.findByRole('button', { name: new RegExp(language === 'zh-CN' ? '文档 1' : 'Document 1') });
+    for (const value of ['claimed', 'clientobs657', 'Forbidden', 'status', 'actor']) expect(defaultVisibleText(page)).not.toContain(value);
+  });
+
   it.each([65537, 262144])('opens an advertised %i-byte document using the supported whole-document budget', async (size) => {
     await i18n.changeLanguage('en-US');
     const text = 'x'.repeat(size);

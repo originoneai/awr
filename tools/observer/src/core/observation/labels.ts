@@ -1,5 +1,5 @@
-import { ACTION_VOCABULARY, ARTIFACT_VOCABULARY, CHECK_VOCABULARY, FORBIDDEN_VISIBLE_PATTERNS, humanText } from '../../i18n/human-language';
-import { statementText } from './values';
+import { ACTION_VOCABULARY, ARTIFACT_VOCABULARY, CHECK_VOCABULARY, FORBIDDEN_VISIBLE_PATTERNS, STATUS_LABELS, humanText } from '../../i18n/human-language';
+import { STATUS_FIELDS, statementText } from './values';
 import { readableSentence } from './readable';
 import type { ActionWordsResult, ActorAliasEntry, ActorAliasResult, ArtifactLabelResult, CheckLabelResult, DocumentLabelResult, WorkLabelResult } from './types';
 
@@ -112,19 +112,27 @@ export function documentLabel(path: unknown, options: { language: string; positi
   return { kind: 'named', text: name, technical: { raw } };
 }
 
-/** Source headings are optional names. Paths and diagnostics stay behind the explicit document read. */
-export function documentTitle(title: unknown, path: unknown, options: { language: string; position: number }): DocumentLabelResult {
-  const raw = statementText(title);
+function readableDocumentName(raw: string, language: string): boolean {
   const pathReference = /(?:^|[\s("'`])(?:[a-z]:[\\/]|~?[\\/]|\S+[\\/])\S+/i;
   const diagnosticFields = /\b[a-z][a-z0-9_.-]*\s*[=:]\s*\S/i;
   const identifierReference = /\b(?:[a-z0-9]+-)+[a-z0-9]*\d[a-z0-9]*\b/i;
-  const refusalCode = /\b(?:Forbidden|Unauthenticated|SessionExpired|CursorExpired|ContextIncomplete|ResponseTooLarge|InvalidInput|BadGateway)\b/;
-  if (raw === null || readableSentence(raw, options.language) !== raw || readsAsReference(raw)
-    || pathReference.test(raw) || diagnosticFields.test(raw) || identifierReference.test(raw)
-    || refusalCode.test(raw) || FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(raw))) {
-    return documentLabel(path, options);
-  }
-  return { kind: 'named', text: raw, technical: { raw } };
+  const refusalCode = /\b(?:Forbidden|Unauthenticated|SessionExpired|CursorExpired|ContextIncomplete|ResponseTooLarge|InvalidInput|BadGateway)\b/i;
+  const words = raw.toLowerCase().split(/\s+/);
+  const hasStatus = words.some((word) => Object.hasOwn(STATUS_LABELS, word));
+  const hasField = words.some((word) => STATUS_FIELDS.has(word) || ['actor', 'client', 'reason', 'source', 'request'].includes(word));
+  const hasOpaqueToken = words.some((word) => /^(?=.*[a-z])(?=.*\d)[a-z0-9_-]+$/.test(word) && !/^v\d+$/.test(word));
+  return !Object.hasOwn(STATUS_LABELS, raw.toLowerCase()) && !(hasField && hasStatus) && !hasOpaqueToken
+    && readableSentence(raw, language) === raw && !readsAsReference(raw)
+    && !pathReference.test(raw) && !diagnosticFields.test(raw) && !identifierReference.test(raw)
+    && !refusalCode.test(raw) && !FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(raw));
+}
+
+/** Source headings and filename fallbacks use the same admission before becoming product labels. */
+export function documentTitle(title: unknown, path: unknown, options: { language: string; position: number }): DocumentLabelResult {
+  const raw = statementText(title);
+  if (raw !== null && readableDocumentName(raw, options.language)) return { kind: 'named', text: raw, technical: { raw } };
+  const file = statementText(path)?.split(/[\\/]/).at(-1)?.replace(/(?<=.)\.[A-Za-z0-9]{1,8}$/, '');
+  return file && readableDocumentName(file, options.language) ? documentLabel(path, options) : documentLabel(null, options);
 }
 
 /**
