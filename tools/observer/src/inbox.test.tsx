@@ -195,6 +195,18 @@ describe('ordinary project questions', () => {
     expect(findHumanLanguageViolations(card)).toEqual([]);
   });
 
+  it.each(['zh-CN', 'en-US'])('removes internal URLs and colon-form diagnostics while retaining business reasons in %s', async (language) => {
+    await i18n.changeLanguage(language);
+    setup(() => page([question({ impact: 'Decision: Keep the launch date. reason: customer deadline.\nStatus: claimed. reason: Forbidden Actor: client_obs_658\nSESSION_ID：PRIVATE-900\nHTTP://127.0.0.1:7381/work?session_id=PRIVATE-123\nhttp://localhost.:7381/work\nhttp://[::1]:7381/work\nhttps://example.com/plan?customer=ACME-2026-42&SOURCE_SNAPSHOT_ID=PRIVATE-456#session_id=PRIVATE-789' })]));
+    const card = await screen.findByTestId('ordinary-question');
+    const visible = defaultVisibleText(card);
+    expect(visible).toContain('Decision: Keep the launch date. reason: customer deadline.');
+    expect(visible).toContain('https://example.com/plan?customer=ACME-2026-42');
+    for (const internal of ['127.0.0.1', 'localhost', '[::1]', 'PRIVATE-', 'session_id', 'SOURCE_SNAPSHOT_ID', 'Status:', 'reason: Forbidden', 'Actor:', 'claimed', 'client_obs_658']) {
+      expect(visible).not.toContain(internal);
+    }
+  });
+
   it('navigates bounded pages, resets pages on tab changes and refreshes from the beginning', async () => {
     await i18n.changeLanguage('en-US');
     const { calls } = setup((query) => query.cursor ? page([question({ question: 'Can support proceed?' })])

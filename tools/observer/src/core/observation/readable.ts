@@ -1,4 +1,4 @@
-import { CHECK_VOCABULARY, OPERATION_VOCABULARY } from '../../i18n/human-language';
+import { CHECK_VOCABULARY, OPERATION_VOCABULARY, STATUS_LABELS } from '../../i18n/human-language';
 
 const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
 /** Git object ids and sha256 digests. */
@@ -47,19 +47,63 @@ export function readableSentence(text: string, language: string): string {
     .replace(/\b[A-Z][A-Za-z]*(?:Error|Exception)\b/g, zh ? '执行问题' : 'an execution problem');
 }
 
-/** Preserve business prose and web references while removing internal diagnostic values. */
+const INTERNAL_FIELDS = new Set([
+  'actor_id', 'client_id', 'session_id', 'execution_id', 'claim_id', 'receipt_id', 'credential_id',
+  'source_snapshot_id', 'workstream_id', 'decision_id', 'request_id', 'request_key', 'contract_hash',
+  'baseline_digest', 'project_revision', 'decision_version', 'allowed_responder_person_ids',
+]);
+const DIAGNOSTIC_FIELDS = new Set(['status', 'state', 'reason', 'actor', 'client', 'source', 'path']);
+const ERROR_CODE = /\b(?:Forbidden|Unauthenticated|SessionExpired|CursorExpired|ContextIncomplete|ResponseTooLarge|InvalidInput|BadGateway)\b/i;
+const INTERNAL_TOKEN = /\b(?:client|actor|session|execution|claim|receipt|credential|snapshot|workstream|decision|request|agent)[_-](?=[a-z0-9_-]*\d)[a-z0-9_-]+\b/i;
+const SYSTEM_PATH = /(?:[A-Za-z]:\\|\/(?:Users|home|var|private|tmp|opt|etc|srv)\/|~\/|\b(?:crates|tools|src|target|\.local)\/)[^\s<>"']+/;
+
+function diagnosticValue(field: string, value: string): boolean {
+  const scalar = value.replace(/^["']|["']$/g, '').replace(/[.!?]+$/, '');
+  return ERROR_CODE.test(scalar) || INTERNAL_TOKEN.test(scalar) || SYSTEM_PATH.test(scalar)
+    || ['status', 'state'].includes(field) && Object.hasOwn(STATUS_LABELS, scalar.toLowerCase());
+}
+
+function removeDiagnosticAssignments(text: string): string {
+  return text.replace(/\b([a-z][a-z0-9_]*)\s*([:：=])\s*("[^"\n]*"|'[^'\n]*'|[^\s,;]+)/gi,
+    (original, rawField: string, separator: string, value: string) => {
+      const field = rawField.toLowerCase();
+      return INTERNAL_FIELDS.has(field) || DIAGNOSTIC_FIELDS.has(field) && (separator === '=' || diagnosticValue(field, value))
+        ? '' : original;
+    });
+}
+
+function businessUrl(text: string, reference: string): string {
+  let url: URL;
+  try { url = new URL(text); } catch { return reference; }
+  if (/^(?:(?:[a-z0-9-]+\.)*localhost|127(?:\.\d+){3}|\[::1\]|0\.0\.0\.0)$/.test(url.hostname.replace(/\.$/, ''))
+    || url.username || url.password || /^\/v\d+\/(?:projects|web)(?:\/|$)/.test(url.pathname)) return reference;
+  let changed = false;
+  for (const [rawField, value] of [...url.searchParams]) {
+    const field = rawField.toLowerCase();
+    if (INTERNAL_FIELDS.has(field) || DIAGNOSTIC_FIELDS.has(field) && diagnosticValue(field, value)) {
+      url.searchParams.delete(rawField);
+      changed = true;
+    }
+  }
+  let fragment: string;
+  try { fragment = decodeURIComponent(url.hash); } catch { return reference; }
+  if (removeDiagnosticAssignments(fragment) !== fragment || INTERNAL_TOKEN.test(fragment)) {
+    url.hash = ''; changed = true;
+  }
+  return changed ? url.toString() : text;
+}
+
+/** Preserve business prose and public references while removing internal diagnostic values. */
 export function readableNarrative(text: string, language: string): string | null {
   const zh = language.toLowerCase().startsWith('zh');
   const record = zh ? '相关记录' : 'the related record';
   const file = zh ? '相关文件' : 'the related file';
-  const result = text.split(/(https?:\/\/[^\s<>()]+)/g).map((part) => {
-    if (/^https?:\/\//.test(part)) return part;
-    const redacted = part
-      .replace(/\b(?:actor_id|client_id|session_id|execution_id|claim_id|receipt_id|credential_id|source_snapshot_id|workstream_id|decision_id|request_id|request_key|contract_hash|baseline_digest|project_revision|decision_version)\s*[:=]\s*(?:"[^"\n]*"|'[^'\n]*'|[^\s,;]+)/g, '')
-      .replace(/\b(?:status|state|reason|actor|client|source|path)\s*=\s*(?:"[^"\n]*"|'[^'\n]*'|[^\s,;]+)/g, '')
-      .replace(/(?:[A-Za-z]:\\|\/(?:Users|home|var|private|tmp|opt|etc|srv)\/|~\/|\b(?:crates|tools|src|target|\.local)\/)[^\s<>"']+/g, file)
-      .replace(/\b(?:client|actor|session|execution|claim|receipt|credential|snapshot|workstream|decision|request|agent)[_-](?=[a-z0-9_-]*\d)[a-z0-9_-]+\b/gi, record)
-      .replace(/\b(?:Forbidden|Unauthenticated|SessionExpired|CursorExpired|ContextIncomplete|ResponseTooLarge|InvalidInput|BadGateway)\b/g, zh ? '处理问题' : 'a processing issue');
+  const result = text.split(/(https?:\/\/[^\s()]+)/gi).map((part) => {
+    if (/^https?:\/\//i.test(part)) return businessUrl(part, record);
+    const redacted = removeDiagnosticAssignments(part)
+      .replace(new RegExp(SYSTEM_PATH.source, 'g'), file)
+      .replace(new RegExp(INTERNAL_TOKEN.source, 'gi'), record)
+      .replace(new RegExp(ERROR_CODE.source, 'gi'), zh ? '处理问题' : 'a processing issue');
     return readableSentence(redacted, language);
   }).join('').trim();
   const content = result.replaceAll(record, '').replaceAll(file, '').replace(/[^\p{L}\p{N}]+/gu, '');
