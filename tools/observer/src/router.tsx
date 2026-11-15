@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate, type RouteObject } from 'react-router';
 import { AccountPage } from './pages/AccountPage';
 import { ActivityPage } from './pages/ActivityPage';
 import { InboxPage } from './pages/InboxPage';
+import { MembersPage } from './pages/MembersPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 import { AgentConnectPage } from './pages/AgentConnectPage';
 import { ProjectsPage } from './pages/ProjectsPage';
@@ -20,7 +21,7 @@ export const routes: RouteObject[] = [
       { path: 'projects/:project', element: <ProjectShell /> },
       { path: 'inbox', element: <InboxPage /> },
       { path: 'knowledge', element: <PlaceholderPage pageKey="knowledge" /> },
-      { path: 'members', element: <PlaceholderPage pageKey="members" /> },
+      { path: 'members', element: <MembersPage /> },
       { path: 'activity', element: <ActivityPage /> },
       { path: 'settings', element: <PlaceholderPage pageKey="settings" /> },
       { path: 'account', element: <AccountPage /> },

@@ -3,6 +3,24 @@ import type zhCN from './zh-CN';
 type Messages = typeof zhCN;
 
 const enUS: Messages = {
+  members: {
+    directory: 'Project members', organization: 'Organization', projectDepartments: 'Project departments',
+    updated: 'Last maintained', name: 'Member', department: 'Department', status: 'Member record',
+    available: 'Available', unavailableMember: 'Currently unavailable',
+    unnamed: 'Member {{number}}', departmentUnnamed: 'Department {{number}}', organizationUnnamed: 'Project organization',
+    noDepartment: 'No department recorded', noOrganization: 'No organization recorded',
+    coverage: '{{count}} registered members', coverage_one: '{{count}} registered member', coverage_other: '{{count}} registered members',
+    guidance: 'This view shows recorded team relationships. Members whose details have not been registered may be absent. Ask the project management Agent to add or update them.',
+    search: 'Search members or departments', departmentFilter: 'Filter by department', allDepartments: 'All departments',
+    noMatch: 'No members match your search', empty: 'No members registered yet',
+    refresh: 'Refresh members', retry: 'Retry', readFailed: 'Member details could not be loaded. Try refreshing later',
+    notEnabled: 'Team details are not available from this service yet', notRegistered: 'No team relationships have been registered for this project',
+    registrationHelp: 'Ask the project management Agent to register the organization, departments and member relationships',
+    chooseProject: 'Choose a project to see its members', open: 'View members', noProjects: 'No projects are available to view',
+    projectsFailed: 'Projects could not be loaded. Try again later',
+    agents: 'Agent connections', agentsHelp: 'Check whether your Agent access is active, or connect another Agent. Open the project to see task progress.',
+    viewConnections: 'View my connections', connectAgent: 'Connect an Agent',
+  },
   collaboration: {
     graph: 'Relationship map', list: 'Dependencies', people: 'People & handoffs',
     dependencyDetail: 'Dependency details', provider: 'Providing work', consumer: 'Consuming work',

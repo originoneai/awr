@@ -1,4 +1,22 @@
 const zhCN = {
+  members: {
+    directory: '项目成员', organization: '所属组织', projectDepartments: '项目所属部门',
+    updated: '最近维护', name: '成员', department: '所属部门', status: '成员资料',
+    available: '资料有效', unavailableMember: '资料暂不可用',
+    unnamed: '成员 {{number}}', departmentUnnamed: '部门 {{number}}', organizationUnnamed: '项目所属组织',
+    noDepartment: '尚未登记部门', noOrganization: '尚未登记组织',
+    coverage: '已登记 {{count}} 名成员', coverage_one: '已登记 {{count}} 名成员', coverage_other: '已登记 {{count}} 名成员',
+    guidance: '这里展示已登记的团队归属，未登记的成员可能尚未列出。需要补充或调整时，请让负责项目管理的 Agent 更新。',
+    search: '搜索成员或部门', departmentFilter: '筛选部门', allDepartments: '全部部门',
+    noMatch: '没有找到符合条件的成员', empty: '还没有登记成员',
+    refresh: '刷新成员', retry: '重试', readFailed: '成员资料暂时无法读取，请稍后刷新',
+    notEnabled: '此服务暂未提供团队归属资料', notRegistered: '此项目尚未登记团队归属',
+    registrationHelp: '请让负责项目管理的 Agent 登记组织、部门和成员归属',
+    chooseProject: '选择要查看成员的项目', open: '查看成员', noProjects: '当前没有可查看的项目',
+    projectsFailed: '项目暂时无法读取，请稍后重试',
+    agents: 'Agent 连接', agentsHelp: '查看你的 Agent 访问是否有效，或连接一个新的 Agent。任务执行进度可在项目中查看。',
+    viewConnections: '查看我的连接', connectAgent: '连接 Agent',
+  },
   collaboration: {
     graph: '关系图', list: '依赖清单', people: '分工与交接',
     dependencyDetail: '依赖详情', provider: '提供成果的工作', consumer: '使用成果的工作',
