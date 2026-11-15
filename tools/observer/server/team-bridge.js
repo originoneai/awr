@@ -41,10 +41,10 @@ const READ_WORK_SELECTION = new Set(['work.prepare', 'work.admission', 'work.sna
   'handoff.inspect', 'evidence.inspect', 'review.inspect', 'review.rounds', 'completion.inspect',
   'delivery.inspect', 'artifact.content', 'artifact.segment', 'delivery.exports']);
 const READ_PAGED = new Set(['workstreams.list', 'work.list', 'work.graph', 'work.search', 'events.list',
-  'work.next', 'work.inbox', 'task.assignees', 'delivery.exports', 'planning.candidates', 'sources.inspect', 'review.rounds', 'handoff.list', 'dependencies.list']);
+  'work.next', 'work.inbox', 'task.assignees', 'delivery.exports', 'planning.candidates', 'sources.inspect', 'documents.list', 'review.rounds', 'handoff.list', 'dependencies.list']);
 const READ_CONTEXT_BUDGET = new Set(['work.prepare', 'work.snapshot', 'work.observe', 'work.inbox',
   'source.content', 'artifact.content', 'artifact.segment', 'review.inspect',
-  'delivery.neutral.inspect', 'delivery.submission.describe', 'planning.candidates', 'sources.inspect', 'review.rounds', 'handoff.list', 'dependencies.list']);
+  'delivery.neutral.inspect', 'delivery.submission.describe', 'planning.candidates', 'sources.inspect', 'documents.list', 'review.rounds', 'handoff.list', 'dependencies.list']);
 const READ_REQUIRED_SELECTOR = {
   'command.inspect': 'request_id',
   'planning.outcome': 'request_id',
@@ -81,6 +81,7 @@ const READ_ECHOES = {
   'work.snapshot': [{ path: ['work_id'], selector: 'work_id' }],
   'work.observe': [{ path: ['work_id'], selector: 'work_id' }],
   'sources.inspect': [{ path: ['work_id'], selector: 'work_id' }],
+  'documents.list': [{ path: ['work_id'], selector: 'work_id' }],
   'review.rounds': [{ path: ['work_id'], selector: 'work_id' }],
   'handoff.list': [{ path: ['work_id'], selector: 'work_id' }],
   'dependencies.list': [{ path: ['work_id'], selector: 'work_id' }],
@@ -144,7 +145,7 @@ function validateReadQuery(query) {
     // Navigation reads are selector-free.
   } else if (READ_WORK_LIST.has(op)) {
     allowIds('workstream_id');
-  } else if (op === 'sources.inspect' || op === 'dependencies.list') {
+  } else if (op === 'sources.inspect' || op === 'documents.list' || op === 'dependencies.list') {
     allowIds('work_id', 'workstream_id');
   } else if (op === 'handoff.list') {
     allowIds('work_id', 'workstream_id', 'recipient_person_id');
@@ -161,7 +162,7 @@ function validateReadQuery(query) {
   }
   if (READ_PAGED.has(op) || READ_AUDIT.has(op) || op === 'artifact.segment') allowed.add('cursor');
   if (READ_PAGED.has(op) || READ_AUDIT.has(op)) allowed.add('limit');
-  if (op === 'work.search' || op === 'task.assignees') allowed.add('search');
+  if (op === 'work.search' || op === 'task.assignees' || op === 'documents.list') allowed.add('search');
   if (READ_CONTEXT_BUDGET.has(op)) allowed.add('max_context_bytes');
   const required = READ_REQUIRED_SELECTOR[op];
   if (required) allowed.add(required);
@@ -250,6 +251,7 @@ function validReadResponse(reply, op) {
     && (typeof data.next_cursor !== 'string' || data.next_cursor.length === 0
       || data.next_cursor.length > 4096)) return false;
   if (op === 'sources.inspect') return validRequiredSources(reply);
+  if (op === 'documents.list') return validDocuments(reply);
   if (op === 'review.rounds') return validReviewRounds(reply);
   if (op === 'handoff.list') return validHandoffs(reply);
   if (op === 'dependencies.list') return validDependencies(reply);
@@ -258,6 +260,43 @@ function validReadResponse(reply, op) {
       validDependency(item, data.delivery.work_id) && !('work_title' in item) && !('dependency_position' in item));
   }
   return true;
+}
+
+function validDocuments(reply) {
+  const data = reply.data;
+  const fields = new Set(['path', 'name', 'summary', 'summary_kind', 'sha256', 'byte_length',
+    'source_kind', 'readable', 'status', 'reason', 'document_position']);
+  const boundedText = (value, maximum) => typeof value === 'string' && Array.from(value).length <= maximum;
+  const fingerprint = (value) => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+  if (!Array.isArray(data.items) || !Number.isSafeInteger(data.total) || data.total < data.items.length
+    || typeof data.truncated !== 'boolean' || data.truncated !== (data.next_cursor !== null)
+    || data.read_only !== true || data.execution_authorized !== false
+    || data.content_read_limit_bytes !== 262144
+    || !['work', 'authorized_workstreams'].includes(data.scope)
+    || !Number.isSafeInteger(data.as_of?.at_unix_ms) || data.as_of.at_unix_ms < 0
+    || data.as_of.source_snapshot_id !== reply.source_snapshot_id
+    || data.as_of.project_revision !== reply.project_revision) return false;
+  return data.items.every((item) => {
+    if (!asObject(item) || Object.keys(item).some((key) => !fields.has(key))
+      || !Number.isSafeInteger(item.document_position) || item.document_position < 1
+      || item.document_position > data.total || item.source_kind !== 'registered_source'
+      || item.summary_kind !== 'source_excerpt'
+      || !(item.path === null || isControlledSourcePath(item.path))
+      || !(item.name === null || boundedText(item.name, 256))
+      || !(item.summary === null || boundedText(item.summary, 512))) return false;
+    if (item.status === 'available' || item.status === 'too_large') {
+      return isControlledSourcePath(item.path) && boundedText(item.name, 256) && item.name.length > 0
+        && fingerprint(item.sha256) && Number.isSafeInteger(item.byte_length) && item.byte_length >= 0
+        && (item.status === 'available'
+          ? item.readable === true && item.reason === null && item.byte_length <= data.content_read_limit_bytes
+          : item.readable === false && item.reason === 'content_exceeds_read_budget'
+            && item.byte_length > data.content_read_limit_bytes);
+    }
+    return ['restricted', 'missing', 'changed', 'unverified'].includes(item.status)
+      && item.readable === false && boundedText(item.reason, 128) && item.reason.length > 0
+      && item.name === null && item.summary === null && item.sha256 === null && item.byte_length === null
+      && (item.status !== 'restricted' || item.path === null && item.reason === 'permission_restricted');
+  });
 }
 
 function validDependency(item, work) {
@@ -586,6 +625,15 @@ function readAttributionError(query, result, { strictWorkstream } = {}) {
     || !query.work_id && data.work_id !== null
     || data.collection?.scope !== (query.work_id ? 'work' : 'authorized_workstreams'))) {
     return { code: 'BadGateway', message: 'Source observations are not attributable to the requested scope' };
+  }
+  if (query.op === 'documents.list' && (
+    !validPageCoverage(data, query, 'document_position')
+    || ((query.work_id || query.workstream_id) && (!isBoundedId(result.workstream_id)
+      || typeof result.authority_version !== 'string' || !/^[1-9]\d*$/.test(result.authority_version)))
+    || query.workstream_id && result.workstream_id !== query.workstream_id
+    || data.work_id !== (query.work_id ?? null)
+    || data.scope !== (query.work_id ? 'work' : 'authorized_workstreams'))) {
+    return { code: 'BadGateway', message: 'Documents are not attributable to the requested scope' };
   }
   if (query.op === 'review.rounds' && (!validPageCoverage(data, query, 'round_position')
     || !isBoundedId(result.workstream_id) || typeof result.authority_version !== 'string'

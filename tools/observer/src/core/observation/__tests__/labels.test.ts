@@ -3,10 +3,52 @@ import DERIVED_RUN09 from '../../../test-fixtures/activity/derived-audit-develop
 import { findForbiddenVisibleText } from '../../../lib/human-language-guard';
 import REPORTS from '../../../test-fixtures/work-state/progress-reports-run09.json';
 import { ACTION_VOCABULARY, ARTIFACT_VOCABULARY } from '../../../i18n/human-language';
-import { actionWords, actorAliases, artifactLabel, checkLabel, documentLabel, workLabel } from '../index';
+import { actionWords, actorAliases, artifactLabel, checkLabel, documentLabel, documentTitle, workLabel } from '../index';
+import { PROJECT_DOCUMENT_STATUSES } from '../types';
 
 const ITEMS = DERIVED_RUN09.data.items as Array<{ actor_id: string; work_id: string | null }>;
 const ACTORS = ITEMS.map((item) => item.actor_id);
+
+describe('documentTitle', () => {
+  it.each(['zh-CN', 'en-US'])('rejects mixed identifiers before filename separators are normalized in %s', (language) => {
+    const options = { language, position: 3 };
+    const numbered = language === 'zh-CN' ? '文档 3' : 'Document 3';
+    for (const separator of ['', '-', '_', '-_', '_-']) {
+      const identifier = ['client', 'obs', '657'].join(separator);
+      const fullWidth = identifier.replace(/[!-~]/g, (character) => String.fromCharCode(character.charCodeAt(0) + 0xFEE0));
+      for (const title of [identifier, `${identifier}.`, `Guide (${identifier})`, fullWidth]) {
+        expect(documentTitle(title, 'docs/guide.md', options).text, title).toBe('guide');
+      }
+      expect(documentTitle(null, `docs/${identifier}.md`, options).text, identifier).toBe(numbered);
+    }
+  });
+
+  it.each(['zh-CN', 'en-US'])('uses readable source headings and replaces technical headings in %s', (language) => {
+    const options = { language, position: 3 };
+    expect(documentTitle('Delivery guide', 'docs/guide.md', options).text).toBe('Delivery guide');
+    expect(documentTitle('Delivery guide v2', 'docs/guide.md', options).text).toBe('Delivery guide v2');
+    for (const title of ['/var/lib/awr-beta/sources/private/customer-plan', 'C:\\private\\customer-plan',
+      'status=claimed reason=Forbidden', 'Source /private/project', 'client_id=private-client',
+      'CursorExpired', 'a'.repeat(64), 'AWR-OBS-657', 'client-obs-657', 'docs/guide.md', 'Review docs/private/guide']) {
+      const label = documentTitle(title, 'docs/guide.md', options).text;
+      expect(label).toBe('guide');
+      expect(findForbiddenVisibleText(label)).toEqual([]);
+    }
+    for (const title of ['claimed', 'claimed.', 'clientobs657', 'status claimed actor clientobs657', 'status claimed actor member', 'restric\u200bted']) {
+      expect(documentTitle(title, 'docs/clientobs657.md', options).text).toBe(language === 'zh-CN' ? '文档 3' : 'Document 3');
+    }
+    expect(documentTitle(null, 'docs/client-obs-657.md', options).text).toBe(language === 'zh-CN' ? '文档 3' : 'Document 3');
+    for (const status of PROJECT_DOCUMENT_STATUSES) {
+      const fullWidth = status.replace(/[!-~]/g, (character) => String.fromCharCode(character.charCodeAt(0) + 0xFEE0));
+      for (const title of [status, `${status}.`, `status ${status}, actor member`, `status (${status}) actor member`, fullWidth]) {
+        expect(documentTitle(title, 'docs/guide.md', options).text).toBe('guide');
+      }
+      for (const file of [`${status}.md`, `${status}-.md`, `${status}_.md`]) {
+        expect(documentTitle(null, `docs/${file}`, options).text).toBe(language === 'zh-CN' ? '文档 3' : 'Document 3');
+      }
+    }
+  });
+});
 
 describe('actorAliases', () => {
   it('numbers the real run-09 actors the same way whatever order the events arrive in', () => {

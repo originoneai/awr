@@ -1185,7 +1185,7 @@ fn catalog() -> Vec<Tool> {
             "description":"Optional category filter for audit.history, audit.export or audit.count."},
         "include_denies":{"type":"boolean",
             "description":"Optional for audit.history, audit.export or audit.count; authorization still applies."},
-        "search":{"type":"string","maxLength":512,"description":"Required for work.search; optional literal, case-insensitive member-name substring for task.assignees."},"cursor":{"type":"string","maxLength":4096},
+        "search":{"type":"string","maxLength":512,"description":"Required for work.search; optional literal, case-insensitive name substring for task.assignees or documents.list."},"cursor":{"type":"string","maxLength":4096},
         "limit":{"type":"integer","minimum":1,"maximum":100},
         "max_context_bytes":{"type":"integer","minimum":1,"maximum":WorkstreamQuery::MAX_ARTIFACT_BYTES,
             "description":"Defaults stay bounded. Only artifact.content accepts up to 1 MiB of raw bytes; other query budgets are at most 256 KiB. artifact.segment requires expected_sha256 and uses 1..4096 raw bytes per page (default 2048); follow next_query and verify the complete digest. JSON/base64 and metadata add transport overhead."},
@@ -1195,6 +1195,8 @@ fn catalog() -> Vec<Tool> {
         "expected_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"}
     }});
     query["allOf"] = json!([
+        {"if":{"properties":{"op":{"const":"documents.list"}},"required":["op"]},
+            "then":{"not":{"required":["session_id"]}}},
         {"if":{"properties":{"op":{"const":"dependencies.list"}},"required":["op"]},
             "then":{"not":{"required":["session_id"]}}},
         {"if":{"properties":{"op":{"const":"handoff.list"}},"required":["op"]},

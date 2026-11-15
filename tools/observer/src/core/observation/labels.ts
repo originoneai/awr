@@ -1,5 +1,7 @@
-import { ACTION_VOCABULARY, ARTIFACT_VOCABULARY, CHECK_VOCABULARY, FORBIDDEN_VISIBLE_PATTERNS, humanText } from '../../i18n/human-language';
-import { statementText } from './values';
+import { ACTION_VOCABULARY, ARTIFACT_VOCABULARY, CHECK_VOCABULARY, FORBIDDEN_VISIBLE_PATTERNS, STATUS_LABELS, humanText } from '../../i18n/human-language';
+import { STATUS_FIELDS, statementText } from './values';
+import { readableSentence } from './readable';
+import { PROJECT_DOCUMENT_STATUSES } from './types';
 import type { ActionWordsResult, ActorAliasEntry, ActorAliasResult, ArtifactLabelResult, CheckLabelResult, DocumentLabelResult, WorkLabelResult } from './types';
 
 function present(value: string | null | undefined): value is string {
@@ -109,6 +111,43 @@ export function documentLabel(path: unknown, options: { language: string; positi
     return { kind: 'numbered', text: numbered, technical: { raw } };
   }
   return { kind: 'named', text: name, technical: { raw } };
+}
+
+function documentNameWords(text: string): string[] {
+  return text.normalize('NFKC').toLowerCase().match(/[a-z0-9]+/g) ?? [];
+}
+
+const documentNameStatuses = [...new Set(
+  [...Object.keys(STATUS_LABELS), ...PROJECT_DOCUMENT_STATUSES]
+    .map((status) => documentNameWords(status).join(' ')).filter(Boolean),
+)];
+
+function readableDocumentName(raw: string, language: string): boolean {
+  const canonical = raw.normalize('NFKC');
+  const pathReference = /(?:^|[\s("'`])(?:[a-z]:[\\/]|~?[\\/]|\S+[\\/])\S+/i;
+  const diagnosticFields = /\b[a-z][a-z0-9_.-]*\s*[=:]\s*\S/i;
+  const identifierReference = /\b(?:[a-z0-9]+-)+[a-z0-9]*\d[a-z0-9]*\b/i;
+  const refusalCode = /\b(?:Forbidden|Unauthenticated|SessionExpired|CursorExpired|ContextIncomplete|ResponseTooLarge|InvalidInput|BadGateway)\b/i;
+  const words = documentNameWords(canonical);
+  const tokens = canonical.toLowerCase().match(/[a-z0-9_-]+/g) ?? [];
+  const phrase = words.join(' ');
+  const hasStatus = documentNameStatuses.some((status) => ` ${phrase} `.includes(` ${status} `));
+  const hasField = words.some((word) => STATUS_FIELDS.has(word) || ['actor', 'client', 'reason', 'source', 'request'].includes(word));
+  const hasOpaqueToken = tokens.some((token) => /^(?=.*[a-z])(?=.*\d)[a-z0-9_-]+$/.test(token) && !/^v\d+$/.test(token));
+  return !/[\p{Cc}\p{Cf}]/u.test(raw) && !documentNameStatuses.includes(phrase) && !(hasField && hasStatus) && !hasOpaqueToken
+    && readableSentence(canonical, language) === canonical && !readsAsReference(canonical)
+    && !pathReference.test(canonical) && !diagnosticFields.test(canonical) && !identifierReference.test(canonical)
+    && !refusalCode.test(canonical) && !FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(canonical));
+}
+
+/** Source headings and filename fallbacks use the same admission before becoming product labels. */
+export function documentTitle(title: unknown, path: unknown, options: { language: string; position: number }): DocumentLabelResult {
+  const raw = statementText(title);
+  if (raw !== null && readableDocumentName(raw, options.language)) return { kind: 'named', text: raw, technical: { raw } };
+  const file = statementText(path)?.split(/[\\/]/).at(-1)?.replace(/(?<=.)\.[A-Za-z0-9]{1,8}$/, '');
+  const fallback = documentLabel(path, options);
+  return file && readableDocumentName(file, options.language) && readableDocumentName(fallback.text, options.language)
+    ? fallback : documentLabel(null, options);
 }
 
 /**

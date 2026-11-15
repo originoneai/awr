@@ -1,6 +1,8 @@
 import type { OperationKind } from '../../i18n/human-language';
 import type { TeamActivityItem } from '../../lib/types';
 
+export const PROJECT_DOCUMENT_STATUSES = ['available', 'missing', 'restricted', 'changed', 'unverified', 'too_large'] as const;
+
 export type SemanticTone = 'neutral' | 'accent' | 'positive' | 'warning' | 'negative';
 
 export interface RawObservationTextResult {

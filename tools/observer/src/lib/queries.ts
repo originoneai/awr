@@ -14,6 +14,7 @@ import type {
   WorkSnapshotData,
   PlanningCandidatesData,
   RequiredSourcesData,
+  ProjectDocumentsData,
 } from './types';
 
 // AWR-前后端能力审查完整清单.md:212 and reviewer-web.md:22 require a 5 s
@@ -27,7 +28,7 @@ export const SNAPSHOT_SLOW_POLL_INTERVAL_MS = 600000;
 const snapshotReadLimit = pLimit(4);
 
 function retryRead(failureCount: number, error: unknown) {
-  return !isAuthError(error) && failureCount < 1;
+  return !isAuthError(error) && !(error instanceof ApiError && error.code === 'CursorExpired') && failureCount < 1;
 }
 
 // Cursor-bound pages retain their resource cadence to recheck current visibility.
@@ -90,7 +91,7 @@ export function overviewQueryOptions(project: string | null, revoked = false) {
 
 /** Capabilities is the flat discovery response; object reads carry a data envelope. */
 interface CapabilitiesResponse {
-  result: { identity?: TeamIdentity };
+  result: { identity?: TeamIdentity; queries?: string[] };
 }
 
 export function capabilitiesQueryOptions(project: string, revoked = false) {
@@ -125,15 +126,29 @@ export function activityQueryOptions(project: string | null, revoked = false, wo
 
 interface TeamReadQuery {
   protocol_version: 1;
-  op: 'work.next' | 'work.inbox' | 'work.snapshot' | 'review.inspect' | 'source.content' | 'planning.candidates' | 'sources.inspect';
+  op: 'work.next' | 'work.inbox' | 'work.snapshot' | 'review.inspect' | 'source.content' | 'planning.candidates' | 'sources.inspect' | 'documents.list';
   work_id?: string;
   workstream_id?: string;
   review_round_id?: string;
   source_path?: string;
   expected_sha256?: string;
   cursor?: string;
+  search?: string;
   limit?: number;
   max_context_bytes?: number;
+}
+
+export function projectDocumentsQueryOptions(project: string, search: string, cursor: string | null, revoked: boolean) {
+  return {
+    queryKey: ['team', 'documents.list', project, search, cursor],
+    queryFn: ({ signal }: { signal: AbortSignal }) => teamRead<ProjectDocumentsData>(project, {
+      protocol_version: 1, op: 'documents.list', limit: 20, max_context_bytes: 262144,
+      ...(search ? { search } : {}), ...(cursor ? { cursor } : {}),
+    }, signal),
+    enabled: Boolean(project) && !revoked,
+    ...readQueryDefaults,
+    refetchInterval: SNAPSHOT_POLL_INTERVAL_MS,
+  } satisfies UseQueryOptions<TeamReadResponse<ProjectDocumentsData>>;
 }
 
 function teamRead<T>(project: string, query: TeamReadQuery, signal?: AbortSignal) {
@@ -259,6 +274,7 @@ export function sourceContentQueryOptions(
         op: 'source.content',
         source_path: sourcePath,
         expected_sha256: expectedSha256,
+        max_context_bytes: 262144,
       }, signal);
     },
     enabled: !revoked,

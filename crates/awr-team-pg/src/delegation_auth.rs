@@ -560,6 +560,7 @@ pub(crate) async fn resolve_agent_read_delegation(
                     | "work.search"
                     | "planning.candidates"
                     | "sources.inspect"
+                    | "documents.list"
                     | "handoff.list"
                     | "dependencies.list"
                     | "events.list"

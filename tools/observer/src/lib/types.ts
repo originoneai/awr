@@ -1,3 +1,4 @@
+import type { PROJECT_DOCUMENT_STATUSES } from '../core/observation/types';
 import type { PlaneState } from './contract';
 
 /** One freshness plane as the bridge reports it (see observation-contract). */
@@ -313,6 +314,33 @@ export interface SourceContentData {
   kind?: string;
   snapshot?: string;
   [key: string]: unknown;
+}
+
+export interface ProjectDocument {
+  document_position: number;
+  path: string | null;
+  name: string | null;
+  summary: string | null;
+  summary_kind: 'source_excerpt';
+  sha256: string | null;
+  byte_length: number | null;
+  source_kind: 'registered_source';
+  readable: boolean;
+  status: (typeof PROJECT_DOCUMENT_STATUSES)[number];
+  reason: string | null;
+}
+
+export interface ProjectDocumentsData {
+  work_id: string | null;
+  items: ProjectDocument[];
+  total: number;
+  next_cursor: string | null;
+  truncated: boolean;
+  read_only: true;
+  execution_authorized: false;
+  scope: 'work' | 'authorized_workstreams';
+  content_read_limit_bytes: number;
+  as_of: { at_unix_ms: number; source_snapshot_id: string; project_revision: string };
 }
 
 export interface WorkSnapshotData {
