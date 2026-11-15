@@ -74,18 +74,26 @@ pub(super) async fn read_for_prepare(
     // complete current responsibility/version and pending assignment.
     responsibility["owner_person_id"] = responsibility["owner"].clone();
     responsibility["executor_agent_id"] = responsibility["current_executor"]["agent_id"].clone();
-    responsibility["owner_name"] = tx
-        .query_opt(
-            "SELECT display_name FROM awr_team.persons
-        WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
-            &[
-                &tenant,
-                &project,
-                &responsibility["owner_person_id"].as_str(),
-            ],
-        )
-        .await?
-        .map_or(Value::Null, |r| json!(r.get::<_, String>(0)));
+    let names = tx.query_one("SELECT owner.display_name,pending.display_name,executor.display_name,agent.display_name
+        FROM (SELECT 1) selected
+        LEFT JOIN awr_team.persons owner ON owner.tenant_id=$1 AND owner.project_id=$2 AND owner.id=$3::text
+        LEFT JOIN awr_team.persons pending ON pending.tenant_id=$1 AND pending.project_id=$2 AND pending.id=$4::text
+        LEFT JOIN awr_team.persons executor ON executor.tenant_id=$1 AND executor.project_id=$2 AND executor.id=$5::text
+        LEFT JOIN awr_team.actors agent ON agent.tenant_id=$1 AND agent.id=$6::text",
+        &[&tenant,&project,&responsibility["owner_person_id"].as_str(),
+            &responsibility["pending"]["person_id"].as_str(),&responsibility["current_executor"]["person_id"].as_str(),
+            &responsibility["current_executor"]["agent_id"].as_str()]).await?;
+    for (index, field) in [
+        "owner_name",
+        "pending_name",
+        "executor_person_name",
+        "executor_agent_name",
+    ]
+    .iter()
+    .enumerate()
+    {
+        responsibility[*field] = json!(names.get::<_, Option<String>>(index));
+    }
     let session = tx.query_opt("SELECT s.id,s.actor_id,a.display_name,s.client_id,s.state,c.id,
           c.contract_hash,c.next_action,c.open_loops_json,(extract(epoch FROM c.created_at)*1000)::bigint,
           s.session_version

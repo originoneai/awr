@@ -146,7 +146,7 @@ describe('effective plan table', () => {
     expect(screen.getByTestId('plan-owner-W1').textContent).toBe('加载中…');
     await act(async () => { release(); });
     await waitFor(() => expect(screen.getByTestId('plan-status-W1').textContent).toBe('已认领'));
-    expect(screen.getByTestId('plan-owner-W1').textContent).toBe('lin');
+    expect(screen.getByTestId('plan-owner-W1').textContent).toBe('未提供');
   });
 
   it('refreshes the progress words of the list slowly, ten minutes, and the selected work\'s own detail fast', async () => {
@@ -187,7 +187,7 @@ describe('effective plan table', () => {
     expect(screen.getByTestId('workstream-group-WS1').textContent).toContain('Backend workstream');
     expect(screen.getByTestId('workstream-group-WS2').textContent).toContain('Frontend workstream');
     await waitFor(() => expect(screen.getByTestId('plan-status-W1').textContent).toBe('已认领'));
-    expect(screen.getByTestId('plan-owner-W1').textContent).toBe('lin');
+    expect(screen.getByTestId('plan-owner-W1').textContent).toBe('未提供');
     expect(screen.getByRole('radio', { name: '看板' })).toHaveProperty('disabled', true);
     expect(screen.queryByRole('button', { name: '提出需求' })).toBeNull();
 

@@ -2,21 +2,33 @@ import { describe, expect, it } from 'vitest';
 import { ApiError } from './api';
 import { activityListQueryOptions } from './activity';
 import { outcomeQueryOptions, reviewRoundsQueryOptions } from './outcome';
+import { dependenciesQueryOptions, handoffsQueryOptions } from './collaboration';
 import {
   activityQueryOptions,
   createAppQueryClient,
   capabilitiesQueryOptions,
   overviewQueryOptions,
+  planningCandidatesQueryOptions,
   POLL_INTERVAL_MS,
   projectsQueryOptions,
   queryKeys,
   readQueryDefaults,
+  requiredSourcesQueryOptions,
+  SNAPSHOT_POLL_INTERVAL_MS,
   workSnapshotQueryOptions,
 } from './queries';
 
 describe('TanStack Query read configuration (observation contract bounds)', () => {
   it('polls at the documented cadence', () => {
     expect(readQueryDefaults.refetchInterval).toBe(POLL_INTERVAL_MS);
+  });
+
+  it('keeps authorization and currentness checks active on every cursor page', () => {
+    expect(dependenciesQueryOptions('demo', null, 'page-two', false).refetchInterval).toBe(POLL_INTERVAL_MS);
+    expect(handoffsQueryOptions('demo', 'W1', 'page-two', false).refetchInterval).toBe(POLL_INTERVAL_MS);
+    expect(reviewRoundsQueryOptions('demo', 'W1', 'WS1', 'page-two', false).refetchInterval).toBe(POLL_INTERVAL_MS);
+    expect(planningCandidatesQueryOptions('demo', null, 'page-two', false).refetchInterval).toBe(SNAPSHOT_POLL_INTERVAL_MS);
+    expect(requiredSourcesQueryOptions('demo', null, null, 'page-two', false).refetchInterval).toBe(SNAPSHOT_POLL_INTERVAL_MS);
   });
 
   it('refetches on window focus without retaining data across a new query key', () => {

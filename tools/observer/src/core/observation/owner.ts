@@ -21,7 +21,7 @@ export const IDENTIFIER_PATTERN_IDS = new Set(['snake_case', 'operation_name', '
  * Does this raw value read as a person's name — short, letters (any script), spaces, dots,
  * hyphens and apostrophes, no identifier shape the guard already knows and no long digit runs?
  * A machine identifier in the owner field is not shown as a name; the raw value stays for the
- * technical details.
+ * backend records.
  */
 export function readsAsName(value: string): boolean {
   if (value.length === 0 || value.length > 40) return false;
@@ -35,8 +35,8 @@ export function readsAsName(value: string): boolean {
 
 /**
  * Who is responsible for one work, in the words the data actually holds: the overview row's own
- * owner field when it has one, else the snapshot's responsibility (the owner's name, else the
- * owner id as written — a short person id reads as a name); a read that has not come back yet
+ * owner field when it has one, else the snapshot's explicit owner name. Identifiers never
+ * substitute for a display name. A read that has not come back yet
  * says it is loading rather than "not provided", which is a claim the page cannot make while
  * the answer is still on its way; a failed read or no responsibility at all leaves the honest
  * "not provided".
@@ -57,13 +57,8 @@ export function deriveOwner(input: {
     return { name: null, source: 'none', loading: true, technical };
   }
   if (input.readState === 'ready') {
-    // The recorded name is shown as written; the bare owner field only when it reads as a
-    // name — an id shape is not a name, whatever it says.
     if (technical.snapshotOwnerName != null) {
       return { name: technical.snapshotOwnerName, source: 'snapshot', loading: false, technical };
-    }
-    if (technical.snapshotOwner != null && readsAsName(technical.snapshotOwner)) {
-      return { name: technical.snapshotOwner, source: 'snapshot', loading: false, technical };
     }
   }
   return { name: null, source: 'none', loading: false, technical };
