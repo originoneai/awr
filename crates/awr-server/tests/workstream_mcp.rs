@@ -2314,7 +2314,12 @@ async fn sdk_clients_negotiate_tools_and_isolate_workstreams_on_one_service() {
     let tools = a.list_all_tools().await.unwrap();
     // Query/command, input contracts, connections, directory, member access and
     // planning are discoverable; calls still recheck effective authority.
-    assert_eq!(tools.len(), 19);
+    assert_eq!(tools.len(), 20);
+    assert!(
+        tools
+            .iter()
+            .any(|tool| tool.name == "awr_team_planning_reject")
+    );
     let caps = call(
         &a,
         "awr_team_query",
