@@ -722,6 +722,12 @@ test('ordinary question reads preserve confirmed responses and refuse malformed 
     result = questionPage('replied');
     result.data.items[0].resolution.at_unix_ms = 500;
     assert.equal((await read('replied')).json.error.code, 'BadGateway');
+    result = questionPage();
+    result.data.items[0].workstream_id = 'OTHER';
+    const workOnly = await req(bridge.base, 'POST', '/api/team/read', { body: { project: 'demo', query: {
+      protocol_version: 1, op: 'decisions.list', work_id: 'WORK', decision_id: 'question', limit: 1,
+    } } });
+    assert.equal(workOnly.json.error.code, 'BadGateway');
     for (const extra of [{ session_id: 'private' }, { decision_state: 'private' }, { question: 'private' }]) {
       assert.equal((await read('open', extra)).json.error.code, 'InvalidInput');
     }

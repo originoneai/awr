@@ -690,7 +690,7 @@ function readAttributionError(query, result, { strictWorkstream } = {}) {
       || typeof result.authority_version !== 'string' || !/^[1-9]\d*$/.test(result.authority_version))
     || new Set(data.items.map((item) => item.decision_id)).size !== data.items.length
     || data.items.some((item, index) => query.work_id && item.work_id !== query.work_id
-      || query.workstream_id && item.workstream_id !== query.workstream_id
+      || (query.work_id || query.workstream_id) && item.workstream_id !== result.workstream_id
       || query.decision_id && item.decision_id !== query.decision_id
       || data.decision_state !== 'all' && item.state !== data.decision_state
       || index > 0 && data.items[index - 1].decision_id <= item.decision_id))) {
