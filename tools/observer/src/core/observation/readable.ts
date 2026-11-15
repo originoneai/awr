@@ -79,7 +79,7 @@ function removeDiagnosticAssignments(text: string): string {
 }
 
 function diagnosticContent(text: string): boolean {
-  return /[{}]|```|\[\s*(?:["'\[\d]|true\b|false\b|null\b)/i.test(text)
+  return /[{}\[\]]|```/.test(text)
     || [...text.matchAll(/["']?\b([a-z][a-z0-9_-]*)["']?\s*([:：=])/gi)]
       .some(([, field, separator]) => SENSITIVE_FIELD.test(field)
         || separator === '=' || /[_-]|[a-z][A-Z]/.test(field))
@@ -111,7 +111,7 @@ function businessUrl(text: string, reference: string): string {
     const value = decodeReferencePart(rawValue);
     if (decodedField === null || value === null) return reference;
     const field = decodedField.toLowerCase();
-    if (SENSITIVE_FIELD.test(field) || diagnosticContent(value)) return reference;
+    if (SENSITIVE_FIELD.test(field) || diagnosticContent(decodedField) || diagnosticContent(value)) return reference;
     if (internalField(field) || DIAGNOSTIC_FIELDS.has(field) && diagnosticValue(field, value)) {
       url.searchParams.delete(rawField);
       changed = true;

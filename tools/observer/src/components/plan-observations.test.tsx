@@ -174,6 +174,11 @@ describe('plan observation product views', () => {
         .flatMap((field) => [`${field}=synthetic-session-value`, `Review https://example.com/guide?${field}=synthetic-session-value`]),
       'Review https://example.com/guide#%61%75%74%68%5f%74%6f%6b%65%6e=synthetic-session-value',
       'Review https://example.com/%63%6c%69%65%6e%74%5f%73%65%63%72%65%74=synthetic-session-value',
+      ...['client[secret]', 'auth[token]', 'headers[authorization]'].flatMap((field) => [
+        `${field}=synthetic-session-value`,
+        `Review https://example.com/guide?${encodeURIComponent(field)}=synthetic-session-value`,
+        `Review https://example.com/guide#${encodeURIComponent(field)}=synthetic-session-value`,
+      ]),
     ];
     const { container } = mount((q) => response(q.op === 'sources.inspect' ? documents() : {
       items: reasons.map((reason, index) => candidate({ candidate_id: `${INTERNAL}-${index}`,

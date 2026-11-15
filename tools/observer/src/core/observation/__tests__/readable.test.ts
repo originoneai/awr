@@ -43,6 +43,21 @@ describe('readableNarrative', () => {
         }
       }
     }
+    for (const field of ['client[secret]', 'auth[token]', 'headers[authorization]', 'headers[0][authorization]',
+      'configuration[opaque]', 'credentials[key]']) {
+      for (const separator of ['=', ':']) {
+        expect(readableNarrative(`Clarify scope. ${field}${separator}synthetic-bracket-value`, language)).toBeNull();
+      }
+      let encoded = field;
+      for (let depth = 0; depth < 6; depth += 1) {
+        for (const url of [`https://example.com/${encoded}=synthetic-bracket-value`,
+          `https://example.com/guide#${encoded}=synthetic-bracket-value`,
+          `https://example.com/guide?${encoded}=synthetic-bracket-value`]) {
+          expect(readableNarrative(`Review ${url}`, language) ?? '', url).not.toContain('synthetic-bracket-value');
+        }
+        encoded = encodeURIComponent(encoded);
+      }
+    }
   });
 
   it.each(['zh-CN', 'en-US'])('preserves business reasons while removing internal references in %s', (language) => {
