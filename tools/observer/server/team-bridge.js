@@ -41,10 +41,10 @@ const READ_WORK_SELECTION = new Set(['work.prepare', 'work.admission', 'work.sna
   'handoff.inspect', 'evidence.inspect', 'review.inspect', 'review.rounds', 'completion.inspect',
   'delivery.inspect', 'artifact.content', 'artifact.segment', 'delivery.exports']);
 const READ_PAGED = new Set(['workstreams.list', 'work.list', 'work.graph', 'work.search', 'events.list',
-  'work.next', 'work.inbox', 'task.assignees', 'delivery.exports', 'planning.candidates', 'sources.inspect', 'review.rounds', 'handoff.list']);
+  'work.next', 'work.inbox', 'task.assignees', 'delivery.exports', 'planning.candidates', 'sources.inspect', 'review.rounds', 'handoff.list', 'dependencies.list']);
 const READ_CONTEXT_BUDGET = new Set(['work.prepare', 'work.snapshot', 'work.observe', 'work.inbox',
   'source.content', 'artifact.content', 'artifact.segment', 'review.inspect',
-  'delivery.neutral.inspect', 'delivery.submission.describe', 'planning.candidates', 'sources.inspect', 'review.rounds', 'handoff.list']);
+  'delivery.neutral.inspect', 'delivery.submission.describe', 'planning.candidates', 'sources.inspect', 'review.rounds', 'handoff.list', 'dependencies.list']);
 const READ_REQUIRED_SELECTOR = {
   'command.inspect': 'request_id',
   'planning.outcome': 'request_id',
@@ -83,6 +83,7 @@ const READ_ECHOES = {
   'sources.inspect': [{ path: ['work_id'], selector: 'work_id' }],
   'review.rounds': [{ path: ['work_id'], selector: 'work_id' }],
   'handoff.list': [{ path: ['work_id'], selector: 'work_id' }],
+  'dependencies.list': [{ path: ['work_id'], selector: 'work_id' }],
   'review.inspect': [
     { path: ['review', 'work_id'], selector: 'work_id' },
     { path: ['review', 'round_id'], selector: 'review_round_id' },
@@ -143,7 +144,7 @@ function validateReadQuery(query) {
     // Navigation reads are selector-free.
   } else if (READ_WORK_LIST.has(op)) {
     allowIds('workstream_id');
-  } else if (op === 'sources.inspect') {
+  } else if (op === 'sources.inspect' || op === 'dependencies.list') {
     allowIds('work_id', 'workstream_id');
   } else if (op === 'handoff.list') {
     allowIds('work_id', 'workstream_id', 'recipient_person_id');
@@ -251,7 +252,105 @@ function validReadResponse(reply, op) {
   if (op === 'sources.inspect') return validRequiredSources(reply);
   if (op === 'review.rounds') return validReviewRounds(reply);
   if (op === 'handoff.list') return validHandoffs(reply);
+  if (op === 'dependencies.list') return validDependencies(reply);
+  if (op === 'delivery.inspect' && data.delivery?.dependencies !== undefined) {
+    return Array.isArray(data.delivery.dependencies) && data.delivery.dependencies.every((item) =>
+      validDependency(item, data.delivery.work_id) && !('work_title' in item) && !('dependency_position' in item));
+  }
   return true;
+}
+
+function validDependency(item, work) {
+  const fields = new Set(['work_id', 'provider_work_id', 'provider_title', 'version_policy', 'review_assurance',
+    'required_version', 'available_version', 'adopted_version', 'consumed_version', 'adoption_valid',
+    'validity', 'reason', 'missing', 'work_title', 'dependency_position']);
+  const versionFields = ['required_version', 'available_version', 'adopted_version', 'consumed_version'];
+  const missingFields = ['provider_title', ...versionFields];
+  const version = (value) => value === null || asObject(value)
+    && Object.keys(value).length === 3
+    && Object.keys(value).every((key) => ['receipt_id', 'contract_hash', 'source_snapshot_id'].includes(key))
+    && (value.receipt_id === null || isBoundedId(value.receipt_id))
+    && typeof value.contract_hash === 'string' && /^[0-9a-f]{64}$/.test(value.contract_hash)
+    && (value.source_snapshot_id === null || isBoundedId(value.source_snapshot_id));
+  if (!asObject(item) || !Object.keys(item).every((key) => fields.has(key))
+    || !isBoundedId(item.work_id) || work != null && item.work_id !== work || !isBoundedId(item.provider_work_id)
+    || !(item.provider_title === null || typeof item.provider_title === 'string')
+    || !['current_contract', 'fixed_delivery'].includes(item.version_policy)
+    || !['valid', 'upstream_changed', 'unavailable'].includes(item.validity)
+    || !(item.reason === null || isBoundedId(item.reason))
+    || !(item.adoption_valid === null || typeof item.adoption_valid === 'boolean')
+    || !versionFields.every((key) => version(item[key])) || !asObject(item.missing)
+    || Object.keys(item.missing).length !== missingFields.length
+    || !Object.keys(item.missing).every((key) => missingFields.includes(key))
+    || !missingFields.every((key) => item[key] === null ? isBoundedId(item.missing[key]) : item.missing[key] === null)
+    || item.validity === 'valid' && (item.available_version === null || item.required_version === null || item.reason !== null)
+    || item.validity === 'unavailable' && item.available_version !== null
+    || item.required_version !== null && item.available_version !== null
+      && item.required_version.contract_hash !== item.available_version.contract_hash
+    || item.validity !== 'valid' && item.reason === null) return false;
+  const assurance = item.review_assurance;
+  if (assurance !== null && !['agent_reviewed_caller_asserted_reconciled', 'simulated_member_independent'].includes(assurance)) {
+    const policy = asObject(assurance?.cross_workstream);
+    if (!asObject(assurance) || Object.keys(assurance).length !== 1 || !policy
+      || Object.keys(policy).length !== 2
+      || !['team_independent', 'simulated_member_independent'].includes(policy.review_assurance)
+      || policy.version_policy !== item.version_policy) return false;
+  }
+  for (const field of ['available_version', 'adopted_version', 'consumed_version']) {
+    if (item[field] !== null && !isBoundedId(item[field].receipt_id)) return false;
+  }
+  const sameVersion = (left, right) => {
+    if (left === null || right === null) return left === right;
+    return ['receipt_id', 'contract_hash', 'source_snapshot_id'].every((field) => left[field] === right[field]);
+  };
+  const sameReceipt = (left, right) => left !== null && right !== null
+    && left.receipt_id === right.receipt_id && left.contract_hash === right.contract_hash;
+  if (asObject(assurance)?.cross_workstream) {
+    if (item.adoption_valid === true) {
+      if (item.adopted_version === null || !sameVersion(item.required_version, item.adopted_version)
+        || !sameVersion(item.available_version, item.adopted_version)
+        || item.version_policy === 'fixed_delivery' && item.adopted_version.source_snapshot_id === null) return false;
+    } else if (item.adopted_version !== null || item.available_version !== null || item.validity === 'valid'
+      || (item.adoption_valid === null || item.version_policy === 'fixed_delivery')
+        && item.validity !== 'unavailable') return false;
+  } else if (item.adoption_valid !== null || item.version_policy !== 'current_contract'
+    || !sameVersion(item.adopted_version, item.consumed_version)) return false;
+  if (item.validity === 'valid' && item.consumed_version !== null
+    && !sameReceipt(item.consumed_version, item.available_version)) return false;
+  return true;
+}
+
+function validDependencies(reply) {
+  const data = reply.data, asOf = asObject(data.as_of);
+  const envelopeFields = new Set(['protocol_version', 'scope_id', 'coordinator_epoch', 'project_status',
+    'source_snapshot_id', 'project_revision', 'data', 'workstream_id', 'authority_version']);
+  const fields = new Set(['work_id', 'items', 'total', 'next_cursor', 'truncated', 'count_scope', 'count_limited',
+    'hidden_count', 'execution_authorized', 'as_of']);
+  if (!Object.keys(reply).every((key) => envelopeFields.has(key))
+    || !Object.keys(data).every((key) => fields.has(key))
+    || !isBoundedId(reply.source_snapshot_id) || !isBoundedId(reply.coordinator_epoch)
+    || ['project_status', 'workstream_id'].some((key) => key in reply && !isBoundedId(reply[key]))
+    || 'authority_version' in reply && (typeof reply.authority_version !== 'string' || !/^[1-9]\d*$/.test(reply.authority_version))
+    || !(data.work_id === null || isBoundedId(data.work_id))
+    || !Array.isArray(data.items) || data.items.length > 100
+    || !Number.isSafeInteger(data.total) || data.total < data.items.length
+    || !(data.next_cursor === null || isBoundedCursor(data.next_cursor))
+    || data.truncated !== (data.next_cursor !== null) || data.execution_authorized !== false
+    || data.count_scope !== 'authorized_matches' || data.count_limited !== true || data.hidden_count !== null
+    || !asOf || Object.keys(asOf).length !== 3
+    || !Object.keys(asOf).every((key) => ['at_unix_ms', 'source_snapshot_id', 'project_revision'].includes(key))
+    || !Number.isSafeInteger(asOf.at_unix_ms) || asOf.at_unix_ms < 0
+    || asOf.source_snapshot_id !== reply.source_snapshot_id || asOf.project_revision !== reply.project_revision) return false;
+  const edges = new Set();
+  return data.items.every((item) => {
+    if (!validDependency(item, data.work_id) || typeof item.work_title !== 'string'
+      || !Number.isSafeInteger(item.dependency_position) || item.dependency_position < 1
+      || item.dependency_position > data.total) return false;
+    const key = JSON.stringify([item.work_id, item.provider_work_id]);
+    if (edges.has(key)) return false;
+    edges.add(key);
+    return true;
+  });
 }
 
 function validHandoffs(reply) {
@@ -501,6 +600,13 @@ function readAttributionError(query, result, { strictWorkstream } = {}) {
     || query.work_id && data.items.some((item) => item.work_id !== query.work_id)
     || query.recipient_person_id && data.items.some((item) => item.to_person_id !== query.recipient_person_id))) {
     return { code: 'BadGateway', message: 'Handoff observations are not attributable to the requested scope' };
+  }
+  if (query.op === 'dependencies.list' && (!validPageCoverage(data, query, 'dependency_position')
+    || !query.work_id && data.work_id !== null
+    || (query.work_id || query.workstream_id) && (!isBoundedId(result.workstream_id)
+      || typeof result.authority_version !== 'string' || !/^[1-9]\d*$/.test(result.authority_version))
+    || query.work_id && data.items.some((item) => item.work_id !== query.work_id))) {
+    return { code: 'BadGateway', message: 'Dependency observations are not attributable to the requested scope' };
   }
   if (data.execution_authorized === true) {
     return { code: 'BadGateway', message: 'A Team read response never authorizes execution' };
@@ -1391,6 +1497,25 @@ function createTeamBridge(opts) {
       }
       const query = { protocol_version: 1, op: 'review.rounds' };
       for (const key of ['work_id', 'session_id', 'workstream_id', 'cursor']) {
+        if (url.searchParams.has(key)) query[key] = url.searchParams.get(key);
+      }
+      for (const key of ['limit', 'max_context_bytes']) {
+        if (url.searchParams.has(key)) {
+          const value = url.searchParams.get(key);
+          query[key] = /^[1-9]\d*$/.test(value) ? Number(value) : null;
+        }
+      }
+      return routes['POST /api/team/read'](url, { project: url.searchParams.get('project'), query }, req, res);
+    },
+
+    'GET /api/team/dependencies': async (url, _body, req, res) => {
+      const allowed = new Set(['project', 'work_id', 'workstream_id', 'cursor', 'limit', 'max_context_bytes']);
+      if ([...url.searchParams.keys()].some((key) => !allowed.has(key) || url.searchParams.getAll(key).length !== 1)) {
+        return { ok: false, error: { code: 'InvalidInput', message: 'One bounded dependency read required' },
+          freshness: unmeasuredFreshness(Date.now()) };
+      }
+      const query = { protocol_version: 1, op: 'dependencies.list' };
+      for (const key of ['work_id', 'workstream_id', 'cursor']) {
         if (url.searchParams.has(key)) query[key] = url.searchParams.get(key);
       }
       for (const key of ['limit', 'max_context_bytes']) {

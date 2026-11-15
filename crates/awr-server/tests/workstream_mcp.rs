@@ -20,6 +20,66 @@ use std::time::Duration;
 type Client = RunningService<RoleClient, ()>;
 
 #[tokio::test]
+async fn dependency_observation_discovery_is_read_only_and_matches_http_delivery_inspection() {
+    let (_guard, admin, _, store) = setup().await;
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+    let tools = client.list_all_tools().await.unwrap();
+    let query_tool = tools
+        .iter()
+        .find(|tool| tool.name == "awr_team_query")
+        .unwrap();
+    assert!(
+        query_tool.input_schema["properties"]["op"]["enum"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("dependencies.list"))
+    );
+    let q = json!({"protocol_version":1,"op":"dependencies.list","work_id":"c",
+        "workstream_id":awr_core::Id::from(1).to_string(),"limit":1,"max_context_bytes":65536});
+    let before: i64 = admin
+        .query_one("SELECT count(*) FROM awr_team.events", &[])
+        .await
+        .unwrap()
+        .get(0);
+    let mcp = call(&client, "awr_team_query", q.clone(), false).await;
+    let response = http()
+        .post(format!("{}/one/query", server.url))
+        .bearer_auth(A)
+        .json(&q)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let http_result: Value = response.json().await.unwrap();
+    assert_eq!(mcp["data"]["items"], http_result["data"]["items"]);
+    assert_eq!(mcp["data"]["items"][0]["reason"], "permission_restricted");
+    assert!(mcp["data"]["items"][0]["provider_title"].is_null());
+    let inspect = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"delivery.inspect","work_id":"c"}),
+        false,
+    )
+    .await;
+    let mut edge = mcp["data"]["items"][0].clone();
+    edge.as_object_mut().unwrap().remove("dependency_position");
+    edge.as_object_mut().unwrap().remove("work_title");
+    assert_eq!(inspect["data"]["delivery"]["dependencies"], json!([edge]));
+    let mut invalid = q;
+    invalid["session_id"] = json!("session-a");
+    let refused = call(&client, "awr_team_query", invalid, true).await;
+    assert_eq!(refused["code"], "InvalidInput");
+    let after: i64 = admin
+        .query_one("SELECT count(*) FROM awr_team.events", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(before, after);
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
 async fn a_compact_catalog_client_lists_a_slim_command_tool_and_reads_every_contract_from_the_full_catalog()
  {
     let (_guard, _admin, _, store) = setup().await;

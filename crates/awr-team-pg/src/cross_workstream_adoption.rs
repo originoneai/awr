@@ -133,7 +133,7 @@ pub(crate) async fn apply(
     )
 }
 
-async fn selection(
+pub(crate) async fn selection(
     tx: &Transaction<'_>,
     tenant: &str,
     project: &str,

@@ -1624,9 +1624,35 @@ pub(crate) async fn required_dependencies_covered(
             }
             continue;
         }
-        let receipt = tx
-            .query_opt(
-                "SELECT r.id,r.independence_kind,r.policy,r.approved_by_json,
+        match current_dependency_receipt(
+            tx,
+            tenant_id,
+            project_id,
+            upstream,
+            scope_id,
+            modes.get(upstream).copied(),
+        )
+        .await?
+        {
+            Some(row) => links.push((upstream.clone(), row.get(0))),
+            None => return Ok((false, vec![])),
+        }
+    }
+    Ok((true, links))
+}
+
+/// The same current-receipt and assurance gate serves admission and observation.
+pub(crate) async fn current_dependency_receipt(
+    tx: &tokio_postgres::Transaction<'_>,
+    tenant_id: &str,
+    project_id: &str,
+    upstream: &str,
+    scope_id: &str,
+    mode: Option<awr_team::DependencyAcceptanceMode>,
+) -> PgResult<Option<tokio_postgres::Row>> {
+    let receipt = tx
+        .query_opt(
+            "SELECT r.id,r.independence_kind,r.policy,r.approved_by_json,
                     r.contract_hash,r.evidence_id,p.active_snapshot_id,r.execution_id,
                     e.execution_id,r.evidence_bundle_hash,e.digest,r.result_digest
                  FROM awr_team.completion_receipts r
@@ -1647,37 +1673,32 @@ pub(crate) async fn required_dependencies_covered(
                   AND e.contract_hash=r.contract_hash
                  WHERE r.tenant_id=$1 AND r.project_id=$2 AND r.work_id=$3
                    AND r.scope_id=$4",
-                &[&tenant_id, &project_id, upstream, &scope_id],
-            )
-            .await?;
-        match receipt {
-            Some(row) => {
-                let kind: Option<String> = row.get(1);
-                let mode = modes.get(upstream).copied();
-                let basis: Value = row.get(3);
-                let accepted = dependency_receipt_accepted(
-                    mode,
-                    kind.as_deref(),
-                    &row.get::<_, String>(2),
-                    &basis,
-                );
-                if !accepted {
-                    return Ok((false, vec![]));
-                }
-                if mode == Some(awr_team::DependencyAcceptanceMode::SimulatedMemberIndependent)
-                    && !simulated_dependency_verified(
-                        tx, tenant_id, project_id, upstream, &row, &basis,
-                    )
-                    .await?
-                {
-                    return Ok((false, vec![]));
-                }
-                links.push((upstream.clone(), row.get(0)));
+            &[&tenant_id, &project_id, &upstream, &scope_id],
+        )
+        .await?;
+    match receipt {
+        Some(row) => {
+            let kind: Option<String> = row.get(1);
+            let basis: Value = row.get(3);
+            let accepted = dependency_receipt_accepted(
+                mode,
+                kind.as_deref(),
+                &row.get::<_, String>(2),
+                &basis,
+            );
+            if !accepted {
+                return Ok(None);
             }
-            None => return Ok((false, vec![])),
+            if mode == Some(awr_team::DependencyAcceptanceMode::SimulatedMemberIndependent)
+                && !simulated_dependency_verified(tx, tenant_id, project_id, upstream, &row, &basis)
+                    .await?
+            {
+                return Ok(None);
+            }
+            Ok(Some(row))
         }
+        None => Ok(None),
     }
-    Ok((true, links))
 }
 
 pub(crate) async fn simulated_dependency_verified(

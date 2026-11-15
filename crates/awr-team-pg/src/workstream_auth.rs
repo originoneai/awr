@@ -611,6 +611,7 @@ pub fn query_business_action(op: &str) -> Option<awr_team::Action> {
         "execution.inspect",
         "handoff.inspect",
         "handoff.list",
+        "dependencies.list",
         "evidence.inspect",
         "review.inspect",
         "review.rounds",

@@ -1195,6 +1195,8 @@ fn catalog() -> Vec<Tool> {
         "expected_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"}
     }});
     query["allOf"] = json!([
+        {"if":{"properties":{"op":{"const":"dependencies.list"}},"required":["op"]},
+            "then":{"not":{"required":["session_id"]}}},
         {"if":{"properties":{"op":{"const":"handoff.list"}},"required":["op"]},
             "then":{"not":{"required":["session_id"]}},
             "else":{"not":{"anyOf":[{"required":["recipient_person_id"]},{"required":["handoff_state"]}]}}},
