@@ -159,6 +159,6 @@ mod tests {
     #[test]
     fn schema_contract_is_stable() {
         assert_eq!(SCHEMA, "awr_team");
-        assert_eq!(EXPECTED_SCHEMA_VERSION, 62);
+        assert_eq!(EXPECTED_SCHEMA_VERSION, 63);
     }
 }
