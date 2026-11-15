@@ -47,7 +47,7 @@ const zhCN = {
     failed: '暂时无法读取待决事项', retry: '重试', refresh: '刷新事项',
     emptyPending: '当前没有待答复的问题', emptyAll: '还没有记录过问题',
     updated: '最近查看于 {{time}}',
-    impact: '影响范围', requestedBy: '发起人', responders: '待答复人',
+    impact: '影响范围', requestedBy: '发起人', responders: '指定答复成员',
     answer: '已记录的答复', withdrawal: '撤回原因', answeredBy: '答复人', withdrawnBy: '撤回人',
     raisedAt: '发起时间', respondedAt: '记录时间',
     nameMissing: '姓名待补充', questionMissing: '请让 Agent 说明这项问题',
@@ -90,7 +90,7 @@ const zhCN = {
     recordsLater: '暂时无法读取连接记录。',
   },
   shell: {
-    unnamedProject: '项目名称待补充',
+    unnamedProject: '项目 {{number}} · 名称待补充',
     scope: '全部授权范围',
     searchPlaceholder: '搜索当前范围',
     notifications: '通知',

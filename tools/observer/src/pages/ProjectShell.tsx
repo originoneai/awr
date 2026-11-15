@@ -40,7 +40,7 @@ export function ProjectShell() {
         <Flex align="start" justify="space-between" gap={12} wrap>
           <Flex align="center" gap={8} wrap style={{ flex: '1 1 240px', minWidth: 0 }}>
               <Typography.Title level={4} style={{ margin: 0 }} data-testid="project-title">
-                {meta ? projectLabel(meta) : projects.isPending ? t('common.loading') : t('shell.unnamedProject')}
+                {meta ? projectLabel(meta, (projects.data?.projects.indexOf(meta) ?? 0) + 1) : projects.isPending ? t('common.loading') : t('shell.unnamedProject', { number: 1 })}
               </Typography.Title>
               {meta?.role ? <Tag><ObservationValue value={meta.role} field="role" /></Tag> : null}
           </Flex>

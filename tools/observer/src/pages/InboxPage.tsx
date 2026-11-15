@@ -4,26 +4,22 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { ObservationForbidden } from '../components/states';
-import { documentTitle } from '../core/observation';
+import { documentTitle, readableNarrative } from '../core/observation';
 import { ApiError, isAuthError } from '../lib/api';
 import { formatUnixMs } from '../lib/format';
-import { capabilitiesQueryOptions, ordinaryDecisionsQueryOptions } from '../lib/queries';
+import { ordinaryDecisionsQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
 import { useScope } from '../lib/scope';
 import type { OrdinaryDecision } from '../lib/types';
 
-/** Diagnostic-like statements stay in service history and never become interface text. */
-function productText(value: string | null, fallback: string, language: string): string {
-  const text = (value ?? '').trim();
-  const lines = text.split(/\r\n?|\n/).filter((line) => line.trim());
-  return lines.length > 0 && lines.every((line) => documentTitle(line, null, { language, position: 1 }).kind === 'named')
-    ? text : fallback;
-}
-
 function QuestionCard({ item, project }: { item: OrdinaryDecision; project: string }) {
   const { t, i18n } = useTranslation();
-  const text = (value: string | null, fallback: string) => productText(value, fallback, i18n.language);
-  const person = (name: string | null) => text(name, t('inbox.nameMissing'));
+  const text = (value: string | null, fallback: string) => readableNarrative(value ?? '', i18n.language) ?? fallback;
+  const name = (value: string | null, fallback: string) => {
+    const label = documentTitle(value, null, { language: i18n.language, position: 1 });
+    return label.kind === 'named' ? label.text : fallback;
+  };
+  const person = (value: string | null) => name(value, t('inbox.nameMissing'));
   const changed = !item.baseline_matches_current && item.state !== 'cancelled';
   const status = changed ? 'changed' : item.state;
   const resolved = item.state !== 'open' && item.resolution !== null;
@@ -32,7 +28,7 @@ function QuestionCard({ item, project }: { item: OrdinaryDecision; project: stri
     extra={<Tag color={status === 'replied' ? 'success' : status === 'cancelled' ? 'default' : 'warning'}>{t(`inbox.status.${status}`)}</Tag>}>
     <Space orientation="vertical" size={16} style={{ width: '100%' }}>
       <Link to={`/projects/${encodeURIComponent(project)}?tab=plan&work=${encodeURIComponent(item.work_id)}`}>
-        {text(item.work_title, t('inbox.workMissing'))}
+        {name(item.work_title, t('inbox.workMissing'))}
       </Link>
       {changed ? <Alert type="warning" showIcon title={t('inbox.changed')} /> : null}
       <section>
@@ -80,6 +76,11 @@ function ProjectQuestions({ project }: { project: string }) {
     if (!paging.cursor) void questions.refetch();
   };
   if (revoked || isAuthError(questions.error)) return <ObservationForbidden />;
+  if (questions.error instanceof ApiError && questions.error.code === 'Unsupported') return <Space orientation="vertical" size={12}>
+    <Typography.Text strong>{t('inbox.unavailable')}</Typography.Text>
+    <Typography.Text type="secondary">{t('inbox.unavailableHelp')}</Typography.Text>
+    <Link to={`/workbench?scope=${encodeURIComponent(project)}&tab=needs-me`}>{t('inbox.openWorkbench')}</Link>
+  </Space>;
   return <Space orientation="vertical" size={16} style={{ width: '100%' }} data-testid="project-questions">
     <Flex justify="space-between" align="center" gap={12} wrap>
       <Tabs activeKey={view} style={{ minWidth: 240 }} items={[
@@ -105,24 +106,6 @@ function ProjectQuestions({ project }: { project: string }) {
   </Space>;
 }
 
-function QuestionAvailability({ project }: { project: string }) {
-  const { t } = useTranslation();
-  const { revoked } = useRevocation();
-  const capabilities = useQuery(capabilitiesQueryOptions(project, revoked));
-  if (revoked || isAuthError(capabilities.error)) return <ObservationForbidden />;
-  if (capabilities.isPending) return <Typography.Text type="secondary">{t('common.loading')}</Typography.Text>;
-  if (capabilities.isError) return <Space orientation="vertical" size={12}>
-    <Alert type="warning" title={t('inbox.failed')} />
-    <Button onClick={() => void capabilities.refetch()}>{t('inbox.retry')}</Button>
-  </Space>;
-  if (capabilities.data?.result.queries?.includes('decisions.list')) return <ProjectQuestions project={project} />;
-  return <Space orientation="vertical" size={12}>
-    <Typography.Text strong>{t('inbox.unavailable')}</Typography.Text>
-    <Typography.Text type="secondary">{t('inbox.unavailableHelp')}</Typography.Text>
-    <Link to={`/workbench?scope=${encodeURIComponent(project)}&tab=needs-me`}>{t('inbox.openWorkbench')}</Link>
-  </Space>;
-}
-
 export function InboxPage() {
   const { t } = useTranslation();
   const { projectKey } = useScope();
@@ -131,7 +114,7 @@ export function InboxPage() {
       <Typography.Title level={3} style={{ marginTop: 0 }}>{t('nav.inbox')}</Typography.Title>
       <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>{t('inbox.description')}</Typography.Paragraph>
     </Card>
-    {projectKey ? <QuestionAvailability key={projectKey} project={projectKey} /> : <Card>
+    {projectKey ? <ProjectQuestions key={projectKey} project={projectKey} /> : <Card>
       <Space orientation="vertical" size={12}>
         <Typography.Text>{t('inbox.chooseProject')}</Typography.Text>
         <Link to="/projects">{t('inbox.openProjects')}</Link>

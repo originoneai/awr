@@ -28,10 +28,10 @@ export function ProjectsPage() {
       ) : (
         <List
           dataSource={items}
-          renderItem={(project) => (
+          renderItem={(project, index) => (
             <List.Item>
               <Space>
-                <Link to={`/projects/${encodeURIComponent(project.key)}`}>{projectLabel(project)}</Link>
+                <Link to={`/projects/${encodeURIComponent(project.key)}`}>{projectLabel(project, index + 1)}</Link>
                 <Tag><ObservationValue value={project.role} field="role" /></Tag>
               </Space>
             </List.Item>

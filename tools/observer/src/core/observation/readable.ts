@@ -46,3 +46,22 @@ export function readableSentence(text: string, language: string): string {
     .replace(MACHINE_NAME, (name) => knownName(name, zh) ?? (zh ? '相关操作' : 'the related operation'))
     .replace(/\b[A-Z][A-Za-z]*(?:Error|Exception)\b/g, zh ? '执行问题' : 'an execution problem');
 }
+
+/** Preserve business prose and web references while removing internal diagnostic values. */
+export function readableNarrative(text: string, language: string): string | null {
+  const zh = language.toLowerCase().startsWith('zh');
+  const record = zh ? '相关记录' : 'the related record';
+  const file = zh ? '相关文件' : 'the related file';
+  const result = text.split(/(https?:\/\/[^\s<>()]+)/g).map((part) => {
+    if (/^https?:\/\//.test(part)) return part;
+    const redacted = part
+      .replace(/\b(?:actor_id|client_id|session_id|execution_id|claim_id|receipt_id|credential_id|source_snapshot_id|workstream_id|decision_id|request_id|request_key|contract_hash|baseline_digest|project_revision|decision_version)\s*[:=]\s*(?:"[^"\n]*"|'[^'\n]*'|[^\s,;]+)/g, record)
+      .replace(/\b(?:status|state|reason|actor|client|source|path)\s*=\s*(?:"[^"\n]*"|'[^'\n]*'|[^\s,;]+)/g, record)
+      .replace(/(?:[A-Za-z]:\\|\/(?:Users|home|var|private|tmp|opt|etc|srv)\/|~\/|\b(?:crates|tools|src|target|\.local)\/)[^\s<>"']+/g, file)
+      .replace(/\b(?:client|actor|session|execution|claim|receipt|credential|snapshot|workstream|decision|request|agent)[_-](?=[a-z0-9_-]*\d)[a-z0-9_-]+\b/gi, record)
+      .replace(/\b(?:Forbidden|Unauthenticated|SessionExpired|CursorExpired|ContextIncomplete|ResponseTooLarge|InvalidInput|BadGateway)\b/g, zh ? '处理问题' : 'a processing issue');
+    return readableSentence(redacted, language);
+  }).join('').trim();
+  const content = result.replaceAll(record, '').replaceAll(file, '').replace(/[^\p{L}\p{N}]+/gu, '');
+  return content ? result : null;
+}

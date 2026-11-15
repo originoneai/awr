@@ -57,6 +57,8 @@ describe('ordinary project questions', () => {
     expect(defaultVisibleText(card)).toContain('The answer lets the design work continue.');
     expect(defaultVisibleText(card)).toContain('Lin Chen');
     expect(defaultVisibleText(card)).toContain('Maya Zhou');
+    expect(defaultVisibleText(card)).toContain(i18n.t('inbox.responders'));
+    expect(defaultVisibleText(card)).not.toContain('Waiting for');
     expect(within(card).queryAllByRole('button')).toHaveLength(0);
     expect(card.querySelector('details,[aria-expanded]')).toBeNull();
     expect(findHumanLanguageViolations(card)).toEqual([]);
@@ -64,8 +66,8 @@ describe('ordinary project questions', () => {
       expect(defaultVisibleText(card)).not.toContain(internal);
       expect(card.querySelector(`[title="${internal}"],[aria-label="${internal}"]`)).toBeNull();
     }
-    expect(calls.map((query) => query.op)).toEqual(['capabilities', 'decisions.list']);
-    expect(calls[1]).toEqual({ protocol_version: 1, op: 'decisions.list', decision_state: 'open', limit: 10, max_context_bytes: 262144 });
+    expect(calls.map((query) => query.op)).toEqual(['decisions.list']);
+    expect(calls[0]).toEqual({ protocol_version: 1, op: 'decisions.list', decision_state: 'open', limit: 10, max_context_bytes: 262144 });
   });
 
   it.each(['zh-CN', 'en-US'])('keeps internal diagnostics out of question text and names in %s', async (language) => {
@@ -138,25 +140,58 @@ describe('ordinary project questions', () => {
 
   it('distinguishes an older service from a successfully empty inbox', async () => {
     await i18n.changeLanguage('en-US');
-    const { calls } = setup(() => page([]), () => ({ ok: true, result: { queries: [] } }));
+    const { calls } = setup(() => ({ ok: false, error: { code: 'Unsupported', message: 'private-protocol-version' } }));
     await screen.findByText('Questions are not enabled for this project yet');
     expect(screen.queryByText('No questions awaiting an answer')).toBeNull();
-    expect(calls.every((query) => query.op === 'capabilities')).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].op).toBe('decisions.list');
     expect(screen.getByRole('link', { name: 'Open the workbench' }).getAttribute('href')).toBe('/workbench?scope=demo&tab=needs-me');
   });
 
-  it('retries failed discovery without showing raw service messages', async () => {
+  it('retries failed question reads without showing raw service messages', async () => {
     await i18n.changeLanguage('en-US');
     let failed = true;
-    const { calls } = setup(() => page(), () => failed
+    const { calls } = setup(() => failed
       ? { ok: false, error: { code: 'InternalError', message: 'private-discovery-diagnostics' } }
-      : { ok: true, result: { queries: ['decisions.list'] } });
+      : page());
     await screen.findByText('Questions cannot be loaded right now');
-    expect(calls.every((query) => query.op === 'capabilities')).toBe(true);
+    expect(calls.every((query) => query.op === 'decisions.list')).toBe(true);
     failed = false;
     await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
     await screen.findByTestId('ordinary-question');
     expect(document.body.textContent).not.toContain('private-discovery-diagnostics');
+  });
+
+  it('reads authorized questions when project-wide capability discovery would be forbidden', async () => {
+    await i18n.changeLanguage('en-US');
+    const { calls } = setup(() => page(), () => ({ ok: false, error: { code: 'Forbidden', message: 'Task scope only' } }));
+    await screen.findByTestId('ordinary-question');
+    expect(calls.map((query) => query.op)).toEqual(['decisions.list']);
+    expect(screen.queryByTestId('state-forbidden')).toBeNull();
+  });
+
+  it.each(['zh-CN', 'en-US'])('preserves business punctuation, measurements and external references in %s', async (language) => {
+    await i18n.changeLanguage(language);
+    const content = 'Decision: Keep the blue theme.\n客户编号 ACME-2026-42，目标 P95 低于 200 ms。\nSee https://example.com/customer/ACME-2026-42 for the agreed plan.';
+    setup(() => page([question({ question: 'Decision: Which launch plan should we use?', impact: content,
+      state: 'replied', reply: content, resolution: { person_id: 'maya', display_name: 'Maya Zhou', at_unix_ms: AT + 1000 } })]));
+    const card = await screen.findByTestId('ordinary-question');
+    expect(defaultVisibleText(card)).toContain('Decision: Which launch plan should we use?');
+    expect(defaultVisibleText(card).split(content)).toHaveLength(3);
+    expect(defaultVisibleText(card)).not.toContain(i18n.t('inbox.replyMissing'));
+    expect(defaultVisibleText(card)).not.toContain(i18n.t('inbox.impactMissing'));
+    expect(defaultVisibleText(card)).toContain(i18n.t('inbox.answeredBy'));
+  });
+
+  it.each(['zh-CN', 'en-US'])('preserves business content mixed with diagnostics in %s', async (language) => {
+    await i18n.changeLanguage(language);
+    setup(() => page([question({ impact: 'Decision: Keep the launch date. source_snapshot_id=private-snapshot path=/var/lib/private client_obs_658' })]));
+    const card = await screen.findByTestId('ordinary-question');
+    expect(defaultVisibleText(card)).toContain('Decision: Keep the launch date.');
+    for (const internal of ['source_snapshot_id', 'private-snapshot', '/var/lib/private', 'client_obs_658']) {
+      expect(defaultVisibleText(card)).not.toContain(internal);
+    }
+    expect(findHumanLanguageViolations(card)).toEqual([]);
   });
 
   it('navigates bounded pages, resets pages on tab changes and refreshes from the beginning', async () => {

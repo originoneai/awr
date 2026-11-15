@@ -85,7 +85,7 @@ describe('AppShell navigation', () => {
       '/api/team/overview': DEMO_OVERVIEW });
     const user = userEvent.setup();
     renderApp('/projects/private-key');
-    await waitFor(() => expect(screen.getByTestId('scope-switcher').textContent).toBe('项目名称待补充'));
+    await waitFor(() => expect(screen.getByTestId('scope-switcher').textContent).toBe('项目 1 · 名称待补充'));
     await user.click(screen.getByTestId('scope-switcher'));
     expect(screen.queryByText('private-key')).toBeNull();
     expect(screen.queryByText('client_obs_658')).toBeNull();

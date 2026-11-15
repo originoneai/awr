@@ -142,12 +142,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   const projectItems = revoked ? [] : (projects.data?.projects ?? []);
   const selectedProject = projectItems.find((project) => project.key === projectKey);
   const scopeLabel = selectedProject
-    ? projectLabel(selectedProject)
+    ? projectLabel(selectedProject, projectItems.indexOf(selectedProject) + 1)
     : t('shell.scope');
   const scopeMenu: MenuProps = {
     items: [
       { key: '__org__', label: t('shell.scope') },
-      ...projectItems.map((project) => ({ key: project.key, label: projectLabel(project) })),
+      ...projectItems.map((project, index) => ({ key: project.key, label: projectLabel(project, index + 1) })),
     ],
     selectedKeys: [projectKey ?? '__org__'],
     onClick: ({ key }) => setProjectKey(key === '__org__' ? null : key),

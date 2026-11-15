@@ -149,6 +149,7 @@ export function ordinaryDecisionsQueryOptions(project: string, state: 'open' | '
     }, signal),
     enabled: Boolean(project) && !revoked,
     ...readQueryDefaults,
+    retry: (count, error) => !(error instanceof ApiError && error.code === 'Unsupported') && retryRead(count, error),
     refetchInterval: SNAPSHOT_POLL_INTERVAL_MS,
   } satisfies UseQueryOptions<TeamReadResponse<OrdinaryDecisionsData>>;
 }

@@ -51,7 +51,7 @@ const enUS: Messages = {
     failed: 'Questions cannot be loaded right now', retry: 'Try again', refresh: 'Refresh questions',
     emptyPending: 'No questions awaiting an answer', emptyAll: 'No questions recorded yet',
     updated: 'Last checked {{time}}',
-    impact: 'What this affects', requestedBy: 'Raised by', responders: 'Waiting for',
+    impact: 'What this affects', requestedBy: 'Raised by', responders: 'Selected to answer',
     answer: 'Recorded answer', withdrawal: 'Reason for withdrawal', answeredBy: 'Answered by', withdrawnBy: 'Withdrawn by',
     raisedAt: 'Raised on', respondedAt: 'Recorded on',
     nameMissing: 'Name not provided', questionMissing: 'Ask your agent to explain this question',
@@ -94,7 +94,7 @@ const enUS: Messages = {
     recordsLater: 'Connection records cannot be loaded right now.',
   },
   shell: {
-    unnamedProject: 'Project name not provided',
+    unnamedProject: 'Project {{number}} · name not provided',
     scope: 'All authorised scopes',
     searchPlaceholder: 'Search current scope',
     notifications: 'Notifications',
