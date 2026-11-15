@@ -643,6 +643,13 @@ async fn question_pages_are_bounded_and_bound_to_the_current_permissions() {
     q.decision_state = Some("all".into());
     q.limit = Some(1);
     let first = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    assert_eq!(first["data"]["work_id"], "a");
+    assert_eq!(first["data"]["decision_id"], Value::Null);
+    assert_eq!(first["data"]["decision_state"], "all");
+    let stream = awr_core::Id::from(1).to_string();
+    assert_eq!(first["workstream_id"], stream);
+    assert_eq!(first["authority_version"], "1");
+    assert_eq!(first["data"]["items"][0]["workstream_id"], stream);
     assert_eq!(first["data"]["items"].as_array().unwrap().len(), 1);
     q.cursor = first["data"]["next_cursor"].as_str().map(str::to_owned);
     assert!(q.cursor.is_some());

@@ -378,6 +378,7 @@ pub(crate) async fn record(
         .collect::<Vec<_>>();
     Ok(
         json!({"decision_id":row.get::<_,String>("id"),"work_id":work,
+        "workstream_id":metadata["basis"]["workstream_id"],
         "session_id":row.get::<_,String>("session_id"),"request_key":row.get::<_,String>("decision_key"),
         "question":row.get::<_,String>("question"),"impact":metadata["impact"],
         "reply":row.get::<_,Option<String>>("reply"),"state":row.get::<_,String>("state"),

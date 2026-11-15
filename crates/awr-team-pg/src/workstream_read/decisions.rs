@@ -93,11 +93,18 @@ pub(super) async fn read(
         )
         .await?
         .get(0);
-    let result = json!({"protocol_version":1,"scope_id":"main","selection_basis":"project",
+    let mut result = json!({"protocol_version":1,"scope_id":"main","selection_basis":"project",
         "coordinator_epoch":auth.epoch,"project_status":auth.project_status,
         "source_snapshot_id":auth.snapshot,"project_revision":auth.revision.to_string(),
-        "data":{"items":items,"next_cursor":next,"truncated":more,"execution_authorized":false,
+        "data":{"work_id":q.work_id,"decision_id":q.decision_id,"decision_state":state,
+            "items":items,"next_cursor":next,"truncated":more,"execution_authorized":false,
             "as_of":{"at_unix_ms":at,"source_snapshot_id":auth.snapshot,"project_revision":auth.revision.to_string()}}});
+    if let Some(stream) = bound.as_deref() {
+        let stream = stream.parse().map_err(|_| PgError::SourceDivergence)?;
+        result["workstream_id"] = json!(stream);
+        result["authority_version"] =
+            json!(auth.catalog.get(stream)?.authority_version.to_string());
+    }
     if serde_json::to_vec(&result)
         .map_err(|_| PgError::SourceDivergence)?
         .len()
