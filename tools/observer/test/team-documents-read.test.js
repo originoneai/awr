@@ -137,3 +137,44 @@ test('document discovery refuses unrelated controls and preserves revocation and
     assert.equal(result.result, undefined);
   }
 });
+
+
+test('document discovery carries an exact task selector for controlled content reads', async (t) => {
+  const body = reply([document(1, { content_work_id: 'task-one' })]);
+  body.data.scope = 'authorized_works';
+  const { read, calls } = await setup(t, () => ({ body }));
+  const observed = await read();
+  assert.equal(observed.ok, true);
+  assert.equal(observed.result.data.items[0].content_work_id, 'task-one');
+  assert.equal(observed.result.data.scope, 'authorized_works');
+  assert.deepEqual(calls[0].query, { protocol_version: 1, op: 'documents.list' });
+});
+
+test('document discovery validates content selectors and their exact work attribution', async (t) => {
+  let body;
+  const { read } = await setup(t, () => ({ body }));
+  for (const value of ['', null, 1, {}, 'bad\u0000identity']) {
+    body = reply([document(1, { content_work_id: value })]);
+    assert.equal((await read()).error.code, 'BadGateway');
+  }
+  body = reply([document(1, { content_work_id: 'another-task' })], { work: 'task-one' });
+  assert.equal((await read({ work_id: 'task-one' })).error.code, 'BadGateway');
+  body = reply([document(1, { content_work_id: 'task-one' })], { work: 'task-one' });
+  assert.equal((await read({ work_id: 'task-one' })).ok, true);
+  body = reply([document(1, { path: null, name: null, summary: null, sha256: null, byte_length: null,
+    readable: false, status: 'restricted', reason: 'permission_restricted', content_work_id: 'task-one' })]);
+  assert.equal((await read()).error.code, 'BadGateway');
+});
+
+test('controlled source reads forward the document-selected task without changing identity', async (t) => {
+  const text = '# Delivery guide';
+  const fingerprint = require('node:crypto').createHash('sha256').update(text).digest('hex');
+  const body = reply([]);
+  body.data = { kind: 'source', path: 'docs/guide.md', sha256: fingerprint, byte_length: Buffer.byteLength(text),
+    text, snapshot: 'active', history_bypass: false, url_bypass: false, next_step: null };
+  const { read, calls } = await setup(t, () => ({ body }));
+  const query = { op: 'source.content', work_id: 'task-one', source_path: 'docs/guide.md', expected_sha256: fingerprint, max_context_bytes: 262144 };
+  assert.equal((await read(query)).ok, true);
+  assert.deepEqual(calls[0], { path: '/v1/web/projects/portal/query', cookie: 'awr_web_session=synthetic-library-reader',
+    query: { protocol_version: 1, ...query } });
+});

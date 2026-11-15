@@ -580,7 +580,10 @@ pub(crate) async fn resolve_agent_read_delegation(
         return restrict_read_scope(tx, auth, project, request).await;
     }
     let candidates = effective_delegations(tx, auth, project, None, now_ms).await?;
-    if let Some(stream) = request.workstream_id.filter(|_| !dependency_observation) {
+    if let Some(stream) = request
+        .workstream_id
+        .filter(|_| !dependency_observation && request.op != "documents.list")
+    {
         let chosen = candidates.iter().find(|candidate| {
             candidate.actions.contains(&Action::WorkRead) && covers_stream(&candidate.grant, stream)
         });
@@ -605,7 +608,12 @@ pub(crate) async fn resolve_agent_read_delegation(
     if dependency_observation
         || matches!(
             request.op.as_str(),
-            "work.next" | "work.inbox" | "handoff.list" | "dependencies.list" | "decisions.list"
+            "work.next"
+                | "work.inbox"
+                | "handoff.list"
+                | "dependencies.list"
+                | "decisions.list"
+                | "documents.list"
         )
     {
         let mut scope = NavigationReadScope::default();

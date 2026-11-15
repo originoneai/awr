@@ -129,7 +129,7 @@ asking anyway is refused as `Unsupported`. The lists name operations of this pro
 | `work.search` | Same visibility boundary; required literal substring `search` |
 | `planning.candidates` | Readable planning candidates and server-computed differences from the current plan; optional `workstream_id`, `limit`, `cursor`, `max_context_bytes` |
 | `sources.inspect` | Required document integrity in the active snapshot; optional `work_id`, `workstream_id`, `limit`, `cursor`, `max_context_bytes`; no document bodies |
-| `documents.list` | Project document discovery across authorized workstreams; optional `work_id`, `workstream_id`, literal case-insensitive `search`, `limit`, `cursor`, `max_context_bytes`; verified display metadata, availability and transaction `as_of` |
+| `documents.list` | Project document discovery across authorized workstreams and exact delegated tasks; optional `work_id`, `workstream_id`, literal case-insensitive `search`, `limit`, `cursor`, `max_context_bytes`; verified display metadata, availability and transaction `as_of` |
 | `decisions.list` | Authorized ordinary questions and recorded answers, with optional `work_id`, `workstream_id`, exact `decision_id`, `decision_state`, `limit`, `cursor`, `max_context_bytes`. Defaults to open questions and includes transaction `as_of`. |
 | `review.rounds` | Read-only ordered review history for a required work/session selection with bounded `limit`, `cursor`, `max_context_bytes` and transaction `as_of` |
 | `handoff.list` | Read-only authorized handoff discovery with optional `work_id`, `workstream_id`, `recipient_person_id`, `handoff_state`, `limit`, `cursor`, `max_context_bytes` |
@@ -143,7 +143,7 @@ asking anyway is refused as `Unsupported`. The lists name operations of this pro
 | `command.inspect` | Required work/session and `request_id`; this actor/client's committed receipt or unknown outcome |
 | `claim.inspect` | Required work/session and `claim_id`; current lease state, ownership, fence and epoch validity |
 | `execution.inspect` | Required work/session and `execution_id`; current intent state/version, cancellation and contract/epoch validity |
-| `source.content` | Required relative `source_path` on the **active** snapshot; optional `expected_sha256`, `max_context_bytes`. Rejects `..`, absolute paths, URLs and history selectors (TMCP-023). |
+| `source.content` | Required relative `source_path` on the **active** snapshot; optional `work_id`, `expected_sha256`, `max_context_bytes`. Rejects `..`, absolute paths, URLs and history selectors (TMCP-023). |
 | `artifact.content` | Required `work_id` + `artifact_id` bound to that work's evidence; optional digest/budget (TMCP-023). |
 | `planning.outcome` | Required `request_id`; planning mutation receipt or unknown (TMCP-023). |
 
@@ -304,7 +304,10 @@ Forbidden documents expose neither paths nor digests.
 `acceptance_contracts`. A work selection restricts the catalog to that work's
 workstream, using the same document authorization and metadata as the project read.
 Unregistered files are excluded. Documents shared with another workstream require
-read access to every referencing workstream before any metadata is disclosed.
+read access to every referencing workstream before any metadata is disclosed. Selector-free
+task grants contribute only the acceptance documents of their current task owners.
+The response uses `authorized_works` when exact task scopes participate. Task
+scope remains bound to the current authorized work and its source requirements.
 
 Each row includes `document_position`, `path`, `name`, `summary`, `summary_kind`,
 `sha256`, `byte_length`, `source_kind`, `readable`, `status` and `reason`.
@@ -319,7 +322,12 @@ Missing or unverifiable content has no title, excerpt, digest or size. Only
 `available` rows are readable. Documents above the existing 262,144-byte
 `source.content` limit retain verified metadata and use `too_large`.
 The browser requests bodies only through `source.content` with the listed digest,
-which rechecks current access and source content independently.
+which rechecks current access and source content independently. Rows can include `content_work_id` when the
+controlled read needs an exact task selection. Carry that value as `work_id` in
+`source.content`, alongside the registered path and expected digest. The catalog
+uses the same selected read authority before advertising content availability.
+Restricted rows retain no content selector. Revocation and ownership changes are
+rechecked on every read and invalidate earlier cursors.
 
 Search matches the authorized title, excerpt or path. Pagination uses opaque
 cursors bound to the current identity, permissions, source, selection, search and

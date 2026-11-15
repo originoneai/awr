@@ -1445,3 +1445,236 @@ async fn checkpoint_resolves_read_and_command_grants_independently() {
         .await;
     assert!(matches!(denied, Err(PgError::Forbidden)));
 }
+
+#[tokio::test]
+async fn task_document_discovery_and_content_use_the_same_exact_live_read_scope() {
+    let body = "# Delivery guide\n\nCheck the outcome before sharing it.";
+    let (_guard, admin, db, store) = setup_with_specs(vec![
+        SourceFile {
+            path: "docs/alpha.md".into(),
+            bytes: body.as_bytes().to_vec(),
+        },
+        SourceFile {
+            path: "docs/private-beta.md".into(),
+            bytes: b"# PRIVATE peer guide\n\nPeer-only instructions.".to_vec(),
+        },
+    ])
+    .await;
+    agent_identity(&admin).await;
+    grant(
+        &db,
+        AuthorizationScope::Task {
+            project_id: PROJECT.into(),
+            work_item_id: "a".into(),
+        },
+    )
+    .await;
+    let mut q = query("documents.list");
+    let project = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    assert_eq!(project["data"]["scope"], "authorized_works");
+    assert_eq!(project["data"]["total"], 1);
+    let item = &project["data"]["items"][0];
+    assert_eq!(item["name"], "Delivery guide");
+    assert_eq!(item["content_work_id"], "a");
+    assert_eq!(item["readable"], true);
+    assert!(!project.to_string().contains("PRIVATE"));
+    assert!(!project.to_string().contains("private-beta"));
+    let mut content = query("source.content");
+    content.source_path = item["path"].as_str().map(Into::into);
+    content.expected_sha256 = item["sha256"].as_str().map(Into::into);
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, content.clone()).await,
+        Err(PgError::Forbidden)
+    ));
+    content.work_id = item["content_work_id"].as_str().map(Into::into);
+    assert_eq!(
+        store
+            .query(TENANT, PROJECT, A, content.clone())
+            .await
+            .unwrap()["data"]["text"],
+        body
+    );
+    for work in ["c", "b-private"] {
+        content.work_id = Some(work.into());
+        assert!(matches!(
+            store.query(TENANT, PROJECT, A, content.clone()).await,
+            Err(PgError::Forbidden)
+        ));
+    }
+    q.search = Some("PRIVATE".into());
+    assert_eq!(
+        store.query(TENANT, PROJECT, A, q.clone()).await.unwrap()["data"]["total"],
+        0
+    );
+    q.search = None;
+    q.workstream_id = Some(Id::from(1));
+    assert_eq!(
+        store.query(TENANT, PROJECT, A, q.clone()).await.unwrap()["data"]["items"][0]["content_work_id"],
+        "a"
+    );
+    q.workstream_id = Some(Id::from(2));
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, q).await,
+        Err(PgError::Forbidden)
+    ));
+    admin.execute("UPDATE awr_team.agent_authorizations SET status='revoked' WHERE id='read-authorization'", &[]).await.unwrap();
+    content.work_id = Some("a".into());
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, content).await,
+        Err(PgError::Forbidden)
+    ));
+    assert!(matches!(
+        store
+            .query(TENANT, PROJECT, A, query("documents.list"))
+            .await,
+        Err(PgError::Forbidden)
+    ));
+}
+
+#[tokio::test]
+async fn document_task_paging_rechecks_current_grants_without_promoting_task_owners_to_streams() {
+    let (_guard, admin, db, store) = setup_with_specs(vec![
+        SourceFile {
+            path: "docs/alpha.md".into(),
+            bytes: b"# Delivery guide\n\nReview delivery.".to_vec(),
+        },
+        SourceFile {
+            path: "docs/private-beta.md".into(),
+            bytes: b"# Peer guide\n\nReview peer delivery.".to_vec(),
+        },
+    ])
+    .await;
+    agent_identity(&admin).await;
+    grant(
+        &db,
+        AuthorizationScope::Task {
+            project_id: PROJECT.into(),
+            work_item_id: "a".into(),
+        },
+    )
+    .await;
+    grant_task(
+        &db,
+        "peer-task-read",
+        "b-private",
+        &[AuthorizedAction::Inspect],
+    )
+    .await;
+    let mut q = query("documents.list");
+    q.limit = Some(1);
+    let first = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    assert_eq!(first["data"]["total"], 2);
+    assert_eq!(first["data"]["items"][0]["content_work_id"], "a");
+    q.cursor = first["data"]["next_cursor"].as_str().map(Into::into);
+    let second = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    assert_eq!(second["data"]["items"][0]["name"], "Peer guide");
+    assert_eq!(second["data"]["items"][0]["content_work_id"], "b-private");
+    let mut content = query("source.content");
+    content.work_id = Some("b-private".into());
+    content.source_path = second["data"]["items"][0]["path"].as_str().map(Into::into);
+    content.expected_sha256 = second["data"]["items"][0]["sha256"]
+        .as_str()
+        .map(Into::into);
+    assert!(
+        store.query(TENANT, PROJECT, A, content).await.unwrap()["data"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Review peer delivery")
+    );
+    admin.execute("UPDATE awr_team.agent_authorizations SET status='revoked' WHERE id='read-authorization'", &[]).await.unwrap();
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, q.clone()).await,
+        Err(PgError::CursorExpired)
+    ));
+    q.cursor = None;
+    let narrowed = store.query(TENANT, PROJECT, A, q).await.unwrap();
+    assert_eq!(narrowed["data"]["total"], 1);
+    assert_eq!(narrowed["data"]["items"][0]["content_work_id"], "b-private");
+    assert!(!narrowed.to_string().contains("Delivery guide"));
+}
+
+#[tokio::test]
+async fn task_document_metadata_matches_the_content_scope_for_shared_sources() {
+    let (_guard, admin, db, store) = setup_with_specs(vec![
+        SourceFile {
+            path: "docs/alpha.md".into(),
+            bytes: b"# PRIVATE shared guidance\n\nShared guidance body.".to_vec(),
+        },
+        SourceFile {
+            path: "docs/private-beta.md".into(),
+            bytes: b"# Peer guide\n\nReview peer delivery.".to_vec(),
+        },
+    ])
+    .await;
+    let mut catalog: serde_json::Value = admin
+        .query_one("SELECT catalog_json FROM awr_team.workstream_catalogs", &[])
+        .await
+        .unwrap()
+        .get(0);
+    catalog["workstreams"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|stream| stream["id"] == Id::from(2).to_string())
+        .unwrap()["acceptance_contracts"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("docs/alpha.md"));
+    admin
+        .execute(
+            "UPDATE awr_team.workstream_catalogs SET catalog_json=$1",
+            &[&catalog],
+        )
+        .await
+        .unwrap();
+    agent_identity(&admin).await;
+    grant(
+        &db,
+        AuthorizationScope::Task {
+            project_id: PROJECT.into(),
+            work_item_id: "a".into(),
+        },
+    )
+    .await;
+    grant_task(
+        &db,
+        "peer-task-read",
+        "b-private",
+        &[AuthorizedAction::Inspect],
+    )
+    .await;
+    let result = store
+        .query(TENANT, PROJECT, A, query("documents.list"))
+        .await
+        .unwrap();
+    assert_eq!(result["data"]["total"], 2);
+    let restricted = result["data"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["status"] == "restricted")
+        .unwrap();
+    for field in [
+        "path",
+        "name",
+        "summary",
+        "sha256",
+        "byte_length",
+        "content_work_id",
+    ] {
+        assert!(
+            restricted[field].is_null(),
+            "restricted {field} must remain hidden"
+        );
+    }
+    assert!(!result.to_string().contains("PRIVATE shared guidance"));
+    let mut content = query("source.content");
+    content.source_path = Some("docs/alpha.md".into());
+    for work in ["a", "b-private"] {
+        content.work_id = Some(work.into());
+        assert!(matches!(
+            store.query(TENANT, PROJECT, A, content.clone()).await,
+            Err(PgError::Forbidden)
+        ));
+    }
+}

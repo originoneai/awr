@@ -36,7 +36,9 @@ async fn document_catalog_matches_work_metadata_and_preserves_controlled_content
     let mut work = query("documents.list");
     work.work_id = Some("a".into());
     let selected = store.query(TENANT, PROJECT, A, work).await.unwrap();
-    assert_eq!(selected["data"]["items"], data["items"]);
+    let mut selected_items = data["items"].clone();
+    selected_items[0]["content_work_id"] = json!("a");
+    assert_eq!(selected["data"]["items"], selected_items);
     assert_eq!(selected["data"]["scope"], "work");
     let prepared = prepare(&store, A, "a").await;
     let required = &prepared["data"]["required_specs"][0];
