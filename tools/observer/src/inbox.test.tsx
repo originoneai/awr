@@ -185,9 +185,10 @@ describe('ordinary project questions', () => {
 
   it.each(['zh-CN', 'en-US'])('preserves business content mixed with diagnostics in %s', async (language) => {
     await i18n.changeLanguage(language);
-    setup(() => page([question({ impact: 'Decision: Keep the launch date. source_snapshot_id=private-snapshot path=/var/lib/private client_obs_658' })]));
+    setup(() => page([question({ impact: 'Decision: Keep the launch date. source_snapshot_id=private-snapshot path=/var/lib/private' })]));
     const card = await screen.findByTestId('ordinary-question');
     expect(defaultVisibleText(card)).toContain('Decision: Keep the launch date.');
+    expect(defaultVisibleText(card)).not.toContain(language.startsWith('zh') ? '相关记录' : 'the related record');
     for (const internal of ['source_snapshot_id', 'private-snapshot', '/var/lib/private', 'client_obs_658']) {
       expect(defaultVisibleText(card)).not.toContain(internal);
     }
