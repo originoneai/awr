@@ -14,7 +14,6 @@ export function dependenciesQueryOptions(project: string, workId: string | null,
     }, signal),
     enabled: Boolean(project) && !revoked,
     ...readQueryDefaults,
-    refetchInterval: cursor ? false : readQueryDefaults.refetchInterval,
   } satisfies UseQueryOptions<TeamReadResponse<DependencyListData>>;
 }
 
@@ -29,6 +28,5 @@ export function handoffsQueryOptions(project: string, workId: string, cursor: st
     }, signal),
     enabled: Boolean(project && workId) && !revoked,
     ...readQueryDefaults,
-    refetchInterval: cursor ? false : readQueryDefaults.refetchInterval,
   } satisfies UseQueryOptions<TeamReadResponse<HandoffListData>>;
 }

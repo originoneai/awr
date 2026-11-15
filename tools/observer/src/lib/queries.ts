@@ -30,6 +30,7 @@ function retryRead(failureCount: number, error: unknown) {
   return !isAuthError(error) && failureCount < 1;
 }
 
+// Cursor-bound pages retain their resource cadence to recheck current visibility.
 export const readQueryDefaults = {
   refetchInterval: POLL_INTERVAL_MS,
   refetchOnWindowFocus: true,
@@ -184,7 +185,7 @@ export function planningCandidatesQueryOptions(project: string, stream: string |
     },
     enabled: Boolean(project) && !revoked,
     ...readQueryDefaults,
-    refetchInterval: cursor ? false as const : SNAPSHOT_POLL_INTERVAL_MS,
+    refetchInterval: SNAPSHOT_POLL_INTERVAL_MS,
   } satisfies UseQueryOptions<TeamReadResponse<PlanningCandidatesData>>;
 }
 
@@ -216,7 +217,7 @@ export function requiredSourcesQueryOptions(project: string, stream: string | nu
     },
     enabled: Boolean(project) && !revoked,
     ...readQueryDefaults,
-    refetchInterval: cursor ? false as const : SNAPSHOT_POLL_INTERVAL_MS,
+    refetchInterval: SNAPSHOT_POLL_INTERVAL_MS,
   } satisfies UseQueryOptions<TeamReadResponse<RequiredSourcesData>>;
 }
 

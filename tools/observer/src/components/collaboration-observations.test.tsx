@@ -145,6 +145,24 @@ describe('dependency observation', () => {
     await screen.findByTestId('state-forbidden');
     expect(screen.queryByText('Build the customer portal')).toBeNull();
   });
+
+  it('rechecks a later dependency page and clears facts after server-side revocation', async () => {
+    const user = userEvent.setup();
+    let revoked = false;
+    const { calls } = mount(<DependencyObservations project="portal" />, (query) => {
+      if (query.cursor && revoked) return error('Forbidden');
+      return response({ items: [edge(query.cursor ? { work_title: 'Connect account management' } : {})], total: 2,
+        next_cursor: query.cursor ? null : 'page-two', as_of: { at_unix_ms: AT } });
+    });
+    await screen.findByTestId('dependency-detail');
+    await user.click(screen.getByRole('button', { name: '下一页' }));
+    await waitFor(() => expect(screen.getByTestId('dependency-detail').textContent).toContain('Connect account management'));
+    revoked = true;
+    await waitFor(() => expect(screen.getByTestId('state-forbidden')).toBeTruthy(), { timeout: 9000 });
+    expect(screen.queryByText('Connect account management')).toBeNull();
+    expect(screen.queryByTestId('dependency-detail')).toBeNull();
+    expect(calls.filter(query => query.cursor === 'page-two').length).toBeGreaterThanOrEqual(2);
+  }, 15000);
 });
 
 describe('responsibility and handoffs', () => {
@@ -191,4 +209,22 @@ describe('responsibility and handoffs', () => {
     expect(container.textContent).toContain('占用已结束');
     expectProductOnly(container);
   });
+
+  it('rechecks a later handoff page without clearing the readable responsibility', async () => {
+    const user = userEvent.setup();
+    let revoked = false;
+    const { calls } = mount(<WorkResponsibility project="portal" workId="customer-portal" snapshot={snapshot} />, query => {
+      if (query.cursor && revoked) return error('Forbidden');
+      return response({ items: [{ ...handoff, to_display_name: query.cursor ? 'Restricted colleague' : 'Shen Lan' }],
+        total: 2, next_cursor: query.cursor ? null : 'handoff-page-two', as_of: { at_unix_ms: AT } });
+    });
+    await screen.findByText('Lin Chen → Shen Lan');
+    await user.click(screen.getByRole('button', { name: '下一页' }));
+    await screen.findByText('Lin Chen → Restricted colleague');
+    revoked = true;
+    await waitFor(() => expect(screen.getByTestId('state-forbidden')).toBeTruthy(), { timeout: 9000 });
+    expect(screen.queryByText('Lin Chen → Restricted colleague')).toBeNull();
+    expect(screen.getByTestId('work-responsibility').textContent).toContain('Lin Chen');
+    expect(calls.filter(query => query.cursor === 'handoff-page-two').length).toBeGreaterThanOrEqual(2);
+  }, 15000);
 });

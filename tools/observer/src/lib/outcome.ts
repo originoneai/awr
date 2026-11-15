@@ -35,6 +35,5 @@ export function reviewRoundsQueryOptions(project: string, workId: string, stream
       apiPost<TeamReadResponse<ReviewRoundsData>>('/api/team/read', { project, query }, signal),
     enabled: Boolean(project && workId && stream) && !revoked,
     ...readQueryDefaults,
-    refetchInterval: cursor ? false : readQueryDefaults.refetchInterval,
   } satisfies UseQueryOptions<TeamReadResponse<ReviewRoundsData>>;
 }
