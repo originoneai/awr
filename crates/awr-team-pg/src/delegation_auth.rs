@@ -539,6 +539,9 @@ pub(crate) async fn resolve_agent_read_delegation(
     request: &crate::WorkstreamQuery,
     now_ms: i64,
 ) -> PgResult<()> {
+    if request.op == "source.content" && actor_requires_explicit_delegation(&auth.actor_kind) {
+        return resolve_source_read_delegation(tx, auth, project, request, now_ms).await;
+    }
     // An edge can need separate grants for its consumer and upstream. Narrowing
     // consumers retains those read grants, with one covering grant per object.
     let dependency_observation = request.session_id.is_none()
@@ -580,7 +583,10 @@ pub(crate) async fn resolve_agent_read_delegation(
         return restrict_read_scope(tx, auth, project, request).await;
     }
     let candidates = effective_delegations(tx, auth, project, None, now_ms).await?;
-    if let Some(stream) = request.workstream_id.filter(|_| !dependency_observation) {
+    if let Some(stream) = request
+        .workstream_id
+        .filter(|_| !dependency_observation && request.op != "documents.list")
+    {
         let chosen = candidates.iter().find(|candidate| {
             candidate.actions.contains(&Action::WorkRead) && covers_stream(&candidate.grant, stream)
         });
@@ -605,7 +611,12 @@ pub(crate) async fn resolve_agent_read_delegation(
     if dependency_observation
         || matches!(
             request.op.as_str(),
-            "work.next" | "work.inbox" | "handoff.list" | "dependencies.list" | "decisions.list"
+            "work.next"
+                | "work.inbox"
+                | "handoff.list"
+                | "dependencies.list"
+                | "decisions.list"
+                | "documents.list"
         )
     {
         let mut scope = NavigationReadScope::default();
@@ -689,6 +700,59 @@ pub(crate) async fn resolve_agent_read_delegation(
     auth.delegated_actions = Some(BTreeSet::from([Action::WorkRead]));
     auth.read_delegations = Some(candidates);
     Ok(())
+}
+
+/// A source is one disclosure object, including when several streams reference
+/// it. Select one live grant that covers every owner before narrowing access.
+async fn resolve_source_read_delegation(
+    tx: &tokio_postgres::Transaction<'_>,
+    auth: &mut ReaderAuthority,
+    project: &str,
+    request: &crate::WorkstreamQuery,
+    now_ms: i64,
+) -> PgResult<()> {
+    let path = request.source_path.as_deref().ok_or(PgError::Forbidden)?;
+    let required = crate::workstream_read::source_file_workstreams(auth, path)?;
+    let task_stream = if let Some(work) = request.work_id.as_deref() {
+        crate::tx::bind_workstream_scope(tx, &auth.tenant_id, project).await?;
+        let row = tx
+            .query_opt(
+                "SELECT s.workstream_id FROM awr_team.workstream_snapshot_ownership s
+             JOIN awr_team.workstream_ownership o
+               ON o.tenant_id=s.tenant_id AND o.project_id=s.project_id
+              AND o.work_id=s.work_id AND o.workstream_id=s.workstream_id
+              AND o.ownership_version=s.ownership_version
+             WHERE s.tenant_id=$1 AND s.project_id=$2 AND s.snapshot_id=$3
+               AND s.scope_id='main' AND s.work_id=$4 FOR SHARE OF o",
+                &[&auth.tenant_id, &project, &auth.snapshot, &work],
+            )
+            .await?
+            .ok_or(PgError::Forbidden)?;
+        Some(row.get::<_, String>(0))
+    } else {
+        None
+    };
+    let candidates =
+        effective_delegations(tx, auth, project, request.session_id.as_deref(), now_ms).await?;
+    let chosen = candidates.iter().find(|candidate| {
+        candidate.actions.contains(&Action::WorkRead)
+            && request.work_id.as_deref().is_none_or(|work| {
+                candidate
+                    .grant
+                    .covers_task(project, work, task_stream.as_deref())
+            })
+            && required.iter().all(|stream| {
+                covers_stream(&candidate.grant, *stream)
+                    || request.work_id.as_deref().is_some_and(|work| {
+                        task_stream.as_deref() == Some(stream.to_string().as_str())
+                            && candidate
+                                .grant
+                                .covers_task(project, work, task_stream.as_deref())
+                    })
+            })
+    });
+    install_delegation(auth, chosen);
+    restrict_read_scope(tx, auth, project, request).await
 }
 
 /// Advisory navigation uses a covering grant for this exact work; an action in

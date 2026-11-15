@@ -310,14 +310,14 @@ function validDecisions(reply) {
 function validDocuments(reply) {
   const data = reply.data;
   const fields = new Set(['path', 'name', 'summary', 'summary_kind', 'sha256', 'byte_length',
-    'source_kind', 'readable', 'status', 'reason', 'document_position']);
+    'source_kind', 'readable', 'status', 'reason', 'document_position', 'content_work_id']);
   const boundedText = (value, maximum) => typeof value === 'string' && Array.from(value).length <= maximum;
   const fingerprint = (value) => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
   if (!Array.isArray(data.items) || !Number.isSafeInteger(data.total) || data.total < data.items.length
     || typeof data.truncated !== 'boolean' || data.truncated !== (data.next_cursor !== null)
     || data.read_only !== true || data.execution_authorized !== false
     || data.content_read_limit_bytes !== 262144
-    || !['work', 'authorized_workstreams'].includes(data.scope)
+    || !['work', 'authorized_workstreams', 'authorized_works'].includes(data.scope)
     || !Number.isSafeInteger(data.as_of?.at_unix_ms) || data.as_of.at_unix_ms < 0
     || data.as_of.source_snapshot_id !== reply.source_snapshot_id
     || data.as_of.project_revision !== reply.project_revision) return false;
@@ -326,6 +326,8 @@ function validDocuments(reply) {
       || !Number.isSafeInteger(item.document_position) || item.document_position < 1
       || item.document_position > data.total || item.source_kind !== 'registered_source'
       || item.summary_kind !== 'source_excerpt'
+      || ('content_work_id' in item && !isBoundedId(item.content_work_id))
+      || (data.scope === 'authorized_workstreams' && 'content_work_id' in item)
       || !(item.path === null || isControlledSourcePath(item.path))
       || !(item.name === null || boundedText(item.name, 256))
       || !(item.summary === null || boundedText(item.summary, 512))) return false;
@@ -340,7 +342,8 @@ function validDocuments(reply) {
     return ['restricted', 'missing', 'changed', 'unverified'].includes(item.status)
       && item.readable === false && boundedText(item.reason, 128) && item.reason.length > 0
       && item.name === null && item.summary === null && item.sha256 === null && item.byte_length === null
-      && (item.status !== 'restricted' || item.path === null && item.reason === 'permission_restricted');
+      && (item.status !== 'restricted' || item.path === null && item.reason === 'permission_restricted'
+        && !('content_work_id' in item));
   });
 }
 
@@ -677,7 +680,8 @@ function readAttributionError(query, result, { strictWorkstream } = {}) {
       || typeof result.authority_version !== 'string' || !/^[1-9]\d*$/.test(result.authority_version)))
     || query.workstream_id && result.workstream_id !== query.workstream_id
     || data.work_id !== (query.work_id ?? null)
-    || data.scope !== (query.work_id ? 'work' : 'authorized_workstreams'))) {
+    || (query.work_id ? data.scope !== 'work' : !['authorized_workstreams', 'authorized_works'].includes(data.scope))
+    || query.work_id && data.items.some((item) => item.content_work_id && item.content_work_id !== query.work_id))) {
     return { code: 'BadGateway', message: 'Documents are not attributable to the requested scope' };
   }
   if (query.op === 'decisions.list' && (

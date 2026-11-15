@@ -140,19 +140,101 @@ pub(super) async fn read(
     if streams.is_empty() {
         return Err(PgError::Forbidden);
     }
-    let paths: BTreeSet<_> = streams
-        .iter()
-        .flat_map(|stream| stream.acceptance_contracts.iter().cloned())
-        .collect();
+    let mut paths = BTreeMap::<String, Option<String>>::new();
+    for stream in &streams {
+        let content_work = if let Some(work) = &q.work_id {
+            Some(work.clone())
+        } else if let Some(scope) = &auth.navigation_read_scope {
+            if scope.streams.contains(&stream.id) {
+                None
+            } else {
+                let Some((work, _)) = scope.tasks.iter().find(|(_, owner)| **owner == stream.id)
+                else {
+                    continue;
+                };
+                Some(work.clone())
+            }
+        } else {
+            None
+        };
+        for path in &stream.acceptance_contracts {
+            paths
+                .entry(path.clone())
+                .and_modify(|current| {
+                    if content_work.is_none() {
+                        *current = None;
+                    }
+                })
+                .or_insert_with(|| content_work.clone());
+        }
+    }
     let files = active_source_files(tx, tenant, project).await?;
     let files_by_path: BTreeMap<_, _> = files
         .iter()
         .filter_map(|file| file["path"].as_str().map(|path| (path, file)))
         .collect();
-    let mut rows = paths
-        .iter()
-        .map(|path| document(auth, path, files_by_path.get(path.as_str()).copied()))
-        .collect::<PgResult<Vec<_>>>()?;
+    // Match the controlled content read's own selected delegation. A task's
+    // stream does not confer the other tasks' authority, and independent read
+    // grants cannot synthesize permission for a shared source.
+    let now_ms: i64 = tx
+        .query_one(
+            "SELECT (extract(epoch FROM clock_timestamp())*1000)::bigint",
+            &[],
+        )
+        .await?
+        .get(0);
+    let mut content_authorities =
+        BTreeMap::<(Option<String>, BTreeSet<Id>), Option<ReaderAuthority>>::new();
+    let mut rows = Vec::new();
+    for (path, content_work) in &paths {
+        if safe_relative_source_path(path).is_err() {
+            rows.push(document(
+                auth,
+                path,
+                files_by_path.get(path.as_str()).copied(),
+            )?);
+            continue;
+        }
+        let authority_key = (content_work.clone(), source_file_workstreams(auth, path)?);
+        if !content_authorities.contains_key(&authority_key) {
+            let mut selected = auth.clone();
+            let mut content_query = q.clone();
+            content_query.op = "source.content".into();
+            content_query.source_path = Some(path.clone());
+            content_query.work_id = content_work.clone();
+            content_query.workstream_id = None;
+            content_query.session_id = None;
+            let authority = match crate::delegation_auth::resolve_agent_read_delegation(
+                tx,
+                &mut selected,
+                project,
+                &content_query,
+                now_ms,
+            )
+            .await
+            {
+                Ok(()) => Some(selected),
+                Err(PgError::Forbidden) => None,
+                Err(error) => return Err(error),
+            };
+            content_authorities.insert(authority_key.clone(), authority);
+        }
+        let mut row = match content_authorities
+            .get(&authority_key)
+            .and_then(Option::as_ref)
+        {
+            Some(selected) => document(selected, path, files_by_path.get(path.as_str()).copied())?,
+            None => json!({"path":null,"name":null,"summary":null,"summary_kind":"source_excerpt",
+                "sha256":null,"byte_length":null,"source_kind":"registered_source","readable":false,
+                "status":"restricted","reason":"permission_restricted"}),
+        };
+        if row["path"].is_string() {
+            if let Some(work) = content_work {
+                row["content_work_id"] = json!(work);
+            }
+        }
+        rows.push(row);
+    }
     if let Some(search) = &q.search {
         let needle = search.to_lowercase();
         rows.retain(|row| {
@@ -213,7 +295,7 @@ pub(super) async fn read(
         "project_revision":auth.revision.to_string(),"project_status":auth.project_status,
         "data":{"work_id":q.work_id,"items":&rows[start..end],"total":rows.len(),
             "next_cursor":next,"truncated":more,"read_only":true,"execution_authorized":false,
-            "scope":if q.work_id.is_some(){"work"}else{"authorized_workstreams"},
+            "scope":if q.work_id.is_some(){"work"}else if auth.navigation_read_scope.as_ref().is_some_and(|scope| !scope.tasks.is_empty()) {"authorized_works"} else {"authorized_workstreams"},
             "content_read_limit_bytes":CONTENT_READ_LIMIT,
             "as_of":{"at_unix_ms":observed_at,"source_snapshot_id":auth.snapshot,
                 "project_revision":auth.revision.to_string()}}
