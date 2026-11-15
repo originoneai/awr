@@ -155,6 +155,29 @@ mod tests {
 
     #[test]
     fn browser_admission_and_revocation_are_encrypted_and_restart_durable() {
+        const ISOLATED: &str = "AWR_BROWSER_RESTART_TEST_CHILD";
+        const VERIFIED: &str = "browser_restart_fixture_verified";
+        // Parallel process-spawning tests can inherit an open writer-lock
+        // descriptor during fork. Keep this fixture's lock lifetime in its own process.
+        if std::env::var_os(ISOLATED).as_deref() != Some(std::ffi::OsStr::new("1")) {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "oauth::connections::tests::browser_admission_and_revocation_are_encrypted_and_restart_durable",
+                    "--nocapture",
+                ])
+                .env(ISOLATED, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success()
+                    && String::from_utf8_lossy(&output.stdout).contains(VERIFIED),
+                "isolated browser restart fixture failed\nstdout={}\nstderr={}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+            return;
+        }
         let directory =
             std::env::temp_dir().join(format!("awr-browser-state-{}", awr_core::Id::new()));
         let open = || {
@@ -214,5 +237,6 @@ mod tests {
         );
         drop(store);
         std::fs::remove_dir_all(directory).unwrap();
+        println!("{VERIFIED}");
     }
 }
