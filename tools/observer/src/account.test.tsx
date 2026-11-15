@@ -51,7 +51,7 @@ describe('Account mutations and connection entry', () => {
 
   it.each([
     { button: '退出登录', path: '/api/team/logout' },
-    { button: '退出本设备上的所有登录', path: '/api/team/session/revoke' },
+    { button: '退出浏览器登录', path: '/api/team/session/revoke' },
   ])('clears and stops restricted reads after $button succeeds', async ({ button, path }) => {
     const { calls } = accountFetch();
     const user = userEvent.setup();

@@ -9,6 +9,7 @@ import { projectsQueryOptions } from '../lib/queries';
 import { ObservationForbidden } from '../components/states';
 import { humanText } from '../i18n/human-language';
 import { useRevocation } from '../lib/revocation';
+import { AccountConnections } from '../components/AccountConnections';
 
 function ActionError() {
   const { t } = useTranslation();
@@ -65,9 +66,6 @@ function AccountObservationCards() {
           <Space direction="vertical" size={12}>
             <RevokeAllMineButton />
             <Alert type="info" showIcon title={humanText('revokeLocal', i18n.language)} />
-            <div data-testid="independent-revoke-unavailable">
-              <Typography.Text type="secondary">{t('account.independentUnavailable')}</Typography.Text>
-            </div>
           </Space>
         </Card>
       </Col>
@@ -120,6 +118,7 @@ export function AccountPage() {
     mutationFn: () => apiPost('/api/team/login', { bearer }),
     onSuccess: async () => {
       setBearer('');
+      revoke();
       resume();
       await queryClient.invalidateQueries();
       message.success(t('account.done'));
@@ -141,6 +140,7 @@ export function AccountPage() {
         {t('account.title')}
       </Typography.Title>
       <AccountObservationCards />
+      <AccountConnections />
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={14}>
           <Card title={t('account.login')}>

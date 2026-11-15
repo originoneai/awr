@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Button, Card, Col, Descriptions, Row, Space, Tabs, Typography } from 'antd';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router';
 import { ObservationForbidden } from '../components/states';
 import { ObservationValue } from '../components/ObservationValue';
 
@@ -19,7 +20,7 @@ function humanOther(count: number, language: string): string {
 /**
  * The connect-your-agent page (prototype 12), verified sources only:
  * the service address from the overview's mcp_url, the identity's effective
- * permissions, and an explicit "independent revocation is unavailable" note.
+ * permissions, and the separate account connection-management entry.
  * No bearer or credential value is ever rendered.
  */
 export function AgentConnectPage() {
@@ -127,6 +128,7 @@ export function AgentConnectPage() {
                 </Col>
                 <Col span={24}>
                   <Typography.Text type="secondary" data-testid="connect-revocation-note">{t('agentConnect.revocationNote')}</Typography.Text>
+                  <Link to={`/account${project ? `?scope=${encodeURIComponent(project)}` : ''}`} style={{ marginLeft: 8 }}>{t('account.title')}</Link>
                 </Col>
               </Row>
             ),
