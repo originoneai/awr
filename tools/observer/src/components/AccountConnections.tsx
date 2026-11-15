@@ -28,16 +28,20 @@ interface ConnectionsResponse {
 
 /** Account operations have a separate entry from project work observation. */
 export function AccountConnections() {
+  const { revoked } = useRevocation();
+  const { projectKey } = useScope();
+  const projects = useQuery(projectsQueryOptions(revoked));
+  const project = projectKey ?? projects.data?.projects?.[0]?.key ?? null;
+  return <ProjectConnections key={project ?? ''} project={project} projectsLoading={projects.isPending} />;
+}
+
+function ProjectConnections({ project, projectsLoading }: { project: string | null; projectsLoading: boolean }) {
   const { t, i18n } = useTranslation();
   const { message } = App.useApp();
   const { revoked, revoke } = useRevocation();
-  const { projectKey } = useScope();
   const screens = Grid.useBreakpoint();
   const client = useQueryClient();
-  const projects = useQuery(projectsQueryOptions(revoked));
-  const project = projectKey ?? projects.data?.projects?.[0]?.key ?? null;
-  const [pagination, setPagination] = useState<{ project: string | null; cursors: string[] }>({ project: null, cursors: [] });
-  const pages = pagination.project === project ? pagination.cursors : [];
+  const [pages, setPages] = useState<string[]>([]);
   const cursor = pages.at(-1);
   const connections = useQuery({
     queryKey: ['team', 'connections', project, cursor ?? null],
@@ -106,7 +110,7 @@ export function AccountConnections() {
       <Space orientation="vertical" size={16} style={{ width: '100%' }}>
         <Typography.Paragraph type="secondary" style={{ margin: 0 }}>{t('connections.description')}</Typography.Paragraph>
         {connections.isError ? <Alert type="warning" showIcon title={t('connections.unavailable')} /> : screens.md === false ? (
-          <List<Connection> dataSource={items} loading={projects.isPending || (connections.isPending && Boolean(project))}
+          <List<Connection> dataSource={items} loading={projectsLoading || (connections.isPending && Boolean(project))}
             locale={{ emptyText: t('connections.empty') }} renderItem={(row) => (
               <List.Item key={row.connection_id}>
                 <Space orientation="vertical" size={12} style={{ width: '100%' }}>
@@ -124,7 +128,7 @@ export function AccountConnections() {
               </List.Item>
             )} />
         ) : (
-          <Table<Connection> rowKey="connection_id" dataSource={items} loading={projects.isPending || (connections.isPending && Boolean(project))}
+          <Table<Connection> rowKey="connection_id" dataSource={items} loading={projectsLoading || (connections.isPending && Boolean(project))}
             pagination={false} scroll={{ x: 640 }} locale={{ emptyText: <Empty description={t('connections.empty')} image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
             columns={[
               { title: t('connections.name'), key: 'name', render: (_, row) => <Space orientation="vertical" size={4}>
@@ -139,10 +143,10 @@ export function AccountConnections() {
           />
         )}
         {(pages.length > 0 || connections.data?.data.next_cursor) && <Space>
-          <Button disabled={pages.length === 0 || connections.isFetching} onClick={() => setPagination({ project, cursors: pages.slice(0, -1) })}>{t('connections.previous')}</Button>
+          <Button disabled={pages.length === 0 || connections.isFetching} onClick={() => setPages((previous) => previous.slice(0, -1))}>{t('connections.previous')}</Button>
           <Button disabled={!connections.data?.data.next_cursor || connections.isFetching} onClick={() => {
             const next = connections.data?.data.next_cursor;
-            if (next) setPagination({ project, cursors: [...pages, next] });
+            if (next) setPages((previous) => [...previous, next]);
           }}>{t('connections.next')}</Button>
         </Space>}
       </Space>

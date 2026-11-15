@@ -54,7 +54,7 @@ describe('connection management', () => {
     }
   });
 
-  it('starts at the first connection page when the selected project changes', async () => {
+  it('starts at the first connection page on every project switch including a return visit', async () => {
     const calls = setup({ paged: true });
     const user = userEvent.setup();
     const { router } = renderApp('/account?scope=demo');
@@ -65,6 +65,11 @@ describe('connection management', () => {
     await waitFor(() => expect(calls.some((call) => call.url === '/api/team/connections/list' && call.body.project === 'docs')).toBe(true));
     const next = calls.find((call) => call.url === '/api/team/connections/list' && call.body.project === 'docs');
     expect(next?.body.cursor).toBeUndefined();
+    const beforeReturn = calls.length;
+    await act(() => router.navigate('/account?scope=demo'));
+    await waitFor(() => expect(calls.slice(beforeReturn).some((call) => call.url === '/api/team/connections/list' && call.body.project === 'demo')).toBe(true));
+    const returned = calls.slice(beforeReturn).find((call) => call.url === '/api/team/connections/list' && call.body.project === 'demo');
+    expect(returned?.body.cursor).toBeUndefined();
   });
 
   it('clears the previous connection list while a new sign-in is being verified', async () => {
