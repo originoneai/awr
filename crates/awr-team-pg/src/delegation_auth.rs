@@ -65,6 +65,9 @@ pub fn tmcp_actions_for_authorized(action: AuthorizedAction) -> BTreeSet<Action>
             out.insert(SessionMaintainOwn);
         }
         AuthorizedAction::ManageAuthorization => {}
+        AuthorizedAction::ManageDirectory => {
+            out.insert(DirectoryManageProject);
+        }
     }
     out
 }

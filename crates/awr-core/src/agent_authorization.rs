@@ -49,6 +49,8 @@ pub enum AuthorizedAction {
     FinalizeDelivery,
     Review,
     ManageAuthorization,
+    /// Maintain project grouping without granting membership or credential power.
+    ManageDirectory,
 }
 
 impl AuthorizedAction {
@@ -67,6 +69,7 @@ impl AuthorizedAction {
             Self::FinalizeDelivery => "finalize_delivery",
             Self::Review => "review",
             Self::ManageAuthorization => "manage_authorization",
+            Self::ManageDirectory => "manage_directory",
         }
     }
 
@@ -85,6 +88,7 @@ impl AuthorizedAction {
             "finalize_delivery" => Ok(Self::FinalizeDelivery),
             "review" => Ok(Self::Review),
             "manage_authorization" => Ok(Self::ManageAuthorization),
+            "manage_directory" => Ok(Self::ManageDirectory),
             _ => Err(Error::InvalidInput(format!(
                 "unknown authorized action '{value}'; default deny"
             ))),

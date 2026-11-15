@@ -106,6 +106,7 @@ impl AgentProvisionPlan {
                         | AuthorizedAction::PublishPlanning
                         | AuthorizedAction::FinalizeDelivery
                         | AuthorizedAction::Review
+                        | AuthorizedAction::ManageDirectory
                 )
             })
             || a.scope.project_id() != self.project_id
