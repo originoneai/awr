@@ -1,7 +1,81 @@
 import { describe, expect, it } from 'vitest';
 import { OPERATION_VOCABULARY } from '../../../i18n/human-language';
 import REPORTS from '../../../test-fixtures/work-state/progress-reports-run09.json';
-import { abbreviateIds, readableSentence } from '../index';
+import { abbreviateIds, readableNarrative, readableSentence } from '../index';
+
+describe('readableNarrative', () => {
+  it.each(['zh-CN', 'en-US'])('withholds diagnostic payloads and sensitive assignments in %s', (language) => {
+    for (const text of [
+      'payload={"token":"synthetic-session-value","reason":"clarify scope"}',
+      '{"reason":"clarify scope","candidate_id":"proposal-123"}',
+      '["candidate-123","synthetic-session-value"]',
+      'Clarify the outcome. ```json\n{"reason":"scope"}\n```',
+      'Clarify scope. token: synthetic-session-value',
+      'authorization=Bearer synthetic-session-value',
+      'configuration_value: synthetic-field-value',
+      'connectionString=synthetic-field-value',
+      'unknown=synthetic-field-value',
+      'Traceback (most recent call last):\n  File "/private/service.py", line 12',
+    ]) expect(readableNarrative(text, language), text).toBeNull();
+    for (const text of ['candidate_id=proposal-123', '"candidate_id": "proposal-123"', 'evidence_id=review-456']) {
+      expect(readableNarrative(text, language), text).toBeNull();
+    }
+    for (const field of ['client_secret', 'auth_token', 'session_token', 'private_key', 'x-api-key',
+      'clientSecret', 'apiKey', 'secret_access_key', 'database_password', 'signing_key', 'access_key2']) {
+      for (const text of [`${field}=synthetic-field-value`, `Clarify scope. "${field}": "synthetic-field-value"`]) {
+        expect(readableNarrative(text, language), text).toBeNull();
+      }
+      for (const key of [field, [...field].map((c) => `%${c.charCodeAt(0).toString(16)}`).join('')]) {
+        for (const url of [`https://example.com/guide?${key}=synthetic-field-value`,
+          `https://example.com/guide#${key}=synthetic-field-value`,
+          `https://example.com/${key}=synthetic-field-value`]) {
+          expect(readableNarrative(`Review ${url}`, language) ?? '', url).not.toContain('synthetic-field-value');
+        }
+      }
+    }
+    for (const value of ['client_secret=synthetic-field-value', '{"token":"synthetic-field-value"}']) {
+      let encoded = value;
+      for (let depth = 0; depth < 6; depth += 1) {
+        encoded = encodeURIComponent(encoded);
+        for (const url of [`https://example.com/${encoded}`, `https://example.com/guide#${encoded}`,
+          `https://example.com/guide?customer=${encoded}`]) {
+          expect(readableNarrative(url, language) ?? '', url).not.toContain('synthetic-field-value');
+        }
+      }
+    }
+    for (const field of ['client[secret]', 'auth[token]', 'headers[authorization]', 'headers[0][authorization]',
+      'configuration[opaque]', 'credentials[key]']) {
+      for (const separator of ['=', ':']) {
+        expect(readableNarrative(`Clarify scope. ${field}${separator}synthetic-bracket-value`, language)).toBeNull();
+      }
+      let encoded = field;
+      for (let depth = 0; depth < 6; depth += 1) {
+        expect(readableNarrative(`${encoded}=synthetic-bracket-value`, language)).toBeNull();
+        for (const url of [`https://example.com/${encoded}=synthetic-bracket-value`,
+          `https://example.com/guide#${encoded}=synthetic-bracket-value`,
+          `https://example.com/guide?${encoded}=synthetic-bracket-value`]) {
+          expect(readableNarrative(`Review ${url}`, language) ?? '', url).not.toContain('synthetic-bracket-value');
+        }
+        encoded = encodeURIComponent(encoded);
+      }
+    }
+  });
+
+  it.each(['zh-CN', 'en-US'])('preserves business reasons while removing internal references in %s', (language) => {
+    const reason = 'Clarify acceptance before adding this work';
+    expect(readableNarrative(reason, language)).toBe(reason);
+    expect(readableNarrative(`${reason}. candidate_id=proposal-123`, language)).toBe(`${reason}.`);
+    expect(readableNarrative('请补充验收要求，然后让 Agent 重新提交。', language)).toBe('请补充验收要求，然后让 Agent 重新提交。');
+    expect(readableNarrative('Review https://example.com/guide?topic=release', language)).toBe('Review https://example.com/guide?topic=release');
+    expect(readableNarrative('Review https://example.com/guide?access_token=synthetic-session-value', language))
+      .not.toContain('synthetic-session-value');
+    const result = readableNarrative('Review https://example.com/guide?access%5Ftoken=synthetic-session-value', language);
+    expect(result).not.toContain('synthetic-session-value');
+    expect(result).not.toContain('access_token');
+    expect(readableNarrative('Review https://example.com/guide?configuration_value=synthetic-field-value', language))
+      .not.toContain('synthetic-field-value');
+  });
+});
 
 describe('abbreviateIds', () => {
   it('cuts ULIDs, git object ids, digests and UUIDs to their first eight characters', () => {

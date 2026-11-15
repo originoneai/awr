@@ -60,7 +60,8 @@ test('planning route preserves recorded decisions, current differences and unkno
 test('planning route refuses forged controls and preserves upstream revocation without fixture fallback', async (t) => {
   const { read, calls } = await planningBridge(t, { code: 'Forbidden', message: 'Access denied' });
   for (const input of ['project=portal&actor_id=forged', 'project=portal&limit=1.5',
-    'project=portal&project=other', 'project=portal&limit=101', 'project=portal&work_id=hidden']) {
+    'project=portal&project=other', 'project=portal&limit=101', 'project=portal&work_id=hidden',
+    'project=portal&operation=planning.reject']) {
     assert.equal((await read(input)).error.code, 'InvalidInput');
   }
   assert.equal(calls.length, 0);
@@ -69,4 +70,15 @@ test('planning route refuses forged controls and preserves upstream revocation w
   assert.equal(refused.error.code, 'Forbidden');
   assert.equal(refused.result, undefined);
   assert.equal(calls.length, 1);
+});
+
+test('planning reads preserve an explicit returned-plan decision without exposing a write route', async (t) => {
+  const data={items:[{candidate_id:'returned-proposal',state:'rejected',
+    rejection:{value:{actor_id:'reviewer',display_name:'Kai',at_unix_ms:1793534400000,
+      reason:'Clarify the acceptance criteria'},reason:null}}],total:1,next_cursor:null,
+    truncated:false,execution_authorized:false};
+  const {read,calls}=await planningBridge(t,data);
+  const result=await read('project=portal');
+  assert.deepEqual(result.result.data,data);
+  assert.deepEqual(calls,[{protocol_version:1,op:'planning.candidates'}]);
 });
