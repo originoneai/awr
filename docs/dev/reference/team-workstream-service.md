@@ -328,6 +328,11 @@ includes the scoped count, `next_cursor`, `truncated`, `read_only: true`,
 validates page coverage, scope, redaction and availability before forwarding it.
 The project knowledge page uses this catalog when advertised by capabilities.
 Older services retain the existing work-reference view.
+Catalog and whole-source browser requests explicitly use the supported 262,144-byte
+budget. Source-derived titles pass a dedicated document-name presentation check.
+Raw source excerpts remain service metadata until the user opens the document body.
+An expired cursor immediately hides the retained page, clears the project's cached
+catalog and document bodies, and reloads the first authorized page.
 Shared catalog access is derived from the activated workstream catalog before
 source bytes or availability are inspected. Removing a private workstream from
 stored text, malformed text or missing text cannot reduce that access boundary.

@@ -28,7 +28,7 @@ export const SNAPSHOT_SLOW_POLL_INTERVAL_MS = 600000;
 const snapshotReadLimit = pLimit(4);
 
 function retryRead(failureCount: number, error: unknown) {
-  return !isAuthError(error) && failureCount < 1;
+  return !isAuthError(error) && !(error instanceof ApiError && error.code === 'CursorExpired') && failureCount < 1;
 }
 
 // Cursor-bound pages retain their resource cadence to recheck current visibility.
@@ -142,7 +142,7 @@ export function projectDocumentsQueryOptions(project: string, search: string, cu
   return {
     queryKey: ['team', 'documents.list', project, search, cursor],
     queryFn: ({ signal }: { signal: AbortSignal }) => teamRead<ProjectDocumentsData>(project, {
-      protocol_version: 1, op: 'documents.list', limit: 20, max_context_bytes: 65536,
+      protocol_version: 1, op: 'documents.list', limit: 20, max_context_bytes: 262144,
       ...(search ? { search } : {}), ...(cursor ? { cursor } : {}),
     }, signal),
     enabled: Boolean(project) && !revoked,
@@ -274,6 +274,7 @@ export function sourceContentQueryOptions(
         op: 'source.content',
         source_path: sourcePath,
         expected_sha256: expectedSha256,
+        max_context_bytes: 262144,
       }, signal);
     },
     enabled: !revoked,

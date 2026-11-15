@@ -167,6 +167,37 @@ async fn document_catalog_rechecks_shared_document_access_before_exposing_metada
 }
 
 #[tokio::test]
+async fn document_catalog_supports_full_pages_of_bounded_unicode_metadata() {
+    let text = format!("# {}\n\n{}", "🌍".repeat(256), "🌍".repeat(512));
+    let mut files = vec![SourceFile {
+        path: "docs/alpha.md".into(),
+        bytes: text.as_bytes().to_vec(),
+    }];
+    for index in 1..20 {
+        files.push(SourceFile {
+            path: format!("docs/{}-{index}.md", "p".repeat(490)),
+            bytes: text.as_bytes().to_vec(),
+        });
+    }
+    let paths: Vec<_> = files.iter().skip(1).map(|file| file.path.clone()).collect();
+    let (_guard, admin, _, store) = setup_with_specs(files).await;
+    for path in paths {
+        add_required_source(&admin, 1, &path).await;
+    }
+    let mut q = query("documents.list");
+    q.max_context_bytes = Some(65_536);
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, q.clone()).await,
+        Err(PgError::ResponseTooLarge)
+    ));
+    q.max_context_bytes = Some(262_144);
+    let page = store.query(TENANT, PROJECT, A, q).await.unwrap();
+    assert_eq!(page["data"]["items"].as_array().unwrap().len(), 20);
+    let bytes = serde_json::to_vec(&page).unwrap().len();
+    assert!(bytes > 65_536 && bytes <= 262_144);
+}
+
+#[tokio::test]
 async fn document_catalog_distinguishes_missing_integrity_and_content_size_limits() {
     let (_guard, admin, _, store) = setup_with_specs(vec![SourceFile {
         path: "docs/alpha.md".into(),
@@ -242,4 +273,35 @@ async fn document_catalog_distinguishes_missing_integrity_and_content_size_limit
     assert_eq!(row["readable"], false);
     assert_eq!(row["name"], "Large guide");
     assert_eq!(row["byte_length"], body.len());
+    for size in [65_537, 262_144] {
+        let text = "x".repeat(size);
+        let file = oversized["files"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|file| file["path"] == "docs/alpha.md")
+            .unwrap();
+        file["text"] = json!(text);
+        file["bytes"] = json!(size);
+        file["sha256"] = json!(format!("{:x}", Sha256::digest(text.as_bytes())));
+        replace_source_record(&admin, &id, &oversized).await;
+        let catalog = store
+            .query(TENANT, PROJECT, A, query("documents.list"))
+            .await
+            .unwrap();
+        assert_eq!(catalog["data"]["items"][0]["readable"], true);
+        let mut content = query("source.content");
+        content.source_path = Some("docs/alpha.md".into());
+        content.expected_sha256 = catalog["data"]["items"][0]["sha256"]
+            .as_str()
+            .map(str::to_owned);
+        assert!(matches!(
+            store.query(TENANT, PROJECT, A, content.clone()).await,
+            Err(PgError::ContextIncomplete)
+        ));
+        content.max_context_bytes = Some(262_144);
+        let full = store.query(TENANT, PROJECT, A, content).await.unwrap();
+        assert_eq!(full["data"]["text"], text);
+        assert_eq!(full["data"]["byte_length"], size);
+    }
 }

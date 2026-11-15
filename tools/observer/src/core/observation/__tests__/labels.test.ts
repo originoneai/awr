@@ -3,10 +3,24 @@ import DERIVED_RUN09 from '../../../test-fixtures/activity/derived-audit-develop
 import { findForbiddenVisibleText } from '../../../lib/human-language-guard';
 import REPORTS from '../../../test-fixtures/work-state/progress-reports-run09.json';
 import { ACTION_VOCABULARY, ARTIFACT_VOCABULARY } from '../../../i18n/human-language';
-import { actionWords, actorAliases, artifactLabel, checkLabel, documentLabel, workLabel } from '../index';
+import { actionWords, actorAliases, artifactLabel, checkLabel, documentLabel, documentTitle, workLabel } from '../index';
 
 const ITEMS = DERIVED_RUN09.data.items as Array<{ actor_id: string; work_id: string | null }>;
 const ACTORS = ITEMS.map((item) => item.actor_id);
+
+describe('documentTitle', () => {
+  it.each(['zh-CN', 'en-US'])('uses readable source headings and replaces technical headings in %s', (language) => {
+    const options = { language, position: 3 };
+    expect(documentTitle('Delivery guide', 'docs/guide.md', options).text).toBe('Delivery guide');
+    for (const title of ['/var/lib/awr-beta/sources/private/customer-plan', 'C:\\private\\customer-plan',
+      'status=claimed reason=Forbidden', 'Source /private/project', 'client_id=private-client',
+      'CursorExpired', 'a'.repeat(64), 'AWR-OBS-657', 'client-obs-657', 'docs/guide.md', 'Review docs/private/guide']) {
+      const label = documentTitle(title, 'docs/guide.md', options).text;
+      expect(label).toBe('guide');
+      expect(findForbiddenVisibleText(label)).toEqual([]);
+    }
+  });
+});
 
 describe('actorAliases', () => {
   it('numbers the real run-09 actors the same way whatever order the events arrive in', () => {

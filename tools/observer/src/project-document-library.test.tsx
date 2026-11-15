@@ -35,9 +35,9 @@ function setup(respond: (query: Record<string, unknown>) => unknown = () => cata
   vi.stubGlobal('fetch', vi.fn(async (_url, init) => {
     const query = JSON.parse(init.body).query;
     calls.push(query);
-    const payload = query.op === 'capabilities'
+    const payload = await (query.op === 'capabilities'
       ? discovery()
-      : respond(query);
+      : respond(query));
     return new Response(JSON.stringify(payload), { status: 200, headers: { 'content-type': 'application/json' } });
   }));
   const client = createAppQueryClient();
@@ -91,8 +91,75 @@ describe('project document library', () => {
     expect((await screen.findByTestId('library-document-text')).textContent).toBe(TEXT);
     expect(screen.getByText('Content unchanged')).not.toBeNull();
     expect(calls.filter((query) => query.op === 'source.content')).toEqual([
-      { protocol_version: 1, op: 'source.content', source_path: 'docs/delivery-guide.md', expected_sha256: DIGEST },
+      { protocol_version: 1, op: 'source.content', source_path: 'docs/delivery-guide.md', expected_sha256: DIGEST, max_context_bytes: 262144 },
     ]);
+  });
+
+  it.each(['zh-CN', 'en-US'])('keeps raw source headings and excerpts behind the explicit content read in %s', async (language) => {
+    await i18n.changeLanguage(language);
+    setup(() => catalog([document(1, { name: '/var/lib/awr-beta/sources/private/customer-plan',
+      summary: 'status=claimed reason=Forbidden source=/var/lib/awr-beta/sources/private/customer-plan actor=client-obs-657' })]));
+    const page = await screen.findByTestId('project-document-library');
+    const button = await screen.findByRole('button', { name: /delivery guide/i });
+    for (const value of ['/var/lib', 'claimed', 'Forbidden', 'client-obs-657']) {
+      expect(defaultVisibleText(page)).not.toContain(value);
+      expect(button.getAttribute('title') ?? '').not.toContain(value);
+      expect(button.textContent).not.toContain(value);
+    }
+  });
+
+  it.each([65537, 262144])('opens an advertised %i-byte document using the supported whole-document budget', async (size) => {
+    await i18n.changeLanguage('en-US');
+    const text = 'x'.repeat(size);
+    const digest = createHash('sha256').update(text).digest('hex');
+    setup((query) => query.op === 'source.content'
+      ? Number(query.max_context_bytes ?? 65536) >= size
+        ? { ok: true, result: { data: { text, sha256: digest, byte_length: size } } }
+        : { ok: false, error: { code: 'ContextIncomplete', message: 'Read budget exceeded' } }
+      : catalog([document(1, { sha256: digest, byte_length: size })]));
+    await userEvent.click(await screen.findByRole('button', { name: 'Read the full text' }));
+    expect((await screen.findByTestId('library-document-text')).textContent).toHaveLength(size);
+  });
+
+  it('reads a valid maximum-length Unicode metadata page within its declared response budget', async () => {
+    await i18n.changeLanguage('en-US');
+    const items = Array.from({ length: 20 }, (_, i) => document(i + 1, {
+      name: '🌍'.repeat(256), summary: '🌍'.repeat(512), path: `docs/${'p'.repeat(490)}-${i}.md`,
+    }));
+    const response = catalog(items);
+    const size = Buffer.byteLength(JSON.stringify(response));
+    expect(size).toBeGreaterThan(65536);
+    setup((query) => Number(query.max_context_bytes ?? 65536) >= size
+      ? response : { ok: false, error: { code: 'ResponseTooLarge', message: 'Page budget exceeded' } });
+    await screen.findByText('20 project documents');
+    expect(screen.queryByText(i18n.t('knowledge.libraryFailed'))).toBeNull();
+  });
+
+  it.each(['permission narrowing', 'source change'])('discards the expired page and cached content after %s', async () => {
+    await i18n.changeLanguage('en-US');
+    let changed = false;
+    let finishRefresh: (value: ReturnType<typeof catalog>) => void = () => {};
+    const refreshing = new Promise<ReturnType<typeof catalog>>((resolve) => { finishRefresh = resolve; });
+    const { client, calls } = setup((query) => {
+      if (query.op === 'source.content') return { ok: true, result: { data: { text: TEXT } } };
+      if (changed && query.cursor) return { ok: false, error: { code: 'CursorExpired', message: 'private-scope-change' } };
+      if (changed) return refreshing;
+      if (query.cursor) return catalog([document(21, { name: 'Previously visible private guide' })], 21);
+      return catalog(Array.from({ length: 20 }, (_, i) => document(i + 1, { name: `Previous project guide ${i + 1}` })), 21, 'page-two');
+    });
+    await userEvent.click(await screen.findByRole('button', { name: 'Next' }));
+    await screen.findByRole('button', { name: /Previously visible private guide/ });
+    await userEvent.click(screen.getByRole('button', { name: 'Read the full text' }));
+    await screen.findByTestId('library-document-text');
+    changed = true;
+    await act(async () => { await client.refetchQueries({ queryKey: ['team', 'documents.list', 'portal', '', 'page-two'] }); });
+    await waitFor(() => expect(globalThis.document.body.textContent).not.toContain('Previously visible private guide'));
+    expect(globalThis.document.body.textContent).not.toContain('Previous project guide');
+    expect(screen.queryByTestId('library-document-text')).toBeNull();
+    expect(client.getQueriesData({ queryKey: ['team', 'source.content', 'portal'] })).toEqual([]);
+    expect(calls.filter((query) => changed && query.cursor).length).toBe(2);
+    await act(async () => { finishRefresh(catalog([document(1, { name: 'Current public guide' })])); });
+    await screen.findByRole('button', { name: /Current public guide/ });
   });
 
   it('keeps changed text off the page and describes the failure in product language', async () => {

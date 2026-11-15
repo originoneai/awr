@@ -1,11 +1,11 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Card, Col, Input, List, Row, Space, Tag, Typography, theme } from 'antd';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ObservationEmpty, ObservationForbidden } from '../components/states';
-import { documentLabel, judgeContentRead, utf8ByteLength } from '../core/observation';
+import { documentTitle, judgeContentRead, utf8ByteLength } from '../core/observation';
 import { formatObservationValue } from '../i18n/craft';
-import { isAuthError } from '../lib/api';
+import { ApiError, isAuthError } from '../lib/api';
 import { formatUnixMs } from '../lib/format';
 import { projectDocumentsQueryOptions, sourceContentQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
@@ -51,19 +51,30 @@ function DocumentText({ project, document }: { project: string; document: Projec
 export function ProjectDocumentLibrary({ project }: { project: string }) {
   const { t, i18n } = useTranslation();
   const { token } = theme.useToken();
+  const queryClient = useQueryClient();
   const { revoked } = useRevocation();
   const [search, setSearch] = useState('');
   const [paging, setPaging] = useState<{ cursor: string | null; previous: Array<string | null> }>({ cursor: null, previous: [] });
   const [selection, setSelection] = useState<number | null>(null);
   const library = useQuery(projectDocumentsQueryOptions(project, search, paging.cursor, revoked));
-  const data = library.data?.result.data;
+  const expired = library.error instanceof ApiError && library.error.code === 'CursorExpired';
+  // A cursor can expire after permission narrowing. Hide retained data in the same render.
+  const data = expired ? undefined : library.data?.result.data;
+  useEffect(() => {
+    if (!expired || !paging.cursor) return;
+    for (const resource of ['documents.list', 'source.content']) {
+      const queryKey = ['team', resource, project];
+      void queryClient.cancelQueries({ queryKey });
+      queryClient.removeQueries({ queryKey });
+    }
+    setSelection(null);
+    setPaging({ cursor: null, previous: [] });
+  }, [expired, paging.cursor, project, queryClient]);
   const documents = data?.items ?? [];
   const selected = documents.find((item) => item.document_position === selection) ?? documents[0];
-  const name = (item: ProjectDocument) => {
-    const fileName = item.path?.split('/').at(-1);
-    if (item.name && item.name !== fileName) return item.name;
-    return documentLabel(item.path, { language: i18n.language, position: item.document_position }).text;
-  };
+  const name = (item: ProjectDocument) => documentTitle(item.name, item.path, {
+    language: i18n.language, position: item.document_position,
+  }).text;
   const reset = () => {
     setPaging({ cursor: null, previous: [] });
     setSelection(null);
@@ -98,9 +109,6 @@ export function ProjectDocumentLibrary({ project }: { project: string }) {
                 height: 'auto', textAlign: 'start', whiteSpace: 'normal' }}>
               <Space orientation="vertical" size={4} style={{ width: '100%' }}>
                 <Typography.Text style={{ overflowWrap: 'anywhere' }}>{formatObservationValue(name(item), i18n.language)}</Typography.Text>
-                {item.summary ? <Typography.Text type="secondary" style={{ overflowWrap: 'anywhere' }}>
-                  {formatObservationValue(item.summary, i18n.language)}
-                </Typography.Text> : null}
                 <Typography.Text type="secondary">{t(`knowledge.documentStatus.${item.status}`)}</Typography.Text>
               </Space>
             </Button>
@@ -118,9 +126,6 @@ export function ProjectDocumentLibrary({ project }: { project: string }) {
       {selected ? <Col xs={24} lg={16}>
         <Card size="small" title={formatObservationValue(name(selected), i18n.language)}>
           <Space orientation="vertical" size={16} style={{ width: '100%' }}>
-            {selected.summary ? <Typography.Text type="secondary" style={{ overflowWrap: 'anywhere' }}>
-              {formatObservationValue(selected.summary, i18n.language)}
-            </Typography.Text> : null}
             <Typography.Text type="secondary">{t('knowledge.registeredDocument')}</Typography.Text>
             {selected.byte_length !== null ? <Typography.Text type="secondary">
               {t('knowledge.documentSize', { size: new Intl.NumberFormat(i18n.language, {
