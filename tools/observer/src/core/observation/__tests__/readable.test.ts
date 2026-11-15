@@ -1,7 +1,36 @@
 import { describe, expect, it } from 'vitest';
 import { OPERATION_VOCABULARY } from '../../../i18n/human-language';
 import REPORTS from '../../../test-fixtures/work-state/progress-reports-run09.json';
-import { abbreviateIds, readableSentence } from '../index';
+import { abbreviateIds, readableNarrative, readableSentence } from '../index';
+
+describe('readableNarrative', () => {
+  it.each(['zh-CN', 'en-US'])('withholds diagnostic payloads and sensitive assignments in %s', (language) => {
+    for (const text of [
+      'payload={"token":"synthetic-session-value","reason":"clarify scope"}',
+      '{"reason":"clarify scope","candidate_id":"proposal-123"}',
+      '["candidate-123","synthetic-session-value"]',
+      'Clarify the outcome. ```json\n{"reason":"scope"}\n```',
+      'Clarify scope. token: synthetic-session-value',
+      'authorization=Bearer synthetic-session-value',
+      'Traceback (most recent call last):\n  File "/private/service.py", line 12',
+    ]) expect(readableNarrative(text, language), text).toBeNull();
+    for (const text of ['candidate_id=proposal-123', '"candidate_id": "proposal-123"', 'evidence_id=review-456']) {
+      expect(readableNarrative(text, language), text).toBeNull();
+    }
+  });
+
+  it.each(['zh-CN', 'en-US'])('preserves business reasons while removing internal references in %s', (language) => {
+    const reason = 'Clarify acceptance before adding this work';
+    expect(readableNarrative(reason, language)).toBe(reason);
+    expect(readableNarrative(`${reason}. candidate_id=proposal-123`, language)).toBe(`${reason}.`);
+    expect(readableNarrative('请补充验收要求，然后让 Agent 重新提交。', language)).toBe('请补充验收要求，然后让 Agent 重新提交。');
+    expect(readableNarrative('Review https://example.com/guide?topic=release', language)).toBe('Review https://example.com/guide?topic=release');
+    expect(readableNarrative('Review https://example.com/guide?access_token=synthetic-session-value', language)).toBeNull();
+    const result = readableNarrative('Review https://example.com/guide?access%5Ftoken=synthetic-session-value', language);
+    expect(result).not.toContain('synthetic-session-value');
+    expect(result).not.toContain('access_token');
+  });
+});
 
 describe('abbreviateIds', () => {
   it('cuts ULIDs, git object ids, digests and UUIDs to their first eight characters', () => {

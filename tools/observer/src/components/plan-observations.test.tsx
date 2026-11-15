@@ -163,6 +163,27 @@ describe('plan observation product views', () => {
     expect(panel.querySelector('details,pre,code,[data-testid="technical-details"]')).toBeNull();
   });
 
+  it.each(['zh-CN', 'en-US'])('uses the product fallback for payload-shaped returned reasons in %s', async (language) => {
+    await i18n.changeLanguage(language);
+    const reasons = [
+      'payload={"token":"synthetic-session-value","reason":"clarify scope"}',
+      '{"reason":"clarify scope","candidate_id":"proposal-123"}',
+      'candidate_id=proposal-123',
+      'token: synthetic-session-value',
+    ];
+    const { container } = mount((q) => response(q.op === 'sources.inspect' ? documents() : {
+      items: reasons.map((reason, index) => candidate({ candidate_id: `${INTERNAL}-${index}`,
+        state: 'rejected', approval: absent('not_approved'), publication: absent('not_published'),
+        rejection: recorded({ display_name: 'Kai', reason }),
+      })), total: reasons.length, next_cursor: null, as_of: { at_unix_ms: AT },
+    }));
+    await screen.findAllByText(i18n.t('plan.changes.returnedReasonUnavailable'));
+    expect(screen.getAllByText(i18n.t('plan.changes.returnedReasonUnavailable'))).toHaveLength(reasons.length);
+    expect(container.textContent).not.toMatch(/synthetic-session-value|proposal-123|payload|candidate_id|clarify scope/);
+    expect(container.querySelector('details,pre,code,[data-testid="technical-details"]')).toBeNull();
+    expect(within(screen.getByTestId('plan-changes')).queryByRole('button', { name: /copy|复制/i })).toBeNull();
+  });
+
   it.each([
     {state:'rejected'},
     {state:'rejected',rejection:recorded({display_name:'Kai',reason:' '})},

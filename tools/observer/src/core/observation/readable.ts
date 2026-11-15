@@ -50,13 +50,18 @@ export function readableSentence(text: string, language: string): string {
 const INTERNAL_FIELDS = new Set([
   'actor_id', 'client_id', 'session_id', 'execution_id', 'claim_id', 'receipt_id', 'credential_id',
   'source_snapshot_id', 'workstream_id', 'decision_id', 'request_id', 'request_key', 'contract_hash',
-  'baseline_digest', 'candidate_digest', 'project_revision', 'decision_version', 'allowed_responder_person_ids',
+  'baseline_digest', 'candidate_id', 'candidate_digest', 'project_revision', 'decision_version', 'allowed_responder_person_ids',
 ]);
 const DIAGNOSTIC_FIELDS = new Set(['status', 'state', 'reason', 'actor', 'client', 'source', 'path']);
 const ERROR_CODE = /\b(?:Forbidden|Unauthenticated|SessionExpired|CursorExpired|ContextIncomplete|ResponseTooLarge|InvalidInput|BadGateway)\b/i;
 const INTERNAL_TOKEN = /\b(?:client|actor|session|execution|claim|receipt|credential|snapshot|workstream|decision|request|agent)[_-](?=[a-z0-9_-]*\d)[a-z0-9_-]+\b/i;
 const SYSTEM_PATH = /(?:[A-Za-z]:\\|\/(?:Users|home|var|private|tmp|opt|etc|srv)\/|~\/|\b(?:crates|tools|src|target|\.local)\/)[^\s<>"']+/;
 const OPAQUE_URL_COMPONENT = new RegExp([UUID.source, LONG_HEX.source, ULID.source, INTERNAL_TOKEN.source].join('|'), 'i');
+const SENSITIVE_FIELD = /^(?:payload|authorization|cookie|credential|password|secret|token|api[_-]?key|access[_-]?token|refresh[_-]?token)$/i;
+
+function internalField(field: string): boolean {
+  return INTERNAL_FIELDS.has(field) || /_(?:id|hash|digest)$/.test(field);
+}
 
 function diagnosticValue(field: string, value: string): boolean {
   const scalar = value.replace(/^["']|["']$/g, '').replace(/[.!?]+$/, '');
@@ -65,10 +70,10 @@ function diagnosticValue(field: string, value: string): boolean {
 }
 
 function removeDiagnosticAssignments(text: string): string {
-  return text.replace(/\b([a-z][a-z0-9_]*)\s*([:：=])\s*("[^"\n]*"|'[^'\n]*'|[^\s,;]+)/gi,
+  return text.replace(/["']?\b([a-z][a-z0-9_]*)["']?\s*([:：=])\s*("[^"\n]*"|'[^'\n]*'|[^\s,;]+)/gi,
     (original, rawField: string, separator: string, value: string) => {
       const field = rawField.toLowerCase();
-      return INTERNAL_FIELDS.has(field) || DIAGNOSTIC_FIELDS.has(field) && (separator === '=' || diagnosticValue(field, value))
+      return internalField(field) || DIAGNOSTIC_FIELDS.has(field) && (separator === '=' || diagnosticValue(field, value))
         ? '' : original;
     });
 }
@@ -84,7 +89,8 @@ function businessUrl(text: string, reference: string): string {
   let changed = false;
   for (const [rawField, value] of [...url.searchParams]) {
     const field = rawField.toLowerCase();
-    if (INTERNAL_FIELDS.has(field) || DIAGNOSTIC_FIELDS.has(field) && diagnosticValue(field, value)) {
+    if (SENSITIVE_FIELD.test(field)) return reference;
+    if (internalField(field) || DIAGNOSTIC_FIELDS.has(field) && diagnosticValue(field, value)) {
       url.searchParams.delete(rawField);
       changed = true;
     } else if (OPAQUE_URL_COMPONENT.test(field) || OPAQUE_URL_COMPONENT.test(value)) {
@@ -101,6 +107,11 @@ function businessUrl(text: string, reference: string): string {
 
 /** Preserve business prose and public references while removing internal diagnostic values. */
 export function readableNarrative(text: string, language: string): string | null {
+  // Diagnostic payloads stay in protected service history. A partial scrub of
+  // structured content cannot establish that the remaining values are prose.
+  if (/[{}]|```|\[\s*(?:["'\[\d]|true\b|false\b|null\b)/i.test(text)
+    || /\b(?:payload|authorization|cookie|credential|password|secret|token|api[_-]?key|access[_-]?token|refresh[_-]?token)["']?\s*[:：=]/i.test(text)
+    || /\bBearer\s+\S+|-----BEGIN [A-Z ]*PRIVATE KEY-----|^\s*(?:Traceback\b|at\s+\S+\s*\([^\n]+:\d+)/im.test(text)) return null;
   const zh = language.toLowerCase().startsWith('zh');
   const record = zh ? '相关记录' : 'the related record';
   const file = zh ? '相关文件' : 'the related file';
