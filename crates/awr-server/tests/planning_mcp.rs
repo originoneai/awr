@@ -146,6 +146,34 @@ async fn planning_rejection_has_http_mcp_parity_and_retains_the_original_decisio
         "candidate_id":created["result"]["candidate_id"],
         "candidate_digest":created["result"]["candidate_digest"],
         "reason":"Describe the user-visible outcome before proposing this work"});
+    let mut stale = input.clone();
+    stale["request_id"] = json!("rejection-parity-stale");
+    stale["candidate_digest"] = json!("0".repeat(64));
+    let response = http()
+        .post(format!("{}/one/planning/reject", server.url))
+        .bearer_auth(A)
+        .json(&stale)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let refused = response.json::<Value>().await.unwrap();
+    assert_eq!(refused["result"]["outcome"], "known_rejection");
+    assert_eq!(refused["result"]["code"], "PlanningCandidateChanged");
+    assert_eq!(refused["result"]["decision_written"], false);
+    let replay = call(&client, "awr_team_planning_reject", stale.clone(), false).await;
+    assert_eq!(replay["result"], refused["result"]);
+    let outcome = call(
+        &client,
+        "awr_team_planning_outcome",
+        json!({
+            "protocol_version":1,"request_id":stale["request_id"]
+        }),
+        false,
+    )
+    .await;
+    assert_eq!(outcome["already_recorded"], true);
+    assert_eq!(outcome["result"]["result"], refused["result"]);
     let response = http()
         .post(format!("{}/one/planning/reject", server.url))
         .bearer_auth(A)

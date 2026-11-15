@@ -68,9 +68,49 @@ pub struct PlanningCommandBind {
 
 const PLANNING_RECEIPT_PROTOCOL: &str = "awr-planning-command-receipt-v1";
 
-pub(crate) enum PlanningApprovalAttempt {
-    Approved(Value),
+pub(crate) enum PlanningDecisionAttempt {
+    Recorded(Value),
     SourceBaselineChanged,
+    CandidateChanged,
+    CandidateClosed,
+}
+
+/// Keep a committed decision recoverable even if the candidate changes before
+/// the command layer receives the commit acknowledgement.
+async fn complete_decision_receipt(
+    tx: &Transaction<'_>,
+    tenant_id: &str,
+    project_id: &str,
+    auth: &ReaderAuthority,
+    bind: &PlanningCommandBind,
+    result: &Value,
+) -> PgResult<()> {
+    let wrapped = json!({
+        "protocol":super::planning_ops::RECEIPT_PROTOCOL,
+        "request_id":bind.request_id, "op":bind.op,
+        "request_hash":bind.request_hash, "result":result, "already_recorded":false
+    });
+    let updated = tx
+        .execute(
+            "UPDATE awr_team.planning_command_receipts
+         SET status='completed',result_json=$4,updated_at=clock_timestamp()
+         WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3 AND request_hash=$5
+           AND actor_id=$6 AND client_id=$7",
+            &[
+                &tenant_id,
+                &project_id,
+                &bind.request_id,
+                &wrapped,
+                &bind.request_hash,
+                &auth.actor_id,
+                &auth.client_id,
+            ],
+        )
+        .await?;
+    if updated != 1 {
+        return Err(PgError::IdempotencyConflict);
+    }
+    Ok(())
 }
 
 async fn bind_planning_receipt_and_ops_audit(
@@ -667,11 +707,18 @@ impl SourceStore {
                 candidate_id,
                 candidate_digest,
                 author_person_id,
+                None,
             )
             .await?
         {
-            PlanningApprovalAttempt::Approved(result) => Ok(result),
-            PlanningApprovalAttempt::SourceBaselineChanged => Err(PgError::PreconditionsChanged),
+            PlanningDecisionAttempt::Recorded(result) => Ok(result),
+            PlanningDecisionAttempt::SourceBaselineChanged => Err(PgError::PreconditionsChanged),
+            PlanningDecisionAttempt::CandidateChanged => Err(PgError::Protocol(
+                "approval digest does not match current candidate".into(),
+            )),
+            PlanningDecisionAttempt::CandidateClosed => Err(PgError::Protocol(
+                "approve requires a drafting candidate".into(),
+            )),
         }
     }
 
@@ -685,7 +732,8 @@ impl SourceStore {
         candidate_id: &str,
         candidate_digest: &str,
         author_person_id: Option<&str>,
-    ) -> PgResult<PlanningApprovalAttempt> {
+        bind: Option<&PlanningCommandBind>,
+    ) -> PgResult<PlanningDecisionAttempt> {
         let mut client = self.connect().await?;
         crate::check_schema(&client).await?;
         let tx = client
@@ -702,14 +750,14 @@ impl SourceStore {
         )
         .await?;
         let row = tx
-            .query_one(
+            .query_opt(
                 "SELECT self_approve_policy_json, delivery_completion_policy
                  FROM awr_team.planning_candidates
                  WHERE tenant_id=$1 AND project_id=$2 AND id=$3 FOR UPDATE",
                 &[&tenant_id, &project_id, &candidate_id],
             )
-            .await
-            .map_err(|_| PgError::Protocol("planning candidate not found".into()))?;
+            .await?
+            .ok_or_else(|| PgError::Protocol("planning candidate not found".into()))?;
         let policy_json: Value = row.get(0);
         let delivery_policy: String = row.get(1);
         let policy: OrdinaryPlanningSelfApprovePolicy =
@@ -719,6 +767,14 @@ impl SourceStore {
         // Do not copy a caller-supplied person into the approver scope. That
         // substitution both forges the receipt and clears the self-approve ban.
         attested_actor_person(&auth.actor_id, author_person_id).map_err(map_team)?;
+        if candidate.state != CandidateState::Drafting {
+            tx.rollback().await?;
+            return Ok(PlanningDecisionAttempt::CandidateClosed);
+        }
+        if candidate.candidate_digest().map_err(map_team)? != candidate_digest {
+            tx.rollback().await?;
+            return Ok(PlanningDecisionAttempt::CandidateChanged);
+        }
         let scope = crate::workstream_auth::authority_scope(&auth, None, None);
         let resource = ResourceRef {
             tenant_id: tenant_id.into(),
@@ -741,7 +797,7 @@ impl SourceStore {
             Ok(()) => {}
             Err(PgError::PreconditionsChanged) => {
                 tx.rollback().await?;
-                return Ok(PlanningApprovalAttempt::SourceBaselineChanged);
+                return Ok(PlanningDecisionAttempt::SourceBaselineChanged);
             }
             Err(error) => return Err(error),
         }
@@ -798,14 +854,18 @@ impl SourceStore {
                 "candidate",
             );
             audit.target_id = Some(candidate_id.to_string());
+            audit.request_id = bind.map(|command| command.request_id.clone());
             audit.change_id = Some(candidate_id.to_string());
             audit.source_version = Some(candidate_digest.to_string());
             audit.digest = Some(crate::ops_audit::digest_of(&summary));
             audit.summary = summary;
             crate::ops_audit::record_in_tx(&tx, tenant_id, project_id, &audit).await?;
         }
+        if let Some(bind) = bind {
+            complete_decision_receipt(&tx, tenant_id, project_id, &auth, bind, &result).await?;
+        }
         tx.commit().await?;
-        Ok(PlanningApprovalAttempt::Approved(result))
+        Ok(PlanningDecisionAttempt::Recorded(result))
     }
 
     /// Closing a draft records a decision without changing sources or live work.
@@ -816,7 +876,7 @@ impl SourceStore {
         bearer: &str,
         req: &super::planning_ops::PlanningRejectRequest,
         request_hash: &str,
-    ) -> PgResult<Value> {
+    ) -> PgResult<PlanningDecisionAttempt> {
         let mut client = self.connect().await?;
         crate::check_schema(&client).await?;
         let tx = client
@@ -847,8 +907,11 @@ impl SourceStore {
             )
             .await?;
         if let Some(row) = previous {
+            if row.get::<_, String>(8) != req.request_id {
+                tx.rollback().await?;
+                return Ok(PlanningDecisionAttempt::CandidateClosed);
+            }
             if candidate.state != CandidateState::Rejected
-                || row.get::<_, String>(8) != req.request_id
                 || row.get::<_, String>(9) != request_hash
                 || row.get::<_, String>(4) != auth.actor_id
                 || row.get::<_, String>(5) != auth.client_id
@@ -857,7 +920,15 @@ impl SourceStore {
             }
             let result = rejection_result(&req.candidate_id, &row);
             tx.commit().await?;
-            return Ok(result);
+            return Ok(PlanningDecisionAttempt::Recorded(result));
+        }
+        if candidate.state != CandidateState::Drafting {
+            tx.rollback().await?;
+            return Ok(PlanningDecisionAttempt::CandidateClosed);
+        }
+        if candidate.candidate_digest().map_err(map_team)? != req.candidate_digest {
+            tx.rollback().await?;
+            return Ok(PlanningDecisionAttempt::CandidateChanged);
         }
         let scope = crate::workstream_auth::authority_scope(&auth, None, None);
         let resource = ResourceRef {
@@ -923,8 +994,9 @@ impl SourceStore {
             &result,
         )
         .await?;
+        complete_decision_receipt(&tx, tenant_id, project_id, &auth, &bind, &result).await?;
         tx.commit().await?;
-        Ok(result)
+        Ok(PlanningDecisionAttempt::Recorded(result))
     }
 
     /// Publish is separate from approve and also digest-bound. Does not write
@@ -1138,12 +1210,8 @@ async fn authorize_candidate_writable_scope(
     if auth.access.grants.iter().all(|g| !g.write) {
         return Err(PgError::Forbidden);
     }
-    let mut seen = std::collections::BTreeSet::new();
     for change in &candidate.changes {
         let work_id = change.after.work_id.as_str();
-        if !seen.insert(work_id.to_owned()) {
-            continue;
-        }
         let row = tx
             .query_opt(
                 "SELECT workstream_id FROM awr_team.workstream_ownership
@@ -1186,12 +1254,8 @@ pub(super) async fn authorize_candidate_readable_scope(
     if auth.access.grants.iter().all(|g| !g.read) {
         return Err(PgError::Forbidden);
     }
-    let mut seen = std::collections::BTreeSet::new();
     for change in &candidate.changes {
         let work_id = change.after.work_id.as_str();
-        if !seen.insert(work_id.to_owned()) {
-            continue;
-        }
         let row = tx
             .query_opt(
                 "SELECT workstream_id FROM awr_team.workstream_ownership
