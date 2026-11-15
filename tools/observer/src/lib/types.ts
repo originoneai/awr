@@ -315,6 +315,33 @@ export interface SourceContentData {
   [key: string]: unknown;
 }
 
+export interface ProjectDocument {
+  document_position: number;
+  path: string | null;
+  name: string | null;
+  summary: string | null;
+  summary_kind: 'source_excerpt';
+  sha256: string | null;
+  byte_length: number | null;
+  source_kind: 'registered_source';
+  readable: boolean;
+  status: 'available' | 'missing' | 'restricted' | 'changed' | 'unverified' | 'too_large';
+  reason: string | null;
+}
+
+export interface ProjectDocumentsData {
+  work_id: string | null;
+  items: ProjectDocument[];
+  total: number;
+  next_cursor: string | null;
+  truncated: boolean;
+  read_only: true;
+  execution_authorized: false;
+  scope: 'work' | 'authorized_workstreams';
+  content_read_limit_bytes: number;
+  as_of: { at_unix_ms: number; source_snapshot_id: string; project_revision: string };
+}
+
 export interface WorkSnapshotData {
   context_complete?: boolean;
   work_id?: string;

@@ -129,6 +129,7 @@ asking anyway is refused as `Unsupported`. The lists name operations of this pro
 | `work.search` | Same visibility boundary; required literal substring `search` |
 | `planning.candidates` | Readable planning candidates and server-computed differences from the current plan; optional `workstream_id`, `limit`, `cursor`, `max_context_bytes` |
 | `sources.inspect` | Required document integrity in the active snapshot; optional `work_id`, `workstream_id`, `limit`, `cursor`, `max_context_bytes`; no document bodies |
+| `documents.list` | Project document discovery across authorized workstreams; optional `work_id`, `workstream_id`, literal case-insensitive `search`, `limit`, `cursor`, `max_context_bytes`; verified display metadata, availability and transaction `as_of` |
 | `review.rounds` | Read-only ordered review history for a required work/session selection with bounded `limit`, `cursor`, `max_context_bytes` and transaction `as_of` |
 | `handoff.list` | Read-only authorized handoff discovery with optional `work_id`, `workstream_id`, `recipient_person_id`, `handoff_state`, `limit`, `cursor`, `max_context_bytes` |
 | `dependencies.list` | Read-only authorized dependency edges with required, available, adopted and consumed versions; optional `work_id`, `workstream_id`, `limit`, `cursor`, `max_context_bytes` |
@@ -297,6 +298,36 @@ returns the standard envelope with `data.items`, `total`, `next_cursor`,
 or `unverified`. Missing metadata remains null with an explicit `missing`
 reason; it never becomes a successful check. No document bodies are returned.
 Forbidden documents expose neither paths nor digests.
+
+`documents.list` discovers the unique documents registered in readable workstreams'
+`acceptance_contracts`. A work selection restricts the catalog to that work's
+workstream, using the same document authorization and metadata as the project read.
+Unregistered files are excluded. Documents shared with another workstream require
+read access to every referencing workstream before any metadata is disclosed.
+
+Each row includes `document_position`, `path`, `name`, `summary`, `summary_kind`,
+`sha256`, `byte_length`, `source_kind`, `readable`, `status` and `reason`.
+`source_kind` is `registered_source`. `summary_kind` is `source_excerpt`, derived
+from the first Markdown section after the stored source bytes and digest agree.
+Titles and excerpts are bounded to 256 and 512 Unicode characters. They are display
+metadata, without generated interpretation or a separate document body.
+
+Availability is `available`, `missing`, `restricted`, `changed`, `unverified` or
+`too_large`. Restricted rows disclose neither path, title, excerpt, digest nor size.
+Missing or unverifiable content has no title, excerpt, digest or size. Only
+`available` rows are readable. Documents above the existing 262,144-byte
+`source.content` limit retain verified metadata and use `too_large`.
+The browser requests bodies only through `source.content` with the listed digest,
+which rechecks current access and source content independently.
+
+Search matches the authorized title, excerpt or path. Pagination uses opaque
+cursors bound to the current identity, permissions, source, selection, search and
+document facts. Changed inputs or authority invalidate the cursor. The response
+includes the scoped count, `next_cursor`, `truncated`, `read_only: true`,
+`execution_authorized: false` and transaction `as_of`. The Observer read bridge
+validates page coverage, scope, redaction and availability before forwarding it.
+The project knowledge page uses this catalog when advertised by capabilities.
+Older services retain the existing work-reference view.
 Shared catalog access is derived from the activated workstream catalog before
 source bytes or availability are inspected. Removing a private workstream from
 stored text, malformed text or missing text cannot reduce that access boundary.

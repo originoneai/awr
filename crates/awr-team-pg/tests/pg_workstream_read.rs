@@ -20,6 +20,9 @@ mod dependency_reads;
 #[path = "cases/responsibility_reads.rs"]
 mod responsibility_reads;
 
+#[path = "cases/document_reads.rs"]
+mod document_reads;
+
 async fn source_record(admin: &tokio_postgres::Client) -> (String, Value) {
     let row=admin.query_one("SELECT s.id,s.source_ref_json FROM awr_team.source_snapshots s
         JOIN awr_team.projects p ON p.tenant_id=s.tenant_id AND p.id=s.project_id AND p.active_snapshot_id=s.id

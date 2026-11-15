@@ -16,6 +16,7 @@ mod artifact_segments;
 mod assignees;
 mod delivery;
 mod dependencies;
+mod documents;
 mod graph;
 mod guidance;
 mod handoffs;
@@ -67,6 +68,7 @@ pub(crate) const QUERIES: &[&str] = &[
     "planning.outcome",
     "planning.candidates",
     "sources.inspect",
+    "documents.list",
     "audit.history",
     "audit.export",
     "audit.count",
@@ -125,6 +127,7 @@ impl WorkstreamQuery {
     pub const CONTEXT_BUDGET_OPERATIONS: &'static [&'static str] = &[
         "planning.candidates",
         "sources.inspect",
+        "documents.list",
         "work.prepare",
         "work.snapshot",
         "work.observe",
@@ -246,6 +249,7 @@ impl WorkstreamQuery {
                 | "delivery.routes"
                 | "planning.candidates"
                 | "sources.inspect"
+                | "documents.list"
                 | "review.rounds"
                 | "handoff.list"
                 | "dependencies.list"
@@ -268,7 +272,10 @@ impl WorkstreamQuery {
             (
                 "search",
                 self.search.is_some()
-                    && !matches!(self.op.as_str(), "work.search" | "task.assignees"),
+                    && !matches!(
+                        self.op.as_str(),
+                        "work.search" | "task.assignees" | "documents.list"
+                    ),
             ),
             (
                 "max_context_bytes",
@@ -451,7 +458,10 @@ impl WorkstreamQuery {
                         || exact_work
                         || matches!(
                             self.op.as_str(),
-                            "sources.inspect" | "handoff.list" | "dependencies.list"
+                            "sources.inspect"
+                                | "documents.list"
+                                | "handoff.list"
+                                | "dependencies.list"
                         )),
             ),
             (
@@ -1245,6 +1255,9 @@ pub(crate) async fn read(
     }
     if q.op == "sources.inspect" {
         return sources::read(tx, tenant, project, auth, q).await;
+    }
+    if q.op == "documents.list" {
+        return documents::read(tx, tenant, project, auth, q).await;
     }
     if q.op == "dependencies.list" {
         return dependencies::read(tx, tenant, project, auth, q).await;

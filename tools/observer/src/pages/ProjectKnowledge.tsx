@@ -1,6 +1,6 @@
 import { ObservationValue } from '../components/ObservationValue';
 import { useQuery } from '@tanstack/react-query';
-import { Button, Card, Col, Input, List, Pagination, Row, Space, Tag, Typography, theme } from 'antd';
+import { Alert, Button, Card, Col, Input, List, Pagination, Row, Space, Tag, Typography, theme } from 'antd';
 import { useState } from 'react';
 import { Stamp } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -16,7 +16,8 @@ import {
 import { isAuthError } from '../lib/api';
 import { OBSERVATION_PAGE_SIZE, validObservationPage } from '../lib/pagination';
 import { contractGroups } from '../lib/contract-groups';
-import { overviewQueryOptions, readableSourceRef, sourceContentQueryOptions } from '../lib/queries';
+import { capabilitiesQueryOptions, overviewQueryOptions, readableSourceRef, sourceContentQueryOptions } from '../lib/queries';
+import { ProjectDocumentLibrary } from './ProjectDocumentLibrary';
 import { useRevocation } from '../lib/revocation';
 import { useTextDigest, type DigestCheck } from '../lib/text-digest';
 import { useWorkSnapshots } from '../lib/work-snapshots';
@@ -51,8 +52,24 @@ const DIGEST_LABEL = {
   pending: 'knowledge.digestUnverified',
 } as const satisfies Record<DigestCheck, string>;
 
-/** Assemble the knowledge list from per-work reads, never a project-level read. */
 export function ProjectKnowledge({ project }: { project: string }) {
+  const { t } = useTranslation();
+  const { revoked } = useRevocation();
+  const capabilities = useQuery(capabilitiesQueryOptions(project, revoked));
+  if (revoked || isAuthError(capabilities.error)) return <ObservationForbidden />;
+  if (capabilities.isPending) return <Typography.Text type="secondary">{t('common.loading')}</Typography.Text>;
+  if (capabilities.isError) return <Space orientation="vertical" size={12}>
+    <Alert type="warning" title={t('knowledge.libraryFailed')} />
+    <Button onClick={() => void capabilities.refetch()}>{t('knowledge.retry')}</Button>
+  </Space>;
+  if (capabilities.data?.result.queries?.includes('documents.list')) {
+    return <ProjectDocumentLibrary key={project} project={project} />;
+  }
+  return <WorkDocumentReferences project={project} />;
+}
+
+/** Compatibility for services that have not published project document discovery. */
+function WorkDocumentReferences({ project }: { project: string }) {
   const { t, i18n } = useTranslation();
   const { token } = theme.useToken();
   const { revoked } = useRevocation();
