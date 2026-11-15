@@ -107,12 +107,17 @@ pub(crate) async fn basis(
     .await?;
     sources.sort_by(|a, b| a["path"].as_str().cmp(&b["path"].as_str()));
     let responsibility = crate::responsibility::current(tx, tenant, project, work).await?;
+    let available = match task_intake::require_enabled(tx, tenant, project, auth, work).await {
+        Ok(()) => true,
+        Err(PgError::PreconditionsChanged) => false,
+        Err(error) => return Err(error),
+    };
     Ok(
         json!({"contract_hash":row.get::<_,String>(0),"ownership_version":ownership.to_string(),
         "workstream_id":binding.workstream_id,"responsibility_version":responsibility.version.to_string(),
         "authority_version":auth.catalog.get(binding.workstream_id)?.authority_version.to_string(),
         "coordinator_epoch":auth.epoch,
-        "sources":sources,"complete":reasons.is_empty()}),
+        "sources":sources,"complete":reasons.is_empty() && available}),
     )
 }
 

@@ -185,6 +185,78 @@ async fn changed_verified_goal_material_rejects_an_answer_while_unrelated_materi
 }
 
 #[tokio::test]
+async fn inactive_or_terminal_work_refuses_old_answers_and_keeps_withdrawal_available() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let c = claim(&store).await;
+    let session = c["receipt"]["data"]["session_id"].as_str().unwrap();
+    let opened = store
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            request(&store, &c, "active-work-question", &["agent"]).await,
+        )
+        .await
+        .unwrap();
+    let id = opened["receipt"]["data"]["decision_id"].as_str().unwrap();
+    let transitions = [
+        (
+            "UPDATE awr_team.work_contracts SET definition_state='archived' WHERE work_id='a'",
+            "UPDATE awr_team.work_contracts SET definition_state='enabled' WHERE work_id='a'",
+        ),
+        (
+            "UPDATE awr_team.work_scopes SET status='archived' WHERE id='main'",
+            "UPDATE awr_team.work_scopes SET status='active' WHERE id='main'",
+        ),
+        (
+            "UPDATE awr_team.work_runtime SET state='cancelled' WHERE work_id='a'",
+            "UPDATE awr_team.work_runtime SET state='claimed' WHERE work_id='a'",
+        ),
+        (
+            "UPDATE awr_team.work_runtime SET state='archived' WHERE work_id='a'",
+            "UPDATE awr_team.work_runtime SET state='claimed' WHERE work_id='a'",
+        ),
+    ];
+    for (index, (disable, restore)) in transitions.into_iter().enumerate() {
+        admin.batch_execute(disable).await.unwrap();
+        assert_eq!(
+            catalog(&store, A).await["data"]["items"][0]["baseline_matches_current"],
+            false
+        );
+        let reply = answer(&store, A, session, id, &format!("inactive-answer-{index}")).await;
+        assert!(matches!(
+            store.commands().execute(TENANT, PROJECT, A, reply).await,
+            Err(PgError::PreconditionsChanged)
+        ));
+        assert_eq!(
+            catalog(&store, A).await["data"]["items"][0]["state"],
+            "open"
+        );
+        admin.batch_execute(restore).await.unwrap();
+    }
+    admin
+        .batch_execute(
+            "UPDATE awr_team.work_contracts SET definition_state='archived' WHERE work_id='a'",
+        )
+        .await
+        .unwrap();
+    let mut withdraw = answer(&store, A, session, id, "withdraw-inactive-question").await;
+    withdraw.op = "decision.cancel".into();
+    let cancelled = store
+        .commands()
+        .execute(TENANT, PROJECT, A, withdraw)
+        .await
+        .unwrap();
+    assert_eq!(cancelled["receipt"]["data"]["applied"], true);
+    assert_eq!(
+        cancelled["receipt"]["data"]["decision"]["state"],
+        "cancelled"
+    );
+}
+
+#[tokio::test]
 async fn simultaneous_retries_create_one_question_and_lease_expiry_does_not_prevent_an_allowed_answer()
  {
     let (_guard, admin, _, store) = setup().await;
