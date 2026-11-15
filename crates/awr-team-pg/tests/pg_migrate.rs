@@ -4,6 +4,72 @@ use awr_team_pg::{EXPECTED_SCHEMA_VERSION, check_schema, migrate};
 use serde_json::{Value, json};
 
 #[tokio::test]
+async fn schema63_planning_rejection_upgrade_is_atomic_and_preserves_earlier_candidates() {
+    let (_guard, admin, _) = common::historical_team_schema(62).await;
+    admin.batch_execute("INSERT INTO awr_team.tenants(id,name,status) VALUES('planning-tenant','Planning','active');
+        INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status)
+          VALUES('planning-tenant','planning-project','planning','team','epoch','active');
+        INSERT INTO awr_team.planning_candidates(tenant_id,project_id,id,author_person_id,
+          author_actor_id,author_client_id,baseline_digest,baseline_epoch,draft_revision,candidate_digest,
+          state,changes_json,self_approve_policy_json,delivery_completion_policy)
+          VALUES('planning-tenant','planning-project','earlier-candidate','member','actor','client',
+            'baseline','epoch',1,repeat('a',64),'drafting','[]','{}','independent_review')").await.unwrap();
+    let before: Value = admin
+        .query_one(
+            "SELECT to_jsonb(c) FROM awr_team.planning_candidates c",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let ddl = include_str!("../migrations/20261115000063_planning_rejections.sql");
+    assert!(
+        admin
+            .batch_execute(&ddl.replace(
+                "UPDATE awr_team.schema_state",
+                "SELECT 1/0; UPDATE awr_team.schema_state"
+            ))
+            .await
+            .is_err()
+    );
+    admin.batch_execute("ROLLBACK").await.unwrap();
+    let rolled_back = admin
+        .query_one(
+            "SELECT (SELECT version FROM awr_team.schema_state),
+        to_regclass('awr_team.planning_rejections')::text",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(rolled_back.get::<_, i32>(0), 62);
+    assert!(rolled_back.get::<_, Option<String>>(1).is_none());
+    migrate(&admin).await.unwrap();
+    migrate(&admin).await.unwrap();
+    check_schema(&admin).await.unwrap();
+    let after: Value = admin
+        .query_one(
+            "SELECT to_jsonb(c) FROM awr_team.planning_candidates c",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(after, before);
+    let table = admin
+        .query_one(
+            "SELECT relrowsecurity,relforcerowsecurity,
+        (SELECT count(*) FROM awr_team.planning_rejections) FROM pg_class
+        WHERE oid='awr_team.planning_rejections'::regclass",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert!(table.get::<_, bool>(0));
+    assert!(table.get::<_, bool>(1));
+    assert_eq!(table.get::<_, i64>(2), 0);
+}
+
+#[tokio::test]
 async fn schema60_route_registry_is_atomic_repeatable_and_preserves_existing_connectors() {
     let (_g, admin, _) = common::historical_team_schema(59).await;
     assert!(matches!(

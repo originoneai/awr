@@ -567,7 +567,7 @@ async fn planning_observation_compares_with_current_plan_and_does_not_expose_hid
         assert_eq!(item["author"]["display_name"], "Worker");
         assert!(item["created_at_unix_ms"].is_i64());
         assert_eq!(item["approval"]["reason"], "not_approved");
-        assert_eq!(item["rejection"]["reason"], "transition_not_supported");
+        assert_eq!(item["rejection"]["reason"], "not_rejected");
     }
     let fields = items[0]["current_diff"]["items"][0]["fields"]
         .as_array()

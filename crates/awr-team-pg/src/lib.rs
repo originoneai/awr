@@ -126,7 +126,8 @@ pub use selective_invalidation::{
 };
 pub use source::planning::{DraftCandidateCreate, PlanningCommandBind, SuggestionSubmit};
 pub use source::planning_ops::{
-    PlanningApproveRequest, PlanningDraftRequest, PlanningPublishRequest, PlanningSuggestRequest,
+    PlanningApproveRequest, PlanningDraftRequest, PlanningPublishRequest, PlanningRejectRequest,
+    PlanningSuggestRequest,
 };
 pub use source::writeback::operator::{AbandonRequest, OperatorWriteback};
 pub use source::writeback::{ActivationImpactGate, WritebackActivateRequest};

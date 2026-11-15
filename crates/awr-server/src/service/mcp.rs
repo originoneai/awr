@@ -1607,6 +1607,13 @@ fn catalog() -> Vec<Tool> {
             "author_person_id":{"type":["string","null"],"maxLength":128,"description":"Optional compatibility assertion; normally omit. If supplied, match the credential actor_id, not the responsible member ID. Grants no authority."}
         }
     });
+    let mut planning_reject = planning_approve.clone();
+    planning_reject["required"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("reason"));
+    planning_reject["properties"]["reason"] = json!({"type":"string","minLength":1,"maxLength":4096,
+        "description":"Why this draft needs to be replaced. Nonblank text, at most 4096 UTF-8 bytes, without NUL. No secrets."});
     let planning_publish = json!({
         "type":"object","additionalProperties":false,
         "required":["protocol_version","request_id","candidate_id","candidate_digest"],
@@ -1702,6 +1709,10 @@ fn catalog() -> Vec<Tool> {
             "Publish an approved candidate (planning.publish). Optional activate uses the registered sole source only — no client path/URL/SQL. On disconnect, query outcome with the same request_id.",
             planning_publish.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(false).destructive(true).idempotent(true).open_world(false)),
+        Tool::new("awr_team_planning_reject",
+            "Reject the exact drafting candidate using planning.approve authority. Records the authenticated decision-maker, reason and time. Rejected drafts are terminal; propose a new candidate to revise the plan. Effective sources and work are unchanged. Reuse request_id and inspect planning.outcome after a disconnect. An approval request refusal is never a recorded plan rejection.",
+            planning_reject.as_object().unwrap().clone())
+            .with_annotations(ToolAnnotations::new().read_only(false).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_planning_outcome",
             "Inspect the original planning request_id before retrying. Reserved or absent means unconfirmed; follow its recovery step. A stored known_rejection is a final refusal, not approval; follow its guidance. Never repeat the original intent with a new ID.",
             planning_outcome.as_object().unwrap().clone())
@@ -2043,6 +2054,13 @@ impl ServerHandler for Endpoint {
                             &req,
                         )
                         .await
+                }
+                "awr_team_planning_reject" => {
+                    let req: awr_team_pg::PlanningRejectRequest = serde_json::from_value(args)
+                        .map_err(|_| PgError::Protocol("invalid planning rejection".into()))?;
+                    self.state.store.source().planning_reject(
+                        &self.project.tenant_id, &self.project.project_id, &access.bearer, &req,
+                    ).await
                 }
                 "awr_team_planning_publish" => {
                     let req: awr_team_pg::PlanningPublishRequest = serde_json::from_value(args)

@@ -200,10 +200,11 @@ return `ResponseTooLarge` rather than silently omitting differences.
 Approval and publication must match the candidate's exact digest and draft
 revision. A published proposal can still have source writeback pending; only
 an activation record reports that it was applied. Missing records are explicit
-nulls with reasons. The service currently records drafting, approved, published
-and superseded candidate states. It has no separate candidate-rejection
-transition: `rejection` therefore reports null with `transition_not_supported`.
-A rejected request is never presented as a rejected plan. The bridge exposes
+nulls with reasons. The service records drafting, approved, published, superseded
+and rejected candidate states. An explicit `planning.reject` decision records
+the authenticated reviewer, reason and database decision time. `rejection` is
+null with `not_rejected` when there is no such decision. A refused approval
+request never produces a rejected-plan record. The bridge exposes
 the same scoped read at `GET /api/team/plans?project=PROJECT`, with optional
 `workstream_id`, `limit`, `cursor` and `max_context_bytes`; no planning commands
 are exposed by that route.
@@ -492,6 +493,7 @@ call SourceStore planning entrypoints only:
 | `POST .../planning/draft` / `awr_team_planning_draft` | `planning.edit_draft` | `mode=create|edit`; split/cancel/archive are `changes[].op`. |
 | `POST .../planning/preview` / `awr_team_planning_preview` | read (propose/edit/approve/publish/work.read) | Exact diff + impact; no mutation. |
 | `POST .../planning/approve` / `awr_team_planning_approve` | `planning.approve` | Bound to current `candidate_digest`. |
+| `POST .../planning/reject` / `awr_team_planning_reject` | `planning.approve` | Closes the exact drafting candidate with a recorded reason. |
 | `POST .../planning/publish` / `awr_team_planning_publish` | `planning.publish` | Optional `activate` uses the **registered** sole source only; client paths/URLs are refused. |
 | `POST .../planning/outcome` / `awr_team_planning_outcome` / query `planning.outcome` | work.read or planning.* | Original `request_id`; scoped Agents with `planning.propose` recover only their own suggestion under one live covering delegation. Reserved commands stay unknown. |
 
@@ -499,6 +501,25 @@ Unsupported adapters (for example private management repo writeback), publish
 blocked by in-flight claims, and missing context return sanitized `code` /
 `message` / `next_step` on both HTTP and MCP. Members, planners and admins use
 these surfaces for daily planning — not hand-edited JSON or SQL.
+
+Rejection requires `protocol_version`, a stable `request_id`, `candidate_id`,
+the current `candidate_digest`, and a nonblank `reason` of at most 4,096 UTF-8
+bytes without NUL. The optional `author_person_id` remains a compatibility
+assertion that must match the authenticated actor. Decision authority and full
+candidate visibility are rechecked for every request, including replay.
+
+Only drafting candidates can be rejected. A rejected candidate is terminal and
+keeps its original content, version and decision. Create a new candidate to
+propose a revision. A stale source baseline can be rejected because the decision
+leaves the effective source and work unchanged. A stale candidate digest is
+refused. Concurrent approval and rejection can produce only one decision.
+
+After a disconnect, inspect `planning.outcome` using the original request ID,
+then replay the exact request when instructed. Recovery reuses the committed
+decision and its original time. Changed content under the same request returns
+`IdempotencyConflict`. Invalid fields or a terminal candidate return
+`InvalidInput`; missing current authority or visibility returns `Forbidden`.
+Responses and errors follow the same contract through HTTP and MCP.
 
 ### Controlled context and content reads
 

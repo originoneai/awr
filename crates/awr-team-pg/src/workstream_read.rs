@@ -1366,6 +1366,7 @@ pub(crate) async fn read(
                     "awr_team_planning_draft",
                     "awr_team_planning_preview",
                     "awr_team_planning_approve",
+                    "awr_team_planning_reject",
                     "awr_team_planning_publish",
                     "awr_team_planning_outcome"
                 ],
