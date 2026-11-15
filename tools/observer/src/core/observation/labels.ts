@@ -129,10 +129,11 @@ function readableDocumentName(raw: string, language: string): boolean {
   const identifierReference = /\b(?:[a-z0-9]+-)+[a-z0-9]*\d[a-z0-9]*\b/i;
   const refusalCode = /\b(?:Forbidden|Unauthenticated|SessionExpired|CursorExpired|ContextIncomplete|ResponseTooLarge|InvalidInput|BadGateway)\b/i;
   const words = documentNameWords(canonical);
+  const tokens = canonical.toLowerCase().match(/[a-z0-9_-]+/g) ?? [];
   const phrase = words.join(' ');
   const hasStatus = documentNameStatuses.some((status) => ` ${phrase} `.includes(` ${status} `));
   const hasField = words.some((word) => STATUS_FIELDS.has(word) || ['actor', 'client', 'reason', 'source', 'request'].includes(word));
-  const hasOpaqueToken = words.some((word) => /^(?=.*[a-z])(?=.*\d)[a-z0-9_-]+$/.test(word) && !/^v\d+$/.test(word));
+  const hasOpaqueToken = tokens.some((token) => /^(?=.*[a-z])(?=.*\d)[a-z0-9_-]+$/.test(token) && !/^v\d+$/.test(token));
   return !/[\p{Cc}\p{Cf}]/u.test(raw) && !documentNameStatuses.includes(phrase) && !(hasField && hasStatus) && !hasOpaqueToken
     && readableSentence(canonical, language) === canonical && !readsAsReference(canonical)
     && !pathReference.test(canonical) && !diagnosticFields.test(canonical) && !identifierReference.test(canonical)

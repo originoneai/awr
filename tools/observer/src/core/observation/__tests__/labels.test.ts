@@ -10,6 +10,19 @@ const ITEMS = DERIVED_RUN09.data.items as Array<{ actor_id: string; work_id: str
 const ACTORS = ITEMS.map((item) => item.actor_id);
 
 describe('documentTitle', () => {
+  it.each(['zh-CN', 'en-US'])('rejects mixed identifiers before filename separators are normalized in %s', (language) => {
+    const options = { language, position: 3 };
+    const numbered = language === 'zh-CN' ? '文档 3' : 'Document 3';
+    for (const separator of ['', '-', '_', '-_', '_-']) {
+      const identifier = ['client', 'obs', '657'].join(separator);
+      const fullWidth = identifier.replace(/[!-~]/g, (character) => String.fromCharCode(character.charCodeAt(0) + 0xFEE0));
+      for (const title of [identifier, `${identifier}.`, `Guide (${identifier})`, fullWidth]) {
+        expect(documentTitle(title, 'docs/guide.md', options).text, title).toBe('guide');
+      }
+      expect(documentTitle(null, `docs/${identifier}.md`, options).text, identifier).toBe(numbered);
+    }
+  });
+
   it.each(['zh-CN', 'en-US'])('uses readable source headings and replaces technical headings in %s', (language) => {
     const options = { language, position: 3 };
     expect(documentTitle('Delivery guide', 'docs/guide.md', options).text).toBe('Delivery guide');
