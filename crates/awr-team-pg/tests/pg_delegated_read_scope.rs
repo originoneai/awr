@@ -103,6 +103,38 @@ async fn grant_scope(db: &str, id: &str, scope: AuthorizationScope, actions: &[A
 }
 
 #[tokio::test]
+async fn task_scoped_agent_can_manage_its_own_connections_with_a_live_delegation() {
+    let (_guard, admin, db, store) = setup().await;
+    agent_identity(&admin).await;
+    let connections = store.connections();
+    assert!(matches!(
+        connections
+            .operate(TENANT, PROJECT, A, None, None, |_| panic!(
+                "no live delegation"
+            ))
+            .await,
+        Err(PgError::Forbidden)
+    ));
+    grant(
+        &db,
+        AuthorizationScope::Task {
+            project_id: PROJECT.into(),
+            work_item_id: "a".into(),
+        },
+    )
+    .await;
+    let result = connections
+        .operate(TENANT, PROJECT, A, None, None, |scope| {
+            assert!(scope.allows(A));
+            assert!(!scope.allows(B));
+            Ok(json!({"items":scope.credentials()}))
+        })
+        .await
+        .unwrap();
+    assert_eq!(result["items"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn multiple_scopes_are_discoverable_without_sharing_actions_or_hidden_work() {
     let (_g, admin, db, store) = setup_with_three_streams().await;
     agent_identity(&admin).await;

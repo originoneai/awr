@@ -60,8 +60,8 @@ impl OAuthConfig {
 
 pub(super) struct OAuthRuntime {
     issuer: String,
-    durable: bool,
-    pub(super) store: OAuthStore,
+    pub(super) durable: bool,
+    pub(super) store: Arc<OAuthStore>,
 }
 
 impl OAuthRuntime {
@@ -86,7 +86,7 @@ impl OAuthRuntime {
         Ok(Self {
             issuer: config.issuer.clone(),
             durable: config.state_directory.is_some(),
-            store,
+            store: Arc::new(store),
         })
     }
     pub(super) fn resource(&self, key: &str) -> String {

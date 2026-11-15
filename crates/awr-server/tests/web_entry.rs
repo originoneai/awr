@@ -74,6 +74,169 @@ fn session_cookie(set_cookie: &reqwest::header::HeaderValue) -> String {
         .to_string()
 }
 
+async fn login_cookie(server: &Server, bearer: &str) -> String {
+    let response = http()
+        .post(format!("{}/v1/web/login", server.base))
+        .headers(web_headers(&server.origin, None))
+        .json(&json!({"bearer":bearer}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    session_cookie(response.headers().get("set-cookie").unwrap())
+}
+
+async fn connections_request(
+    server: &Server,
+    cookie: &str,
+    action: &str,
+    request: Value,
+) -> (u16, Value) {
+    let response = http()
+        .post(format!(
+            "{}/v1/web/projects/one/connections/{action}",
+            server.base
+        ))
+        .headers(web_headers(&server.origin, Some(cookie)))
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    (response.status().as_u16(), response.json().await.unwrap())
+}
+
+#[tokio::test]
+async fn browser_connections_are_individually_revoked_without_disclosing_cookies() {
+    let (_guard, _, _, store) = setup().await;
+    let server = start(
+        store,
+        vec![ProjectBinding {
+            key: "one".into(),
+            tenant_id: TENANT.into(),
+            project_id: PROJECT.into(),
+        }],
+    )
+    .await;
+    let current = login_cookie(&server, A).await;
+    let other = login_cookie(&server, A).await;
+    let peer = login_cookie(&server, B).await;
+    let (status, list) =
+        connections_request(&server, &current, "list", json!({"protocol_version":1})).await;
+    assert_eq!(status, 200, "{list}");
+    let items = list["data"]["items"].as_array().unwrap();
+    assert_eq!(
+        items
+            .iter()
+            .filter(|item| item["kind"] == "browser")
+            .count(),
+        2
+    );
+    for secret in [A, B, &current, &other, &peer, "sha256:"] {
+        assert!(!list.to_string().contains(secret));
+    }
+    let target = items
+        .iter()
+        .find(|item| item["kind"] == "browser" && item["is_current"] == false)
+        .unwrap()["connection_id"]
+        .clone();
+    let request = json!({"protocol_version":1,"connection_id":target});
+    let (denied, _) = connections_request(&server, &peer, "revoke", request.clone()).await;
+    assert_eq!(denied, 403);
+    for _ in 0..2 {
+        let (status, result) =
+            connections_request(&server, &current, "revoke", request.clone()).await;
+        assert_eq!(status, 200, "{result}");
+        assert_eq!(result["data"]["state"], "revoked");
+        assert_eq!(result["data"]["ends_current"], false);
+    }
+    assert_eq!(
+        connections_request(&server, &other, "list", json!({"protocol_version":1}))
+            .await
+            .0,
+        401
+    );
+    assert_eq!(
+        connections_request(&server, &current, "list", json!({"protocol_version":1}))
+            .await
+            .0,
+        200
+    );
+    assert_eq!(
+        connections_request(
+            &server,
+            &current,
+            "revoke",
+            json!({"protocol_version":1,"connection_id":"browser_unknown"})
+        )
+        .await
+        .0,
+        403
+    );
+    let (status, _) = connections_request(
+        &server,
+        &current,
+        "list",
+        json!({"protocol_version":1,"subject":{"actor_id":"agent","client_id":"cli-b"}}),
+    )
+    .await;
+    assert_eq!(status, 403);
+}
+
+#[tokio::test]
+async fn shared_access_revocation_ends_every_browser_using_that_credential() {
+    let (_guard, _, _, store) = setup().await;
+    let server = start(
+        store,
+        vec![ProjectBinding {
+            key: "one".into(),
+            tenant_id: TENANT.into(),
+            project_id: PROJECT.into(),
+        }],
+    )
+    .await;
+    let current = login_cookie(&server, A).await;
+    let other = login_cookie(&server, A).await;
+    let peer = login_cookie(&server, B).await;
+    let (_, list) = connections_request(
+        &server,
+        &current,
+        "list",
+        json!({"protocol_version":1,"limit":100}),
+    )
+    .await;
+    let shared = list["data"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["kind"] == "shared_access")
+        .unwrap();
+    assert_eq!(shared["revocation_scope"], "shared_account_access");
+    let (status, result) = connections_request(
+        &server,
+        &current,
+        "revoke",
+        json!({"protocol_version":1,"connection_id":shared["connection_id"]}),
+    )
+    .await;
+    assert_eq!(status, 200, "{result}");
+    assert_eq!(result["data"]["state"], "revoked");
+    assert_eq!(result["data"]["ends_current"], true);
+    for cookie in [&current, &other] {
+        assert_eq!(
+            connections_request(&server, cookie, "list", json!({"protocol_version":1}))
+                .await
+                .0,
+            403
+        );
+    }
+    assert_eq!(
+        connections_request(&server, &peer, "list", json!({"protocol_version":1}))
+            .await
+            .0,
+        200
+    );
+}
+
 fn assert_no_project_metadata(body: &Value, forbidden: &str) {
     let mut metadata = body.clone();
     // The opaque session identifier can randomly contain a short project key.

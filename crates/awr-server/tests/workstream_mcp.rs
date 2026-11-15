@@ -2314,7 +2314,7 @@ async fn sdk_clients_negotiate_tools_and_isolate_workstreams_on_one_service() {
     let tools = a.list_all_tools().await.unwrap();
     // Query/command, their on-demand input-contract projection, member access
     // and planning are discoverable; calls still recheck effective authority.
-    assert_eq!(tools.len(), 13);
+    assert_eq!(tools.len(), 15);
     let caps = call(
         &a,
         "awr_team_query",

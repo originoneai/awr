@@ -89,6 +89,130 @@ async fn sdk_call(
 
 #[cfg(unix)]
 #[tokio::test]
+async fn connection_management_works_through_mcp_and_restores_browser_cutoffs_after_restart() {
+    let (_guard, _, db, store) = setup().await;
+    let directory =
+        std::env::temp_dir().join(format!("awr-connections-http-{}", awr_core::Id::new()));
+    let server = start_with_directory(store, true, Some(directory.clone())).await;
+    let first_token = issue(&server, A).await;
+    let first = sdk_client(&server, &first_token).await;
+    let before = sdk_call(
+        &first,
+        "awr_team_connections_list",
+        json!({"protocol_version":1}),
+    )
+    .await;
+    let first_reference = before["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["kind"] == "agent")
+        .unwrap()["connection_id"]
+        .clone();
+    let second_token = issue(&server, A).await;
+    let second = sdk_client(&server, &second_token).await;
+    let login = server
+        .post("/v1/web/login")
+        .header("origin", ISSUER)
+        .header("x-awr-web", "1")
+        .json(&json!({"bearer":A}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(login.status(), 200);
+    let cookie = login.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let request = json!({"protocol_version":1,"connection_id":first_reference});
+    let result = sdk_call(&second, "awr_team_connections_revoke", request.clone()).await;
+    assert_eq!(result["state"], "revoked");
+    let cutoff = result["revoked_at_ms"].clone();
+    let list = sdk_call(
+        &second,
+        "awr_team_connections_list",
+        json!({"protocol_version":1}),
+    )
+    .await;
+    let browser_reference = list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["kind"] == "browser")
+        .unwrap()["connection_id"]
+        .clone();
+    for secret in [A, &first_token, &second_token, &cookie, "sha256:"] {
+        assert!(!list.to_string().contains(secret));
+    }
+    let _ = first.cancel().await;
+    second.cancel().await.unwrap();
+    server.shutdown().await;
+    let store = awr_team_pg::WorkstreamReadStore::from_config(common::with_app_role(
+        &common::test_config(),
+        &db,
+    ));
+    let server = start_with_directory(store, true, Some(directory.clone())).await;
+    assert_eq!(
+        initialize(&server, "one", &first_token)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    let second = sdk_client(&server, &second_token).await;
+    let replay = sdk_call(&second, "awr_team_connections_revoke", request).await;
+    assert_eq!(replay["revoked_at_ms"], cutoff);
+    let restored = server
+        .post("/v1/web/projects/one/connections/list")
+        .header("origin", ISSUER)
+        .header("x-awr-web", "1")
+        .header("cookie", &cookie)
+        .json(&json!({"protocol_version":1}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(restored.status(), 200);
+    let restored: Value = restored.json().await.unwrap();
+    assert!(
+        restored["data"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["connection_id"] == browser_reference && item["is_current"] == true)
+    );
+    sdk_call(
+        &second,
+        "awr_team_connections_revoke",
+        json!({"protocol_version":1,"connection_id":browser_reference}),
+    )
+    .await;
+    second.cancel().await.unwrap();
+    server.shutdown().await;
+    let store = awr_team_pg::WorkstreamReadStore::from_config(common::with_app_role(
+        &common::test_config(),
+        &db,
+    ));
+    let server = start_with_directory(store, true, Some(directory.clone())).await;
+    let denied = server
+        .post("/v1/web/projects/one/connections/list")
+        .header("origin", ISSUER)
+        .header("x-awr-web", "1")
+        .header("cookie", &cookie)
+        .json(&json!({"protocol_version":1}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), 401);
+    server.shutdown().await;
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn oauth_restart_rotation_and_concurrent_reconnect_preserve_owned_work_without_duplicate_claims()
  {
     let (_guard, admin, db, store) = setup().await;

@@ -192,6 +192,40 @@ pub(crate) async fn authorize_project_action(
     crate::workstream_auth::authorize_domain_action(auth, action, None, None)
 }
 
+/// Ending one's own access never grants task or member administration. A live
+/// task-scoped read delegation is sufficient to manage that same client binding.
+pub(crate) async fn authorize_own_connections(
+    tx: &tokio_postgres::Transaction<'_>,
+    auth: &ReaderAuthority,
+    project: &str,
+) -> PgResult<()> {
+    if !auth.membership_actions().contains(&Action::WorkRead) {
+        return Err(PgError::Forbidden);
+    }
+    let has_read = auth.catalog.workstreams.iter().any(|stream| {
+        auth.access
+            .authorize(&auth.catalog, stream.id, awr_core::WorkstreamAction::Read)
+            .is_ok()
+    });
+    if !has_read {
+        return Err(PgError::Forbidden);
+    }
+    if actor_requires_explicit_delegation(&auth.actor_kind) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| PgError::Forbidden)?
+            .as_millis() as i64;
+        let candidates = effective_delegations(tx, auth, project, None, now).await?;
+        if !candidates
+            .iter()
+            .any(|candidate| candidate.actions.contains(&Action::WorkRead))
+        {
+            return Err(PgError::Forbidden);
+        }
+    }
+    Ok(())
+}
+
 fn install_delegation(auth: &mut ReaderAuthority, chosen: Option<&ReadDelegation>) {
     auth.delegation_id = chosen.map(|candidate| candidate.grant.id.clone());
     auth.delegated_actions = Some(

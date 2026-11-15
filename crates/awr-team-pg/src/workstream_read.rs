@@ -1043,6 +1043,10 @@ impl WorkstreamReadStore {
         crate::ProjectAccessStore::from_pool(self.pool.clone())
     }
 
+    pub fn connections(&self) -> crate::ConnectionStore {
+        crate::ConnectionStore::from_pool(self.pool.clone())
+    }
+
     /// Authoritative source / planning domain entry (TMCP-021/022/023).
     pub fn source(&self) -> crate::SourceStore {
         crate::SourceStore::from_pool(self.pool.clone())

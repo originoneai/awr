@@ -2,6 +2,7 @@
 //! Personal SQLite runtime does not depend on this crate.
 mod agent_authorization;
 mod bootstrap;
+mod connections;
 mod cross_workstream_adoption;
 mod cross_workstream_exports;
 mod delegation_auth;
@@ -43,6 +44,7 @@ mod workstream_read;
 
 pub use agent_authorization::AuthorizationStore;
 pub use bootstrap::Bootstrap;
+pub use connections::{ConnectionScope, ConnectionStore, ConnectionSubject};
 pub use delegation_auth::{
     actor_requires_explicit_delegation, intersect_delegation_with_template,
     tmcp_actions_for_authorized, tmcp_actions_for_authorized_set,

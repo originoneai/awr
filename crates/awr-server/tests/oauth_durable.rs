@@ -89,6 +89,171 @@ fn request(client: &RegisteredClient, token: &AccessToken) -> RefreshRequest {
 }
 
 #[test]
+fn connection_revocation_is_scoped_idempotent_and_survives_restart() {
+    let directory = Directory::new();
+    let store = directory.open();
+    let (client, first) = issue(&store, Instant::now());
+    let (_, second) = issue(&store, Instant::now());
+    let listed = store
+        .connections(RESOURCE, |bearer| bearer == BEARER, Instant::now())
+        .unwrap();
+    assert_eq!(listed.len(), 2);
+    let reference = listed[0].connection_id.clone();
+    let public = serde_json::to_string(&listed).unwrap();
+    for secret in [
+        BEARER,
+        &first.access_token,
+        &first.refresh_token,
+        &second.access_token,
+        &client.client_id,
+    ] {
+        assert!(!public.contains(secret));
+    }
+    assert!(
+        store
+            .connections(OTHER, |_| true, Instant::now())
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        store
+            .connections(RESOURCE, |_| false, Instant::now())
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        store.revoke_connection(RESOURCE, &reference, |_| false, Instant::now()),
+        Err(OAuthError::AccessDenied)
+    );
+    assert_eq!(
+        store.revoke_connection(OTHER, &reference, |_| true, Instant::now()),
+        Err(OAuthError::AccessDenied)
+    );
+    let cutoff = store
+        .revoke_connection(RESOURCE, &reference, |_| true, Instant::now())
+        .unwrap();
+    assert_eq!(
+        store
+            .revoke_connection(RESOURCE, &reference, |_| true, Instant::now())
+            .unwrap(),
+        cutoff
+    );
+    let remaining = [&first, &second]
+        .iter()
+        .filter(|t| {
+            store
+                .resolve(&t.access_token, RESOURCE, Instant::now())
+                .is_some()
+        })
+        .count();
+    assert_eq!(remaining, 1);
+    drop(store);
+    let store = directory.open();
+    assert_eq!(
+        store
+            .revoke_connection(RESOURCE, &reference, |_| true, Instant::now())
+            .unwrap(),
+        cutoff
+    );
+    let listed = store
+        .connections(RESOURCE, |_| true, Instant::now())
+        .unwrap();
+    assert_eq!(
+        listed
+            .iter()
+            .filter(|c| c.revoked_at_ms == Some(cutoff))
+            .count(),
+        1
+    );
+    assert_eq!(
+        [&first, &second]
+            .iter()
+            .filter(|t| store
+                .resolve(&t.access_token, RESOURCE, Instant::now())
+                .is_some())
+            .count(),
+        1
+    );
+    assert_eq!(
+        store.revoke_connection(RESOURCE, "agent_unknown", |_| true, Instant::now()),
+        Err(OAuthError::AccessDenied)
+    );
+}
+
+#[test]
+fn refresh_and_revocation_share_one_cutoff_even_when_concurrent() {
+    use std::sync::{Arc, Barrier};
+    let directory = Directory::new();
+    let store = Arc::new(directory.open());
+    let (client, token) = issue(&store, Instant::now());
+    let reference = store
+        .connections(RESOURCE, |_| true, Instant::now())
+        .unwrap()[0]
+        .connection_id
+        .clone();
+    let gate = Arc::new(Barrier::new(2));
+    let refresh = request(&client, &token);
+    let other_store = store.clone();
+    let other_gate = gate.clone();
+    let worker = std::thread::spawn(move || {
+        other_gate.wait();
+        other_store.refresh(refresh, Instant::now())
+    });
+    gate.wait();
+    store
+        .revoke_connection(RESOURCE, &reference, |_| true, Instant::now())
+        .unwrap();
+    if let Ok(rotated) = worker.join().unwrap() {
+        assert!(
+            store
+                .resolve(&rotated.access_token, RESOURCE, Instant::now())
+                .is_none()
+        );
+        assert!(matches!(
+            store.refresh(request(&client, &rotated), Instant::now()),
+            Err(OAuthError::InvalidGrant)
+        ));
+    }
+    assert!(
+        store
+            .resolve(&token.access_token, RESOURCE, Instant::now())
+            .is_none()
+    );
+    assert!(matches!(
+        store.refresh(request(&client, &token), Instant::now()),
+        Err(OAuthError::InvalidGrant)
+    ));
+    drop(store);
+    let store = directory.open();
+    assert!(
+        store
+            .resolve(&token.access_token, RESOURCE, Instant::now())
+            .is_none()
+    );
+}
+
+#[test]
+fn expired_connections_are_absent_and_cannot_be_reported_as_revoked() {
+    let store = OAuthStore::new(vec![RESOURCE.into()]).unwrap();
+    let now = Instant::now();
+    issue(&store, now);
+    let reference = store.connections(RESOURCE, |_| true, now).unwrap()[0]
+        .connection_id
+        .clone();
+    let expired = now + CONNECTION_TTL + Duration::from_secs(1);
+    assert!(
+        store
+            .connections(RESOURCE, |_| true, expired)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        store.revoke_connection(RESOURCE, &reference, |_| true, expired),
+        Err(OAuthError::AccessDenied)
+    );
+}
+
+#[test]
 fn restart_restores_access_registration_and_rotation_without_plaintext_secrets() {
     let directory = Directory::new();
     let store = directory.open();

@@ -32,70 +32,123 @@ pub const WEB_GUARD_HEADER: &str = "x-awr-web";
 const SESSION_TTL_SECS: u64 = 8 * 60 * 60;
 const MAX_SESSIONS: usize = 4096;
 
-#[derive(Clone)]
-pub struct WebSession {
-    pub id: String,
-    pub bearer: String,
-    pub created_at_ms: u64,
-    pub expires_at_ms: u64,
-    pub last_seen_ms: u64,
-    pub revoked: bool,
-}
+pub(crate) use crate::oauth::BrowserSession as WebSession;
 
 #[derive(Default)]
 pub struct WebSessionStore {
     inner: std::sync::Mutex<BTreeMap<String, WebSession>>,
+    shared: Option<Arc<crate::oauth::OAuthStore>>,
 }
 
 impl WebSessionStore {
-    pub fn insert(&self, session: WebSession) -> Result<(), &'static str> {
-        let mut guard = self.inner.lock().map_err(|_| "session store unavailable")?;
-        if guard.len() >= MAX_SESSIONS {
-            let now = now_ms();
-            guard.retain(|_, s| !s.revoked && s.expires_at_ms > now);
-            if guard.len() >= MAX_SESSIONS {
-                return Err("too many web sessions");
-            }
+    pub fn new(shared: Option<Arc<crate::oauth::OAuthStore>>) -> Self {
+        Self {
+            shared,
+            ..Self::default()
         }
-        guard.insert(session.id.clone(), session);
-        Ok(())
+    }
+
+    fn access<T>(
+        &self,
+        persist: bool,
+        operation: impl FnOnce(&mut BTreeMap<String, WebSession>) -> Result<T, &'static str>,
+    ) -> Result<T, &'static str> {
+        if let Some(shared) = &self.shared {
+            return shared
+                .browser_sessions(persist, |sessions| {
+                    operation(sessions).map_err(|_| crate::oauth::OAuthError::Unavailable)
+                })
+                .map_err(|_| "session store unavailable");
+        }
+        let mut guard = self.inner.lock().map_err(|_| "session store unavailable")?;
+        operation(&mut guard)
+    }
+
+    pub fn insert(&self, session: WebSession) -> Result<(), &'static str> {
+        self.access(true, |guard| {
+            if guard.len() >= MAX_SESSIONS {
+                let now = now_ms();
+                guard.retain(|_, s| !s.revoked && s.expires_at_ms > now);
+                if guard.len() >= MAX_SESSIONS {
+                    return Err("too many web sessions");
+                }
+            }
+            guard.insert(session.id.clone(), session);
+            Ok(())
+        })
     }
 
     pub fn get_live(&self, id: &str) -> Option<WebSession> {
-        let mut guard = self.inner.lock().ok()?;
-        let now = now_ms();
-        let session = guard.get_mut(id)?;
-        if session.revoked || session.expires_at_ms <= now {
-            return None;
-        }
-        session.last_seen_ms = now;
-        Some(session.clone())
-    }
-
-    pub fn revoke(&self, id: &str) -> bool {
-        let Ok(mut guard) = self.inner.lock() else {
-            return false;
-        };
-        if let Some(session) = guard.get_mut(id) {
-            session.revoked = true;
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn revoke_bearer_sessions(&self, bearer: &str) -> usize {
-        let Ok(mut guard) = self.inner.lock() else {
-            return 0;
-        };
-        let mut n = 0;
-        for session in guard.values_mut() {
-            if session.bearer == bearer && !session.revoked {
-                session.revoked = true;
-                n += 1;
+        self.access(false, |guard| {
+            let now = now_ms();
+            let Some(session) = guard.get_mut(id) else {
+                return Ok(None);
+            };
+            if session.revoked || session.expires_at_ms <= now {
+                return Ok(None);
             }
-        }
-        n
+            session.last_seen_ms = now;
+            Ok(Some(session.clone()))
+        })
+        .ok()
+        .flatten()
+    }
+
+    pub fn revoke(&self, id: &str) -> Result<bool, &'static str> {
+        self.access(true, |guard| {
+            if let Some(session) = guard.get_mut(id) {
+                session.revoked = true;
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        })
+    }
+
+    pub fn revoke_bearer_sessions(&self, bearer: &str) -> Result<usize, &'static str> {
+        self.access(true, |guard| {
+            let mut n = 0;
+            for session in guard.values_mut() {
+                if session.bearer == bearer && !session.revoked {
+                    session.revoked = true;
+                    n += 1;
+                }
+            }
+            Ok(n)
+        })
+    }
+
+    pub(super) fn connections(
+        &self,
+        allows: impl Fn(&str) -> bool,
+    ) -> Result<Vec<Value>, &'static str> {
+        self.access(false, |sessions| {
+            let now = now_ms();
+            Ok(sessions.values().filter(|s| s.expires_at_ms > now && allows(&s.bearer))
+                .map(|s| json!({"connection_id":s.connection_id,"kind":"browser","created_at_ms":s.created_at_ms,
+                    "expires_at_ms":s.expires_at_ms,"last_seen_ms":s.last_seen_ms,"state":if s.revoked {"revoked"} else {"active"},
+                    "revocation_scope":"connection"})).collect())
+        })
+    }
+
+    pub(super) fn revoke_connection(
+        &self,
+        connection: &str,
+        allows: impl Fn(&str) -> bool,
+    ) -> Result<bool, &'static str> {
+        self.access(true, |sessions| {
+            let now = now_ms();
+            let session = sessions.values_mut().find(|s| {
+                s.connection_id == connection && s.expires_at_ms > now && allows(&s.bearer)
+            });
+            match session {
+                Some(session) => {
+                    session.revoked = true;
+                    Ok(true)
+                }
+                None => Ok(false),
+            }
+        })
     }
 }
 
@@ -129,6 +182,14 @@ pub fn router(state: Arc<StateData>) -> Router {
         .route("/v1/web/logout", post(logout))
         .route("/v1/web/session", get(session_inspect))
         .route("/v1/web/session/revoke", post(session_revoke))
+        .route(
+            "/v1/web/projects/{project}/connections/list",
+            post(connections_list),
+        )
+        .route(
+            "/v1/web/projects/{project}/connections/revoke",
+            post(connections_revoke),
+        )
         .route("/v1/web/projects", get(list_projects))
         .route("/v1/web/projects/{project}/query", post(web_query))
         .route("/v1/web/projects/{project}/command", post(web_command))
@@ -337,6 +398,7 @@ async fn login(State(state): State<Arc<StateData>>, headers: HeaderMap, body: By
     };
     let now = now_ms();
     let session = WebSession {
+        connection_id: WebSession::reference(&session_id),
         id: session_id.clone(),
         bearer: parsed.bearer,
         created_at_ms: now,
@@ -389,7 +451,9 @@ async fn logout(State(state): State<Arc<StateData>>, headers: HeaderMap) -> Resp
         return with_cors(r, &origin);
     }
     if let Some(id) = cookie_session_id(&headers) {
-        state.web_sessions.revoke(&id);
+        if state.web_sessions.revoke(&id).is_err() {
+            return with_cors(super::unavailable(), &origin);
+        }
     }
     let mut res = response(StatusCode::OK, json!({"ok": true, "logged_out": true}));
     clear_session_cookie(&mut res, secure_cookie(&state));
@@ -437,7 +501,10 @@ async fn session_revoke(
     };
     let mut revoked = Vec::new();
     if parsed.all_mine {
-        let n = state.web_sessions.revoke_bearer_sessions(&current.bearer);
+        let n = match state.web_sessions.revoke_bearer_sessions(&current.bearer) {
+            Ok(n) => n,
+            Err(_) => return with_cors(super::unavailable(), &origin),
+        };
         revoked.push(json!({"scope":"all_mine","count": n}));
     } else {
         let target = parsed
@@ -450,7 +517,11 @@ async fn session_revoke(
                 return with_cors(denied(), &origin);
             }
         }
-        if state.web_sessions.revoke(&target) {
+        let ended = match state.web_sessions.revoke(&target) {
+            Ok(ended) => ended,
+            Err(_) => return with_cors(super::unavailable(), &origin),
+        };
+        if ended {
             revoked.push(json!({"session_id": target}));
         }
     }
@@ -653,6 +724,86 @@ async fn web_query(
     with_cors(result, &origin)
 }
 
+async fn connections_list(
+    State(state): State<Arc<StateData>>,
+    Path(key): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    connections_dispatch(state, key, headers, body, false).await
+}
+
+async fn connections_revoke(
+    State(state): State<Arc<StateData>>,
+    Path(key): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    connections_dispatch(state, key, headers, body, true).await
+}
+
+async fn connections_dispatch(
+    state: Arc<StateData>,
+    key: String,
+    headers: HeaderMap,
+    body: Bytes,
+    revoke: bool,
+) -> Response {
+    let (origin, session) = match require_session(&state, &headers).await {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    let Some(project) = state.projects.get(&key) else {
+        return with_cors(denied(), &origin);
+    };
+    let request = match serde_json::from_slice(&body) {
+        Ok(request) => request,
+        Err(_) => {
+            return with_cors(
+                response(StatusCode::BAD_REQUEST, json!({"code":"InvalidInput"})),
+                &origin,
+            );
+        }
+    };
+    let action = if revoke {
+        "connections.revoke"
+    } else {
+        "connections.list"
+    };
+    let Ok(_permit) = state.permits.try_acquire() else {
+        return with_cors(super::unavailable(), &origin);
+    };
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        super::audited(
+            &state,
+            project,
+            &session.bearer,
+            action,
+            None,
+            super::connections::operate(
+                &state,
+                project,
+                &session.bearer,
+                request,
+                revoke,
+                Some(&session.connection_id),
+            ),
+        ),
+    )
+    .await
+    .unwrap_or_else(|_| {
+        Err(PgError::Unsupported(
+            "connection result is unconfirmed".into(),
+        ))
+    });
+    let res = match result {
+        Ok(data) => response(StatusCode::OK, json!({"ok":true,"data":data})),
+        Err(error) => error_response(error),
+    };
+    with_cors(res, &origin)
+}
+
 async fn web_command(
     State(state): State<Arc<StateData>>,
     Path(key): Path<String>,
@@ -725,6 +876,7 @@ mod tests {
         let now = now_ms();
         store
             .insert(WebSession {
+                connection_id: WebSession::reference("ws_a"),
                 id: "ws_a".into(),
                 bearer: "tok".into(),
                 created_at_ms: now,
@@ -734,7 +886,7 @@ mod tests {
             })
             .unwrap();
         assert!(store.get_live("ws_a").is_some());
-        assert!(store.revoke("ws_a"));
+        assert!(store.revoke("ws_a").unwrap());
         assert!(store.get_live("ws_a").is_none());
     }
 
