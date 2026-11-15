@@ -510,17 +510,13 @@ async fn authorize(State(endpoint): State<Endpoint>, request: Request, next: Nex
         };
         // Initialize, discovery, ping and notifications also require current
         // access. Each actual tool then rechecks it in its own operation's tx.
-        let capabilities: WorkstreamQuery =
-            serde_json::from_value(json!({"protocol_version":1,"op":"capabilities"}))
-                .expect("static capabilities query");
         if let Err(error) = endpoint
             .state
             .store
-            .query(
+            .authorize_project_entry(
                 &endpoint.project.tenant_id,
                 &endpoint.project.project_id,
                 &access.bearer,
-                capabilities,
             )
             .await
         {

@@ -192,9 +192,9 @@ pub(crate) async fn authorize_project_action(
     crate::workstream_auth::authorize_domain_action(auth, action, None, None)
 }
 
-/// Ending one's own access never grants task or member administration. A live
-/// task-scoped read delegation is sufficient to manage that same client binding.
-pub(crate) async fn authorize_own_connections(
+/// Project transport admission proves one currently readable scope without
+/// disclosing project-wide capabilities or granting any domain operation.
+pub(crate) async fn authorize_project_entry(
     tx: &tokio_postgres::Transaction<'_>,
     auth: &ReaderAuthority,
     project: &str,
@@ -215,13 +215,12 @@ pub(crate) async fn authorize_own_connections(
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| PgError::Forbidden)?
             .as_millis() as i64;
-        let candidates = effective_delegations(tx, auth, project, None, now).await?;
-        if !candidates
-            .iter()
-            .any(|candidate| candidate.actions.contains(&Action::WorkRead))
-        {
-            return Err(PgError::Forbidden);
-        }
+        let query = serde_json::from_value(serde_json::json!({
+            "protocol_version":1,"op":"work.next"
+        }))
+        .expect("static scope discovery query");
+        let mut scoped = auth.clone();
+        resolve_agent_read_delegation(tx, &mut scoped, project, &query, now).await?;
     }
     Ok(())
 }

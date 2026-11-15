@@ -95,7 +95,7 @@ impl ConnectionStore {
             .to_owned();
         let is_self = actor == auth.actor_id && caller == auth.client_id;
         if is_self {
-            crate::delegation_auth::authorize_own_connections(&tx, &auth, project).await?;
+            crate::delegation_auth::authorize_project_entry(&tx, &auth, project).await?;
         } else {
             crate::delegation_auth::authorize_project_action(
                 &tx,

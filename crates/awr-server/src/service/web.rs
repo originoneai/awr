@@ -10,7 +10,7 @@ use super::{
     AccessOp, ProjectBinding, StateData, access_dispatch_authorized, denied, dispatch_authorized,
     error_response, response,
 };
-use awr_team_pg::{PgError, WorkstreamQuery};
+use awr_team_pg::PgError;
 use axum::{
     Router,
     body::Bytes,
@@ -335,14 +335,6 @@ fn secure_cookie(state: &StateData) -> bool {
         .all(|h| h.starts_with("127.0.0.1") || h.starts_with("localhost") || h.starts_with("[::1]"))
 }
 
-fn capabilities_query() -> WorkstreamQuery {
-    serde_json::from_value(json!({
-        "protocol_version": 1,
-        "op": "capabilities"
-    }))
-    .expect("capabilities query shape")
-}
-
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LoginBody {
@@ -659,12 +651,7 @@ async fn authorized_project_bindings(
     for project in candidates {
         match state
             .store
-            .query(
-                &project.tenant_id,
-                &project.project_id,
-                bearer,
-                capabilities_query(),
-            )
+            .authorize_project_entry(&project.tenant_id, &project.project_id, bearer)
             .await
         {
             Ok(_) => out.push(project.clone()),
