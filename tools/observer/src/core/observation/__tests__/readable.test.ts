@@ -182,8 +182,17 @@ describe('protocol fields and numbered identities', () => {
   });
 
   it.each(['Release 1.2.3.4 passed customer validation.', 'Version 1.2.3.4 is ready.', '版本 1.2.3.4 已通过验证。',
-    'Review https://example.com/releases/1.2.3.4'])('preserves explicit release versions in %s', (text) => {
+    'Review https://example.com/releases/1.2.3.4', 'Review https://example.com/download?version=1.2.3.4'])('preserves explicit release versions in %s', (text) => {
     expect(readableNarrative(text, 'en-US')).toBe(text);
     expect(containsDiagnosticContent(text)).toBe(false);
+  });
+
+  it.each(['2001:db8::1', 'fd00:42::1', '::ffff:192.0.2.1'])('withholds IPv6 diagnostics for %s', (address) => {
+    for (const text of [`Connection refused at ${address}`, `https://[${address}]/plan`,
+      `https://example.com/${encodeURIComponent(address)}`, `https://example.com/plan?detail=${encodeURIComponent(address)}`,
+      `https://example.com/plan#${encodeURIComponent(address)}`]) {
+      expect(containsDiagnosticContent(text)).toBe(true);
+      expect(readableNarrative(text, 'en-US') ?? '').not.toContain(address);
+    }
   });
 });

@@ -68,7 +68,9 @@ function internalField(field: string): boolean {
 }
 
 function hasNetworkAddress(text: string): boolean {
-  return NETWORK_ADDRESS.test(text.replace(RELEASE_VERSION, ''));
+  const prose = text.replace(RELEASE_VERSION, '');
+  return NETWORK_ADDRESS.test(prose) || [...prose.matchAll(/[a-f0-9]*:[a-f0-9:.]+/gi)]
+    .some(([value]) => URL.canParse(`http://[${value.replace(/\.+$/, '')}]/`));
 }
 
 function diagnosticValue(field: string, value: string): boolean {
@@ -110,7 +112,7 @@ function businessUrl(text: string, reference: string): string {
   let url: URL;
   try { url = new URL(text); } catch { return reference; }
   if (/^(?:(?:[a-z0-9-]+\.)*localhost|127(?:\.\d+){3}|\[::1\]|0\.0\.0\.0)$/.test(url.hostname.replace(/\.$/, ''))
-    || NETWORK_ADDRESS.test(url.hostname) || url.username || url.password || /^\/v\d+\/(?:projects|web)(?:\/|$)/.test(url.pathname)) return reference;
+    || hasNetworkAddress(url.hostname) || url.username || url.password || /^\/v\d+\/(?:projects|web)(?:\/|$)/.test(url.pathname)) return reference;
   const pathname = decodeReferencePart(url.pathname);
   if (pathname === null || diagnosticContent(pathname)
     || /^\/v\d+\/(?:projects|web)(?:\/|$)/.test(pathname)
@@ -127,7 +129,7 @@ function businessUrl(text: string, reference: string): string {
       url.searchParams.delete(rawField);
       changed = true;
     } else if (/[_-]|[a-z][A-Z]/.test(decodedField)
-      || OPAQUE_URL_COMPONENT.test(field) || OPAQUE_URL_COMPONENT.test(value) || hasNetworkAddress(value)) {
+      || OPAQUE_URL_COMPONENT.test(field) || OPAQUE_URL_COMPONENT.test(value) || hasNetworkAddress(`${field} ${value}`)) {
       return reference;
     }
   }
