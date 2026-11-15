@@ -284,6 +284,9 @@ function validDependency(item, work) {
     || !Object.keys(item.missing).every((key) => missingFields.includes(key))
     || !missingFields.every((key) => item[key] === null ? isBoundedId(item.missing[key]) : item.missing[key] === null)
     || item.validity === 'valid' && (item.available_version === null || item.required_version === null || item.reason !== null)
+    || item.validity === 'unavailable' && item.available_version !== null
+    || item.required_version !== null && item.available_version !== null
+      && item.required_version.contract_hash !== item.available_version.contract_hash
     || item.validity !== 'valid' && item.reason === null) return false;
   const assurance = item.review_assurance;
   if (assurance !== null && !['agent_reviewed_caller_asserted_reconciled', 'simulated_member_independent'].includes(assurance)) {
@@ -306,13 +309,13 @@ function validDependency(item, work) {
     if (item.adoption_valid === true) {
       if (item.adopted_version === null || !sameVersion(item.required_version, item.adopted_version)
         || !sameVersion(item.available_version, item.adopted_version)
-        || item.validity === 'unavailable'
         || item.version_policy === 'fixed_delivery' && item.adopted_version.source_snapshot_id === null) return false;
-    } else if (item.adopted_version !== null || item.available_version !== null || item.validity === 'valid') return false;
+    } else if (item.adopted_version !== null || item.available_version !== null || item.validity === 'valid'
+      || item.version_policy === 'fixed_delivery' && item.validity !== 'unavailable') return false;
   } else if (item.adoption_valid !== null || item.version_policy !== 'current_contract'
     || !sameVersion(item.adopted_version, item.consumed_version)) return false;
-  if (item.validity === 'valid' && (item.required_version.contract_hash !== item.available_version.contract_hash
-    || item.consumed_version !== null && !sameReceipt(item.consumed_version, item.available_version))) return false;
+  if (item.validity === 'valid' && item.consumed_version !== null
+    && !sameReceipt(item.consumed_version, item.available_version)) return false;
   return true;
 }
 

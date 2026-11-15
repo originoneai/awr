@@ -147,6 +147,20 @@ test('dependency mapping refuses invalid adoption and contradictory ready-state 
     (item) => {
       item.adopted_version = version('different-output', 'b'); item.missing.adopted_version = null;
     },
+    (item) => { item.validity = 'unavailable'; item.reason = 'completion_unavailable'; },
+    (item) => {
+      item.version_policy = 'fixed_delivery';
+      item.review_assurance = { cross_workstream: { review_assurance: 'team_independent', version_policy: 'fixed_delivery' } };
+      item.adoption_valid = false; item.available_version = null; item.missing.available_version = 'adoption_unavailable';
+      item.validity = 'upstream_changed'; item.reason = 'upstream_contract_changed';
+    },
+    (item) => {
+      item.review_assurance = { cross_workstream: { review_assurance: 'team_independent', version_policy: 'current_contract' } };
+      for (const field of ['required_version', 'available_version', 'adopted_version']) {
+        item[field] = version(); item.missing[field] = null;
+      }
+      item.adoption_valid = true; item.validity = 'unavailable'; item.reason = 'adoption_unavailable';
+    },
   ]) {
     body = reply(); mutate(body.data.items[0]);
     const result = await read(scope);
