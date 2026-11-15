@@ -230,3 +230,32 @@ describe('the real-shaped pages show a reporter as written, with long identifier
     await waitFor(() => expect(visibleTextParts(document.body).reporter.split('\n').sort()).toEqual([...REPORTER_SENTENCES[page]].sort()));
   });
 });
+
+
+describe('shared product labels across project pages', () => {
+  it.each(['zh-CN', 'en-US'].flatMap((language) => ['overview', 'plan', 'knowledge'].map((tab) => ({ language, tab }))))(
+    'withholds structured work and workstream titles in $tab for $language', async ({ language, tab }) => {
+      await act(async () => { await i18n.changeLanguage(language); });
+      installRealShapeMock('data', 'in-review');
+      const original = globalThis.fetch;
+      vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).includes('/api/team/read') && JSON.parse(String(init?.body)).query.op === 'documents.list') {
+          return json({ ok: false, error: { code: 'Unsupported', message: 'Project document discovery is unavailable' } });
+        }
+        const response = await original(input, init);
+        const data = await response.json();
+        if (String(input).includes('/api/team/overview')) {
+          data.works = data.works.map((work: Record<string, unknown>) => ({ ...work, title: 'client[secret]=synthetic-work-title' }));
+          data.workstreams = data.workstreams.map((workstream: Record<string, unknown>) => ({ ...workstream, title: 'payload={"token":"synthetic-workstream-title"}' }));
+        }
+        return json(data);
+      }));
+      renderApp(`/projects/demo?tab=${tab}&work=${REAL_API_WORK}`);
+      await waitFor(() => expect(document.body.textContent).toContain(language === 'zh-CN' ? '某项工作' : 'A work item'));
+      const visible = document.body.textContent + [...document.querySelectorAll('[title],[aria-label]')]
+        .flatMap((node) => [node.getAttribute('title'), node.getAttribute('aria-label')]).join(' ');
+      expect(visible).not.toMatch(/synthetic-work-title|synthetic-workstream-title|payload|secret/);
+      if (tab !== 'knowledge') expect(visible).toContain(language === 'zh-CN' ? '某条工作线' : 'A workstream');
+    },
+  );
+});

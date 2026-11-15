@@ -1,6 +1,6 @@
 import { humanText } from '../../i18n/human-language';
 import { rawObservationText, statementText, statusWord } from './values';
-import { readableSentence } from './readable';
+import { readableNarrative } from './readable';
 import { absoluteTimeText } from './time';
 import type { WorkStateInput, WorkStateResult } from './types';
 
@@ -28,10 +28,11 @@ export function deriveWorkState(input: WorkStateInput): WorkStateResult {
     guidanceOp: readState === 'ready' ? rawObservationText(guidance?.op).text : null,
     guidanceNote: readState === 'ready' ? rawObservationText(guidance?.note).text : null,
   };
+  const nextText = reportedNext == null ? null : readableNarrative(reportedNext, language);
   const next: WorkStateResult['next'] = readState === 'loading'
     ? { kind: 'loading', text: humanText('loading', language), fullText: null, technical }
     : reportedNext != null
-      ? { kind: 'reported', text: readableSentence(reportedNext, language), fullText: reportedNext, technical }
+      ? { kind: 'reported', text: nextText ?? humanText('reportedContentUnavailable', language), fullText: nextText, technical }
       : { kind: 'missing', text: humanText('nextStepMissing', language), fullText: null, technical };
 
   // Client declarations and progress reports have independent clocks.

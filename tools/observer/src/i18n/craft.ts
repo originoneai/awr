@@ -1,4 +1,4 @@
-import { rawObservationText, readableSentence, statusWord } from '../core/observation';
+import { rawObservationText, readableNarrative, statusWord } from '../core/observation';
 import { humanText } from './human-language';
 
 export { STATUS_FIELDS } from '../core/observation';
@@ -152,9 +152,9 @@ export function formatObservationValue(value: unknown, language: string, field?:
   if (Array.isArray(value)) return value.length ? value.map((item) => formatObservationValue(item, language, field)).join(', ') : notProvided(language);
   if (typeof value === 'string') {
     if (NUMERIC_STRING_FIELDS.has(field ?? '')) return formatMetric(value, language, field);
-    return readableSentence(statusLabel(value, language, field ?? ''), language);
+    return readableNarrative(statusLabel(value, language, field ?? ''), language) ?? humanText('contentUnavailable', language);
   }
   const record = value as Record<string, unknown>;
   const statement = [record.text, record.description, record.title, record.summary].find((item) => typeof item === 'string' && item.trim() !== '');
-  return typeof statement === 'string' ? readableSentence(statement, language) : humanText('contentUnavailable', language);
+  return typeof statement === 'string' ? readableNarrative(statement, language) ?? humanText('contentUnavailable', language) : humanText('contentUnavailable', language);
 }

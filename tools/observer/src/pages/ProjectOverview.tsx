@@ -23,7 +23,8 @@ import { LastReportText } from '../components/LastReportText';
 import { WorkProgress, useWorkState } from '../components/WorkProgress';
 import { ToneBadge } from '../components/ToneBadge';
 import { contractGroups } from '../lib/contract-groups';
-import { deriveOwner, deriveTrouble, deriveWorkState, groupWorks, moreLinesText, ownerCellText, rawObservationText } from '../core/observation';
+import { deriveOwner, deriveTrouble, deriveWorkState, groupWorks, moreLinesText, ownerCellText, rawObservationText, workLabel } from '../core/observation';
+import { humanText } from '../i18n/human-language';
 import { readStateOf } from '../lib/read-state';
 import { RecentChanges } from '../components/RecentChanges';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
@@ -100,13 +101,13 @@ function OwnerCell({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
 
 /** The goals and acceptance the works on this page have declared, merged; only reads already made. */
 function GoalsBlock({ works, snapshots }: { project: string; works: TeamWork[]; snapshots: SnapshotQuery[] }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const GROUP_LIMIT = 5;
   const read = works.map((work, index) => {
     const query = snapshots[index];
     const contract = query?.data?.result.data?.visible_contract;
     return {
-      title: work.title,
+      title: workLabel(work.title, { language: i18n.language }).text,
       // A read that did not happen contributes nothing; it is counted, never guessed from.
       state: readStateOf(query),
       goals: contract?.goals as WorkContractValue[] | undefined,
@@ -267,7 +268,7 @@ function DeliveryBlock({ project, works, snapshots, coverage }: {
                       // service's own trouble facts follow as plain sentences.
                       <li key={work.key}>
                         <Link to={taskPath(project, work.key)} data-testid={`project-delivery-attention-${work.key}`}>
-                          {work.title}
+                          {workLabel(work.title, { language: i18n.language }).text}
                           {t('knowledge.titleSeparator')}
                           {progress.text}
                         </Link>
@@ -407,7 +408,7 @@ function RecentActivity({ query, project }: { query: ActivityQuery; project: str
 }
 
 export function ProjectOverview({ project }: { project: string }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { revoked } = useRevocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const overview = useQuery(overviewQueryOptions(project, revoked));
@@ -442,7 +443,8 @@ export function ProjectOverview({ project }: { project: string }) {
         kind: 'group',
         key: `group-${currentWorkstream}`,
         id: currentWorkstream,
-        title: (grouped.titles[currentWorkstream] ?? currentWorkstream),
+        title: workLabel(grouped.titles[currentWorkstream] ?? currentWorkstream,
+          { language: i18n.language, fallback: humanText('workstreamUnnamed', i18n.language) }).text,
       });
     }
     displayRows.push({ kind: 'work', key: work.key, work, index });
@@ -456,7 +458,7 @@ export function ProjectOverview({ project }: { project: string }) {
       onCell: (row) => ({ colSpan: row.kind === 'group' ? 5 : 1 }),
       render: (_, row) => row.kind === 'group'
         ? <Typography.Text strong data-testid={`workstream-group-${row.id}`}>{row.title}</Typography.Text>
-        : <Link to={taskPath(project, row.work.key)}>{row.work.title}</Link>,
+        : <Link to={taskPath(project, row.work.key)}>{workLabel(row.work.title, { language: i18n.language }).text}</Link>,
     },
     {
       title: t('projectOverview.columns.owner'),

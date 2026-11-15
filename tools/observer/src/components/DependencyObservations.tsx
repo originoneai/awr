@@ -3,7 +3,7 @@ import { Alert, Button, Card, Col, Descriptions, Empty, Flex, List, Row, Space, 
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
-import { readableSentence } from '../core/observation';
+import { workLabel } from '../core/observation';
 import { isAuthError } from '../lib/api';
 import { dependenciesQueryOptions } from '../lib/collaboration';
 import { useRevocation } from '../lib/revocation';
@@ -47,13 +47,13 @@ export function DependencyDetails({ item, project }: { item: DependencyObservati
   const review = assurance === 'team_independent' ? 'teamReview'
     : assurance === 'simulated_member_independent' ? 'collaboratorReview'
       : assurance === 'agent_reviewed_caller_asserted_reconciled' ? 'agentReview' : 'unknownReview';
-  const provider = item.provider_title ? readableSentence(item.provider_title, i18n.language) : t('collaboration.restrictedWork');
+  const provider = item.provider_title ? workLabel(item.provider_title, { language: i18n.language }).text : t('collaboration.restrictedWork');
   return <Card size="small" title={t('collaboration.dependencyDetail')} data-testid="dependency-detail">
     <Flex vertical gap={16}>
       <Descriptions size="small" column={1} items={[
         { key: 'provider', label: t('collaboration.provider'), children: item.provider_title
           ? <Link to={`/projects/${encodeURIComponent(project)}?tab=plan&work=${encodeURIComponent(item.provider_work_id)}`}>{provider}</Link> : provider },
-        { key: 'consumer', label: t('collaboration.consumer'), children: <Link to={`/projects/${encodeURIComponent(project)}?tab=plan&work=${encodeURIComponent(item.work_id)}`}>{readableSentence(item.work_title, i18n.language)}</Link> },
+        { key: 'consumer', label: t('collaboration.consumer'), children: <Link to={`/projects/${encodeURIComponent(project)}?tab=plan&work=${encodeURIComponent(item.work_id)}`}>{workLabel(item.work_title, { language: i18n.language }).text}</Link> },
         { key: 'policy', label: t('collaboration.policy'), children: t(item.version_policy === 'fixed_delivery' ? 'collaboration.fixedPolicy' : 'collaboration.currentPolicy') },
         { key: 'review', label: t('collaboration.review'), children: t(`collaboration.${review}`) },
         { key: 'required', label: t('collaboration.required'), children: versionLabel('required_version') },
@@ -95,14 +95,14 @@ export function DependencyObservations({ project, workId = null }: { project: st
           <List dataSource={data.items} rowKey={keyOf} renderItem={(item) => <List.Item>
             <Flex vertical gap={4} style={{ width: '100%', minWidth: 0 }}>
               <Button type={current === item ? 'default' : 'text'} block aria-pressed={current === item}
-                aria-label={`${readableSentence(item.work_title, i18n.language)} · ${t('collaboration.dependsOn', {
-                  name: item.provider_title ? readableSentence(item.provider_title, i18n.language) : t('collaboration.restrictedWork'),
+                aria-label={`${workLabel(item.work_title, { language: i18n.language }).text} · ${t('collaboration.dependsOn', {
+                  name: item.provider_title ? workLabel(item.provider_title, { language: i18n.language }).text : t('collaboration.restrictedWork'),
                 })}`} onClick={() => setSelected(keyOf(item))}
                 style={{ height: 'auto', minHeight: token.controlHeight, whiteSpace: 'normal', textAlign: 'start', justifyContent: 'start' }}>
-                {readableSentence(item.work_title, i18n.language)}
+                {workLabel(item.work_title, { language: i18n.language }).text}
               </Button>
               <Typography.Text type="secondary">{t('collaboration.dependsOn', {
-                name: item.provider_title ? readableSentence(item.provider_title, i18n.language) : t('collaboration.restrictedWork'),
+                name: item.provider_title ? workLabel(item.provider_title, { language: i18n.language }).text : t('collaboration.restrictedWork'),
               })}</Typography.Text>
               <Tag style={{ alignSelf: 'start' }} color={item.validity === 'valid' ? 'success' : 'warning'}>
                 {t(item.validity === 'valid' ? 'collaboration.deliveryAvailable' : 'collaboration.needsAttention')}

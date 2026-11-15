@@ -228,3 +228,41 @@ describe('responsibility and handoffs', () => {
     expect(calls.filter(query => query.cursor === 'handoff-page-two').length).toBeGreaterThanOrEqual(2);
   }, 15000);
 });
+
+
+describe('product-safe collaboration names and labels', () => {
+  it.each(['zh-CN', 'en-US'])('guards dependency titles in visible and accessible text in %s', async (language) => {
+    await i18n.changeLanguage(language);
+    const { container } = mount(<DependencyObservations project="portal" />, () => response({
+      items: [edge({ work_title: 'payload={"token":"synthetic-dependency"}',
+        provider_title: 'client[secret]=synthetic-provider' })], total: 1, next_cursor: null, as_of: { at_unix_ms: AT },
+    }));
+    await screen.findByTestId('dependency-detail');
+    const text = [container.textContent, ...[...container.querySelectorAll('[aria-label],[title]')]
+      .flatMap((element) => [element.getAttribute('aria-label'), element.getAttribute('title')])].join(' ');
+    expect(text).not.toMatch(/synthetic-dependency|synthetic-provider|payload|secret/);
+    expectProductOnly(container);
+    expect(container.textContent).toContain(language === 'zh-CN' ? '某项工作' : 'A work item');
+  });
+
+  it.each(['zh-CN', 'en-US'])('preserves responsibility and handoff state while withholding unsafe names in %s', async (language) => {
+    await i18n.changeLanguage(language);
+    const raw = 'client[secret]=synthetic-person';
+    const snapshot = { observation: {
+      responsibility: { owner: 'person', owner_name: raw, pending: { person_id: 'next-person' }, pending_name: raw,
+        current_executor: { agent_id: 'agent' }, executor_person_name: raw, executor_agent_name: 'GLM4.6' },
+      claim: { lease_live: true }, progress: { origin: { actor_name: raw } },
+    } };
+    const { container } = mount(<WorkResponsibility project="portal" workId="customer-portal" snapshot={snapshot} />, () => response({
+      items: [{ handoff_id: INTERNAL, kind: 'execution', effective_status: 'accepted', pending: false, expired: false,
+        from_display_name: raw, to_display_name: 'Grok4', updated_at_unix_ms: AT, expires_at_unix_ms: null }],
+      total: 1, next_cursor: null, as_of: { at_unix_ms: AT },
+    }));
+    await screen.findByText(language === 'zh-CN' ? /已接手/ : /Accepted/);
+    expect(container.textContent).toContain('GLM4.6');
+    expect(container.textContent).toContain('Grok4');
+    expect(container.textContent).toContain(language === 'zh-CN' ? '名称暂时无法显示' : 'Name cannot be displayed');
+    expect(container.textContent).not.toContain('synthetic-person');
+    expectProductOnly(container);
+  });
+});

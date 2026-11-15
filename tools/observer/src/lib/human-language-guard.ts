@@ -1,5 +1,6 @@
 import { FORBIDDEN_VISIBLE_PATTERNS } from '../i18n/human-language';
 import { IDENTIFIER_PATTERN_IDS } from '../core/observation/owner';
+import { containsDiagnosticContent } from '../core/observation/readable';
 
 export { IDENTIFIER_PATTERN_IDS };
 export interface VisibleTextViolation {
@@ -14,11 +15,12 @@ export function findForbiddenVisibleText(text: string): VisibleTextViolation[] {
   });
 }
 
-/** The patterns that are shapes of identifiers; a reporter's own words are scanned for these and nothing else. */
+/** Reporter prose is checked for identifier shapes and structured diagnostics. */
 // The one set lives in the core; the guard and the owner gate share it.
 
 export function findIdentifierText(text: string): VisibleTextViolation[] {
-  return findForbiddenVisibleText(text).filter((violation) => IDENTIFIER_PATTERN_IDS.has(violation.id));
+  const prose = text.replace(/https?:\/\/[^\s()]+/gi, (url) => containsDiagnosticContent(url) ? url : '');
+  return findForbiddenVisibleText(prose).filter((violation) => IDENTIFIER_PATTERN_IDS.has(violation.id));
 }
 
 /** The mark a page puts on a sentence its work's reporter wrote and the page shows as written. */
@@ -46,7 +48,7 @@ export function defaultVisibleText(root: ParentNode): string {
 
 /**
  * The default visible text in two parts: the words of the page itself, and the sentences a work's reporter
- * wrote (elements marked `data-reporter-text`), which the page shows as written and cannot rewrite.
+ * wrote (elements marked `data-reporter-text`), after the shared product projection.
  */
 export function visibleTextParts(root: ParentNode): { own: string; reporter: string } {
   const clone = root.cloneNode(true) as ParentNode;
@@ -56,12 +58,23 @@ export function visibleTextParts(root: ParentNode): { own: string; reporter: str
   return { own: textOf(clone), reporter };
 }
 
-/** What the ratchet counts: the page's own words against the whole list, a reporter's words against identifiers only. */
+/** Product vocabulary, reporter references and diagnostic payloads are checked after rendering. */
 export function findHumanLanguageViolations(root: ParentNode): VisibleTextViolation[] {
-  const { own, reporter } = visibleTextParts(root);
+  const product = root.cloneNode(true) as ParentNode;
+  // Only the supported connection address may expose the service endpoint.
+  for (const element of product.querySelectorAll('[data-agent-connection-address]')) {
+    try {
+      const url = new URL(element.textContent ?? '');
+      if (['https:', 'http:'].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash
+        && /^\/v\d+\/projects\/[^/]+\/mcp\/?$/.test(url.pathname)) element.remove();
+    } catch { /* Unrecognized content receives the ordinary product checks. */ }
+  }
+  const { own, reporter } = visibleTextParts(product);
   const descriptions = [...root.querySelectorAll('[title],[aria-label],[alt]')]
     .flatMap(element => ['title', 'aria-label', 'alt'].map(attribute => element.getAttribute(attribute) ?? ''));
-  return [...findForbiddenVisibleText(own), ...findIdentifierText(reporter), ...descriptions.flatMap(findForbiddenVisibleText)];
+  const diagnostics = [own, reporter, ...descriptions].flatMap((text) => text.split('\n')
+    .filter(containsDiagnosticContent).map((match) => ({ id: 'diagnostic_content', match })));
+  return [...findForbiddenVisibleText(own), ...findIdentifierText(reporter), ...descriptions.flatMap(findForbiddenVisibleText), ...diagnostics];
 }
 
 export function withinHumanLanguageBaseline(current: number, baseline: number): boolean {

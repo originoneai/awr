@@ -231,3 +231,26 @@ describe('describeProgressReport: who said it, and whether it still holds', () =
     }
   });
 });
+
+
+describe('product-safe reported content', () => {
+  it.each(['zh-CN', 'en-US'])('retains supplied progress and blockers while withholding structured content in %s', (language) => {
+    const unsafe = 'payload={"token":"synthetic-report-value"}';
+    const report = describeProgressReport({
+      summary: unsafe, completed: [unsafe, 'Prepared the sign-in page'], blockers: [unsafe],
+      origin: { actor_name: 'client[secret]=synthetic-name' }, reported_at_unix_ms: 1793534400000,
+      tests: [{ name: unsafe, outcome: 'failed' }], artifacts: [{ label: unsafe }],
+    }, { language });
+    expect(report.kind).toBe('reported');
+    expect(report.summary).toBe(language === 'zh-CN' ? '已收到汇报，详细内容暂时无法显示' : 'A report was received, but its details cannot be displayed');
+    expect(report.completed.shown).toEqual([report.summary, 'Prepared the sign-in page']);
+    expect(report.blockers).toEqual({ reported: true, shown: [report.summary], more: 0 });
+    expect(report.tests.shown[0].tone).toBe('negative');
+    const { technical, ...product } = report;
+    const visible = { ...product, artifacts: report.artifacts.shown.map((artifact) => artifact.text) };
+    expect(JSON.stringify(visible)).not.toMatch(/synthetic-report-value|synthetic-name|payload|token/);
+    expect(JSON.stringify(technical)).toContain('synthetic-report-value');
+    expect(report.declaration[0]).toContain(language === 'zh-CN' ? '汇报者' : 'the reporter');
+    expect(describeProgressReport({ summary: 'The sign-in page is ready', origin: { actor_name: 'Grok4' } }, { language }).declaration[0]).toContain('Grok4');
+  });
+});

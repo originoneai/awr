@@ -1,11 +1,12 @@
 import { humanText } from '../../i18n/human-language';
 import { artifactLabel, checkLabel } from './labels';
-import { readableSentence } from './readable';
+import { readableNarrative } from './readable';
+import { readsAsName } from './owner';
 import { absoluteTimeText } from './time';
 import { rawObservationText, statementText, statusWord } from './values';
 import type { CappedList, ProgressReportArtifact, ProgressReportResult, ProgressReportTest } from './types';
 
-/** How many entries of one list a person is shown; every field stays in the technical details. */
+/** How many entries of one list a person is shown. Original reports remain in service history. */
 export const REPORT_LIST_LIMIT = 5;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -20,7 +21,7 @@ function sentences(value: unknown, language: string): string[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((entry) => {
     const text = statementText(entry);
-    return text == null ? [] : [readableSentence(text, language)];
+    return text == null ? [] : [readableNarrative(text, language) ?? humanText('reportedContentUnavailable', language)];
   });
 }
 
@@ -43,8 +44,8 @@ const MISSING: ProgressReportResult = {
 /**
  * The reporter's checkpoint in plain words: its own summary, what is done, what blocks it, the tests
  * with their outcome words, what was produced, who said it and when, and a warning when the task
- * moved on after the report was written. The reporter's sentences are shown verbatim; ids, hashes,
- * references and every raw field go to the technical items.
+ * moved on after the report was written. Business prose uses the shared narrative projection.
+ * Supplied content that cannot be displayed remains distinct from a missing report.
  */
 export function describeProgressReport(progress: unknown, options: { language: string; finished?: boolean }): ProgressReportResult {
   const { language } = options;
@@ -52,7 +53,7 @@ export function describeProgressReport(progress: unknown, options: { language: s
   if (report == null) return MISSING;
 
   const summaryText = statementText(report.summary);
-  const summary = summaryText == null ? null : readableSentence(summaryText, language);
+  const summary = summaryText == null ? null : readableNarrative(summaryText, language) ?? humanText('reportedContentUnavailable', language);
   const completed = capped(sentences(report.completed, language));
   const blockers = { ...capped(sentences(report.blockers, language)), reported: Array.isArray(report.blockers) };
   const tests = capped(
@@ -72,7 +73,8 @@ export function describeProgressReport(progress: unknown, options: { language: s
   const hasContent = summary != null || completed.shown.length > 0 || blockers.reported || tests.shown.length > 0 || artifacts.shown.length > 0;
   if (!hasContent) return MISSING;
 
-  const name = statementText(asRecord(report.origin)?.actor_name) ?? humanText('reporterUnnamed', language);
+  const rawName = statementText(asRecord(report.origin)?.actor_name);
+  const name = rawName != null && readsAsName(rawName) ? rawName : humanText('reporterUnnamed', language);
   const at = typeof report.reported_at_unix_ms === 'number' && Number.isFinite(report.reported_at_unix_ms)
     ? absoluteTimeText(report.reported_at_unix_ms, { language }).text
     : null;

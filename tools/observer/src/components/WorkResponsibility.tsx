@@ -2,7 +2,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Alert, Button, Descriptions, Empty, Flex, List, Space, Spin, Typography } from 'antd';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { readableSentence } from '../core/observation';
+import { readsAsName } from '../core/observation';
+import { humanText } from '../i18n/human-language';
 import { isAuthError } from '../lib/api';
 import { handoffsQueryOptions } from '../lib/collaboration';
 import { useRevocation } from '../lib/revocation';
@@ -29,7 +30,7 @@ export function WorkResponsibility({ project, workId, snapshot }: { project: str
   const claim = observation?.claim;
   const reporter = record(record(observation?.progress).origin).actor_name;
   const name = (value: unknown) => typeof value === 'string' && value.trim()
-    ? readableSentence(value.trim(), i18n.language) : t('collaboration.nameMissing');
+    ? readsAsName(value.trim()) ? value.trim() : humanText('nameUnavailable', i18n.language) : t('collaboration.nameMissing');
   const reservation = claim === null ? 'unreserved' : claim?.lease_live === true ? 'reserved'
     : claim?.lease_live === false ? 'reservationEnded' : 'unavailable';
   const owner = !responsibility ? t('collaboration.unavailable') : responsibility.owner === null

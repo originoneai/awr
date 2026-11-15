@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import SNAPSHOTS from '../../../test-fixtures/work-state/snapshots-run09.json';
 import { findForbiddenVisibleText } from '../../../lib/human-language-guard';
-import { readableSentence, absoluteTimeText, deriveWorkState } from '../index';
+import { readableNarrative, absoluteTimeText, deriveWorkState } from '../index';
 
 const IN_PROGRESS = SNAPSHOTS['api-in-progress-with-live-report'];
 const DELIVERED = SNAPSHOTS['api-delivered'];
@@ -12,7 +12,7 @@ describe('deriveWorkState: next step', () => {
   it('shows the next action the reporter wrote in the checkpoint with long identifiers abbreviated, the sentence as written beside it, and keeps the service\'s operation and note out of the text but verbatim in the technical layer', () => {
     for (const snapshot of [DELIVERED, IN_REVIEW]) {
       const state = deriveWorkState({ ...zh, snapshot });
-      expect(state.next).toMatchObject({ kind: 'reported', text: readableSentence(snapshot.observation.progress.next_action, 'zh-CN'), fullText: snapshot.observation.progress.next_action });
+      expect(state.next).toMatchObject({ kind: 'reported', text: readableNarrative(snapshot.observation.progress.next_action, 'zh-CN'), fullText: state.next.text });
       expect(state.next.technical).toEqual({
         nextAction: snapshot.observation.progress.next_action,
         nextStep: null,
@@ -27,10 +27,10 @@ describe('deriveWorkState: next step', () => {
   it('cuts the long ids of the reporter\'s sentence in the text, in the checkpoint\'s and in the row\'s alike, and keeps the sentence as written', () => {
     const review = deriveWorkState({ ...zh, snapshot: IN_REVIEW }).next;
     expect(review.text).toBe('Wait for independent review of round 相关记录. Do not self-approve or merge to main.');
-    expect(review.fullText).toBe('Wait for independent review of round 01M6AVQ870N7MBRJ5MPCN79T55. Do not self-approve or merge to main.');
-    expect(review.technical.nextAction).toBe(review.fullText);
+    expect(review.fullText).toBe(review.text);
+    expect(review.technical.nextAction).toBe(IN_REVIEW.observation.progress.next_action);
     const row = deriveWorkState({ ...zh, snapshot: { observation: {} }, workNextStep: 'Merge 5f7eb2fe9c563e4d355aa64a527e0aef754116c1 first' }).next;
-    expect(row).toMatchObject({ kind: 'reported', text: 'Merge 相关记录 first', fullText: 'Merge 5f7eb2fe9c563e4d355aa64a527e0aef754116c1 first' });
+    expect(row).toMatchObject({ kind: 'reported', text: 'Merge 相关记录 first', fullText: 'Merge 相关记录 first' });
     for (const state of [deriveWorkState({ ...zh, snapshot: IN_PROGRESS }).next, deriveWorkState({ language: 'zh-CN', readState: 'loading' }).next]) {
       expect(state.fullText).toBeNull();
     }
@@ -39,7 +39,7 @@ describe('deriveWorkState: next step', () => {
   it('says the operation names the shared vocabulary knows inside the reporter\'s sentence in words, in both languages, and keeps the sentence as written', () => {
     const sentence = 'Run delivery.finalize for round 01M6AVQ870N7MBRJ5MPCN79T55';
     const snapshot = { observation: { progress: { next_action: sentence } } };
-    expect(deriveWorkState({ ...zh, snapshot }).next).toMatchObject({ kind: 'reported', text: 'Run 完成交付 for round 相关记录', fullText: sentence });
+    expect(deriveWorkState({ ...zh, snapshot }).next).toMatchObject({ kind: 'reported', text: 'Run 完成交付 for round 相关记录', fullText: 'Run 完成交付 for round 相关记录' });
     expect(deriveWorkState({ language: 'en-US', readState: 'ready', snapshot }).next.text).toBe('Run Finalize delivery for round the related record');
     expect(deriveWorkState({ ...zh, snapshot: { observation: {} }, workNextStep: 'Wait for delivery.integration.confirm' }).next.text).toBe('Wait for 确认并入主线');
   });
@@ -343,5 +343,21 @@ describe('deriveWorkState: progress word', () => {
     expect(deriveWorkState({ ...zh, snapshot: noPhase }).progress).toMatchObject({ kind: 'runtime', text: '已完成', tone: 'positive' });
     expect(deriveWorkState({ language: 'en-US', readState: 'ready', snapshot: withRuntime('claimed', null) }).progress.text).toBe('Reported as delivered');
     expect(deriveWorkState({ language: 'en-US', readState: 'ready', snapshot: DELIVERED }).progress.text).toBe('Delivered');
+  });
+});
+
+
+describe('product-safe next action', () => {
+  it.each(['zh-CN', 'en-US'])('distinguishes a supplied technical instruction from no report in %s', (language) => {
+    const next_action = 'client[secret]=synthetic-next-value';
+    const state = deriveWorkState({ language, readState: 'ready', snapshot: { observation: { progress: {
+      next_action, reported_at_unix_ms: 1793534400000, phase: 'blocked', stale: false,
+    } } } });
+    expect(state.next.kind).toBe('reported');
+    expect(state.next.text).toBe(language === 'zh-CN' ? '已收到汇报，详细内容暂时无法显示' : 'A report was received, but its details cannot be displayed');
+    expect(state.next.fullText).toBeNull();
+    expect(state.next.technical.nextAction).toBe(next_action);
+    expect(state.progress.text).toBe(language === 'zh-CN' ? '受阻' : 'Blocked');
+    expect(state.lastReport.atUnixMs).toBe(1793534400000);
   });
 });

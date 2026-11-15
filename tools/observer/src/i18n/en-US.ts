@@ -80,7 +80,7 @@ const enUS: Messages = {
     instructions: 'Connection instructions for your agent',
     serviceAddress: 'Service address',
     copyInstructions: 'Copy full instructions',
-    credentialRow: 'Personal credential: never shown here (none exists and none is displayed).',
+    credentialRow: 'Use your personal sign-in to authorize Agent access',
     capabilities: 'What this connection can do',
     project: 'Project',
     businessRoles: 'Business roles',

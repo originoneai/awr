@@ -128,6 +128,13 @@ function businessUrl(text: string, reference: string): string {
   return changed ? url.toString() : text;
 }
 
+/** The UI guard uses the same structured-content and public-reference checks as the projection. */
+export function containsDiagnosticContent(text: string): boolean {
+  return text.split(/(https?:\/\/[^\s()]+)/gi).some((part) => /^https?:\/\//i.test(part)
+    ? businessUrl(part, '') !== part
+    : diagnosticContent(part) || INTERNAL_TOKEN.test(part) || SYSTEM_PATH.test(part) || ERROR_CODE.test(part));
+}
+
 /** Preserve business prose and public references while removing internal diagnostic values. */
 export function readableNarrative(text: string, language: string): string | null {
   // Diagnostic payloads stay in protected service history. A partial scrub of

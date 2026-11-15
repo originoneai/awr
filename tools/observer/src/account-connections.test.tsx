@@ -107,7 +107,7 @@ describe('agent-connect page (AWR-OBS-008)', () => {
     setupAccount();
     renderApp('/agent-connect?scope=demo');
     expect(await screen.findByText('http://127.0.0.1:9000/v1/projects/demo/mcp')).toBeTruthy();
-    expect(screen.getByTestId('credential-row').textContent).toContain('不展示凭据');
+    expect(screen.getByTestId('credential-row').textContent).toBe(i18n.t('agentConnect.credentialRow'));
     expect(document.body.textContent).not.toContain(FULL_SESSION_ID);
   });
 

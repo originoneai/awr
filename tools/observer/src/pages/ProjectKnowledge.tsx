@@ -10,6 +10,7 @@ import { ObservationEmpty, ObservationForbidden } from '../components/states';
 
 import {
   documentLabel,
+  workLabel,
   judgeContentRead,
   utf8ByteLength,
   type ContentReadStatus,
@@ -362,7 +363,7 @@ function WorkDocumentReferences({ project }: { project: string }) {
                     {selected.citingWorks.map((work, index) => (
                       <span key={work.key}>
                         {index > 0 ? ' · ' : ''}
-                        <Link to={`/projects/${project}?tab=plan&work=${encodeURIComponent(work.key)}`}>{work.title}</Link>
+                        <Link to={`/projects/${project}?tab=plan&work=${encodeURIComponent(work.key)}`}>{workLabel(work.title, { language: i18n.language }).text}</Link>
                       </span>
                     ))}
                   </Typography.Text>
@@ -376,7 +377,7 @@ function WorkDocumentReferences({ project }: { project: string }) {
                     <Typography.Text type="secondary" data-testid="read-checking">{t('common.loading')}</Typography.Text>
                   ) : null}
                   {contractGroups(selected.citingWorks).map((group) => (
-                    <Card key={group.titles.join('\u0000')} size="small" type="inner" title={t('knowledge.contractFor', { title: group.titles.join(t('knowledge.titleSeparator')) })}>
+                    <Card key={group.titles.join('\u0000')} size="small" type="inner" title={t('knowledge.contractFor', { title: group.titles.map((title) => workLabel(title, { language: i18n.language }).text).join(t('knowledge.titleSeparator')) })}>
                       {group.goals?.length ? (
                         <List size="small" header={t('workbench.detail.goals')} dataSource={group.goals} renderItem={(goal) => <List.Item><ObservationValue value={goal} /></List.Item>} />
                       ) : null}
