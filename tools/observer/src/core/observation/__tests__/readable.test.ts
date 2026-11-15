@@ -12,10 +12,23 @@ describe('readableNarrative', () => {
       'Clarify the outcome. ```json\n{"reason":"scope"}\n```',
       'Clarify scope. token: synthetic-session-value',
       'authorization=Bearer synthetic-session-value',
+      'configuration_value: synthetic-field-value',
+      'connectionString=synthetic-field-value',
+      'unknown=synthetic-field-value',
       'Traceback (most recent call last):\n  File "/private/service.py", line 12',
     ]) expect(readableNarrative(text, language), text).toBeNull();
     for (const text of ['candidate_id=proposal-123', '"candidate_id": "proposal-123"', 'evidence_id=review-456']) {
       expect(readableNarrative(text, language), text).toBeNull();
+    }
+    for (const field of ['client_secret', 'auth_token', 'session_token', 'private_key', 'x-api-key',
+      'clientSecret', 'apiKey', 'secret_access_key', 'database_password', 'signing_key', 'access_key2']) {
+      for (const text of [`${field}=synthetic-field-value`, `Clarify scope. "${field}": "synthetic-field-value"`]) {
+        expect(readableNarrative(text, language), text).toBeNull();
+      }
+      for (const key of [field, [...field].map((c) => `%${c.charCodeAt(0).toString(16)}`).join('')]) {
+        const result = readableNarrative(`Review https://example.com/guide?${key}=synthetic-field-value`, language);
+        expect(result ?? '', key).not.toContain('synthetic-field-value');
+      }
     }
   });
 
@@ -29,6 +42,8 @@ describe('readableNarrative', () => {
     const result = readableNarrative('Review https://example.com/guide?access%5Ftoken=synthetic-session-value', language);
     expect(result).not.toContain('synthetic-session-value');
     expect(result).not.toContain('access_token');
+    expect(readableNarrative('Review https://example.com/guide?configuration_value=synthetic-field-value', language))
+      .not.toContain('synthetic-field-value');
   });
 });
 

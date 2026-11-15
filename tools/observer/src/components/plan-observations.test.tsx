@@ -170,6 +170,8 @@ describe('plan observation product views', () => {
       '{"reason":"clarify scope","candidate_id":"proposal-123"}',
       'candidate_id=proposal-123',
       'token: synthetic-session-value',
+      ...['client_secret', 'auth_token', 'session_token', 'private_key', 'x-api-key', 'clientSecret']
+        .flatMap((field) => [`${field}=synthetic-session-value`, `Review https://example.com/guide?${field}=synthetic-session-value`]),
     ];
     const { container } = mount((q) => response(q.op === 'sources.inspect' ? documents() : {
       items: reasons.map((reason, index) => candidate({ candidate_id: `${INTERNAL}-${index}`,
