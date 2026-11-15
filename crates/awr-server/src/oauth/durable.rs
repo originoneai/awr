@@ -1,5 +1,5 @@
 //! Encrypted, atomic snapshots for one coordinator process. PostgreSQL remains
-//! the live authority; this file only preserves approved OAuth connections.
+//! the live authority; this file preserves approved Agent and browser connections.
 use super::*;
 use ring::aead::{self, Aad, LessSafeKey, Nonce, UnboundKey};
 use std::{
@@ -26,6 +26,8 @@ struct Snapshot {
     grants: Vec<(Key, SavedGrant)>,
     tokens: Vec<(Key, SavedToken)>,
     refresh_tokens: Vec<(Key, RefreshToken)>,
+    #[serde(default)]
+    browser_sessions: Vec<(String, BrowserSession)>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -40,6 +42,10 @@ struct SavedGrant {
     resource: String,
     bearer: String,
     expires_ns: u64,
+    #[serde(default)]
+    created_at_ms: Option<u64>,
+    #[serde(default)]
+    revoked_at_ms: Option<u64>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -309,6 +315,8 @@ impl Store {
                             resource: e.resource.clone(),
                             bearer: e.bearer.clone(),
                             expires_ns: self.clock.deadline(e.expires)?,
+                            created_at_ms: e.created_at_ms,
+                            revoked_at_ms: e.revoked_at_ms,
                         },
                     ))
                 })
@@ -326,6 +334,11 @@ impl Store {
                     ))
                 })
                 .collect::<Result<_, OAuthError>>()?,
+            browser_sessions: entries
+                .browser_sessions
+                .iter()
+                .map(|(id, session)| (id.clone(), session.clone()))
+                .collect(),
             refresh_tokens: entries
                 .refresh_tokens
                 .iter()
@@ -394,6 +407,7 @@ impl Store {
             || snapshot.grants.len() > MAX_TOKENS
             || snapshot.tokens.len() > MAX_TOKENS
             || snapshot.refresh_tokens.len() > MAX_REFRESH_TOKENS
+            || snapshot.browser_sessions.len() > 4096
         {
             return Err(OAuthError::Unavailable);
         }
@@ -438,6 +452,8 @@ impl Store {
                             resource: e.resource,
                             bearer: e.bearer,
                             expires,
+                            created_at_ms: e.created_at_ms,
+                            revoked_at_ms: e.revoked_at_ms,
                         },
                     )
                     .is_some()
@@ -469,6 +485,11 @@ impl Store {
             if !entries.grants.contains_key(&e.family)
                 || entries.refresh_tokens.insert(id, e).is_some()
             {
+                return Err(OAuthError::Unavailable);
+            }
+        }
+        for (id, session) in snapshot.browser_sessions {
+            if !session.valid(&id) || entries.browser_sessions.insert(id, session).is_some() {
                 return Err(OAuthError::Unavailable);
             }
         }

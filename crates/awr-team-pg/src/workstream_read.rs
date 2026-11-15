@@ -1043,6 +1043,27 @@ impl WorkstreamReadStore {
         crate::ProjectAccessStore::from_pool(self.pool.clone())
     }
 
+    pub fn connections(&self) -> crate::ConnectionStore {
+        crate::ConnectionStore::from_pool(self.pool.clone())
+    }
+
+    /// Transport admission accepts one live readable scope. Each domain read
+    /// and mutation retains its own transaction and authority checks.
+    pub async fn authorize_project_entry(
+        &self,
+        tenant: &str,
+        project: &str,
+        bearer: &str,
+    ) -> PgResult<()> {
+        let mut client = self.pool.get().await?;
+        crate::check_schema(&client).await?;
+        let tx = client.transaction().await?;
+        let auth = authenticate(&tx, tenant, project, bearer).await?;
+        crate::delegation_auth::authorize_project_entry(&tx, &auth, project).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// Authoritative source / planning domain entry (TMCP-021/022/023).
     pub fn source(&self) -> crate::SourceStore {
         crate::SourceStore::from_pool(self.pool.clone())

@@ -15,7 +15,11 @@ use std::{
 };
 use url::Url;
 
+mod connections;
 mod durable;
+
+pub(crate) use connections::BrowserSession;
+pub use connections::OAuthConnection;
 
 pub const ACCESS_TOKEN_PREFIX: &str = "awr_oauth_";
 pub const ACCESS_TTL: Duration = Duration::from_secs(3600);
@@ -153,6 +157,8 @@ struct Grant {
     resource: String,
     bearer: String,
     expires: Instant,
+    created_at_ms: Option<u64>,
+    revoked_at_ms: Option<u64>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -170,6 +176,7 @@ struct Entries {
     tokens: BTreeMap<[u8; 32], Token>,
     grants: BTreeMap<[u8; 32], Grant>,
     refresh_tokens: BTreeMap<[u8; 32], RefreshToken>,
+    browser_sessions: BTreeMap<String, BrowserSession>,
 }
 
 impl Entries {
@@ -178,10 +185,18 @@ impl Entries {
         self.pending.retain(|_, e| e.expires > now);
         self.codes.retain(|_, e| e.expires > now);
         self.grants.retain(|_, e| e.expires > now);
-        self.tokens
-            .retain(|_, e| e.expires > now && self.grants.contains_key(&e.family));
-        self.refresh_tokens
-            .retain(|_, e| self.grants.contains_key(&e.family));
+        self.tokens.retain(|_, e| {
+            e.expires > now
+                && self
+                    .grants
+                    .get(&e.family)
+                    .is_some_and(|g| g.revoked_at_ms.is_none())
+        });
+        self.refresh_tokens.retain(|_, e| {
+            self.grants
+                .get(&e.family)
+                .is_some_and(|g| g.revoked_at_ms.is_none())
+        });
     }
 
     fn refresh_family(
@@ -202,7 +217,8 @@ impl Entries {
             .ok_or(OAuthError::InvalidGrant)?;
         let family = refresh.family;
         let grant = self.grants.get(&family).ok_or(OAuthError::InvalidGrant)?;
-        if grant.client_id != request.client_id
+        if grant.revoked_at_ms.is_some()
+            || grant.client_id != request.client_id
             || request
                 .resource
                 .as_ref()
@@ -215,7 +231,10 @@ impl Entries {
         // the bound client revokes the whole family, including issued access.
         // A different client/resource must not be able to revoke it.
         if refresh.used {
-            self.grants.remove(&family);
+            self.grants
+                .get_mut(&family)
+                .expect("validated grant")
+                .revoked_at_ms = Some(connections::now_ms()?);
             self.prune(now);
             return Err(OAuthError::InvalidGrant);
         }
@@ -553,6 +572,8 @@ impl OAuthStore {
                     resource: code.request.resource,
                     bearer: code.bearer,
                     expires: connection_expires,
+                    created_at_ms: Some(connections::now_ms()?),
+                    revoked_at_ms: None,
                 },
             );
             entries.refresh_tokens.insert(
@@ -665,7 +686,10 @@ impl OAuthStore {
         let entries = self.entries.lock().ok()?;
         let token = entries.tokens.get(&hash(access_token))?;
         let grant = entries.grants.get(&token.family)?;
-        (token.expires > now && grant.expires > now && grant.resource == resource)
+        (token.expires > now
+            && grant.expires > now
+            && grant.revoked_at_ms.is_none()
+            && grant.resource == resource)
             .then(|| grant.bearer.clone())
     }
 }

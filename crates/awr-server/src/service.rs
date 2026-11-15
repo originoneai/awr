@@ -1,6 +1,7 @@
 //! Operator-bound multi-project HTTP/MCP service. Every request authenticates
 //! inside PostgreSQL; tenant/actor/client/grants are never taken from its JSON.
 mod action_auth;
+mod connections;
 pub mod delivery_sync;
 pub mod delivery_workers;
 pub mod github_webhook;
@@ -172,7 +173,9 @@ pub fn router(
             .collect(),
         hosts,
         web_origins,
-        web_sessions: Arc::new(web::WebSessionStore::default()),
+        web_sessions: Arc::new(web::WebSessionStore::new(
+            oauth.as_ref().map(|runtime| runtime.store.clone()),
+        )),
         oauth,
         permits: Arc::new(tokio::sync::Semaphore::new(64)),
     });

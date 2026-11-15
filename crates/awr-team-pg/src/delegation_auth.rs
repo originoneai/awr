@@ -192,6 +192,39 @@ pub(crate) async fn authorize_project_action(
     crate::workstream_auth::authorize_domain_action(auth, action, None, None)
 }
 
+/// Project transport admission proves one currently readable scope without
+/// disclosing project-wide capabilities or granting any domain operation.
+pub(crate) async fn authorize_project_entry(
+    tx: &tokio_postgres::Transaction<'_>,
+    auth: &ReaderAuthority,
+    project: &str,
+) -> PgResult<()> {
+    if !auth.membership_actions().contains(&Action::WorkRead) {
+        return Err(PgError::Forbidden);
+    }
+    let has_read = auth.catalog.workstreams.iter().any(|stream| {
+        auth.access
+            .authorize(&auth.catalog, stream.id, awr_core::WorkstreamAction::Read)
+            .is_ok()
+    });
+    if !has_read {
+        return Err(PgError::Forbidden);
+    }
+    if actor_requires_explicit_delegation(&auth.actor_kind) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| PgError::Forbidden)?
+            .as_millis() as i64;
+        let query = serde_json::from_value(serde_json::json!({
+            "protocol_version":1,"op":"work.next"
+        }))
+        .expect("static scope discovery query");
+        let mut scoped = auth.clone();
+        resolve_agent_read_delegation(tx, &mut scoped, project, &query, now).await?;
+    }
+    Ok(())
+}
+
 fn install_delegation(auth: &mut ReaderAuthority, chosen: Option<&ReadDelegation>) {
     auth.delegation_id = chosen.map(|candidate| candidate.grant.id.clone());
     auth.delegated_actions = Some(

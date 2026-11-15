@@ -299,6 +299,8 @@ async fn http_and_mcp_clients_cannot_reach_operator_only_surfaces() {
         "awr_team_access_preview",
         "awr_team_access_apply",
         "awr_team_access_outcome",
+        "awr_team_connections_list",
+        "awr_team_connections_revoke",
         "awr_team_planning_suggest",
         "awr_team_planning_draft",
         "awr_team_planning_preview",
