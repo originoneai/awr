@@ -9,6 +9,7 @@ import { createAppQueryClient } from './lib/queries';
 import { RevocationProvider } from './lib/revocation';
 import { ProjectKnowledge } from './pages/ProjectKnowledge';
 import type { ProjectDocument } from './lib/types';
+import { PROJECT_DOCUMENT_STATUSES } from './core/observation/types';
 
 const TEXT = '# Delivery guide\n\nCheck the outcome before sharing it.';
 const DIGEST = createHash('sha256').update(TEXT).digest('hex');
@@ -116,6 +117,17 @@ describe('project document library', () => {
     await screen.findByRole('button', { name: new RegExp(language === 'zh-CN' ? '文档 1' : 'Document 1') });
     for (const value of ['claimed', 'clientobs657', 'Forbidden', 'status', 'actor']) expect(defaultVisibleText(page)).not.toContain(value);
   });
+
+  it.each(PROJECT_DOCUMENT_STATUSES.flatMap((status) => ['zh-CN', 'en-US'].map((language) => ({ status, language }))))(
+    'keeps the declared document state $status out of automatic titles in $language', async ({ status, language }) => {
+      await i18n.changeLanguage(language);
+      setup(() => catalog([document(1, { name: `status ${status} actor member`, path: `docs/${status}.md` })]));
+      const page = await screen.findByTestId('project-document-library');
+      await screen.findByRole('button', { name: new RegExp(language === 'zh-CN' ? '文档 1' : 'Document 1') });
+      expect(defaultVisibleText(page)).not.toContain(status);
+      expect(defaultVisibleText(page)).not.toContain('actor member');
+    },
+  );
 
   it.each([65537, 262144])('opens an advertised %i-byte document using the supported whole-document budget', async (size) => {
     await i18n.changeLanguage('en-US');

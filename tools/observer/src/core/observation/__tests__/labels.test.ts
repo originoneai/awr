@@ -4,6 +4,7 @@ import { findForbiddenVisibleText } from '../../../lib/human-language-guard';
 import REPORTS from '../../../test-fixtures/work-state/progress-reports-run09.json';
 import { ACTION_VOCABULARY, ARTIFACT_VOCABULARY } from '../../../i18n/human-language';
 import { actionWords, actorAliases, artifactLabel, checkLabel, documentLabel, documentTitle, workLabel } from '../index';
+import { PROJECT_DOCUMENT_STATUSES } from '../types';
 
 const ITEMS = DERIVED_RUN09.data.items as Array<{ actor_id: string; work_id: string | null }>;
 const ACTORS = ITEMS.map((item) => item.actor_id);
@@ -24,6 +25,10 @@ describe('documentTitle', () => {
       expect(documentTitle(title, 'docs/clientobs657.md', options).text).toBe(language === 'zh-CN' ? '文档 3' : 'Document 3');
     }
     expect(documentTitle(null, 'docs/client-obs-657.md', options).text).toBe(language === 'zh-CN' ? '文档 3' : 'Document 3');
+    for (const status of PROJECT_DOCUMENT_STATUSES) {
+      expect(documentTitle(status, 'docs/guide.md', options).text).toBe('guide');
+      expect(documentTitle(`status ${status} actor member`, `docs/${status}.md`, options).text).toBe(language === 'zh-CN' ? '文档 3' : 'Document 3');
+    }
   });
 });
 

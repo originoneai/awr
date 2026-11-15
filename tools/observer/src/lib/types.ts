@@ -1,3 +1,4 @@
+import type { PROJECT_DOCUMENT_STATUSES } from '../core/observation/types';
 import type { PlaneState } from './contract';
 
 /** One freshness plane as the bridge reports it (see observation-contract). */
@@ -325,7 +326,7 @@ export interface ProjectDocument {
   byte_length: number | null;
   source_kind: 'registered_source';
   readable: boolean;
-  status: 'available' | 'missing' | 'restricted' | 'changed' | 'unverified' | 'too_large';
+  status: (typeof PROJECT_DOCUMENT_STATUSES)[number];
   reason: string | null;
 }
 
