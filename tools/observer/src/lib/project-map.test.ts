@@ -20,16 +20,36 @@ function graph(): TeamGraphResponse {
 }
 
 describe('Team projection into the shared project maps', () => {
-  it('keeps long recorded group names inside their own column and retains the full title', () => {
+  it.each([
+    '让团队成员通过统一入口按权限完成任务规划、开发与验收并持续交付',
+    'Let every team member plan, develop, review and deliver work through the shared project',
+    'UninterruptedGroupName'.repeat(6),
+  ])('wraps the complete group name in a fixed-width header and moves progress below it (%s)', (title) => {
     const response = graph();
-    const title = '让团队成员通过统一入口按权限完成任务规划、开发与验收并持续交付';
     response.workstreams[0].title = title;
+    response.workstreams.push({ id: 'review', title: 'Review' });
+    response.items[1].workstream_id = 'review';
+    response.items[1].required_dependencies = [];
     const rendered = page.renderProjectMap(teamProjectSnapshot(response), undefined, { t: page.makeT({ en }, 'en'), lang: 'en', interactive: true, productOnly: true });
     const container = document.createElement('div'); container.innerHTML = rendered.body;
-    const header = container.querySelector('.pm-fold[data-lane]')!;
+    const headers = [...container.querySelectorAll('.pm-fold[data-lane]')];
+    const header = headers.find(element => element.querySelector('title')?.textContent === title)!;
     expect(header.querySelector('title')?.textContent).toBe(title);
-    expect(Number(header.querySelector('rect')?.getAttribute('width'))).toBeLessThanOrEqual(214);
-    expect(header.querySelectorAll('text').length).toBeGreaterThanOrEqual(2);
+    const lines = [...header.querySelectorAll('text')].map(element => element.textContent ?? '');
+    expect(lines.length).toBeGreaterThan(2);
+    expect(lines.join('').replace(/\s/g, '')).toBe(title.replace(/\s/g, ''));
+    const headerBottom = Math.max(...headers.map(element => {
+      const rect = element.querySelector('rect')!;
+      expect(Number(rect.getAttribute('width'))).toBe(214);
+      return Number(rect.getAttribute('y')) + Number(rect.getAttribute('height'));
+    }));
+    const overview = header.closest('svg')!;
+    const bars = [...overview.querySelectorAll('clipPath[id^="overview-bar-"] rect')];
+    expect(bars).toHaveLength(2);
+    expect(bars.map(element => Number(element.getAttribute('y')))).toEqual([headerBottom + 10, headerBottom + 10]);
+    for (const card of overview.querySelectorAll('.pm-card > rect')) {
+      expect(Number(card.getAttribute('y'))).toBeGreaterThan(headerBottom + 38);
+    }
   });
   it('uses the registered project and workstream names when no goal was recorded', () => {
     const response = graph();

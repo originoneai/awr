@@ -17,7 +17,6 @@
   const CW = 214;
   const GAP = 28;
   const LANE_Y = 318;
-  const TOP = 414;
   const GROUP_ORDER = ['developing', 'stalled', 'blocked', 'ready', 'draft', 'waiting', 'unknown'];
   const RANK = { blocked: 3, stalled: 2, developing: 1 };
   const BLOCK = 'BLOCK';
@@ -102,6 +101,10 @@
       const inner = N * CW + (N - 1) * GAP;
       const W = Math.floor(Math.max(1100, inner + 2 * 70));
       const X0 = (W - inner) / 2;
+      const laneCx = lanes.map((_, i) => X0 + i * (CW + GAP) + CW / 2);
+      const laneHeaders = lanes.map((lane, i) => kit.laneHead(laneCx[i], LANE_Y, laneTitle(lane), lane.tag, lane.color, CW,
+        { attr: 'data-lane', value: lane.id, open: !collapsedLanes.has(lane.id) }, CW));
+      const laneHeaderBottom = LANE_Y + Math.max(42, ...laneHeaders.map(([, , height]) => height));
       const now = meta.generated_at;
       const all = [...nodes.values()];
       const byLane = new Map(lanes.map((l) => [l.id, all.filter((n) => n.lane === l.id)]));
@@ -158,7 +161,7 @@
       const ends = new Map();
       lanes.forEach((lane, i) => {
         const sv = new Svg(0, 0);
-        const col = new Col(kit, sv, X0 + i * (CW + GAP), TOP, CW);
+        const col = new Col(kit, sv, X0 + i * (CW + GAP), laneHeaderBottom + 54, CW);
         bufs.set(lane.id, sv);
         const ns = byLane.get(lane.id);
         const done = ns.filter((n) => n.vis === 'done');
@@ -229,7 +232,6 @@
       const pcBottom = kit.projectCard(body, cx, 196, meta.project.name, t(productOnly ? 'map.project.product_progress' : 'map.project.revision', { revision: meta.revision }), t(productOnly ? 'map.project.product_source' : 'map.project.source'), cfg.project_goal || '',
         [[String(nodes.size), t('map.stat.items')], [String(edges.length), t(productOnly ? 'map.stat.dependencies' : 'map.stat.edges')], [String(tot.stalled || 0), ST.stalled.label], [String(tot.blocked || 0), ST.blocked.label]]);
       const busY = pcBottom + 20;
-      const laneCx = lanes.map((_, i) => X0 + i * (CW + GAP) + CW / 2);
       body.add(`<path d="M${cx},${pcBottom} L${cx},${busY}" stroke="#b7c9ee" stroke-width="1.6" fill="none"/>`);
       body.add(`<path d="M${laneCx[0]},${busY} L${laneCx[laneCx.length - 1]},${busY}" stroke="#b7c9ee" stroke-width="1.6" fill="none"/>`);
       for (const lx of laneCx) body.add(`<path d="M${lx},${busY} L${lx},${LANE_Y - 2}" stroke="#b7c9ee" stroke-width="1.6" fill="none" marker-end="url(#aBlue)"/>`);
@@ -240,18 +242,18 @@
       lanes.forEach((lane, i) => {
         const x = X0 + i * (CW + GAP);
         const c = counts.get(lane.id);
-        const [head] = kit.laneHead(laneCx[i], LANE_Y, laneTitle(lane), lane.tag, lane.color, 150, { attr: 'data-lane', value: lane.id, open: !collapsedLanes.has(lane.id) }, CW);
+        const [head] = laneHeaders[i];
         body.add(head);
-        kit.stackedBar(body, x + 4, LANE_Y + 52, CW - 8, c);
-        body.add(text(x + 4, LANE_Y + 80, t('map.lane.done_of', { done: c.done || 0, total: Object.values(c).reduce((s, v) => s + v, 0) }), 10.5, INK, 650));
+        kit.stackedBar(body, x + 4, laneHeaderBottom + 10, CW - 8, c);
+        body.add(text(x + 4, laneHeaderBottom + 38, t('map.lane.done_of', { done: c.done || 0, total: Object.values(c).reduce((s, v) => s + v, 0) }), 10.5, INK, 650));
         let rx = x + CW - 4;
         for (const vis of ['blocked', 'stalled', 'developing']) {
           if (c[vis]) {
             const lab = String(c[vis]);
             rx -= tw(lab, 10) + 4;
-            body.add(text(rx, LANE_Y + 80, lab, 10, ST[vis].fg, 700));
+            body.add(text(rx, laneHeaderBottom + 38, lab, 10, ST[vis].fg, 700));
             rx -= 10;
-            body.add(kit.dot(rx + 1, LANE_Y + 76.5, vis, 3.6));
+            body.add(kit.dot(rx + 1, laneHeaderBottom + 34.5, vis, 3.6));
             rx -= 7;
           }
         }

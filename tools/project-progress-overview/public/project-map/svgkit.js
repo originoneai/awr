@@ -328,13 +328,28 @@
     function laneHead(cx, y, name, tag, color, minw = 150, hook = null, maxw = Infinity) {
       const w = Math.min(maxw, Math.max(minw, tw(name, 12) + 52 + (hook ? 14 : 0), tw(tag, 8.5) + 52));
       const x = cx - w / 2;
-      const lines = wrap(name, 12, w - 66, tag ? 1 : 2).map(line => fit(line, 12, w - 66));
+      const wrapLabel = (value, size) => wrap(value, size, w - 66, Infinity).flatMap(line => {
+        const chunks = [];
+        let chunk = '';
+        for (const character of line) {
+          if (chunk && tw(chunk + character, size) > w - 66) {
+            chunks.push(chunk);
+            chunk = '';
+          }
+          chunk += character;
+        }
+        chunks.push(chunk);
+        return chunks;
+      });
+      const lines = wrapLabel(name, 12);
+      const tagLines = tag ? wrapLabel(tag, 8.5) : [];
+      const h = 42 + (lines.length - 1) * 15 + Math.max(0, tagLines.length - 1) * 12;
       const open = hook ? ` class="pm-fold" ${hook.attr}="${esc(hook.value)}" data-open="${hook.open}"` : '';
-      return [`<g${open}><title>${esc(name)}</title><rect x="${f1(x)}" y="${y}" width="${f1(w)}" height="42" rx="12" fill="#fff" fill-opacity=".86" stroke="rgba(255,255,255,.9)" filter="url(#shS)"/>`
-        + `<rect x="${f1(x + 16)}" y="${y + 16}" width="10" height="10" rx="3" fill="${color}"/>`
-        + lines.map((line, index) => text(x + 34, y + (lines.length === 1 && !tag ? 25 : 17 + index * 15), line, 12, INK, 700)).join('')
-        + text(x + 34, y + 31, tag, 8.5, FAINT, 500, 'start', { spacing: 0.3 })
-        + (hook ? chevron(x + w - 22, y + 19, hook.open) : '') + '</g>', w];
+      return [`<g${open}><title>${esc(name)}</title><rect x="${f1(x)}" y="${y}" width="${f1(w)}" height="${h}" rx="12" fill="#fff" fill-opacity=".86" stroke="rgba(255,255,255,.9)" filter="url(#shS)"/>`
+        + `<rect x="${f1(x + 16)}" y="${y + h / 2 - 5}" width="10" height="10" rx="3" fill="${color}"/>`
+        + lines.map((line, index) => text(x + 34, y + (tag ? 17 : 25) + index * 15, line, 12, INK, 700)).join('')
+        + tagLines.map((line, index) => text(x + 34, y + 31 + (lines.length - 1) * 15 + index * 12, line, 8.5, FAINT, 500, 'start', { spacing: 0.3 })).join('')
+        + (hook ? chevron(x + w - 22, y + h / 2 - 2, hook.open) : '') + '</g>', w, h];
     }
 
     const edgeHook = (hook) => (hook ? ` data-from="${esc(hook.from)}" data-to="${esc(hook.to)}"` : '');
