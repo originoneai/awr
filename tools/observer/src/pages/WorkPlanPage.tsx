@@ -16,7 +16,8 @@ import {
 } from 'antd';
 import type { KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { deriveOwner, groupWorks, ownerCellText } from '../core/observation';
+import { deriveOwner, groupWorks, ownerCellText, workLabel } from '../core/observation';
+import { humanText } from '../i18n/human-language';
 import { Link, useSearchParams } from 'react-router';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
 import { WorkProgress } from '../components/WorkProgress';
@@ -102,7 +103,8 @@ export function WorkPlanPage({ project }: { project: string }) {
         kind: 'group',
         key: `group-${currentWorkstream}`,
         id: currentWorkstream,
-        title: (grouped.titles[currentWorkstream] ?? currentWorkstream),
+        title: workLabel(grouped.titles[currentWorkstream] ?? currentWorkstream,
+          { language: i18n.language, fallback: humanText('workstreamUnnamed', i18n.language) }).text,
       });
     }
     displayRows.push({ kind: 'work', key: work.key, work, index });
@@ -116,7 +118,7 @@ export function WorkPlanPage({ project }: { project: string }) {
       onCell: (row) => ({ colSpan: row.kind === 'group' ? 3 : 1 }),
       render: (_, row) => row.kind === 'group'
         ? <Typography.Text strong data-testid={`workstream-group-${row.id}`}>{row.title}</Typography.Text>
-        : <Link to={taskPath(project, row.work.key)}>{row.work.title}</Link>,
+        : <Link to={taskPath(project, row.work.key)}>{workLabel(row.work.title, { language: i18n.language }).text}</Link>,
     },
     {
       title: t('plan.columns.status'),
@@ -229,7 +231,8 @@ export function WorkPlanPage({ project }: { project: string }) {
               { value: 'all', label: t('plan.allWorkstreams') },
               ...(data?.workstreams ?? []).map((workstream) => ({
                 value: workstream.id,
-                label: allTitles[workstream.id] ?? workstream.id,
+                label: workLabel(allTitles[workstream.id] ?? workstream.id,
+                  { language: i18n.language, fallback: humanText('workstreamUnnamed', i18n.language) }).text,
               })),
             ]}
           />

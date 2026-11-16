@@ -334,3 +334,26 @@ describe('plan observation product views', () => {
     expect(document.body.textContent).not.toContain(INTERNAL);
   });
 });
+
+
+describe('product projection of plan business fields', () => {
+  it.each(['zh-CN', 'en-US'])('guards author, changed title and changed criteria in %s', async (language) => {
+    await i18n.changeLanguage(language);
+    const raw = 'payload={"token":"synthetic-plan-value"}';
+    const { container } = mount((q) => response(q.op === 'sources.inspect' ? documents() : {
+      items: [candidate({ author: { display_name: 'client[secret]=synthetic-author', actor_id: INTERNAL },
+        current_diff: { counts: { changed: 1, added: 0, removed: 0, unchanged: 0 }, items: [{
+          work_id: INTERNAL, title: raw, kind: 'changed', fields: [{ field: 'acceptance',
+            before: { value: ['Sign-in opens the project'] }, after: { value: ['Access follows the member role', raw] } }],
+        }] },
+      })], total: 1, next_cursor: null, as_of: { at_unix_ms: AT },
+    }));
+    await screen.findByText(language === 'zh-CN' ? '某项工作' : 'A work item');
+    expect(container.textContent).toContain('Sign-in opens the project');
+    expect(container.textContent).toContain('Access follows the member role');
+    expect(container.textContent).toContain(language === 'zh-CN' ? '名称暂时无法显示' : 'Name cannot be displayed');
+    expect(container.textContent).toContain(language === 'zh-CN' ? '详细内容暂时无法显示' : 'Details are currently unavailable');
+    expect(container.textContent).not.toMatch(/synthetic-plan-value|synthetic-author|payload|token/);
+    expect(container.querySelector('details,pre,[data-testid="technical-details"]')).toBeNull();
+  });
+});

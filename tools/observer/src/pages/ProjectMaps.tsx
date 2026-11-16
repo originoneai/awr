@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Alert, Button, Flex, Spin, Typography, theme } from 'antd';
 import { RefreshCw } from 'lucide-react';
-import { useEffect, useRef, type CSSProperties } from 'react';
+import { useCallback, useEffect, useRef, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import page from 'awr-progress-map/project-map/page.js';
 import interaction from 'awr-progress-map/project-map/interact.js';
@@ -68,14 +68,12 @@ function MapDrawing({ snapshot }: { snapshot: ReturnType<typeof teamProjectSnaps
 
 /** The Team and personal surfaces share rendering, layout and interactions. */
 export function ProjectMaps({ project }: { project: string }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { revoked } = useRevocation();
   const graph = useQuery({
     queryKey: ['team', 'graph', project],
-    queryFn: async () => {
-      const response = await apiGet<TeamGraphResponse>(`/api/team/graph?project=${encodeURIComponent(project)}`);
-      return { response, snapshot: teamProjectSnapshot(response) };
-    },
+    queryFn: () => apiGet<TeamGraphResponse>(`/api/team/graph?project=${encodeURIComponent(project)}`),
+    select: useCallback((response: TeamGraphResponse) => ({ response, snapshot: teamProjectSnapshot(response, i18n.language) }), [i18n.language]),
     enabled: Boolean(project) && !revoked,
     retry: false,
     refetchOnWindowFocus: false,

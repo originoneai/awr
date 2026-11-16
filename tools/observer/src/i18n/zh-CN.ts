@@ -96,7 +96,7 @@ const zhCN = {
     instructions: '给 Agent 的连接说明',
     serviceAddress: '服务地址',
     copyInstructions: '复制完整连接说明',
-    credentialRow: '个人凭据：此处不展示凭据（没有也不会显示）。',
+    credentialRow: '使用你的个人身份授权 Agent 接入',
     capabilities: '这份连接能做什么',
     project: '项目',
     businessRoles: '业务角色',

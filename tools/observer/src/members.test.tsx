@@ -2,6 +2,7 @@ import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from './i18n';
+import { humanText } from './i18n/human-language';
 import { findHumanLanguageViolations } from './lib/human-language-guard';
 import { DEMO_PROJECTS, mockViewport, renderApp } from './test-utils';
 
@@ -69,6 +70,33 @@ describe('project member observation', () => {
     expect(screen.getAllByText('Taylor')).toHaveLength(1);
     await userEvent.setup().clear(search);
     expect(screen.getAllByText('Taylor')).toHaveLength(2);
+  });
+
+  it.each(['zh-CN', 'en-US'])('distinguishes unreadable directory names from absent names in %s', async (language) => {
+    const { setResponse } = setup();
+    await act(async () => { await i18n.changeLanguage(language); });
+    const unreadableDepartment = { key: 'protected-department', name: 'status: custom failure' };
+    const unnamedDepartment = { key: 'unnamed-department', name: '' };
+    setResponse({ ok: true, data: { ...DIRECTORY, organization: 'client9x',
+      departments: [unreadableDepartment, unnamedDepartment], members: [
+        { name: 'agent7a', available: true, departments: [unreadableDepartment] },
+        { name: null, available: false, departments: [unnamedDepartment] },
+      ],
+    } });
+    renderApp('/members?scope=demo');
+    const unavailableName = humanText('nameUnavailable', language);
+    await screen.findAllByText(unavailableName);
+    const page = screen.getByTestId('page-members');
+    expect(within(page).getAllByText(unavailableName).length).toBeGreaterThanOrEqual(3);
+    expect(within(page).getByText(i18n.t('members.unnamed', { number: 2 }))).toBeTruthy();
+    expect(within(page).queryByText(i18n.t('members.unnamed', { number: 1 }))).toBeNull();
+    expect(within(page).queryByText(i18n.t('members.organizationUnnamed'))).toBeNull();
+    expect(within(page).queryByText(i18n.t('members.departmentUnnamed', { number: 1 }))).toBeNull();
+    expect(within(page).getAllByText(i18n.t('members.departmentUnnamed', { number: 2 })).length).toBeGreaterThan(0);
+    expect(within(page).getByText(i18n.t('members.available'))).toBeTruthy();
+    expect(within(page).getByText(i18n.t('members.unavailableMember'))).toBeTruthy();
+    expect(page.textContent).not.toMatch(/client9x|agent7a|status: custom failure|protected-department/);
+    expect(findHumanLanguageViolations(page)).toEqual([]);
   });
 
   it.each(['zh-CN', 'en-US'])('filters same-name departments separately in %s without showing their references', async (language) => {

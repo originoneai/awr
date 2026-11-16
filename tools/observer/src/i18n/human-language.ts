@@ -2,6 +2,8 @@
 export const HUMAN_VOCABULARY = {
   'zh-CN': {
     contentUnavailable: '详细内容暂时无法显示',
+    reportedContentUnavailable: '已收到汇报，详细内容暂时无法显示',
+    nameUnavailable: '名称暂时无法显示',
     copy: '复制',
     copied: '已复制',
     notMeasured: '尚未读取',
@@ -39,6 +41,7 @@ export const HUMAN_VOCABULARY = {
     operatorMissing: '未提供操作者',
     workNone: '无关联工作',
     workUnnamed: '某项工作',
+    workstreamUnnamed: '某条工作线',
     loading: '加载中…',
     nextStepMissing: '未报告下一步',
     reportedByAt: '{{name}} 于 {{time}} 汇报',
@@ -64,6 +67,8 @@ export const HUMAN_VOCABULARY = {
   },
   'en-US': {
     contentUnavailable: 'Details are currently unavailable',
+    reportedContentUnavailable: 'A report was received, but its details cannot be displayed',
+    nameUnavailable: 'Name cannot be displayed',
     copy: 'Copy',
     copied: 'Copied',
     notMeasured: 'Not read yet',
@@ -101,6 +106,7 @@ export const HUMAN_VOCABULARY = {
     operatorMissing: 'Operator not provided',
     workNone: 'No related work',
     workUnnamed: 'A work item',
+    workstreamUnnamed: 'A workstream',
     loading: 'Loading…',
     nextStepMissing: 'No next step reported',
     reportedByAt: 'Reported by {{name}} on {{time}}',

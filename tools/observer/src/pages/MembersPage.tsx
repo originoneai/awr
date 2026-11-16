@@ -6,6 +6,8 @@ import { Link } from 'react-router';
 import { ObservationForbidden } from '../components/states';
 import { readableNarrative } from '../core/observation';
 import { readsAsName } from '../core/observation/owner';
+import { hasObservationValue } from '../core/observation/values';
+import { humanText } from '../i18n/human-language';
 import { ApiError, apiPost, isAuthError } from '../lib/api';
 import { formatUnixMs } from '../lib/format';
 import { projectLabel } from '../lib/project-label';
@@ -60,7 +62,9 @@ function ProjectMembers({ project }: { project: string }) {
   });
   if (revoked) return <ObservationForbidden />;
   const directory = query.isFetchedAfterMount && !isAuthError(query.error) ? query.data?.data : undefined;
-  const label = (value: string, fallback: string) => readableNarrative(value, i18n.language) ?? fallback;
+  const unavailableName = humanText('nameUnavailable', i18n.language);
+  const label = (value: string, fallback: string) => readableNarrative(value, i18n.language)
+    ?? (hasObservationValue(value) ? unavailableName : fallback);
   const departments = [...new Map([
     ...(directory?.departments ?? []), ...(directory?.members.flatMap((member) => member.departments) ?? []),
   ].map((item) => [item.key, item])).values()].map((item, index) => ({
@@ -73,7 +77,8 @@ function ProjectMembers({ project }: { project: string }) {
   const members = (directory?.members ?? []).map((member, index) => ({
     ...member,
     key: index,
-    name: member.name && readsAsName(member.name) ? member.name : t('members.unnamed', { number: index + 1 }),
+    name: member.name && readsAsName(member.name) ? member.name
+      : hasObservationValue(member.name) ? unavailableName : t('members.unnamed', { number: index + 1 }),
   }));
   const selectedDepartment = department && departmentLabels.has(department) ? department : null;
   const filtered = members.filter((member) => (!selectedDepartment || member.departments.some((item) => item.key === selectedDepartment))

@@ -1,6 +1,6 @@
 import { humanText } from '../../i18n/human-language';
-import { rawObservationText, statementText, statusWord } from './values';
-import { readableSentence } from './readable';
+import { hasObservationValue, rawObservationText, statementText, statusWord } from './values';
+import { readableNarrative } from './readable';
 import { absoluteTimeText } from './time';
 import type { WorkStateInput, WorkStateResult } from './types';
 
@@ -19,19 +19,21 @@ export function deriveWorkState(input: WorkStateInput): WorkStateResult {
   const { language, readState, snapshot } = input;
   const guidance = snapshot?.guidance?.action;
   const progress = readState === 'ready' ? snapshot?.observation?.progress : null;
-  const reportedNext = readState === 'ready'
-    ? statementText(progress?.next_action) ?? statementText(input.workNextStep)
-    : readState === 'failed' ? statementText(input.workNextStep) : null;
+  const reportedValue = readState === 'ready'
+    ? hasObservationValue(progress?.next_action) ? progress?.next_action : input.workNextStep
+    : readState === 'failed' ? input.workNextStep : null;
+  const reportedNext = statementText(reportedValue);
   const technical = {
     nextAction: rawObservationText(progress?.next_action).text,
     nextStep: readState === 'ready' ? rawObservationText(snapshot?.next_step).text : null,
     guidanceOp: readState === 'ready' ? rawObservationText(guidance?.op).text : null,
     guidanceNote: readState === 'ready' ? rawObservationText(guidance?.note).text : null,
   };
+  const nextText = reportedNext == null ? null : readableNarrative(reportedNext, language);
   const next: WorkStateResult['next'] = readState === 'loading'
     ? { kind: 'loading', text: humanText('loading', language), fullText: null, technical }
-    : reportedNext != null
-      ? { kind: 'reported', text: readableSentence(reportedNext, language), fullText: reportedNext, technical }
+    : hasObservationValue(reportedValue)
+      ? { kind: 'reported', text: nextText ?? humanText('reportedContentUnavailable', language), fullText: nextText, technical }
       : { kind: 'missing', text: humanText('nextStepMissing', language), fullText: null, technical };
 
   // Client declarations and progress reports have independent clocks.

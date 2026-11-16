@@ -30,6 +30,11 @@ export function statementText(value: unknown): string | null {
   return text.length > 0 ? text : null;
 }
 
+/** A supplied value remains present even when its shape cannot be displayed. */
+export function hasObservationValue(value: unknown): boolean {
+  return value != null && (typeof value !== 'string' || value.trim().length > 0);
+}
+
 /** Serialize a business scalar or an exact technical value without numeric coercion. */
 export function rawObservationText(value: unknown): RawObservationTextResult {
   const raw = rawText(value);

@@ -108,3 +108,45 @@ describe('findHumanLanguageViolations', () => {
     expect(findHumanLanguageViolations(page('<p>Ready for review</p><p data-reporter-text>Wait for the review.</p>'))).toEqual([]);
   });
 });
+
+
+describe('structured diagnostics stay outside all product text', () => {
+  it('limits the connection-address exception to the supported endpoint without credential fields', () => {
+    const root = page('<code data-agent-connection-address>http://127.0.0.1:9000/v1/projects/demo/mcp</code>');
+    expect(findHumanLanguageViolations(root)).toEqual([]);
+    root.firstElementChild!.textContent += '?token=synthetic-connection-value';
+    expect(findHumanLanguageViolations(root).map((entry) => entry.id)).toContain('diagnostic_content');
+  });
+
+  it.each(['', ' data-reporter-text'])('checks structured content even with reporter marking %s', (mark) => {
+    const root = document.createElement('div');
+    const paragraph = document.createElement('p');
+    if (mark) paragraph.setAttribute('data-reporter-text', '');
+    paragraph.textContent = 'client[secret]=synthetic-guard-value';
+    root.append(paragraph);
+    expect(findHumanLanguageViolations(root).map((entry) => entry.id)).toContain('diagnostic_content');
+    paragraph.textContent = '{"reason":"synthetic-guard-value"}';
+    expect(findHumanLanguageViolations(root).map((entry) => entry.id)).toContain('diagnostic_content');
+  });
+
+  it('checks tooltip and accessibility payloads using the same projection rules', () => {
+    const root = page('<button>View progress</button>');
+    root.firstElementChild!.setAttribute('aria-label', 'client[secret]=synthetic-accessible-value');
+    expect(findHumanLanguageViolations(root).map((entry) => entry.id)).toContain('diagnostic_content');
+    expect(findHumanLanguageViolations(page('<p data-reporter-text>Review https://example.com/guide?topic=release</p>'))).toEqual([]);
+  });
+});
+
+
+describe('colon-form protocol content', () => {
+  it.each(['reason: database unavailable', 'status: custom failure', 'state: degraded', 'path: private route'])(
+    'checks reporter prose for %s', (text) => {
+      const root = document.createElement('div');
+      const paragraph = document.createElement('p');
+      paragraph.setAttribute('data-reporter-text', '');
+      paragraph.textContent = text;
+      root.append(paragraph);
+      expect(findHumanLanguageViolations(root).map((item) => item.id)).toContain('diagnostic_content');
+    },
+  );
+});

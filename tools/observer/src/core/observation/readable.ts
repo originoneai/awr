@@ -55,6 +55,10 @@ const INTERNAL_FIELDS = new Set([
 const DIAGNOSTIC_FIELDS = new Set(['status', 'state', 'reason', 'actor', 'client', 'source', 'path']);
 const ERROR_CODE = /\b(?:Forbidden|Unauthenticated|SessionExpired|CursorExpired|ContextIncomplete|ResponseTooLarge|InvalidInput|BadGateway)\b/i;
 const INTERNAL_TOKEN = /\b(?:client|actor|session|execution|claim|receipt|credential|snapshot|workstream|decision|request|agent)[_-](?=[a-z0-9_-]*\d)[a-z0-9_-]+\b/i;
+const NUMBERED_ROLE = /\b(?:client|actor|session|execution|claim|receipt|credential|snapshot|workstream|decision|request|agent|dev)\d[a-z0-9]*\b/i;
+const NETWORK_ADDRESS = /\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b/;
+const RELEASE_VERSION = /(?:\b(?:releases?|version)[\s/_-]+v?|版本\s*v?)\d+(?:\.\d+){3}(?:[-+][\w.-]+)?/gi;
+const DIAGNOSTIC_RECORD = new RegExp(`^\\s*["']?(?:${[...DIAGNOSTIC_FIELDS].join('|')})["']?\\s*[:：=]`, 'im');
 const SYSTEM_PATH = /(?:[A-Za-z]:\\|\/(?:Users|home|var|private|tmp|opt|etc|srv)\/|~\/|\b(?:crates|tools|src|target|\.local)\/)[^\s<>"']+/;
 const OPAQUE_URL_COMPONENT = new RegExp([UUID.source, LONG_HEX.source, ULID.source, INTERNAL_TOKEN.source].join('|'), 'i');
 const SENSITIVE_FIELD = /(?:^payload$|(?:authorization|cookie|credential|password|passwd|passphrase|secret|token|(?:api|private|access|signing)[_-]?key)\d*(?:$|[_-]))/i;
@@ -63,18 +67,26 @@ function internalField(field: string): boolean {
   return INTERNAL_FIELDS.has(field) || /_(?:id|hash|digest)$/.test(field);
 }
 
+function hasNetworkAddress(text: string): boolean {
+  const prose = text.replace(RELEASE_VERSION, '');
+  return NETWORK_ADDRESS.test(prose) || [...prose.matchAll(/[a-f0-9]*:[a-f0-9:.]+/gi)]
+    .some(([value]) => URL.canParse(`http://[${value.replace(/\.+$/, '')}]/`));
+}
+
 function diagnosticValue(field: string, value: string): boolean {
   const scalar = value.replace(/^["']|["']$/g, '').replace(/[.!?]+$/, '');
-  return ERROR_CODE.test(scalar) || INTERNAL_TOKEN.test(scalar) || SYSTEM_PATH.test(scalar)
+  return ERROR_CODE.test(scalar) || INTERNAL_TOKEN.test(scalar) || NUMBERED_ROLE.test(scalar) || SYSTEM_PATH.test(scalar)
     || ['status', 'state'].includes(field) && Object.hasOwn(STATUS_LABELS, scalar.toLowerCase());
 }
 
 function removeDiagnosticAssignments(text: string): string {
   return text.replace(/["']?\b([a-z][a-z0-9_]*)["']?\s*([:：=])\s*("[^"\n]*"|'[^'\n]*'|[^\s,;]+)/gi,
-    (original, rawField: string, separator: string, value: string) => {
+    (original, rawField: string, separator: string, value: string, offset: number) => {
       const field = rawField.toLowerCase();
-      return internalField(field) || DIAGNOSTIC_FIELDS.has(field) && (separator === '=' || diagnosticValue(field, value))
-        ? '' : original;
+      if (internalField(field) || DIAGNOSTIC_FIELDS.has(field) && (separator === '=' || diagnosticValue(field, value))) return '';
+      const lineStart = text.lastIndexOf('\n', offset - 1) + 1;
+      return field === 'reason' && text.slice(lineStart, offset).trim() !== ''
+        ? value.replace(/^["']|["']$/g, '') : original;
     });
 }
 
@@ -82,7 +94,7 @@ function diagnosticContent(text: string): boolean {
   return /[{}\[\]]|```|%[a-f0-9]{2}/i.test(text)
     || [...text.matchAll(/["']?\b([a-z][a-z0-9_-]*)["']?\s*([:：=])/gi)]
       .some(([, field, separator]) => SENSITIVE_FIELD.test(field)
-        || separator === '=' || /[_-]|[a-z][A-Z]/.test(field))
+        || DIAGNOSTIC_FIELDS.has(field.toLowerCase()) || separator === '=' || /[_-]|[a-z][A-Z]/.test(field))
     || /\bBearer\s+\S+|-----BEGIN [A-Z ]*PRIVATE KEY-----|^\s*(?:Traceback\b|at\s+\S+\s*\([^\n]+:\d+)/im.test(text);
 }
 
@@ -100,11 +112,12 @@ function businessUrl(text: string, reference: string): string {
   let url: URL;
   try { url = new URL(text); } catch { return reference; }
   if (/^(?:(?:[a-z0-9-]+\.)*localhost|127(?:\.\d+){3}|\[::1\]|0\.0\.0\.0)$/.test(url.hostname.replace(/\.$/, ''))
-    || url.username || url.password || /^\/v\d+\/(?:projects|web)(?:\/|$)/.test(url.pathname)) return reference;
+    || hasNetworkAddress(url.hostname) || url.username || url.password || /^\/v\d+\/(?:projects|web)(?:\/|$)/.test(url.pathname)) return reference;
   const pathname = decodeReferencePart(url.pathname);
   if (pathname === null || diagnosticContent(pathname)
     || /^\/v\d+\/(?:projects|web)(?:\/|$)/.test(pathname)
-    || OPAQUE_URL_COMPONENT.test(url.hostname) || OPAQUE_URL_COMPONENT.test(pathname) || SYSTEM_PATH.test(pathname)) return reference;
+    || OPAQUE_URL_COMPONENT.test(url.hostname) || OPAQUE_URL_COMPONENT.test(pathname)
+    || hasNetworkAddress(pathname) || SYSTEM_PATH.test(pathname)) return reference;
   let changed = false;
   for (const [rawField, rawValue] of [...url.searchParams]) {
     const decodedField = decodeReferencePart(rawField);
@@ -112,20 +125,28 @@ function businessUrl(text: string, reference: string): string {
     if (decodedField === null || value === null) return reference;
     const field = decodedField.toLowerCase();
     if (SENSITIVE_FIELD.test(field) || diagnosticContent(decodedField) || diagnosticContent(value)) return reference;
-    if (internalField(field) || DIAGNOSTIC_FIELDS.has(field) && diagnosticValue(field, value)) {
+    if (internalField(field) || DIAGNOSTIC_FIELDS.has(field)) {
       url.searchParams.delete(rawField);
       changed = true;
     } else if (/[_-]|[a-z][A-Z]/.test(decodedField)
-      || OPAQUE_URL_COMPONENT.test(field) || OPAQUE_URL_COMPONENT.test(value)) {
+      || OPAQUE_URL_COMPONENT.test(field) || OPAQUE_URL_COMPONENT.test(value) || hasNetworkAddress(`${field} ${value}`)) {
       return reference;
     }
   }
   const fragment = decodeReferencePart(url.hash);
-  if (fragment === null || diagnosticContent(removeDiagnosticAssignments(fragment))) return reference;
+  if (fragment === null || hasNetworkAddress(fragment) || diagnosticContent(removeDiagnosticAssignments(fragment))) return reference;
   if (removeDiagnosticAssignments(fragment) !== fragment || OPAQUE_URL_COMPONENT.test(fragment)) {
     url.hash = ''; changed = true;
   }
   return changed ? url.toString() : text;
+}
+
+/** The UI guard uses the same structured-content and public-reference checks as the projection. */
+export function containsDiagnosticContent(text: string): boolean {
+  return text.split(/(https?:\/\/[^\s()]+)/gi).some((part) => /^https?:\/\//i.test(part)
+    ? businessUrl(part, '') !== part
+    : diagnosticContent(part) || INTERNAL_TOKEN.test(part) || NUMBERED_ROLE.test(part)
+      || hasNetworkAddress(part) || SYSTEM_PATH.test(part) || ERROR_CODE.test(part));
 }
 
 /** Preserve business prose and public references while removing internal diagnostic values. */
@@ -133,8 +154,11 @@ export function readableNarrative(text: string, language: string): string | null
   // Diagnostic payloads stay in protected service history. A partial scrub of
   // structured content cannot establish that the remaining values are prose.
   const parts = text.split(/(https?:\/\/[^\s()]+)/gi);
-  if (parts.some((part) => !/^https?:\/\//i.test(part)
-    && diagnosticContent(removeDiagnosticAssignments(part)))) return null;
+  if (parts.some((part) => {
+    if (/^https?:\/\//i.test(part)) return false;
+    const prose = removeDiagnosticAssignments(part);
+    return DIAGNOSTIC_RECORD.test(prose) || hasNetworkAddress(prose) || diagnosticContent(prose);
+  })) return null;
   const zh = language.toLowerCase().startsWith('zh');
   const record = zh ? '相关记录' : 'the related record';
   const file = zh ? '相关文件' : 'the related file';
@@ -143,6 +167,7 @@ export function readableNarrative(text: string, language: string): string | null
     const redacted = removeDiagnosticAssignments(part)
       .replace(new RegExp(SYSTEM_PATH.source, 'g'), file)
       .replace(new RegExp(INTERNAL_TOKEN.source, 'gi'), record)
+      .replace(new RegExp(NUMBERED_ROLE.source, 'gi'), record)
       .replace(new RegExp(ERROR_CODE.source, 'gi'), zh ? '处理问题' : 'a processing issue');
     return readableSentence(redacted, language);
   }).join('').trim();

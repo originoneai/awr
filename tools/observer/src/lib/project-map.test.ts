@@ -120,3 +120,31 @@ describe('Team projection into the shared project maps', () => {
     ]);
   });
 });
+
+
+describe('product-safe graph titles and names', () => {
+  it.each(['zh-CN', 'en-US'])('keeps unsafe title and owner data out of the map and opened details in %s', (language) => {
+    const response = graph();
+    response.items[0].title = 'payload={"token":"synthetic-map-title"}';
+    response.items[0].owner = 'client[secret]=synthetic-map-owner';
+    response.items[0].claims = [{ id: 'private-claim', actor_id: 'private-actor', actor_name: 'GLM4.6',
+      session_id: 'private-session', acquired_at_unix_ms: response.read_at_unix_ms, expires_at_unix_ms: response.read_at_unix_ms + 10000 }];
+    response.items[1].title = 'Connect the sign-in page';
+    const snapshot = teamProjectSnapshot(response, language);
+    const translate = page.makeT({ en, 'zh-CN': zh }, language.startsWith('zh') ? 'zh-CN' : 'en');
+    const rendered = page.renderProjectMap(snapshot, undefined, { t: translate, lang: language, interactive: true, productOnly: true });
+    const container = document.createElement('div');
+    container.innerHTML = rendered.body;
+    document.body.appendChild(container);
+    const mounted = interaction.mount({ container, snapshot, model: rendered.model, t: translate, productOnly: true });
+    try {
+      container.querySelector('.pm-card')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      const text = [container.textContent, ...[...container.querySelectorAll('[title],[aria-label],title')]
+        .flatMap((element) => [element.getAttribute('title'), element.getAttribute('aria-label'), element.textContent])].join(' ');
+      expect(text).not.toMatch(/synthetic-map-title|synthetic-map-owner|payload|secret/);
+      expect(text).toContain('Connect the sign-in page');
+      expect(text).toContain(language === 'zh-CN' ? '某项工作' : 'A work item');
+      expect(snapshot.nodes).toMatchObject([{ claims: [{ agent_id: 'GLM4.6' }] }, {}]);
+    } finally { mounted.destroy(); container.remove(); }
+  });
+});
