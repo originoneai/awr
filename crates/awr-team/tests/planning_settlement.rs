@@ -279,14 +279,27 @@ fn named_simulation_policy_still_selects_v4_when_existing_fields_are_omitted() {
 }
 
 #[test]
-fn workspace_declaration_cannot_downgrade_independent_human_review() {
+fn reviewed_workspace_declaration_can_select_simulated_member_review() {
     let before = task();
     let after = settled(ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY);
+    candidate(vec![DraftChange {
+        op: DraftOpKind::EditFields,
+        before: Some(before),
+        after,
+    }])
+    .validate_structure()
+    .unwrap();
+}
+
+#[test]
+fn simulated_workspace_review_cannot_be_downgraded_to_ordinary_agent_review() {
+    let before = settled(ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY);
+    let after = settled(ExecutionSettlementPolicy::COMPLETION_POLICY);
     assert!(
         candidate(vec![DraftChange {
             op: DraftOpKind::EditFields,
             before: Some(before),
-            after
+            after,
         }])
         .validate_structure()
         .is_err()

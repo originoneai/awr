@@ -1176,15 +1176,15 @@ work_items:
     }
 
     #[test]
-    fn workspace_source_cannot_bypass_actual_human_review_policy() {
+    fn workspace_source_preserves_independent_review_and_requires_exact_prior() {
         use awr_team::ExecutionSettlementPolicy as Policy;
-        for human_policy in [
+        for prior_policy in [
             "independent_review",
             "independent-review",
             "trusted_execution_and_review",
         ] {
             let mut source = draft("SETTLED-1", &[]);
-            source.completion_policy = human_policy.into();
+            source.completion_policy = prior_policy.into();
             let bytes =
                 serde_yaml_ng::to_string(&json!({"work_items":[draft_to_ledger_row(&source)]}))
                     .unwrap();
@@ -1193,17 +1193,21 @@ work_items:
                 Policy::SIMULATED_MEMBER_COMPLETION_POLICY,
             ] {
                 let after = workspace_draft(policy);
-                assert!(matches!(
-                    apply_planning_changes_to_ledger(
-                        bytes.as_bytes(),
-                        &[DraftChange {
-                            op: DraftOpKind::EditFields,
-                            before: Some(source.clone()),
-                            after: after.clone(),
-                        }]
-                    ),
-                    Err(Error::RuleViolation(_))
-                ));
+                let result = apply_planning_changes_to_ledger(
+                    bytes.as_bytes(),
+                    &[DraftChange {
+                        op: DraftOpKind::EditFields,
+                        before: Some(source.clone()),
+                        after: after.clone(),
+                    }],
+                );
+                if policy == Policy::SIMULATED_MEMBER_COMPLETION_POLICY {
+                    let updated: Value =
+                        serde_yaml_ng::from_slice(&result.unwrap().after_bytes).unwrap();
+                    assert_eq!(updated["work_items"][0]["completion_policy"], policy);
+                } else {
+                    assert!(matches!(result, Err(Error::RuleViolation(_))));
+                }
                 let mut forged = source.clone();
                 forged.completion_policy = policy.into();
                 assert!(matches!(
