@@ -78,10 +78,15 @@ An advisory is not a gap and never becomes one:
 - it never rejects the write and never flips the index report's `ok` flag;
 - a normal entry produces no output at all.
 
-The lint only makes obvious textual defects explicit (blank entries, vague placeholder wording).
-Whether an acceptance criterion is clear, sufficient and verifiable stays an attributed judgment:
-the lint does not decide it, and wording that cites the word list itself can be reported; rewrite
-the entry to clear it.
+The lint only makes obvious textual defects explicit (blank entries, explicit placeholders). Its
+word lists follow a strict false-negative-over-false-positive policy: they carry only wording that
+is almost never part of a real criterion — placeholders such as `TBD`, `待定`, `等等`, `etc`, and
+open-ended adverbs such as `尽量`, `appropriately` — and never common verbs or evaluative
+adjectives, because an advisory is read by agents as "rewrite this entry" and a hit on an ordinary
+verifiable criterion (for example "优化到 200ms 以内") would cause legitimate wording to be
+rewritten. Whether an acceptance criterion is clear, sufficient and verifiable stays an attributed
+judgment: the lint does not decide it, and wording that cites the word list itself can be reported;
+rewrite the entry to clear it.
 
 The program keeps the record, checks that a run really ran and that the right agent chose, and
 suspends only what reads the gap's layer. Whether the gap is real, whether an outcome answers it

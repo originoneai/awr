@@ -17,6 +17,8 @@ work_items:
     acceptance:
       - "单元测试覆盖全部分支，行覆盖率不低于 90%"
       - "回归测试锁定三个场景：无覆盖、孤儿、正常"
+      - "接口 P95 延迟从 400ms 优化到 200ms 以内，压测脚本随 PR 附带"
+      - "全部单测通过，运行良好即可发布"
   - id: W2
     title: Normal English acceptance entries
     status: ready
@@ -24,6 +26,7 @@ work_items:
     acceptance:
       - "All unit tests pass with 90% line coverage"
       - "The projection payload includes the source fingerprint"
+      - "Optimize the query plan; good coverage is better than none"
   - id: W3
     title: Empty acceptance entries
     status: ready
@@ -36,8 +39,8 @@ work_items:
     status: ready
     goal: G1
     acceptance:
-      - "优化相关流程，等等"
-      - "Works properly and delivers good results"
+      - "流程待定，等等"
+      - "Works properly, results TBD"
 "#;
 
 struct Fixture(PathBuf);
@@ -79,8 +82,10 @@ fn normal_entries_produce_no_lint_advisories() {
     let mut store = fixture.store();
     let report = index_project(&mut store, &fixture.0, &manifest(), false).unwrap();
     assert!(report.ok, "advisories must never flip report.ok");
-    // W1 and W2 carry only normal entries; their acceptance indexes 0 and 1
-    // must stay silent even though W3/W4 in the same ledger carry findings.
+    // W1 and W2 carry ordinary verifiable criteria — including ones that
+    // contain 优化/良好/good/better/optimize on purpose. Their acceptance
+    // indexes must stay silent even though W3/W4 in the same ledger carry
+    // findings.
     let issues = lint_issues(&report);
     let normal_hits: Vec<_> = issues
         .iter()
@@ -155,12 +160,24 @@ fn placeholder_entries_report_matched_words() {
         })
         .collect();
     assert!(
-        matched.contains(&"优化".to_string()) && matched.contains(&"等等".to_string()),
+        !matched.is_empty(),
+        "placeholder hits are listed: {matched:?}"
+    );
+    assert!(
+        matched.contains(&"待定".to_string()) && matched.contains(&"等等".to_string()),
         "Chinese hits are listed: {matched:?}"
     );
     assert!(
-        matched.iter().any(|w| w == "properly") && matched.iter().any(|w| w == "good"),
+        matched.iter().any(|w| w == "properly") && matched.iter().any(|w| w == "tbd"),
         "English hits are listed: {matched:?}"
+    );
+    // The removed vague words must never appear: verifiable criteria that
+    // contain them (W1/W2) stay silent by design.
+    assert!(
+        !matched
+            .iter()
+            .any(|w| matches!(w.as_str(), "优化" | "良好" | "good" | "better" | "optimize")),
+        "removed vague words must not be flagged: {matched:?}"
     );
     // W1/W2 stay silent even though W3/W4 carry findings.
     let locators: Vec<_> = placeholders
