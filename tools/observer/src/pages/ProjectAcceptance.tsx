@@ -9,7 +9,7 @@ import { FreshnessBadge } from '../components/FreshnessBadge';
 import { RecordedTime } from '../components/RecordedTime';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
 import { OutcomeActivity, OutcomeReviewHistory } from '../components/OutcomeObservations';
-import { checkLabel, deriveOwner, ownerCellText } from '../core/observation';
+import { checkLabel, deriveOwner, ownerCellText, workLabel } from '../core/observation';
 import { ApiError, isAuthError } from '../lib/api';
 import { formatObservationValue, notProvided } from '../i18n/craft';
 import { craftSelectionStyle } from '../theme';
@@ -405,7 +405,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
                   return (
                     <List.Item data-testid={`acceptance-work-${work.key}`} onClick={() => selectWork(work.key)} style={craftSelectionStyle(token, selectedWork?.key === work.key)}>
                       <Space direction="vertical" size={2} style={{ width: '100%' }}>
-                        <Typography.Text strong style={{ overflowWrap: 'anywhere' }}>{value(work.title)}</Typography.Text>
+                        <Typography.Text strong style={{ overflowWrap: 'anywhere' }}>{workLabel(work.title, { language: i18n.language, recordedTitle: true }).text}</Typography.Text>
                         <Space wrap size={4}>
                           {version ? <Tag>{version}</Tag> : null}
                           <Tag color={state === 'approved' ? 'success' : state === 'rejected' ? 'error' : state === 'open' ? 'warning' : 'default'}>{label}</Tag>
@@ -439,7 +439,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
         </Col>
         <Col xs={24} lg={17}>
           <Space direction="vertical" size={16} style={{ width: '100%' }}>
-            <Card size="small" title={selectedWork ? value(selectedWork.title) : t('acceptance.title')}>
+            <Card size="small" title={selectedWork ? workLabel(selectedWork.title, { language: i18n.language, recordedTitle: true }).text : t('acceptance.title')}>
               <DeliverySteps steps={steps} testId="acceptance-evidence-chain" />
               {integrationId ? (
                 <Space wrap data-testid="acceptance-times">
@@ -549,7 +549,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
                     const related = works.find((work) => work.key === key);
                     return (
                       <List.Item>
-                        <Typography.Text>{related ? value(related.title) : t('acceptance.relatedWork')}</Typography.Text>
+                        <Typography.Text>{related ? workLabel(related.title, { language: i18n.language, recordedTitle: true }).text : t('acceptance.relatedWork')}</Typography.Text>
                       </List.Item>
                     );
                   }}

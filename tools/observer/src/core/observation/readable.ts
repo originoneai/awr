@@ -152,7 +152,7 @@ export function containsDiagnosticContent(text: string): boolean {
 /** Recorded software names may discuss interfaces and error classes. Reuse the
  * credential, structured-payload and instance-identity checks for their data. */
 export function containsNameDiagnostics(text: string): boolean {
-  return text.split(/(https?:\/\/[^\s()]+)/gi).some((part) => /^https?:\/\//i.test(part)
+  return text.split(/([a-z][a-z0-9+.-]*:\/\/[^\s()]+)/gi).some((part) => /^[a-z][a-z0-9+.-]*:\/\//i.test(part)
     ? businessUrl(part, '') !== part
     : diagnosticContent(part) || INTERNAL_TOKEN.test(part) || NUMBERED_ROLE.test(part)
       || hasNetworkAddress(part) || [...part.matchAll(new RegExp(SYSTEM_PATH.source, 'g'))]

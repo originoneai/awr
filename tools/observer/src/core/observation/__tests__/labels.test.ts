@@ -99,14 +99,15 @@ describe('workLabel', () => {
   it('uses recorded titles as names even when the subject includes code or interface vocabulary', () => {
     for (const title of ['Add last_event_at to graph nodes', 'Fix awr-mcp tools/list discovery',
       'Return actionable guidance when candidate_id is missing', 'Fix claim.renew after lease expiry',
-      'Use mode edit when resumed:true did not apply changes']) {
+      'Use mode edit when resumed:true did not apply changes', 'Refine awr-mcp-bridge discovery']) {
       expect(workLabel(title, { language: 'en-US', recordedTitle: true })).toMatchObject({ kind: 'named', text: title });
     }
     for (const title of ['payload={"token":"synthetic-value"}', '{"password":"synthetic-value"}',
       'Authorization: Bearer synthetic-value', 'status=claimed reason=Forbidden', 'client_obs_658',
-      'Repair client_obs_658 display', 'Fix AWR-OBS-042 regression',
+      'Repair client_obs_658 display', 'Fix AWR-OBS-042 regression', 'Fix awr-obs-042 regression',
       'Investigate result={"ok":false}', 'Fix response [1,2]',
       'Investigate https://user:pass@example.com/path',
+      'Investigate postgres://user:pass@example.com/db', 'Investigate ftp://user:pass@example.com/path',
       ...['cookie', 'credential', 'passphrase', 'private_key', 'signing_key'].map(key => `${key}=synthetic-value`)]) {
       expect(workLabel(title, { language: 'en-US', recordedTitle: true }).kind).toBe('unnamed');
     }

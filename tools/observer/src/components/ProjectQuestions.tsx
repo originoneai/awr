@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { ObservationForbidden } from './states';
-import { documentTitle, readableNarrative } from '../core/observation';
+import { documentTitle, readableNarrative, workLabel } from '../core/observation';
 import { ApiError, isAuthError } from '../lib/api';
 import { formatUnixMs } from '../lib/format';
 import { ordinaryDecisionsQueryOptions } from '../lib/queries';
@@ -19,6 +19,7 @@ function QuestionCard({ item, project }: { item: OrdinaryDecision; project: stri
     return label.kind === 'named' ? label.text : fallback;
   };
   const person = (value: string | null) => name(value, t('inbox.nameMissing'));
+  const workName = workLabel(item.work_title, { language: i18n.language, recordedTitle: true });
   const changed = !item.baseline_matches_current && item.state !== 'cancelled';
   const status = changed ? 'changed' : item.state;
   const resolved = item.state !== 'open' && item.resolution !== null;
@@ -27,7 +28,7 @@ function QuestionCard({ item, project }: { item: OrdinaryDecision; project: stri
     extra={<Tag color={status === 'replied' ? 'success' : status === 'cancelled' ? 'default' : 'warning'}>{t(`inbox.status.${status}`)}</Tag>}>
     <Space orientation="vertical" size={16} style={{ width: '100%' }}>
       <Link to={`/projects/${encodeURIComponent(project)}?tab=plan&work=${encodeURIComponent(item.work_id)}`}>
-        {name(item.work_title, t('inbox.workMissing'))}
+        {workName.kind === 'named' ? workName.text : t('inbox.workMissing')}
       </Link>
       {changed ? <Alert type="warning" showIcon title={t('inbox.changed')} /> : null}
       <section>

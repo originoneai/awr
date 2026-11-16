@@ -56,6 +56,11 @@ afterEach(async () => {
 });
 
 describe('project confirmed decisions', () => {
+  it('preserves the recorded software-task name in its project question', async () => {
+    setup(() => page([decision({ work_title: 'Add last_event_at to graph nodes' })]));
+    const card = await screen.findByTestId('ordinary-question');
+    expect(within(card).getByRole('link', { name: 'Add last_event_at to graph nodes' })).toBeTruthy();
+  });
   it.each(['zh-CN', 'en-US'])('reads confirmed choices directly and preserves business content and attribution in %s', async (language) => {
     await i18n.changeLanguage(language);
     const { calls, router } = setup();

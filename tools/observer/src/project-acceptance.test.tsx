@@ -131,7 +131,7 @@ function envelope(data: unknown, workId = WORK) {
   };
 }
 
-function setupAcceptance({ failOps = [], failWith = {} }: { failOps?: string[]; failWith?: Record<string, string> } = {}) {
+function setupAcceptance({ failOps = [], failWith = {}, works = WORKS }: { failOps?: string[]; failWith?: Record<string, string>; works?: typeof WORKS } = {}) {
   const calls: Array<{ url: string; query?: Record<string, unknown> }> = [];
   const snapshots = { [WORK]: snapshotFor(WORK, true), [PAGE]: snapshotFor(PAGE, false) };
   const reviews = { [WORK]: reviewFor(WORK, true), [PAGE]: reviewFor(PAGE, false) };
@@ -170,7 +170,7 @@ function setupAcceptance({ failOps = [], failWith = {} }: { failOps?: string[]; 
     if (url.includes('/api/team/projects')) return json(DEMO_PROJECTS);
     if (url.includes('/api/team/activity')) return json({ ok: true, data: activity });
     if (url.includes('/api/team/overview')) {
-      return json({ ...DEMO_OVERVIEW, works: WORKS, workstreams: [{ id: 'WS1', external_key: 'support', title: 'Support' }] });
+      return json({ ...DEMO_OVERVIEW, works, workstreams: [{ id: 'WS1', external_key: 'support', title: 'Support' }] });
     }
     if (query) {
       if (failOps.includes(String(query.op))) return json({ ok: false, error: { code: failWith[String(query.op)] ?? 'ReadTimeout', message: 'slow' } });
@@ -269,6 +269,12 @@ afterEach(async () => {
 });
 
 describe('project acceptance evidence (AWR-OBS-006)', () => {
+  it('preserves the recorded software-task title in outcome names and selection', async () => {
+    const title = 'Add last_event_at to graph nodes';
+    setupAcceptance({ works: WORKS.map(work => work.key === WORK ? { ...work, title } : work) });
+    renderApp('/projects/demo?tab=acceptance');
+    await waitFor(() => expect(screen.getAllByText(title).length).toBeGreaterThanOrEqual(2));
+  });
   it('polls only the selected outcome at the detail cadence and shares its initial read', async () => {
     const snapshotOptions = vi.spyOn(observationQueries, 'workSnapshotQueryOptions');
     const { calls } = setupAcceptance();

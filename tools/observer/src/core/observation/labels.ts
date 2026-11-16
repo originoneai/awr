@@ -43,7 +43,7 @@ export function workLabel(workId: string | null | undefined, options: { language
   const opaqueTitle = FORBIDDEN_VISIBLE_PATTERNS.some(({ id, pattern }) =>
     ['long_hex', 'ulid', 'uuid', 'sha256'].includes(id) && pattern.test(workId))
     || /[\p{Cc}\p{Cf}]/u.test(workId)
-    || /\bAWR-[A-Z0-9]+(?:-[A-Z0-9]+)+\b/.test(workId)
+    || /\bAWR-[A-Z0-9]+(?:-[A-Z0-9]+)*-[A-Z0-9]*\d[A-Z0-9]*\b/i.test(workId)
     || containsNameDiagnostics(workId);
   const opaque = options.recordedTitle ? opaqueTitle
     : FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(workId))
