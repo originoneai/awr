@@ -94,6 +94,10 @@ pub(super) async fn read_for_prepare(
     {
         responsibility[*field] = json!(names.get::<_, Option<String>>(index));
     }
+    responsibility["historical"] = retained::owners(tx, tenant, project, &[work.to_owned()])
+        .await?
+        .remove(work)
+        .unwrap_or(Value::Null);
     let session = tx.query_opt("SELECT s.id,s.actor_id,a.display_name,s.client_id,s.state,c.id,
           c.contract_hash,c.next_action,c.open_loops_json,(extract(epoch FROM c.created_at)*1000)::bigint,
           s.session_version

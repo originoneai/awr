@@ -12,7 +12,7 @@ const LIST_PAGE_QUERY: &str = "WITH page AS MATERIALIZED (
         )
         SELECT c.work_id,c.title,c.contract_hash,c.ownership_version,
         r.state,t.owner_person_id,p.display_name,s.id,s.client_info_json,
-        (extract(epoch FROM statement_timestamp())*1000)::bigint
+        (extract(epoch FROM statement_timestamp())*1000)::bigint,t.work_id
         FROM page c
         LEFT JOIN awr_team.work_runtime r USING(tenant_id,project_id,scope_id,work_id)
         LEFT JOIN awr_team.task_responsibilities t
@@ -81,6 +81,7 @@ pub(super) async fn read(
         .map(|r| (r.get(0), r.get(3)))
         .collect();
     let work_ids: Vec<String> = bindings.iter().map(|(id, _)| id.clone()).collect();
+    let mut historical = retained::owners(tx, tenant, project, &work_ids).await?;
     let mut reports: BTreeMap<String, _> =
         crate::feedback::report_rows(tx, tenant, project, stream, &bindings, None, "progress")
             .await?
@@ -118,9 +119,11 @@ pub(super) async fn read(
             json!({"origin":report["origin"],"contract_matches_current":report["contract_matches_current"],
                 "stale":report["stale"],"provenance":report["provenance"]})
         };
+        let owner_missing = if r.get::<_,Option<String>>(10).is_some() {"unassigned"} else {"not_recorded"};
         json!({"work_id":work,"title":r.get::<_,String>(1),"contract_hash":contract,
+            "historical_responsibility":historical.remove(&work),
             "summary":{"version":1,
-                "owner":field(owner,observed,"unassigned"),
+                "owner":field(owner,observed,owner_missing),
                 "phase":field(report["phase"].clone(),reported,missing),
                 "runtime":field(json!(r.get::<_,Option<String>>(4)),observed,"no_runtime"),
                 "outcome":field(outcome,if integration.is_null(){reported}else{observed},"no_reported_outcome"),
