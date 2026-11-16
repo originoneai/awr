@@ -114,7 +114,7 @@
     if (d.archived) flags.push(`<span class="pm-badge">${esc(t('map.detail.archived'))}</span>`);
     parts.push(`<header class="pm-d-head"><div class="pm-d-key">${productOnly ? '' : `<code>${esc(d.key)}</code> `}${flags.join(' ')}</div><h2 id="pm-drawer-title">${esc(d.title)}</h2></header>`);
 
-    const last = d.lastEventAt
+    const last = Number.isFinite(d.lastEventAt)
       ? t('map.detail.last_value', { time: utc(d.lastEventAt), days: Math.max(0, Math.round((d.generatedAt - d.lastEventAt) / DAY_MS)) })
       : t('map.detail.never');
     parts.push(section(t('map.detail.summary'), `<dl class="pm-d-grid">${[

@@ -329,6 +329,14 @@ for (const status of ['claimed', 'in_progress']) {
       const facts = detail.detailData(rendered.model, node.key, t);
       assert.equal(facts.lastEventAt, timestamp);
       assert.equal(facts.idleDays, null);
+      for (const language of ['en', 'zh-CN']) {
+        const translate = h.tFor(language);
+        for (const productOnly of [false, true]) {
+          const html = detail.renderDetail(facts, translate, (gap) => page.gapReason(translate, gap), { productOnly });
+          assert.ok(html.includes(translate('map.detail.never')));
+          assert.doesNotMatch(html, /1970-01-01|NaN/);
+        }
+      }
       for (const view of rendered.views) {
         assert.match(view.svg, /data-key="DEMO-A-004" data-vis="developing"/);
       }
@@ -358,7 +366,17 @@ for (const status of ['claimed', 'in_progress']) {
     const model = modelLib.loadModel(snapshotLib.seal(changed, snapshot.generated_at), config);
     assert.equal(model.nodes.get(node.key).vis, 'stalled');
     assert.equal(model.nodes.get(node.key).idle, Date.parse(snapshot.generated_at) / 86400000);
-    assert.equal(detail.detailData(model, node.key, t).lastEventAt, 0);
+    const facts = detail.detailData(model, node.key, t);
+    assert.equal(facts.lastEventAt, 0);
+    for (const language of ['en', 'zh-CN']) {
+      const translate = h.tFor(language);
+      for (const productOnly of [false, true]) {
+        const html = detail.renderDetail(facts, translate, (gap) => page.gapReason(translate, gap), { productOnly });
+        assert.match(html, /1970-01-01/);
+        assert.ok(!html.includes(translate('map.detail.never')));
+        assert.doesNotMatch(html, /NaN/);
+      }
+    }
   });
 }
 
