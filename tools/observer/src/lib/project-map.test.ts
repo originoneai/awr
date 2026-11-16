@@ -20,6 +20,17 @@ function graph(): TeamGraphResponse {
 }
 
 describe('Team projection into the shared project maps', () => {
+  it('keeps long recorded group names inside their own column and retains the full title', () => {
+    const response = graph();
+    const title = '让团队成员通过统一入口按权限完成任务规划、开发与验收并持续交付';
+    response.workstreams[0].title = title;
+    const rendered = page.renderProjectMap(teamProjectSnapshot(response), undefined, { t: page.makeT({ en }, 'en'), lang: 'en', interactive: true, productOnly: true });
+    const container = document.createElement('div'); container.innerHTML = rendered.body;
+    const header = container.querySelector('.pm-fold[data-lane]')!;
+    expect(header.querySelector('title')?.textContent).toBe(title);
+    expect(Number(header.querySelector('rect')?.getAttribute('width'))).toBeLessThanOrEqual(214);
+    expect(header.querySelectorAll('text').length).toBeGreaterThanOrEqual(2);
+  });
   it('uses the registered project and workstream names when no goal was recorded', () => {
     const response = graph();
     response.workstreams[0].title = 'Customer portal delivery';

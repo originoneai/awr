@@ -240,7 +240,7 @@
       lanes.forEach((lane, i) => {
         const x = X0 + i * (CW + GAP);
         const c = counts.get(lane.id);
-        const [head] = kit.laneHead(laneCx[i], LANE_Y, laneTitle(lane), lane.tag, lane.color, 150, { attr: 'data-lane', value: lane.id, open: !collapsedLanes.has(lane.id) });
+        const [head] = kit.laneHead(laneCx[i], LANE_Y, laneTitle(lane), lane.tag, lane.color, 150, { attr: 'data-lane', value: lane.id, open: !collapsedLanes.has(lane.id) }, CW);
         body.add(head);
         kit.stackedBar(body, x + 4, LANE_Y + 52, CW - 8, c);
         body.add(text(x + 4, LANE_Y + 80, t('map.lane.done_of', { done: c.done || 0, total: Object.values(c).reduce((s, v) => s + v, 0) }), 10.5, INK, 650));
