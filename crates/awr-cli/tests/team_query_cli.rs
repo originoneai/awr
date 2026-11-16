@@ -807,6 +807,52 @@ fn invalid_usage_never_connects_and_help_stays_successful() {
         assert!(out.stderr.is_empty());
         assert!(String::from_utf8_lossy(&out.stdout).contains("Usage:"));
     }
+    let exe = format!("awr{}", std::env::consts::EXE_SUFFIX);
+    let team_usage = format!("Usage: {exe} team [OPTIONS] <COMMAND>");
+    let session_usage = format!("Usage: {exe} team session inspect");
+    for (args, expected) in [
+        (vec!["team", "help"], "More: awr team help <group>"),
+        (vec!["team", "help", "navigation"], "Team navigation"),
+        (vec!["team", "help", "inspection"], "session inspect"),
+        (vec!["team", "help", "recovery"], "work recovery"),
+        (vec!["team", "help", "submission"], "Legacy submission"),
+        (vec!["team", "help", "all"], team_usage.as_str()),
+        (vec!["help", "team", "inspection"], "command inspect"),
+        (vec!["help", "team", "all"], team_usage.as_str()),
+        (
+            vec!["team", "help", "session", "inspect"],
+            session_usage.as_str(),
+        ),
+    ] {
+        let out = project.run(&args, true);
+        assert!(out.status.success(), "{out:?}");
+        assert!(out.stderr.is_empty());
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains(expected),
+            "{args:?}"
+        );
+    }
+    assert_eq!(
+        project.run(&["help", "team"], false).stdout,
+        project.run(&["team", "--help"], false).stdout
+    );
+    for args in [
+        vec!["team", "help", "unknown"],
+        vec!["help", "team", "unknown"],
+    ] {
+        let out = project.run(&args, true);
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {out:?}");
+        assert!(out.stdout.is_empty(), "{args:?}: {out:?}");
+        let error: Value = serde_json::from_slice(&out.stderr).unwrap();
+        assert_eq!(error["code"], "InvalidInput");
+        assert!(
+            error["message"]
+                .as_str()
+                .unwrap()
+                .contains("Available groups: navigation, inspection, recovery, submission, all"),
+            "{args:?}: {error}"
+        );
+    }
     assert_eq!(
         listener.accept().unwrap_err().kind(),
         std::io::ErrorKind::WouldBlock

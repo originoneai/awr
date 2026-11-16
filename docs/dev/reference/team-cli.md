@@ -47,6 +47,23 @@ it cannot be combined with `--body` or `--offline`.
 All remote reads explicitly require `--remote NAME`. Global `--project` and
 `--json` work before or after known subcommands.
 
+The Team command has a workflow-oriented grouped help surface:
+
+```sh
+awr team help
+awr team help navigation
+awr team help inspection
+awr team help recovery
+awr team help submission
+awr team help all
+```
+
+Navigation is listed first; inspection contains capabilities and the session,
+claim, execution and original-command reads; recovery contains current-ownership
+recovery; submission holds the legacy `command` envelope path; and `all` returns
+the complete detailed Team command tree. The existing `awr help team` and
+`awr team --help` detailed help paths remain unchanged.
+
 | CLI after `awr team` | `awr_team_query` operation | Optional parameters |
 | --- | --- | --- |
 | `capabilities --remote NAME` | `capabilities` | None |
