@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from './i18n';
 import { formatUnixMs } from './lib/format';
 import { revokeObservationReads } from './lib/queries';
+import * as observationQueries from './lib/queries';
 import { DEMO_OVERVIEW, DEMO_PROJECTS, renderApp } from './test-utils';
 
 // Verbatim service replies used by the review-regression cases:
@@ -262,11 +263,36 @@ async function expectLiveCompletionConflict(mutate: (payloads: AcceptancePayload
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   await act(async () => { await i18n.changeLanguage('zh-CN'); });
 });
 
 describe('project acceptance evidence (AWR-OBS-006)', () => {
+  it('polls only the selected outcome at the detail cadence and shares its initial read', async () => {
+    const snapshotOptions = vi.spyOn(observationQueries, 'workSnapshotQueryOptions');
+    const { calls } = setupAcceptance();
+    await renderAcceptance('/projects/demo?tab=acceptance');
+    expect(snapshotOptions).toHaveBeenCalledWith('demo', WORK, 'WS1', false, 'list');
+    expect(snapshotOptions).toHaveBeenCalledWith('demo', PAGE, 'WS1', false, 'list');
+    expect(snapshotOptions).toHaveBeenCalledWith('demo', WORK, 'WS1', false);
+    expect(calls.filter(call => call.query?.op === 'work.snapshot' && call.query.work_id === WORK)).toHaveLength(1);
+    expect(calls.filter(call => call.query?.op === 'work.snapshot' && call.query.work_id === PAGE)).toHaveLength(1);
+  });
+
+  it('promotes the newly selected outcome to the detail cadence and refreshes it immediately', async () => {
+    const snapshotOptions = vi.spyOn(observationQueries, 'workSnapshotQueryOptions');
+    const { calls } = setupAcceptance();
+    const { queryClient } = await renderAcceptance('/projects/demo?tab=acceptance');
+    snapshotOptions.mockClear();
+    await userEvent.setup().click(screen.getByTestId(`acceptance-work-${PAGE}`));
+    await waitForAcceptanceReads(queryClient);
+    const detailCalls = snapshotOptions.mock.calls.filter(call => call.length === 4);
+    expect(detailCalls.at(-1)).toEqual(['demo', PAGE, 'WS1', false]);
+    expect(snapshotOptions).toHaveBeenCalledWith('demo', WORK, 'WS1', false, 'list');
+    expect(calls.filter(call => call.query?.op === 'work.snapshot' && call.query.work_id === PAGE).length).toBeGreaterThan(1);
+  });
+
   it.each(['contract', 'evidence', 'execution', 'review', 'delivery', 'currentContract'])(
     'keeps completion unconfirmed when the %s binding is missing', async (field) => {
       const { payloads } = setupAcceptance();

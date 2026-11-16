@@ -48,12 +48,13 @@ export function ProjectAcceptance({ project }: { project: string }) {
   const visibleWorks = works.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const snapshots = useQueries({
     queries: visibleWorks.map((work) => (
-      workSnapshotQueryOptions(project, work.key, work.workstream_id, revoked)
+      workSnapshotQueryOptions(project, work.key, work.workstream_id, revoked, 'list')
     )),
   });
   const selectedWork = visibleWorks.find((work) => work.key === requestedWork) ?? visibleWorks[0];
-  const selectedWorkIndex = selectedWork ? visibleWorks.indexOf(selectedWork) : -1;
-  const selectedSnapshot = selectedWorkIndex >= 0 ? snapshots[selectedWorkIndex] : undefined;
+  const selectedSnapshot = useQuery(workSnapshotQueryOptions(
+    project, selectedWork?.key ?? '', selectedWork?.workstream_id ?? '', revoked,
+  ));
   const snapshotData = selectedSnapshot?.data?.result.data;
   const collaboration = snapshotData?.observation?.collaboration;
   const currentRound = collaboration?.review?.id;
