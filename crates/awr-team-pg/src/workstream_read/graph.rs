@@ -113,6 +113,12 @@ pub(super) async fn read(
         .map(|r| r.get(0))
         .collect();
     let work_ids: Vec<String> = rows.iter().take(limit as usize).map(|r| r.get(0)).collect();
+    let mut historical = retained::owners(tx, tenant, project, &work_ids).await?;
+    let goal_ids = contracts
+        .iter()
+        .flat_map(|c| c.goals.iter().cloned())
+        .collect();
+    let goal_titles = retained::goal_titles(tx, tenant, project, auth, &goal_ids).await?;
     let claims = tx
         .query(
             "SELECT cl.work_id,cl.id,cl.actor_id,a.display_name,cl.session_id,
@@ -167,6 +173,9 @@ pub(super) async fn read(
             "contract_hash":row.get::<_,String>(3), "definition_state":definition, "state":state,
             "dependencies_complete":dependencies.len()==contract.required_dependencies.len(),
             "required_dependencies":dependencies, "goals":contract.goals,
+            "goal_titles":contract.goals.iter().filter_map(|id|goal_titles.get(id)
+                .map(|title|json!({"id":id,"title":title}))).collect::<Vec<_>>(),
+            "historical_responsibility":historical.remove(&id),
             "owner":row.get::<_,Option<String>>(6), "last_event_at":row.get::<_,Option<i64>>(7),
             "claims":claims_by_work.remove(&id).unwrap_or_default()})
     }).collect();

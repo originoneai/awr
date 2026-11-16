@@ -67,9 +67,12 @@ pub(super) async fn next(
             WHERE allowed.work_id=c.work_id AND allowed.workstream_id=o.workstream_id))
           AND c.work_id>$5 AND (r.state IS NULL OR r.state NOT IN ('completed','cancelled','archived'))
         ORDER BY c.work_id LIMIT $6", &[&tenant,&project,&auth.snapshot,&streams,&c.key,&(limit+1),&task_ids,&task_streams]).await?;
-    let own = tx.query("SELECT s.id,s.work_id,s.workstream_id,s.session_version FROM awr_team.sessions s
+    let own = tx.query("SELECT s.id,s.work_id,s.workstream_id,s.session_version,c.title FROM awr_team.sessions s
         JOIN awr_team.workstream_snapshot_ownership o ON o.tenant_id=s.tenant_id AND o.project_id=s.project_id
           AND o.snapshot_id=$3 AND o.work_id=s.work_id AND o.workstream_id=s.workstream_id AND o.ownership_version=s.ownership_version
+        JOIN awr_team.work_contracts c
+          ON (c.tenant_id,c.project_id,c.snapshot_id,c.scope_id,c.work_id)
+            =(o.tenant_id,o.project_id,o.snapshot_id,o.scope_id,o.work_id)
         WHERE s.tenant_id=$1 AND s.project_id=$2 AND s.actor_id=$4 AND s.client_id=$5 AND s.state='active'
           AND (s.workstream_id=ANY($6) OR EXISTS (
             SELECT 1 FROM unnest($7::text[], $8::text[]) allowed(work_id,workstream_id)
@@ -79,7 +82,7 @@ pub(super) async fn next(
         .iter()
         .take(20)
         .map(|s| {
-            json!({"session_id":s.get::<_,String>(0),"work_id":s.get::<_,String>(1),
+            json!({"session_id":s.get::<_,String>(0),"work_id":s.get::<_,String>(1),"title":s.get::<_,String>(4),
         "workstream_id":s.get::<_,String>(2),"session_version":s.get::<_,i64>(3).to_string(),
         "next_query":{"protocol_version":1,"op":"work.observe","session_id":s.get::<_,String>(0),
             "work_id":s.get::<_,String>(1),"workstream_id":s.get::<_,String>(2)}})
