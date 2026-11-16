@@ -243,13 +243,13 @@
     const nodes = new Map();
     for (const n of snapshot.nodes) {
       const deps = [...(prerequisites.get(n.key) || [])].sort(compare);
-      const idle = n.last_event_at ? (generatedMs - n.last_event_at) / DAY_MS : null;
+      const idle = n.last_event_at == null ? null : (generatedMs - n.last_event_at) / DAY_MS;
       let vis;
       if (n.status === 'cancelled') vis = 'cancelled';
       else if (n.status === 'unknown') vis = 'unknown';
       else if (n.status === 'completed') vis = 'done';
       else if (n.status === 'blocked') vis = 'blocked';
-      else if (n.status === 'in_progress' || n.status === 'claimed') vis = idle === null || idle >= cfg.stale_days ? 'stalled' : 'developing';
+      else if (n.status === 'in_progress' || n.status === 'claimed') vis = idle !== null && idle >= cfg.stale_days ? 'stalled' : 'developing';
       else if (n.status === 'draft') vis = 'draft';
       else vis = deps.some((d) => statusOf.get(d) !== 'completed') ? 'waiting' : 'ready';
       const cancelled = n.status === 'cancelled';

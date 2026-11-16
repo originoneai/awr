@@ -313,6 +313,73 @@ test('the lane configuration decides the grouping, the stale threshold decides w
   assert.ok(render({ ...config, titles: { page: 'My map', overview: 'My overview' } }).document.includes('<h1>My map</h1>'));
 });
 
+for (const status of ['claimed', 'in_progress']) {
+  for (const timestamp of [null, undefined]) {
+    test(`${status} keeps its progress when the activity timestamp is ${timestamp}`, () => {
+      const t = h.tFor('en');
+      const { snapshot, config } = demo.buildDemo(t);
+      const changed = JSON.parse(JSON.stringify(snapshot));
+      const node = changed.nodes.find((item) => item.key === 'DEMO-A-004');
+      node.status = status;
+      node.last_event_at = timestamp;
+      const sealed = snapshotLib.seal(changed, snapshot.generated_at);
+      const rendered = page.renderProjectMap(sealed, config, { t, lang: 'en' });
+      assert.equal(rendered.model.nodes.get(node.key).vis, 'developing');
+      assert.equal(rendered.model.nodes.get(node.key).idle, null);
+      const facts = detail.detailData(rendered.model, node.key, t);
+      assert.equal(facts.lastEventAt, timestamp);
+      assert.equal(facts.idleDays, null);
+      for (const language of ['en', 'zh-CN']) {
+        const translate = h.tFor(language);
+        for (const productOnly of [false, true]) {
+          const html = detail.renderDetail(facts, translate, (gap) => page.gapReason(translate, gap), { productOnly });
+          assert.ok(html.includes(translate('map.detail.never')));
+          assert.doesNotMatch(html, /1970-01-01|NaN/);
+        }
+      }
+      for (const view of rendered.views) {
+        assert.match(view.svg, /data-key="DEMO-A-004" data-vis="developing"/);
+      }
+    });
+  }
+
+  for (const [days, expected] of [[0, 'developing'], [1, 'developing'], [7, 'stalled'], [8, 'stalled']]) {
+    test(`${status} with a known ${days}-day activity age is ${expected}`, () => {
+      const { snapshot, config } = demo.buildDemo(h.tFor('en'));
+      const changed = JSON.parse(JSON.stringify(snapshot));
+      const node = changed.nodes.find((item) => item.key === 'DEMO-A-004');
+      node.status = status;
+      node.last_event_at = Date.parse(snapshot.generated_at) - days * 86400000;
+      const model = modelLib.loadModel(snapshotLib.seal(changed, snapshot.generated_at), { ...config, stale_days: 7 });
+      assert.equal(model.nodes.get(node.key).vis, expected);
+      assert.equal(model.nodes.get(node.key).idle, days);
+    });
+  }
+
+  test(`${status} treats the Unix epoch as a known activity timestamp`, () => {
+    const t = h.tFor('en');
+    const { snapshot, config } = demo.buildDemo(t);
+    const changed = JSON.parse(JSON.stringify(snapshot));
+    const node = changed.nodes.find((item) => item.key === 'DEMO-A-004');
+    node.status = status;
+    node.last_event_at = 0;
+    const model = modelLib.loadModel(snapshotLib.seal(changed, snapshot.generated_at), config);
+    assert.equal(model.nodes.get(node.key).vis, 'stalled');
+    assert.equal(model.nodes.get(node.key).idle, Date.parse(snapshot.generated_at) / 86400000);
+    const facts = detail.detailData(model, node.key, t);
+    assert.equal(facts.lastEventAt, 0);
+    for (const language of ['en', 'zh-CN']) {
+      const translate = h.tFor(language);
+      for (const productOnly of [false, true]) {
+        const html = detail.renderDetail(facts, translate, (gap) => page.gapReason(translate, gap), { productOnly });
+        assert.match(html, /1970-01-01/);
+        assert.ok(!html.includes(translate('map.detail.never')));
+        assert.doesNotMatch(html, /NaN/);
+      }
+    }
+  });
+}
+
 test('text from the project cannot inject markup', () => {
   const t = h.tFor('en');
   const { snapshot, config } = demo.buildDemo(t);
