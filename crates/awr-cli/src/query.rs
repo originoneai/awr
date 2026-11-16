@@ -739,8 +739,60 @@ pub fn goal(root: &Path, command: &GoalCommand, json_output: bool) -> Result<()>
                     object.insert(key.clone(), metadata.clone());
                 }
             }
-            println!("{}", serde_json::to_string_pretty(&value)?);
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&value)?);
+            } else {
+                print_goal_coverage_text(&coverage);
+            }
             Ok(())
+        }
+    }
+}
+
+fn print_goal_coverage_text(coverage: &GoalCoverage) {
+    let works: usize = coverage.goals.iter().map(|g| g.works.len()).sum();
+    println!(
+        "Goal coverage at revision {} ({} goals, {} supporting works)",
+        coverage.project_revision,
+        coverage.goals.len(),
+        works
+    );
+    for goal in &coverage.goals {
+        let counts = goal
+            .status_counts
+            .iter()
+            .map(|(status, count)| format!("{count} {status}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!(
+            "  [{}] {} — {} ({}: {})",
+            goal.status,
+            goal.key,
+            goal.title,
+            if counts.is_empty() { "works" } else { "status" },
+            if counts.is_empty() {
+                "0".to_string()
+            } else {
+                counts
+            }
+        );
+    }
+    match coverage.uncovered_goal.is_empty() {
+        true => println!("Uncovered goals: none"),
+        false => {
+            println!("Uncovered goals:");
+            for goal in &coverage.uncovered_goal {
+                println!("  [{}] {} — {}", goal.status, goal.key, goal.title);
+            }
+        }
+    }
+    match coverage.orphan_work.is_empty() {
+        true => println!("Orphan references: none"),
+        false => {
+            println!("Orphan references:");
+            for orphan in &coverage.orphan_work {
+                println!("  {} -> {} ({})", orphan.work, orphan.goal, orphan.reason);
+            }
         }
     }
 }

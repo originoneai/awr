@@ -83,6 +83,7 @@ static COMMAND_GROUPS: &[Group] = &[
                 "policy",
                 "Read or switch the sensitive-source admission policy",
             ),
+            ("goal", "Read goal coverage, uncovered goals and orphans"),
         ],
     },
     Group {

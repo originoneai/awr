@@ -66,6 +66,7 @@ pub const DOMAINS: &[DomainDef] = &[
             "awr_work_gap",
             "awr_work_finding",
             "awr_work_graph",
+            "awr_goal_coverage",
             "awr_spec_check",
         ],
         limits: &[
@@ -73,6 +74,7 @@ pub const DOMAINS: &[DomainDef] = &[
             "Management observations bind the current contract/session and a stable key. Continuous management never automatically downgrades.",
             "Admission proposals request a decision. Checks establish provenance and currency, grant only the recorded scope and leave completion policy unchanged.",
             "Containment binds the parent contract, exact children and their dependencies. Proposals are not decisions; checks cover scope, currency and authorization rather than intent.",
+            "Goal coverage is a read-only aggregation with no model calls; uncovered goals and orphan references are facts, not judgments.",
             "Reassessment binds the exact failure/outcome facts or spent rework/effort budget; a request alone is not a decision. Checks establish currency and attribution rather than cause. It opens no task and holds no other work.",
             "Gap closure requires a fact lookup, an experiment actually run, an authorized choice or an observed environment change. Only judgments reading that layer on that work are questioned; no task is opened and no other work is held.",
             "Finding severity is derived: only a reproducible required-criterion/hard-rule failure or a reasoned security/data-loss risk blocks that work's completion. Other findings are linked deferred records.",

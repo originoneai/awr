@@ -48,6 +48,7 @@ pub(crate) fn is_read_only(name: &str) -> bool {
             | "awr_completion_prepare"
             | "awr_work_assess"
             | "awr_work_graph"
+            | "awr_goal_coverage"
             | "awr_spec_check"
             | "awr_change_preview"
             | "awr_change_status"
@@ -397,6 +398,7 @@ pub(crate) fn call(root: &Path, name: &str, mut args: JsonObject) -> Result<Call
             awr_runtime::assess_management(&view.store, root, &parse_tool!(name, args))?
         }
         "awr_work_graph" => awr_runtime::work_graph(&view.store, root, &parse_tool!(name, args))?,
+        "awr_goal_coverage" => serde_json::to_value(view.store.goal_coverage(view.project.id)?)?,
         "awr_spec_check" => {
             awr_runtime::check_specifications(&view.store, root, &parse_tool!(name, args))?
         }

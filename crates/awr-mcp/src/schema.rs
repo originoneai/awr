@@ -1,7 +1,7 @@
 use rmcp::model::{Tool, ToolAnnotations};
 use serde_json::{Value, json};
 
-pub const TOOL_NAMES: [&str; 41] = [
+pub const TOOL_NAMES: [&str; 42] = [
     "awr_project_status",
     "awr_work_ready",
     "awr_work_get",
@@ -27,6 +27,7 @@ pub const TOOL_NAMES: [&str; 41] = [
     "awr_work_assess",
     "awr_work_manage",
     "awr_work_graph",
+    "awr_goal_coverage",
     "awr_spec_check",
     "awr_change_preview",
     "awr_change_apply",
@@ -310,6 +311,13 @@ fn change_tools() -> Vec<Tool> {
                 json!({"roots":strings(),"branch":branch(),"limit":{"type":"integer","minimum":1,"maximum":16384,"default":100}}),
                 &[],
             ),
+            true,
+            false,
+        ),
+        tool(
+            "awr_goal_coverage",
+            "Read goal coverage. Returns every declared goal with its supporting works and status counts, goals no live work supports and works referencing a missing or retired goal.",
+            object(json!({}), &[]),
             true,
             false,
         ),
