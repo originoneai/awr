@@ -197,15 +197,8 @@ td.k{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-spac
     const model = modelLib.loadModel(snapshot, userConfig);
     const { nodes, meta, cfg } = model;
     if (productOnly && !userConfig) {
-      cfg.overview.lanes.forEach((lane, index) => {
-        if (lane.name === undefined) return;
-        lane.name = t('map.group.numbered', { count: index + 1 });
-        lane.tag = '';
-      });
-      cfg.explore_lanes.forEach((lane, index) => {
-        lane.name = t('map.group.numbered', { count: index + 1 });
-        lane.tag = '';
-      });
+      cfg.overview.lanes.forEach((lane) => { lane.tag = ''; });
+      cfg.explore_lanes.forEach((lane) => { lane.tag = ''; });
     }
     const views = viewsLib.createViews(t, { productOnly });
     const kit = kitLib.createKit(t);

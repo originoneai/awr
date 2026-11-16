@@ -270,7 +270,7 @@ export function WorkDetailPanel({
       <Card data-testid="plan-detail">
         <Flex vertical gap={12}>
           <div>
-            <Typography.Title level={3} style={{ marginTop: 0 }}>{workLabel(work.title, { language: i18n.language }).text}</Typography.Title>
+            <Typography.Title level={3} style={{ marginTop: 0 }}>{workLabel(work.title, { language: i18n.language, recordedTitle: true }).text}</Typography.Title>
             <Space wrap>
               <WorkProgress work={work} query={snapshot} testId="plan-detail-status" />
             </Space>

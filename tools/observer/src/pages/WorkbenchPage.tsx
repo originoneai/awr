@@ -97,12 +97,12 @@ function navigationText(navigation: string | undefined, t: TFunction) {
 /** A work's name for a person: its title, or, when the service gave none, what the work label makes of its key. */
 function rowName(row: { title?: string | null; work_id: string }, language: string): string {
   const title = row.title?.trim();
-  return workLabel(title || row.work_id, { language }).text;
+  return workLabel(title || row.work_id, { language, recordedTitle: Boolean(title) }).text;
 }
 
 /** A resumable session's work, named by the title the work.next reply gives that work. */
-function resumeName(workId: string, items: ReadonlyArray<{ work_id: string; title?: string | null }> | undefined, language: string): string {
-  return rowName(items?.find((item) => item.work_id === workId) ?? { work_id: workId }, language);
+function resumeName(entry: { work_id: string; title?: string }, items: ReadonlyArray<{ work_id: string; title?: string | null }> | undefined, language: string): string {
+  return rowName(entry.title ? entry : items?.find((item) => item.work_id === entry.work_id) ?? entry, language);
 }
 
 function nextActionText(query: WorkQuery, t: TFunction) {
@@ -406,7 +406,7 @@ export function WorkbenchPage() {
               renderItem={(entry) => (
                 <List.Item>
                   <Flex vertical gap={4}>
-                    {effectiveProject ? <Link to={taskPath(effectiveProject, entry.work_id)}>{resumeName(entry.work_id, nextData?.items, i18n.language)}</Link> : resumeName(entry.work_id, nextData?.items, i18n.language)}
+                    {effectiveProject ? <Link to={taskPath(effectiveProject, entry.work_id)}>{resumeName(entry, nextData?.items, i18n.language)}</Link> : resumeName(entry, nextData?.items, i18n.language)}
                     <Typography.Text type="secondary">{t('workbench.resume.continue')}</Typography.Text>
                   </Flex>
                 </List.Item>

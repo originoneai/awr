@@ -104,7 +104,7 @@ export function WorkPlanPage({ project }: { project: string }) {
         key: `group-${currentWorkstream}`,
         id: currentWorkstream,
         title: workLabel(grouped.titles[currentWorkstream] ?? currentWorkstream,
-          { language: i18n.language, fallback: humanText('workstreamUnnamed', i18n.language) }).text,
+          { language: i18n.language, recordedTitle: Boolean(grouped.titles[currentWorkstream]), fallback: humanText('workstreamUnnamed', i18n.language) }).text,
       });
     }
     displayRows.push({ kind: 'work', key: work.key, work, index });
@@ -118,7 +118,7 @@ export function WorkPlanPage({ project }: { project: string }) {
       onCell: (row) => ({ colSpan: row.kind === 'group' ? 3 : 1 }),
       render: (_, row) => row.kind === 'group'
         ? <Typography.Text strong data-testid={`workstream-group-${row.id}`}>{row.title}</Typography.Text>
-        : <Link to={taskPath(project, row.work.key)}>{workLabel(row.work.title, { language: i18n.language }).text}</Link>,
+        : <Link to={taskPath(project, row.work.key)}>{workLabel(row.work.title, { language: i18n.language, recordedTitle: true }).text}</Link>,
     },
     {
       title: t('plan.columns.status'),
@@ -138,7 +138,7 @@ export function WorkPlanPage({ project }: { project: string }) {
         if (row.kind !== 'work') return null;
         const query = snapshots[row.index];
         const owner = deriveOwner({
-          rowOwner: row.work.owner_person ?? row.work.agent,
+          rowOwner: row.work.owner_person,
           snapshot: query?.data?.result.data,
           readState: readStateOf(query),
         });
@@ -232,7 +232,7 @@ export function WorkPlanPage({ project }: { project: string }) {
               ...(data?.workstreams ?? []).map((workstream) => ({
                 value: workstream.id,
                 label: workLabel(allTitles[workstream.id] ?? workstream.id,
-                  { language: i18n.language, fallback: humanText('workstreamUnnamed', i18n.language) }).text,
+                  { language: i18n.language, recordedTitle: true, fallback: humanText('workstreamUnnamed', i18n.language) }).text,
               })),
             ]}
           />

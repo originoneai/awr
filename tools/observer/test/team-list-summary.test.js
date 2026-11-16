@@ -37,7 +37,13 @@ test('live overview maps actual list summaries and preserves missing reasons wit
         : { items: [
           { work_id: 'sign-in', title: 'Finish sign-in', contract_hash: 'current', summary: reported },
           { work_id: 'guide', title: 'Write the help guide', summary: absent, status: 'completed', owner_person: 'Untrusted fallback' },
-        ], total: 2, next_cursor: null };
+          { work_id: 'legacy', title: 'Retained task', summary: { ...absent, owner: field(null, 'not_recorded') },
+            historical_responsibility: { name: 'Historic developer', provenance: 'historical' } },
+          { work_id: 'unassigned', title: 'Explicitly unassigned', summary: absent,
+            historical_responsibility: { name: 'Historic developer', provenance: 'historical' } },
+          { work_id: 'current', title: 'Currently assigned', summary: reported,
+            historical_responsibility: { name: 'Historic developer', provenance: 'historical' } },
+        ], total: 5, next_cursor: null };
     res.end(JSON.stringify({ protocol_version: 1, project_revision: '12', source_snapshot_id: 'source-12', coordinator_epoch: 'current', data }));
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -61,4 +67,7 @@ test('live overview maps actual list summaries and preserves missing reasons wit
   assert.equal(result.works[1].status, 'unknown');
   assert.equal(result.works[1].next_step, null);
   assert.deepEqual(result.works[1].observation_summary, absent);
+  assert.deepEqual(result.works[2].owner_person, { name: 'Historic developer', provenance: 'historical' });
+  assert.equal(result.works[3].owner_person, null);
+  assert.equal(result.works[4].owner_person, 'Maya');
 });

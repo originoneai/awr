@@ -1,6 +1,6 @@
 import { ACTION_VOCABULARY, ARTIFACT_VOCABULARY, CHECK_VOCABULARY, FORBIDDEN_VISIBLE_PATTERNS, STATUS_LABELS, humanText } from '../../i18n/human-language';
 import { STATUS_FIELDS, statementText } from './values';
-import { readableNarrative } from './readable';
+import { containsNameDiagnostics, readableNarrative } from './readable';
 import { PROJECT_DOCUMENT_STATUSES } from './types';
 import type { ActionWordsResult, ActorAliasEntry, ActorAliasResult, ArtifactLabelResult, CheckLabelResult, DocumentLabelResult, WorkLabelResult } from './types';
 
@@ -36,10 +36,18 @@ export function actorAliases(
  * The name to show for a work: its own readable name, "no related work", or a neutral phrase when
  * the only thing known is an opaque identifier. The raw value is always returned for technical details.
  */
-export function workLabel(workId: string | null | undefined, options: { language: string; fallback?: string }): WorkLabelResult {
+export function workLabel(workId: string | null | undefined, options: { language: string; fallback?: string; recordedTitle?: boolean }): WorkLabelResult {
   if (!present(workId)) return { kind: 'none', text: humanText('workNone', options.language), technical: { raw: null } };
-  const opaque = FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(workId))
-    || readableNarrative(workId, options.language) !== workId;
+  // Titles belong to the project. Technical subject matter is legitimate in a
+  // software task name, while identifiers and diagnostic payloads stay private.
+  const opaqueTitle = FORBIDDEN_VISIBLE_PATTERNS.some(({ id, pattern }) =>
+    ['long_hex', 'ulid', 'uuid', 'sha256'].includes(id) && pattern.test(workId))
+    || /[\p{Cc}\p{Cf}]/u.test(workId)
+    || /\bAWR-[A-Z0-9]+(?:-[A-Z0-9]+)*-[A-Z0-9]*\d[A-Z0-9]*\b/i.test(workId)
+    || containsNameDiagnostics(workId);
+  const opaque = options.recordedTitle ? opaqueTitle
+    : FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(workId))
+      || readableNarrative(workId, options.language) !== workId;
   if (opaque) return { kind: 'unnamed', text: options.fallback ?? humanText('workUnnamed', options.language), technical: { raw: workId } };
   return { kind: 'named', text: workId, technical: { raw: workId } };
 }

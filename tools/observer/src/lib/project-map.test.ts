@@ -20,11 +20,62 @@ function graph(): TeamGraphResponse {
 }
 
 describe('Team projection into the shared project maps', () => {
+  it.each([
+    '让团队成员通过统一入口按权限完成任务规划、开发与验收并持续交付',
+    'Let every team member plan, develop, review and deliver work through the shared project',
+    'UninterruptedGroupName'.repeat(6),
+  ])('wraps the complete group name in a fixed-width header and moves progress below it (%s)', (title) => {
+    const response = graph();
+    response.workstreams[0].title = title;
+    response.workstreams.push({ id: 'review', title: 'Review' });
+    response.items[1].workstream_id = 'review';
+    response.items[1].required_dependencies = [];
+    const rendered = page.renderProjectMap(teamProjectSnapshot(response), undefined, { t: page.makeT({ en }, 'en'), lang: 'en', interactive: true, productOnly: true });
+    const container = document.createElement('div'); container.innerHTML = rendered.body;
+    const headers = [...container.querySelectorAll('.pm-fold[data-lane]')];
+    const header = headers.find(element => element.querySelector('title')?.textContent === title)!;
+    expect(header.querySelector('title')?.textContent).toBe(title);
+    const lines = [...header.querySelectorAll('text')].map(element => element.textContent ?? '');
+    expect(lines.length).toBeGreaterThan(2);
+    expect(lines.join('').replace(/\s/g, '')).toBe(title.replace(/\s/g, ''));
+    const headerBottom = Math.max(...headers.map(element => {
+      const rect = element.querySelector('rect')!;
+      expect(Number(rect.getAttribute('width'))).toBe(214);
+      return Number(rect.getAttribute('y')) + Number(rect.getAttribute('height'));
+    }));
+    const overview = header.closest('svg')!;
+    const bars = [...overview.querySelectorAll('clipPath[id^="overview-bar-"] rect')];
+    expect(bars).toHaveLength(2);
+    expect(bars.map(element => Number(element.getAttribute('y')))).toEqual([headerBottom + 10, headerBottom + 10]);
+    for (const card of overview.querySelectorAll('.pm-card > rect')) {
+      expect(Number(card.getAttribute('y'))).toBeGreaterThan(headerBottom + 38);
+    }
+  });
+  it('uses the registered project and workstream names when no goal was recorded', () => {
+    const response = graph();
+    response.workstreams[0].title = 'Customer portal delivery';
+    const snapshot = teamProjectSnapshot(response, 'en-US', 'Customer portal');
+    const rendered = page.renderProjectMap(snapshot, undefined, { t: page.makeT({ en }, 'en'), lang: 'en', interactive: false, productOnly: true });
+    expect(snapshot.project).toMatchObject({ name: 'Customer portal' });
+    expect(rendered.body).toContain('Customer portal delivery');
+    expect(rendered.body).not.toMatch(/Work group \d/);
+  });
+
+  it('keeps the responsible owner distinct from an active claimant', () => {
+    const response = graph();
+    response.items[0].owner = 'Project owner';
+    response.items[0].claims = [{ id: 'claim', actor_id: 'actor', actor_name: 'Executing agent', session_id: 'session',
+      acquired_at_unix_ms: response.read_at_unix_ms, expires_at_unix_ms: response.read_at_unix_ms + 10000 }];
+    const rendered = page.renderProjectMap(teamProjectSnapshot(response), undefined, { t: page.makeT({ en }, 'en'), lang: 'en', interactive: false, productOnly: true });
+    const model = rendered.model as { nodes: Map<string, { owner: string }> };
+    expect(model.nodes.get('API-001')?.owner).toBe('Project owner');
+  });
   it.each(['en', 'zh-CN'])('keeps generated group summaries and completed-work previews in product language in %s', (language) => {
     const response = graph();
     response.items = Array.from({ length: 14 }, (_, index) => ({
       ...response.items[0], work_id: `internal-${index}`, external_key: `INTERNAL-${String(index + 1).padStart(3, '0')}`,
       title: `Review document ${index + 1}`, state: index < 4 ? 'completed' : 'planned', required_dependencies: [],
+      goals: ['document-review'], goal_titles: [{ id: 'document-review', title: 'Project document review' }],
     }));
     response.items[4].state = 'in_progress';
     response.items[4].last_event_at = response.read_at_unix_ms;
@@ -36,6 +87,8 @@ describe('Team projection into the shared project maps', () => {
     container.innerHTML = rendered.body;
     const text = container.textContent ?? '';
     expect(text).toContain('Review document');
+    expect(text).toContain('Project document review');
+    expect(text).not.toMatch(/Work group \d|工作组 \d/);
     expect(text.match(/INTERNAL|internal-session|internal-claim|display configuration|展示配置|传递约简|revision|node\./)?.[0]).toBeUndefined();
     expect(text).not.toMatch(/WORK \d|INTERNAL \d/);
     expect(container.querySelector('[data-pm-action="copy-command"]')).toBeNull();

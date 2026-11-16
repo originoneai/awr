@@ -60,10 +60,10 @@
   }
 
   /** Lanes derived from the keys alone: the commonest key families, the rest in one lane. */
-  function deriveLanes(keys) {
+  function deriveLanes(keys, recorded = new Map()) {
     const counts = new Map();
     for (const key of keys) {
-      const family = familyOf(key);
+      const family = recorded.get(key)?.id || familyOf(key);
       counts.set(family, (counts.get(family) || 0) + 1);
     }
     const families = [...counts.entries()].sort((a, b) => b[1] - a[1] || compare(a[0], b[0])).map(([family]) => family);
@@ -74,7 +74,10 @@
       let id = family.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'LANE';
       while (used.has(id)) id += `_${i}`;
       used.add(id);
-      return { id, name: family, tag: `${family}-*`, color: PALETTE[i % PALETTE.length], key_regex: `^${escapeRegex(family)}(?![A-Za-z])` };
+      const group = [...recorded.values()].find((entry) => entry.id === family);
+      const pattern = group ? `^(?:${keys.filter((key) => recorded.get(key)?.id === family).map(escapeRegex).join('|')})$`
+        : `^${escapeRegex(family)}(?![A-Za-z])`;
+      return { id, name: group?.name || family, tag: group ? '' : `${family}-*`, color: PALETTE[i % PALETTE.length], key_regex: pattern };
     });
     const match_order = lanes.map((l) => l.id);
     if (families.length > MAX_LANES) {
@@ -135,7 +138,15 @@
     const overview = raw.overview === undefined ? {} : raw.overview;
     if (!isObject(overview)) throw new ConfigError('overview must be an object');
     if (overview.lanes === undefined) {
-      cfg.overview = deriveLanes(keys);
+      const recorded = new Map(snapshot.nodes.filter((node) => node.group?.id && node.group?.name).map((node) => [node.key, node.group]));
+      cfg.overview = deriveLanes(keys, recorded);
+      for (const lane of cfg.overview.lanes) {
+        if (!lane.key_regex) continue;
+        const members = snapshot.nodes.filter((node) => new RegExp(lane.key_regex).test(node.key));
+        const common = (members[0]?.goals || []).filter((goal) => members.every((node) => (node.goals || []).includes(goal)));
+        const goal = common.map((id) => snapshot.goals.find((entry) => entry.id === id)).find((entry) => entry?.title);
+        if (goal) lane.name = goal.title;
+      }
     } else {
       if (!Array.isArray(overview.lanes) || overview.lanes.length < 1 || overview.lanes.length > 12) {
         throw new ConfigError('overview.lanes must list 1 to 12 lanes');
@@ -255,7 +266,7 @@
       const cancelled = n.status === 'cancelled';
       nodes.set(n.key, {
         id: n.key, short: n.display_key === undefined ? shortKey(n.key, cfg) : n.display_key, title: n.title, status: n.status, vis, lane: laneOfKey(n.key), deps,
-        owner: cancelled ? null : (n.claims.length ? n.claims[0].agent_id : n.owner),
+        owner: cancelled ? null : n.owner,
         live: n.claims.length > 0 && !cancelled, idle: cancelled ? null : idle, blocker: cancelled ? null : n.blocker, milestone: n.milestone,
       });
     }

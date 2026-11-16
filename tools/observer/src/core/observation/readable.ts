@@ -149,6 +149,16 @@ export function containsDiagnosticContent(text: string): boolean {
       || hasNetworkAddress(part) || SYSTEM_PATH.test(part) || ERROR_CODE.test(part));
 }
 
+/** Recorded software names may discuss interfaces and error classes. Reuse the
+ * credential, structured-payload and instance-identity checks for their data. */
+export function containsNameDiagnostics(text: string): boolean {
+  return text.split(/([a-z][a-z0-9+.-]*:\/\/[^\s()]+)/gi).some((part) => /^[a-z][a-z0-9+.-]*:\/\//i.test(part)
+    ? businessUrl(part, '') !== part
+    : diagnosticContent(part) || INTERNAL_TOKEN.test(part) || NUMBERED_ROLE.test(part)
+      || hasNetworkAddress(part) || [...part.matchAll(new RegExp(SYSTEM_PATH.source, 'g'))]
+        .some(([path]) => /^(?:[A-Za-z]:\\|\/|~\/)/.test(path)));
+}
+
 /** Preserve business prose and public references while removing internal diagnostic values. */
 export function readableNarrative(text: string, language: string): string | null {
   // Diagnostic payloads stay in protected service history. A partial scrub of

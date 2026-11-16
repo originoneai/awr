@@ -1123,7 +1123,9 @@ function createTeamBridge(opts) {
       return {
         key: String(key),
         title: (item && (item.title || item.name)) || String(key),
-        owner_person: summary ? summary.owner?.value?.display_name ?? null : (item && item.owner_person) || null,
+        owner_person: summary ? summary.owner?.value?.display_name
+          ?? (summary.owner?.reason === 'not_recorded' ? item.historical_responsibility : null)
+          : (item && item.owner_person) || null,
         agent: summary ? reported?.origin?.actor_name ?? null : (item && item.agent) || null,
         outcome: summary ? outcome?.summary ?? null : (item && item.outcome) || null,
         status: summary ? summary.runtime?.value ?? 'unknown' : (item && (item.status || item.state)) || 'unknown',
