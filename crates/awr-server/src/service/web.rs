@@ -191,6 +191,10 @@ pub fn router(state: Arc<StateData>) -> Router {
             post(connections_revoke),
         )
         .route("/v1/web/projects", get(list_projects))
+        .route(
+            "/v1/web/projects/{project}/directory/read",
+            post(directory_read),
+        )
         .route("/v1/web/projects/{project}/query", post(web_query))
         .route("/v1/web/projects/{project}/command", post(web_command))
         .route(
@@ -789,6 +793,60 @@ async fn connections_dispatch(
         Err(error) => error_response(error),
     };
     with_cors(res, &origin)
+}
+
+async fn directory_read(
+    State(state): State<Arc<StateData>>,
+    Path(key): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let (origin, session) = match require_session(&state, &headers).await {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    let Some(project) = state.projects.get(&key) else {
+        return with_cors(denied(), &origin);
+    };
+    let request: Value = match serde_json::from_slice(&body) {
+        Ok(request) => request,
+        Err(_) => {
+            return with_cors(
+                response(StatusCode::BAD_REQUEST, json!({"code":"InvalidInput"})),
+                &origin,
+            );
+        }
+    };
+    if super::reject_forged_authority_fields(&request).is_err() {
+        return with_cors(denied(), &origin);
+    }
+    let Ok(_permit) = state.permits.try_acquire() else {
+        return with_cors(super::unavailable(), &origin);
+    };
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        super::audited(
+            &state,
+            project,
+            &session.bearer,
+            "directory.read",
+            None,
+            super::directory::operate(
+                &state,
+                project,
+                &session.bearer,
+                request,
+                super::directory::Operation::Read,
+            ),
+        ),
+    )
+    .await;
+    let response = match result {
+        Ok(Ok(data)) => response(StatusCode::OK, json!({"ok":true,"data":data})),
+        Ok(Err(error)) => error_response(error),
+        Err(_) => super::unavailable(),
+    };
+    with_cors(response, &origin)
 }
 
 async fn web_command(

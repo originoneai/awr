@@ -304,3 +304,112 @@ async fn a_task_delegation_cannot_disclose_or_change_project_grouping() {
     assert_eq!(denied.status(), 403);
     client.cancel().await.unwrap();
 }
+
+#[tokio::test]
+async fn browser_directory_reads_reauthorize_the_current_session_and_keep_writes_on_agent_entries()
+{
+    let (_guard, admin, db, store) = setup().await;
+    seed_agent(&admin).await;
+    let grants =
+        AuthorizationStore::from_config(common::with_app_role(&common::test_config(), &db));
+    issue(
+        &grants,
+        "browser-directory-reader",
+        AuthorizationScope::Project {
+            project_id: PROJECT.into(),
+        },
+        BTreeSet::from([AuthorizedAction::Inspect]),
+    )
+    .await;
+    let server = web::start(store, false).await;
+    let login = server
+        .post("/v1/web/login")
+        .header("origin", web::ISSUER)
+        .header("x-awr-web", "1")
+        .json(&json!({"bearer":A}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(login.status(), 200);
+    let cookie = login.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let read = |path: &str, body: Value| {
+        server
+            .post(path)
+            .header("origin", web::ISSUER)
+            .header("x-awr-web", "1")
+            .header("cookie", &cookie)
+            .json(&body)
+    };
+    let path = "/v1/web/projects/one/directory/read";
+    let result = read(path, json!({"protocol_version":1}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(result.status(), 200);
+    assert_eq!(result.headers()["access-control-allow-origin"], web::ISSUER);
+    let result: Value = result.json().await.unwrap();
+    assert_eq!(result["data"]["configured"], false);
+    assert_eq!(result["data"]["members"], json!([]));
+    admin.execute(
+        "INSERT INTO awr_team.project_directories(tenant_id,project_id,version,plan_json,provenance)
+         VALUES($1,$2,1,$3,'{}'::jsonb)",
+        &[&TENANT, &PROJECT, &plan()],
+    ).await.unwrap();
+    let recorded: Value = read(path, json!({"protocol_version":1}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(recorded["data"]["configured"], true);
+    assert_eq!(
+        recorded["data"]["members"][0]["display_name"],
+        "Project coordinator"
+    );
+    assert_eq!(recorded["data"]["members"][0]["available"], true);
+    for (route, body, expected) in [
+        (
+            path,
+            json!({"protocol_version":1,"project_id":"another-project"}),
+            403,
+        ),
+        (path, json!({"protocol_version":1,"plan":plan()}), 400),
+        (
+            "/v1/web/projects/other/directory/read",
+            json!({"protocol_version":1}),
+            403,
+        ),
+        (
+            "/v1/web/projects/one/directory/apply",
+            json!({"protocol_version":1}),
+            404,
+        ),
+    ] {
+        assert_eq!(read(route, body).send().await.unwrap().status(), expected);
+    }
+    let missing_guard = server
+        .post(path)
+        .header("origin", web::ISSUER)
+        .header("cookie", &cookie)
+        .json(&json!({"protocol_version":1}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing_guard.status(), 403);
+    admin.batch_execute("UPDATE awr_team.agent_authorizations SET status='revoked' WHERE id='browser-directory-reader'")
+        .await.unwrap();
+    let denied = read(path, json!({"protocol_version":1}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), 403);
+    let denied: Value = denied.json().await.unwrap();
+    assert!(!denied.to_string().contains("Project coordinator"));
+}

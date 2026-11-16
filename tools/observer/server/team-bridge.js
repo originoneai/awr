@@ -6,6 +6,7 @@
 'use strict';
 
 const { mapObservation, createGithubObserver } = require('./team-progress');
+const { projectDirectory } = require('./directory');
 const { OBSERVATION_STALE_AFTER_MS, READ_TIMEOUT_MS, OVERVIEW_DEADLINE_MS, resolveCurrency } = require('./observation-contract');
 
 const fs = require('fs');
@@ -1805,6 +1806,23 @@ function createTeamBridge(opts) {
   }
 
   Object.assign(routes, {
+    'POST /api/team/directory': async (_url, body, req, res) => {
+      const input = asObject(body);
+      if (!input || typeof input.project !== 'string' || !input.project
+        || Object.keys(input).some((key) => key !== 'project')) {
+        return { ok: false, error: { code: 'InvalidInput' } };
+      }
+      if (!TEAM.live) return { ok: false, error: { code: 'Unsupported' } };
+      const upstream = await proxyTeam(`/v1/web/projects/${encodeURIComponent(input.project)}/directory/read`, req,
+        { protocol_version: 1 }, 'POST');
+      if (upstream && [404, 405].includes(upstream.status)) return { ok: false, error: { code: 'Unsupported' } };
+      if (!upstream || upstream.status >= 400) return liveError(upstream);
+      const data = projectDirectory(upstream.json?.data);
+      if (!data) return { ok: false, error: { code: 'BadGateway' } };
+      applyProxiedCookies(res, upstream.setCookie);
+      return { ok: true, data };
+    },
+
     'POST /api/team/access': async (_url, body, req, res) => {
       if (!TEAM.live) return { ok: false, error: { code: 'Unsupported', message: 'Live Team access required' } };
       const input = asObject(body);

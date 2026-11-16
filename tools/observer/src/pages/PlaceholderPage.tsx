@@ -2,7 +2,7 @@ import { Card, Typography } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { NotOpenYet } from '../components/states';
 
-export type PlaceholderPageKey = 'knowledge' | 'members' | 'activity' | 'settings' | 'advanced' | 'agentConnect';
+export type PlaceholderPageKey = 'knowledge' | 'activity' | 'settings' | 'advanced' | 'agentConnect';
 
 /** Lightweight placeholder for nav destinations whose slice has not shipped. */
 export function PlaceholderPage({ pageKey }: { pageKey: PlaceholderPageKey }) {
