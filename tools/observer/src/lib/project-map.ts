@@ -32,7 +32,7 @@ export interface TeamGraphResponse {
 }
 
 /** Adapt current Team facts to the same snapshot consumed by the personal views. */
-export function teamProjectSnapshot(graph: TeamGraphResponse, language = 'en-US') {
+export function teamProjectSnapshot(graph: TeamGraphResponse, language = 'en-US', projectName = graph.project) {
   const keys = new Map(graph.items.map((item) => [item.work_id, item.external_key]));
   if (keys.size !== graph.items.length || new Set(keys.values()).size !== keys.size) {
     throw new Error('Duplicate graph work identity');
@@ -41,8 +41,17 @@ export function teamProjectSnapshot(graph: TeamGraphResponse, language = 'en-US'
   const actors = new Map([...new Set(graph.items.flatMap(item => item.claims.map(claim => claim.actor_id)))].sort(compare).map((id, index) => [id, `Agent ${index + 1}`]));
   const members = new Map([...new Set(graph.items.flatMap(item => item.owner ? [item.owner] : []))].sort(compare).map((id, index) => [id, `Member ${index + 1}`]));
   const actorName = (claim: GraphWork['claims'][number]) => claim.actor_name && readsAsName(claim.actor_name) ? claim.actor_name : actors.get(claim.actor_id);
+  const groupFor = (item: GraphWork) => {
+    const goal = (item.goals ?? []).map(id => item.goal_titles?.find(goal => goal.id === id)).find(Boolean);
+    const stream = graph.workstreams.find(stream => stream.id === item.workstream_id);
+    const group = goal ? { id: `goal:${goal.id}`, name: goal.title }
+      : stream ? { id: `stream:${stream.id}`, name: stream.title } : null;
+    const name = workLabel(group?.name, { language, recordedTitle: true });
+    return name.kind === 'named' ? { ...group!, name: name.text }
+      : { id: 'project', name: workLabel(projectName, { language, recordedTitle: true }).text };
+  };
   const nodes = graph.items.map((item) => ({
-    id: item.work_id, key: item.external_key, title: workLabel(item.title, { language }).text,
+    id: item.work_id, key: item.external_key, title: workLabel(item.title, { language, recordedTitle: true }).text,
     display_key: '',
     status: item.state === 'unclaimed' ? 'planned' : snapshot.STATUSES.includes(item.state) ? item.state : 'unknown',
     source_status: item.state,
@@ -50,6 +59,7 @@ export function teamProjectSnapshot(graph: TeamGraphResponse, language = 'en-US'
       : item.historical_responsibility?.provenance === 'historical' && readsAsName(item.historical_responsibility.name)
         ? `${item.historical_responsibility.name} ${language.startsWith('zh') ? '（历史记录）' : '(historical record)'}` : null,
     goals: item.goals ?? [],
+    group: groupFor(item),
     last_event_at: item.last_event_at, blocker: null, milestone: null,
     ready: null, archived: item.definition_state === 'archived', next_action: null, waits: [], diagnostics: [],
     claims: item.claims.map((claim) => ({
@@ -69,7 +79,7 @@ export function teamProjectSnapshot(graph: TeamGraphResponse, language = 'en-US'
   })));
   return snapshot.seal({
     schema: snapshot.SCHEMA, version: snapshot.VERSION,
-    project: { key: graph.project, name: graph.project, id: graph.project, revision: graph.as_of?.project_revision ?? 'demo' },
+    project: { key: graph.project, name: workLabel(projectName, { language, recordedTitle: true }).text, id: graph.project, revision: graph.as_of?.project_revision ?? 'demo' },
     basis: {
       work_graph: {
         graph_fingerprint: `sha256:${snapshot.sha256Hex(snapshot.canonical({ nodes, edges }))}`,
@@ -78,7 +88,7 @@ export function teamProjectSnapshot(graph: TeamGraphResponse, language = 'en-US'
       team: graph.as_of, sessions: { count: sessions.length, truncated: false },
     },
     nodes, edges, sessions, goals: [...new Map(graph.items.flatMap(item => (item.goal_titles ?? []).map(goal =>
-      [goal.id, { ...goal, title: workLabel(goal.title, { language }).text }] as const))).values()],
+      [goal.id, { ...goal, title: workLabel(goal.title, { language, recordedTitle: true }).text }] as const))).values()],
     doctor: { ok: null, findings: [] },
     unavailable: [
       { field: 'node.milestone', reason: 'Team graph has no milestone membership; swimlanes use the recorded work groups.' },

@@ -107,7 +107,7 @@ function GoalsBlock({ works, snapshots }: { project: string; works: TeamWork[]; 
     const query = snapshots[index];
     const contract = query?.data?.result.data?.visible_contract;
     return {
-      title: workLabel(work.title, { language: i18n.language }).text,
+      title: workLabel(work.title, { language: i18n.language, recordedTitle: true }).text,
       // A read that did not happen contributes nothing; it is counted, never guessed from.
       state: readStateOf(query),
       goals: contract?.goals as WorkContractValue[] | undefined,
@@ -268,7 +268,7 @@ function DeliveryBlock({ project, works, snapshots, coverage }: {
                       // service's own trouble facts follow as plain sentences.
                       <li key={work.key}>
                         <Link to={taskPath(project, work.key)} data-testid={`project-delivery-attention-${work.key}`}>
-                          {workLabel(work.title, { language: i18n.language }).text}
+                          {workLabel(work.title, { language: i18n.language, recordedTitle: true }).text}
                           {t('knowledge.titleSeparator')}
                           {progress.text}
                         </Link>
@@ -444,7 +444,7 @@ export function ProjectOverview({ project }: { project: string }) {
         key: `group-${currentWorkstream}`,
         id: currentWorkstream,
         title: workLabel(grouped.titles[currentWorkstream] ?? currentWorkstream,
-          { language: i18n.language, fallback: humanText('workstreamUnnamed', i18n.language) }).text,
+          { language: i18n.language, recordedTitle: Boolean(grouped.titles[currentWorkstream]), fallback: humanText('workstreamUnnamed', i18n.language) }).text,
       });
     }
     displayRows.push({ kind: 'work', key: work.key, work, index });
@@ -458,7 +458,7 @@ export function ProjectOverview({ project }: { project: string }) {
       onCell: (row) => ({ colSpan: row.kind === 'group' ? 5 : 1 }),
       render: (_, row) => row.kind === 'group'
         ? <Typography.Text strong data-testid={`workstream-group-${row.id}`}>{row.title}</Typography.Text>
-        : <Link to={taskPath(project, row.work.key)}>{workLabel(row.work.title, { language: i18n.language }).text}</Link>,
+        : <Link to={taskPath(project, row.work.key)}>{workLabel(row.work.title, { language: i18n.language, recordedTitle: true }).text}</Link>,
     },
     {
       title: t('projectOverview.columns.owner'),

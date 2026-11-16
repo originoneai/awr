@@ -70,6 +70,9 @@ describe('ProjectShell', () => {
     const query = queryClient.getQueryCache().find({ queryKey: ['team', 'graph', 'demo'] })!;
     expect(query.observers.map((observer) => observer.options.refetchInterval)).toEqual([false]);
     expect(defaultVisibleText(body)).toContain('Application API');
+    await waitFor(() => expect(defaultVisibleText(body)).toContain('Team mainline'));
+    expect(defaultVisibleText(body)).toContain('Development');
+    expect(defaultVisibleText(body)).not.toContain('demo');
     await user.click(body.querySelector('.pm-card')!);
     const drawer = body.querySelector('.pm-drawer')!;
     expect(defaultVisibleText(drawer)).not.toMatch(/in_progress|synthetic-api|node\.milestone/);

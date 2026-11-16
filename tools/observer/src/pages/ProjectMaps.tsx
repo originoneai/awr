@@ -13,6 +13,8 @@ import { ObservationEmpty, ObservationForbidden } from '../components/states';
 import { apiGet, isAuthError } from '../lib/api';
 import { teamProjectSnapshot, type TeamGraphResponse } from '../lib/project-map';
 import { useRevocation } from '../lib/revocation';
+import { projectLabel } from '../lib/project-label';
+import { projectsQueryOptions } from '../lib/queries';
 
 function MapDrawing({ snapshot }: { snapshot: ReturnType<typeof teamProjectSnapshot> }) {
   const { t, i18n } = useTranslation();
@@ -70,10 +72,13 @@ function MapDrawing({ snapshot }: { snapshot: ReturnType<typeof teamProjectSnaps
 export function ProjectMaps({ project }: { project: string }) {
   const { t, i18n } = useTranslation();
   const { revoked } = useRevocation();
+  const projects = useQuery(projectsQueryOptions(revoked));
+  const selectedProject = projects.data?.projects.find(entry => entry.key === project);
+  const name = selectedProject ? projectLabel(selectedProject) : project;
   const graph = useQuery({
     queryKey: ['team', 'graph', project],
     queryFn: () => apiGet<TeamGraphResponse>(`/api/team/graph?project=${encodeURIComponent(project)}`),
-    select: useCallback((response: TeamGraphResponse) => ({ response, snapshot: teamProjectSnapshot(response, i18n.language) }), [i18n.language]),
+    select: useCallback((response: TeamGraphResponse) => ({ response, snapshot: teamProjectSnapshot(response, i18n.language, name) }), [i18n.language, name]),
     enabled: Boolean(project) && !revoked,
     retry: false,
     refetchOnWindowFocus: false,

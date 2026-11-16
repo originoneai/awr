@@ -20,6 +20,25 @@ function graph(): TeamGraphResponse {
 }
 
 describe('Team projection into the shared project maps', () => {
+  it('uses the registered project and workstream names when no goal was recorded', () => {
+    const response = graph();
+    response.workstreams[0].title = 'Customer portal delivery';
+    const snapshot = teamProjectSnapshot(response, 'en-US', 'Customer portal');
+    const rendered = page.renderProjectMap(snapshot, undefined, { t: page.makeT({ en }, 'en'), lang: 'en', interactive: false, productOnly: true });
+    expect(snapshot.project).toMatchObject({ name: 'Customer portal' });
+    expect(rendered.body).toContain('Customer portal delivery');
+    expect(rendered.body).not.toMatch(/Work group \d/);
+  });
+
+  it('keeps the responsible owner distinct from an active claimant', () => {
+    const response = graph();
+    response.items[0].owner = 'Project owner';
+    response.items[0].claims = [{ id: 'claim', actor_id: 'actor', actor_name: 'Executing agent', session_id: 'session',
+      acquired_at_unix_ms: response.read_at_unix_ms, expires_at_unix_ms: response.read_at_unix_ms + 10000 }];
+    const rendered = page.renderProjectMap(teamProjectSnapshot(response), undefined, { t: page.makeT({ en }, 'en'), lang: 'en', interactive: false, productOnly: true });
+    const model = rendered.model as { nodes: Map<string, { owner: string }> };
+    expect(model.nodes.get('API-001')?.owner).toBe('Project owner');
+  });
   it.each(['en', 'zh-CN'])('keeps generated group summaries and completed-work previews in product language in %s', (language) => {
     const response = graph();
     response.items = Array.from({ length: 14 }, (_, index) => ({

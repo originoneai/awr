@@ -92,7 +92,23 @@ describe('workLabel', () => {
   it.each(['zh-CN', 'en-US'])('preserves the subject of a recorded software task in %s', (language) => {
     for (const title of ['Token Budget、稳定排序与 Context Hash', '实现认领、租约和检查点机制',
       'OAuth connection recovery', 'Freeze the execution contract', '快照读取与数据一致性']) {
-      expect(workLabel(title, { language })).toMatchObject({ kind: 'named', text: title });
+      expect(workLabel(title, { language, recordedTitle: true })).toMatchObject({ kind: 'named', text: title });
+    }
+  });
+
+  it('uses recorded titles as names even when the subject includes code or interface vocabulary', () => {
+    for (const title of ['Add last_event_at to graph nodes', 'Fix awr-mcp tools/list discovery',
+      'Return actionable guidance when candidate_id is missing', 'Fix claim.renew after lease expiry',
+      'Use mode edit when resumed:true did not apply changes']) {
+      expect(workLabel(title, { language: 'en-US', recordedTitle: true })).toMatchObject({ kind: 'named', text: title });
+    }
+    for (const title of ['payload={"token":"synthetic-value"}', '{"password":"synthetic-value"}',
+      'Authorization: Bearer synthetic-value', 'status=claimed reason=Forbidden', 'client_obs_658',
+      'Repair client_obs_658 display', 'Fix AWR-OBS-042 regression',
+      'Investigate result={"ok":false}', 'Fix response [1,2]',
+      'Investigate https://user:pass@example.com/path',
+      ...['cookie', 'credential', 'passphrase', 'private_key', 'signing_key'].map(key => `${key}=synthetic-value`)]) {
+      expect(workLabel(title, { language: 'en-US', recordedTitle: true }).kind).toBe('unnamed');
     }
   });
   it('shows a readable work name as it is and keeps the raw value for technical details', () => {

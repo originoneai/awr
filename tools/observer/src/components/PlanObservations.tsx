@@ -130,7 +130,7 @@ export function PlanningChanges({ project, stream }: { project: string; stream: 
             </Flex> : null}
             <Typography.Text type="secondary">{t('plan.changes.summary', item.current_diff.counts)}</Typography.Text>
             {item.current_diff.items.map((change) => <div key={change.work_id}>
-              <Typography.Text>{workLabel(change.title, { language: i18n.language }).text}</Typography.Text>
+              <Typography.Text>{workLabel(change.title, { language: i18n.language, recordedTitle: true }).text}</Typography.Text>
               {' · '}<Typography.Text type="secondary">{t(`plan.changes.kind.${change.kind === 'added' || change.kind === 'removed' || change.kind === 'changed' || change.kind === 'unchanged' ? change.kind : 'unknown'}`)}</Typography.Text>
               <ChangeDetails fields={change.fields ?? []} />
             </div>)}
