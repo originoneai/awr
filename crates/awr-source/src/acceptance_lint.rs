@@ -5,6 +5,14 @@
 //! index report to failed. The lint does not judge whether an acceptance
 //! criterion is semantically sufficient; it only makes obvious textual
 //! defects explicit at ingestion time.
+//!
+//! The word lists follow a strict false-negative-over-false-positive policy.
+//! An advisory is read by agents as "rewrite this entry", so a hit on an
+//! ordinary verifiable criterion (for example "优化到 200ms 以内") would
+//! cause legitimate wording to be rewritten. The lists therefore only carry
+//! wording that is almost never part of a real criterion: explicit
+//! placeholders and open-ended adverbs, never common verbs or evaluative
+//! adjectives.
 
 use awr_core::WorkItem;
 
@@ -13,12 +21,14 @@ pub const PLACEHOLDER_CODE: &str = "acceptance_lint.placeholder";
 
 /// CJK placeholder fragments. Matched as substrings because Chinese has no
 /// word boundaries. The list avoids fragments that occur inside legitimate
-/// technical terms (for example 等 is excluded because 等级 contains it).
+/// technical terms (for example 等 is excluded because 等级 contains it) and
+/// excludes common verbs and evaluative adjectives (优化, 完善, 良好) that
+/// appear inside ordinary verifiable criteria.
 const CJK_PLACEHOLDERS: &[&str] = &[
     "等等",
-    "良好",
-    "完善",
-    "优化",
+    "待定",
+    "待补充",
+    "待完善",
     "尽量",
     "尽可能",
     "必要时",
@@ -30,7 +40,12 @@ const CJK_PLACEHOLDERS: &[&str] = &[
 
 /// ASCII placeholder words. Matched case-insensitively on word boundaries so
 /// that longer legitimate words (for example "robustness") do not trigger.
+/// Common evaluative words (good, better, optimize) are excluded: they appear
+/// inside ordinary verifiable criteria far too often.
 const ASCII_PLACEHOLDERS: &[&str] = &[
+    "tbd",
+    "tbc",
+    "todo",
     "properly",
     "appropriately",
     "reasonably",
@@ -39,10 +54,7 @@ const ASCII_PLACEHOLDERS: &[&str] = &[
     "seamlessly",
     "various",
     "several",
-    "optimize",
-    "better",
     "etc",
-    "good",
 ];
 
 /// ASCII placeholder phrases. Matched case-insensitively on the lowercased
@@ -193,12 +205,14 @@ mod tests {
 
     #[test]
     fn placeholder_hits_are_reported_once_per_entry() {
-        let findings = lint_work_item(&work(&["优化流程，等等", "Works properly"]));
+        let findings = lint_work_item(&work(&["流程待定，等等", "Works properly, TBD"]));
         assert_eq!(findings.len(), 2);
         let mut hits = findings[0].matched.clone();
         hits.sort();
-        assert_eq!(hits, vec!["优化", "等等"]);
-        assert_eq!(findings[1].matched, vec!["properly"]);
+        assert_eq!(hits, vec!["待定", "等等"]);
+        let mut hits = findings[1].matched.clone();
+        hits.sort();
+        assert_eq!(hits, vec!["properly", "tbd"]);
     }
 
     #[test]
@@ -211,6 +225,29 @@ mod tests {
     #[test]
     fn technical_terms_do_not_trigger_cjk_list() {
         assert!(lint_work_item(&work(&["验证搜索相关性阈值", "等待状态迁移完成"])).is_empty());
-        assert_eq!(lint_work_item(&work(&["运行良好即可通过"])).len(), 1);
+        assert!(lint_work_item(&work(&["运行良好即可通过"])).is_empty());
+    }
+
+    #[test]
+    fn verifiable_criteria_with_common_verbs_stay_silent() {
+        // Review requirement: ordinary verifiable criteria that merely contain
+        // "优化"/"良好"/"good"/"better"/"optimize" must never be flagged.
+        assert!(
+            lint_work_item(&work(&[
+                "接口 P95 延迟从 400ms 优化到 200ms 以内，压测脚本随 PR 附带",
+                "全部单测通过，运行良好即可发布",
+                "Optimize the query plan; good coverage is better than none",
+            ]))
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn explicit_placeholders_are_flagged() {
+        let findings = lint_work_item(&work(&["待补充", "acceptance TBD", "status tbc"]));
+        assert_eq!(findings.len(), 3);
+        assert_eq!(findings[0].matched, vec!["待补充"]);
+        assert_eq!(findings[1].matched, vec!["tbd"]);
+        assert_eq!(findings[2].matched, vec!["tbc"]);
     }
 }
