@@ -1,5 +1,5 @@
 import snapshot from 'awr-progress-map/project-map/snapshot.js';
-import { readsAsName } from '../core/observation';
+import { readsAsName, workLabel } from '../core/observation';
 
 export interface GraphWork {
   work_id: string;
@@ -29,7 +29,7 @@ export interface TeamGraphResponse {
 }
 
 /** Adapt current Team facts to the same snapshot consumed by the personal views. */
-export function teamProjectSnapshot(graph: TeamGraphResponse) {
+export function teamProjectSnapshot(graph: TeamGraphResponse, language = 'en-US') {
   const keys = new Map(graph.items.map((item) => [item.work_id, item.external_key]));
   if (keys.size !== graph.items.length || new Set(keys.values()).size !== keys.size) {
     throw new Error('Duplicate graph work identity');
@@ -39,7 +39,7 @@ export function teamProjectSnapshot(graph: TeamGraphResponse) {
   const members = new Map([...new Set(graph.items.flatMap(item => item.owner ? [item.owner] : []))].sort(compare).map((id, index) => [id, `Member ${index + 1}`]));
   const actorName = (claim: GraphWork['claims'][number]) => claim.actor_name && readsAsName(claim.actor_name) ? claim.actor_name : actors.get(claim.actor_id);
   const nodes = graph.items.map((item) => ({
-    id: item.work_id, key: item.external_key, title: item.title,
+    id: item.work_id, key: item.external_key, title: workLabel(item.title, { language }).text,
     display_key: '',
     status: item.state === 'unclaimed' ? 'planned' : snapshot.STATUSES.includes(item.state) ? item.state : 'unknown',
     source_status: item.state,

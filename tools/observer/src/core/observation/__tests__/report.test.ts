@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import REPORTS from '../../../test-fixtures/work-state/progress-reports-run09.json';
 import { findForbiddenVisibleText } from '../../../lib/human-language-guard';
-import { absoluteTimeText, describeProgressReport, moreLinesText, readableSentence, REPORT_LIST_LIMIT } from '../index';
+import { absoluteTimeText, describeProgressReport, moreLinesText, readableSentence } from '../index';
 
 const DELIVERED = REPORTS['api-delivered'];
 const IN_REVIEW = REPORTS['api-in-review-owned-by-other'];
@@ -76,7 +76,7 @@ describe('describeProgressReport: the real checkpoints', () => {
 
 describe('describeProgressReport: nothing to show', () => {
   it('says missing, with nothing else, for a value that is not a report or has no content to show', () => {
-    for (const value of [undefined, null, 'text', 7, [], {}, { next_action: 'x', phase: 'testing' }, { completed: [], tests: [], artifacts: [] }, { completed: [' ', 3, null] }]) {
+    for (const value of [undefined, null, 'text', 7, [], {}, { next_action: 'x', phase: 'testing' }, { completed: [], tests: [], artifacts: [] }]) {
       const report = describeProgressReport(value, zh);
       expect(report, JSON.stringify(value)).toMatchObject({ kind: 'missing', summary: null, declaration: [], contractNote: null });
       expect(report.technical.items).toEqual([]);
@@ -88,7 +88,7 @@ describe('describeProgressReport: lists', () => {
   it('shows at most five entries of a list, says how many more there are, and counts only real sentences', () => {
     const lines = Array.from({ length: 7 }, (_, index) => `step ${index + 1}`);
     const report = describeProgressReport({ completed: [...lines.slice(0, 3), '', '  ', 4, null, ...lines.slice(3)] }, zh);
-    expect(report.completed).toEqual({ shown: lines.slice(0, REPORT_LIST_LIMIT), more: 2 });
+    expect(report.completed).toEqual({ shown: [...lines.slice(0, 3), '已收到汇报，详细内容暂时无法显示', lines[3]], more: 3 });
     expect(moreLinesText(2, 'zh-CN')).toBe('还有 2 条');
     expect(moreLinesText(2, 'en-US')).toBe('2 more');
   });
@@ -96,7 +96,7 @@ describe('describeProgressReport: lists', () => {
   it('knows whether the blocker list was given at all, so that an empty list can say none were reported', () => {
     expect(describeProgressReport({ summary: 's', blockers: [] }, zh).blockers).toEqual({ shown: [], more: 0, reported: true });
     expect(describeProgressReport({ summary: 's' }, zh).blockers.reported).toBe(false);
-    expect(describeProgressReport({ summary: 's', blockers: 'none' }, zh).blockers.reported).toBe(false);
+    expect(describeProgressReport({ summary: 's', blockers: 'none' }, zh).blockers).toEqual({ reported: true, shown: ['none'], more: 0 });
     expect(describeProgressReport({ summary: 's', blockers: ['waiting for the API', ''] }, zh).blockers).toEqual({ shown: ['waiting for the API'], more: 0, reported: true });
   });
 
@@ -229,5 +229,66 @@ describe('describeProgressReport: who said it, and whether it still holds', () =
       const words = [...result.declaration, result.contractNote ?? '', ...result.tests.shown.map((test) => test.outcome), moreLinesText(3, language)];
       expect(findForbiddenVisibleText(words.join('\n')), language).toEqual([]);
     }
+  });
+});
+
+
+describe('product-safe reported content', () => {
+  it.each(['zh-CN', 'en-US'])('retains supplied progress and blockers while withholding structured content in %s', (language) => {
+    const unsafe = 'payload={"token":"synthetic-report-value"}';
+    const report = describeProgressReport({
+      summary: unsafe, completed: [unsafe, 'Prepared the sign-in page'], blockers: [unsafe],
+      origin: { actor_name: 'client[secret]=synthetic-name' }, reported_at_unix_ms: 1793534400000,
+      tests: [{ name: unsafe, outcome: 'failed' }], artifacts: [{ label: unsafe }],
+    }, { language });
+    expect(report.kind).toBe('reported');
+    expect(report.summary).toBe(language === 'zh-CN' ? '已收到汇报，详细内容暂时无法显示' : 'A report was received, but its details cannot be displayed');
+    expect(report.completed.shown).toEqual([report.summary, 'Prepared the sign-in page']);
+    expect(report.blockers).toEqual({ reported: true, shown: [report.summary], more: 0 });
+    expect(report.tests.shown[0].tone).toBe('negative');
+    const { technical, ...product } = report;
+    const visible = { ...product, artifacts: report.artifacts.shown.map((artifact) => artifact.text) };
+    expect(JSON.stringify(visible)).not.toMatch(/synthetic-report-value|synthetic-name|payload|token/);
+    expect(JSON.stringify(technical)).toContain('synthetic-report-value');
+    expect(report.declaration[0]).toContain(language === 'zh-CN' ? '名称暂时无法显示' : 'Name cannot be displayed');
+    expect(describeProgressReport({ summary: 'The sign-in page is ready', origin: { actor_name: 'Grok4' } }, { language }).declaration[0]).toContain('Grok4');
+  });
+});
+
+
+describe('supplied non-prose report fields', () => {
+  it.each(['zh-CN', 'en-US'])('keeps structured reports and blockers distinct from absent reports in %s', (language) => {
+    const hidden = language === 'zh-CN' ? '已收到汇报，详细内容暂时无法显示' : 'A report was received, but its details cannot be displayed';
+    for (const value of [{ reason: 'synthetic-structured-value' }, [], 7, false]) {
+      const report = describeProgressReport({ summary: value, completed: [value], blockers: value }, { language });
+      expect(report.kind).toBe('reported');
+      expect(report.summary).toBe(hidden);
+      expect(report.completed.shown).toEqual([hidden]);
+      expect(report.blockers.reported).toBe(true);
+      expect(report.blockers.shown).toEqual(Array.isArray(value) ? [] : [hidden]);
+    }
+    expect(describeProgressReport({}, { language }).kind).toBe('missing');
+  });
+});
+
+
+describe('malformed verification-only reports', () => {
+  it.each([{ tests: { outcome: 'synthetic-state' } }, { artifacts: { token: 'synthetic-output' } }, { tests: [42] }, { artifacts: [42] }])(
+    'preserves receipt of %j without asserting a verification result', (value) => {
+      const report = describeProgressReport(value, { language: 'en-US' });
+      expect(report.kind).toBe('reported');
+      expect(report.summary).toBe('A report was received, but its details cannot be displayed');
+      expect(report.tests.shown).toEqual([]);
+      expect(report.artifacts.shown).toEqual([]);
+    },
+  );
+});
+
+
+describe('supplied unreadable reporter names', () => {
+  it.each([7, false, { token: 'synthetic-reporter-name' }, 'agent7a'])('distinguishes %j from an absent reporter name', (actor_name) => {
+    const report = describeProgressReport({ summary: 'Prepared the customer review', origin: { actor_name } }, { language: 'en-US' });
+    expect(report.declaration[0]).toBe('Reported by Name cannot be displayed');
+    expect(describeProgressReport({ summary: 'Prepared the customer review' }, { language: 'en-US' }).declaration[0]).toBe('Reported by the reporter');
   });
 });

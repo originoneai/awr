@@ -2,7 +2,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Alert, Button, Card, Empty, Flex, List, Space, Spin, Typography } from 'antd';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { documentLabel, readableNarrative, readableSentence } from '../core/observation';
+import { documentLabel, readableNarrative, workLabel } from '../core/observation';
+import { humanText } from '../i18n/human-language';
 import { readsAsName } from '../core/observation/owner';
 import { isAuthError } from '../lib/api';
 import { formatUnixMs } from '../lib/format';
@@ -63,9 +64,10 @@ function ChangeDetails({ fields }: { fields: NonNullable<PlanningCandidatesData[
       return t('plan.changes.policy.needsCheck');
     }
     if (!prose) return t('plan.changes.policy.availableToAgent');
-    const text = typeof item.value === 'string' ? item.value : Array.isArray(item.value)
-      ? item.value.filter((v): v is string => typeof v === 'string').join(' · ') : '';
-    return text ? readableSentence(text, i18n.language) : t('plan.changes.notSet');
+    const values = Array.isArray(item.value) ? item.value : [item.value];
+    return values.filter((value): value is string => typeof value === 'string' && value.trim() !== '')
+      .map((value) => readableNarrative(value, i18n.language) ?? humanText('contentUnavailable', i18n.language))
+      .join(' · ') || t('plan.changes.notSet');
   }
   return <>{fields.map((field, index) => {
     const label = Object.hasOwn(labels, field.field) ? labels[field.field as keyof typeof labels] : 'other';
@@ -110,13 +112,16 @@ export function PlanningChanges({ project, stream }: { project: string; stream: 
               <Typography.Text strong>{t('plan.changes.revision', { count: item.draft_revision })}</Typography.Text>
               <Typography.Text>{t(`plan.changes.status.${proposalStatus(item)}`)}</Typography.Text>
             </Flex>
-            <Typography.Text type="secondary">{readableSentence(item.author.display_name ?? t('plan.changes.authorUnknown'), i18n.language)} · {formatUnixMs(item.updated_at_unix_ms, i18n.language)}</Typography.Text>
+            <Typography.Text type="secondary">{item.author.display_name && readsAsName(item.author.display_name)
+              ? item.author.display_name : item.author.display_name ? humanText('nameUnavailable', i18n.language)
+                : t('plan.changes.authorUnknown')} · {formatUnixMs(item.updated_at_unix_ms, i18n.language)}</Typography.Text>
             {!item.baseline.matches_current && !item.activation.value && item.state !== 'rejected' ? <Alert type="info" showIcon message={t('plan.changes.planChanged')} /> : null}
             {item.state === 'rejected' ? <Flex vertical gap={4}>
               {item.rejection?.value ? <>
                 <Typography.Text type="secondary">{t('plan.changes.returnedBy', {
                   name: item.rejection.value.display_name && readsAsName(item.rejection.value.display_name)
-                    ? item.rejection.value.display_name : t('plan.changes.reviewerUnknown'),
+                    ? item.rejection.value.display_name : item.rejection.value.display_name ? humanText('nameUnavailable', i18n.language)
+                      : t('plan.changes.reviewerUnknown'),
                   time: formatUnixMs(item.rejection.value.at_unix_ms, i18n.language),
                 })}</Typography.Text>
                 <Typography.Text>{readableNarrative(item.rejection.value.reason, i18n.language) ?? t('plan.changes.returnedReasonUnavailable')}</Typography.Text>
@@ -125,7 +130,7 @@ export function PlanningChanges({ project, stream }: { project: string; stream: 
             </Flex> : null}
             <Typography.Text type="secondary">{t('plan.changes.summary', item.current_diff.counts)}</Typography.Text>
             {item.current_diff.items.map((change) => <div key={change.work_id}>
-              <Typography.Text>{readableSentence(change.title, i18n.language)}</Typography.Text>
+              <Typography.Text>{workLabel(change.title, { language: i18n.language }).text}</Typography.Text>
               {' · '}<Typography.Text type="secondary">{t(`plan.changes.kind.${change.kind === 'added' || change.kind === 'removed' || change.kind === 'changed' || change.kind === 'unchanged' ? change.kind : 'unknown'}`)}</Typography.Text>
               <ChangeDetails fields={change.fields ?? []} />
             </div>)}

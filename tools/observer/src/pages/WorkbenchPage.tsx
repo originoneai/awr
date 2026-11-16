@@ -97,7 +97,7 @@ function navigationText(navigation: string | undefined, t: TFunction) {
 /** A work's name for a person: its title, or, when the service gave none, what the work label makes of its key. */
 function rowName(row: { title?: string | null; work_id: string }, language: string): string {
   const title = row.title?.trim();
-  return title ? title : workLabel(row.work_id, { language }).text;
+  return workLabel(title || row.work_id, { language }).text;
 }
 
 /** A resumable session's work, named by the title the work.next reply gives that work. */

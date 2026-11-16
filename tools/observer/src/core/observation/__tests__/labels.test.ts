@@ -297,3 +297,17 @@ describe('actionWords', () => {
     }
   });
 });
+
+
+describe('structured content cannot become a product label', () => {
+  it.each(['zh-CN', 'en-US'])('guards work, check, output and document labels in %s', (language) => {
+    const options = { language, position: 2 };
+    for (const text of ['client[secret]=synthetic-label', '{"token":"synthetic-label"}', 'configurationValue=synthetic-label']) {
+      expect(workLabel(text, options).kind).toBe('unnamed');
+      expect(checkLabel(text, options).kind).toBe('numbered');
+      expect(artifactLabel(text, options).kind).toBe('numbered');
+      expect(documentTitle(text, 'guide.md', options).text).toBe('guide');
+      expect(documentTitle(text, text + '.md', options).kind).toBe('numbered');
+    }
+  });
+});

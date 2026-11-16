@@ -43,7 +43,7 @@ describe('deriveOwner', () => {
     }
   });
 
-  it('refuses the shape gate\'s own edges: too long, wrong characters, digits (S2/S5/S7)', () => {
+  it('rejects machine-shaped names while preserving short Agent model versions', () => {
     // q avoids the hex shapes: 40 a's would be a long hex string by the identifier rules.
     expect(readsAsName('q'.repeat(41))).toBe(false); // S2: past the 40 bound
     expect(readsAsName('q'.repeat(40))).toBe(true);
@@ -52,12 +52,27 @@ describe('deriveOwner', () => {
       const result = deriveOwner({ rowOwner: null, snapshot: snapshot(null, value), readState: 'ready' });
       expect(result.name, value).toBeNull();
     }
-    for (const value of ['agent7', 'lin2', 'dev42']) { // S7: a digit anywhere refuses
-      expect(readsAsName(value), value).toBe(false);
+    for (const value of ['Grok4', 'GLM4.6', 'Agent 2', 'lin2']) {
+      expect(readsAsName(value), value).toBe(true);
     }
-    // Long digit runs were already covered by the identifier shapes; a single digit is the rule.
     expect(readsAsName('2026')).toBe(false);
+    expect(readsAsName('Agent 1234')).toBe(false);
   });
+
+  it.each(['client[secret]=synthetic-name', '{"token":"synthetic-name"}', 'agent_private_123', 'actor-123', 'AWR-OBS-123', 'a'.repeat(64)])(
+    'keeps a supplied unreadable name distinct from an absent name for %s', (value) => {
+      for (const input of [
+        { rowOwner: value, snapshot: null, readState: 'ready' as const },
+        { rowOwner: null, snapshot: snapshot(value, 'person'), readState: 'ready' as const },
+      ]) {
+        const result = deriveOwner(input);
+        expect(result.name).toBeNull();
+        expect(result.source).not.toBe('none');
+        expect(ownerCellText(result, { language: 'zh-CN' })).toBe('名称暂时无法显示');
+        expect(ownerCellText(result, { language: 'en-US' })).toBe('Name cannot be displayed');
+      }
+    },
+  );
 
   it('recognizes names in any script while requiring an explicit display-name field', () => {
     for (const owner of ['mei', 'Lin', '周宁', 'Zhou Ning', "O'Brien", 'Jean-Luc']) {
@@ -92,4 +107,20 @@ describe('deriveOwner', () => {
     expect(ownerCellText(deriveOwner({ rowOwner: null, snapshot: snapshot(null, null), readState: 'ready' }), { language: 'zh-CN' })).toBe('未提供');
     expect(ownerCellText(deriveOwner({ rowOwner: null, snapshot: {}, readState: 'ready' }), { language: 'en-US' })).toBe('Not provided');
   });
+});
+
+
+describe('supplied non-name values', () => {
+  it.each([{ token: 'synthetic-name-object' }, [], 7, false, 'agent7', 'dev42', 'client9', 'agent7a', 'client9x', 'dev42beta'])(
+    'keeps a supplied unsafe name distinct from no name for %j', (value) => {
+      for (const input of [
+        { rowOwner: value, snapshot: null, readState: 'ready' as const },
+        { rowOwner: null, snapshot: { observation: { responsibility: { owner_name: value } } }, readState: 'ready' as const },
+      ]) {
+        const result = deriveOwner(input);
+        expect(result.name).toBeNull();
+        expect(ownerCellText(result, { language: 'en-US' })).toBe('Name cannot be displayed');
+      }
+    },
+  );
 });

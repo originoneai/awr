@@ -28,3 +28,14 @@ describe('observed value fidelity (review r1.1)', () => {
     expect(formatObservationValue('approved', 'zh-CN', 'state')).toBe('已批准');
   });
 });
+
+
+describe('product observation text', () => {
+  it.each(['zh-CN', 'en-US'])('withholds structured observation strings and object summaries in %s', (language) => {
+    const text = 'payload={"token":"synthetic-observation-value"}';
+    const expected = language === 'zh-CN' ? '详细内容暂时无法显示' : 'Details are currently unavailable';
+    expect(formatObservationValue(text, language)).toBe(expected);
+    expect(formatObservationValue({ summary: text }, language)).toBe(expected);
+    expect(formatObservationValue('Prepare the sign-in review', language)).toBe('Prepare the sign-in review');
+  });
+});

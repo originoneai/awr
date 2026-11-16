@@ -68,7 +68,7 @@ export function AgentConnectPage() {
                 <Card title={t('agentConnect.instructions')} data-testid="connect-instructions">
                   <Space direction="vertical" size={12}>
                     <Typography.Text strong>{t('agentConnect.serviceAddress')}</Typography.Text>
-                    <Typography.Text code>{mcpUrl ?? t('common.notProvided')}</Typography.Text>
+                    <Typography.Text code data-agent-connection-address>{mcpUrl ?? t('common.notProvided')}</Typography.Text>
                     <Space>
                       <Button size="small" onClick={async () => {
                         if (!mcpUrl) return;

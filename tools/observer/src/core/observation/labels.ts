@@ -1,6 +1,6 @@
 import { ACTION_VOCABULARY, ARTIFACT_VOCABULARY, CHECK_VOCABULARY, FORBIDDEN_VISIBLE_PATTERNS, STATUS_LABELS, humanText } from '../../i18n/human-language';
 import { STATUS_FIELDS, statementText } from './values';
-import { readableSentence } from './readable';
+import { readableNarrative } from './readable';
 import { PROJECT_DOCUMENT_STATUSES } from './types';
 import type { ActionWordsResult, ActorAliasEntry, ActorAliasResult, ArtifactLabelResult, CheckLabelResult, DocumentLabelResult, WorkLabelResult } from './types';
 
@@ -36,10 +36,11 @@ export function actorAliases(
  * The name to show for a work: its own readable name, "no related work", or a neutral phrase when
  * the only thing known is an opaque identifier. The raw value is always returned for technical details.
  */
-export function workLabel(workId: string | null | undefined, options: { language: string }): WorkLabelResult {
+export function workLabel(workId: string | null | undefined, options: { language: string; fallback?: string }): WorkLabelResult {
   if (!present(workId)) return { kind: 'none', text: humanText('workNone', options.language), technical: { raw: null } };
-  const opaque = FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(workId));
-  if (opaque) return { kind: 'unnamed', text: humanText('workUnnamed', options.language), technical: { raw: workId } };
+  const opaque = FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(workId))
+    || readableNarrative(workId, options.language) !== workId;
+  if (opaque) return { kind: 'unnamed', text: options.fallback ?? humanText('workUnnamed', options.language), technical: { raw: workId } };
   return { kind: 'named', text: workId, technical: { raw: workId } };
 }
 
@@ -57,7 +58,9 @@ export function checkLabel(name: unknown, options: { language: string; position:
     const [zh, en] = CHECK_VOCABULARY[raw];
     return { kind: 'known', text: options.language.toLowerCase().startsWith('zh') ? zh : en, technical: { raw } };
   }
-  if (FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(raw))) return { kind: 'numbered', text: numbered, technical: { raw } };
+  if (FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(raw)) || readableNarrative(raw, options.language) !== raw) {
+    return { kind: 'numbered', text: numbered, technical: { raw } };
+  }
   return { kind: 'named', text: raw, technical: { raw } };
 }
 
@@ -86,7 +89,8 @@ export function artifactLabel(label: unknown, options: { language: string; posit
     const [zh, en] = ARTIFACT_VOCABULARY[key];
     return { kind: 'known', text: options.language.toLowerCase().startsWith('zh') ? zh : en, technical: { raw } };
   }
-  if (FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(raw)) || readsAsReference(raw)) return { kind: 'numbered', text: numbered, technical: { raw } };
+  if (FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(raw)) || readsAsReference(raw)
+    || readableNarrative(raw, options.language) !== raw) return { kind: 'numbered', text: numbered, technical: { raw } };
   return { kind: 'named', text: raw, technical: { raw } };
 }
 
@@ -107,7 +111,8 @@ export function documentLabel(path: unknown, options: { language: string; positi
   const standard = Object.hasOwn(projectDocuments, stem.toLowerCase()) ? projectDocuments[stem.toLowerCase() as keyof typeof projectDocuments] : null;
   if (standard) return { kind: 'named', text: humanText(standard, options.language), technical: { raw } };
   const name = stem.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
-  if (name === '' || FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(name))) {
+  if (name === '' || FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(name))
+    || readableNarrative(name, options.language) !== name) {
     return { kind: 'numbered', text: numbered, technical: { raw } };
   }
   return { kind: 'named', text: name, technical: { raw } };
@@ -135,7 +140,7 @@ function readableDocumentName(raw: string, language: string): boolean {
   const hasField = words.some((word) => STATUS_FIELDS.has(word) || ['actor', 'client', 'reason', 'source', 'request'].includes(word));
   const hasOpaqueToken = tokens.some((token) => /^(?=.*[a-z])(?=.*\d)[a-z0-9_-]+$/.test(token) && !/^v\d+$/.test(token));
   return !/[\p{Cc}\p{Cf}]/u.test(raw) && !documentNameStatuses.includes(phrase) && !(hasField && hasStatus) && !hasOpaqueToken
-    && readableSentence(canonical, language) === canonical && !readsAsReference(canonical)
+    && readableNarrative(canonical, language) === canonical && !readsAsReference(canonical)
     && !pathReference.test(canonical) && !diagnosticFields.test(canonical) && !identifierReference.test(canonical)
     && !refusalCode.test(canonical) && !FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(canonical));
 }
