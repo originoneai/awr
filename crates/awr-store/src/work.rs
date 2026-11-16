@@ -648,28 +648,37 @@ pub(crate) fn goal_fingerprints(
 
 /// The goal fingerprint map recorded by the latest claim of the work on the
 /// branch, if any. A claim rides either a `work.claimed` event (explicit claim
-/// command) or a `session.started` event (claim on session start). Older events
-/// without the payload key read as `None`, so pre-existing works are never
-/// blocked by the drift check.
+/// command) or a `session.started` event (claim on session start). Events that
+/// do not carry the payload key are skipped — a `session.started` written
+/// without a claim must not hide the snapshot of an earlier claim — so claims
+/// recorded before this feature read as `None` and never block the drift check.
 pub(crate) fn latest_claimed_goal_fingerprints(
     conn: &Connection,
     project: Id,
     work_id: Id,
     branch: Option<Id>,
 ) -> Result<Option<BTreeMap<String, Option<String>>>> {
-    let payload: Option<String> = conn.query_row(
-        "SELECT payload_json FROM events WHERE project_id=?1 AND work_item_id=?2 AND branch_id IS ?3 AND event_type IN ('work.claimed','session.started') ORDER BY project_revision DESC,id DESC LIMIT 1",
-        params![project.to_string(), work_id.to_string(), branch.map(|id| id.to_string())],
-        |row| row.get(0),
-    )
-    .optional()
-    .map_err(db_error)?;
-    let Some(payload) = payload else {
-        return Ok(None);
-    };
-    let value: serde_json::Value = serde_json::from_str(&payload)?;
-    match value.get("goal_fingerprints") {
-        Some(map) => Ok(Some(serde_json::from_value(map.clone())?)),
-        None => Ok(None),
+    let payloads: Vec<String> = conn
+        .prepare(
+            "SELECT payload_json FROM events WHERE project_id=?1 AND work_item_id=?2 AND branch_id IS ?3 AND event_type IN ('work.claimed','session.started') ORDER BY project_revision DESC,id DESC",
+        )
+        .map_err(db_error)?
+        .query_map(
+            params![
+                project.to_string(),
+                work_id.to_string(),
+                branch.map(|id| id.to_string())
+            ],
+            |row| row.get(0),
+        )
+        .map_err(db_error)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(db_error)?;
+    for payload in payloads {
+        let value: serde_json::Value = serde_json::from_str(&payload)?;
+        if let Some(map) = value.get("goal_fingerprints") {
+            return Ok(Some(serde_json::from_value(map.clone())?));
+        }
     }
+    Ok(None)
 }

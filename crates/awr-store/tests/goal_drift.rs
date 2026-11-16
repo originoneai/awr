@@ -305,3 +305,50 @@ fn the_claim_event_payload_carries_the_fingerprint_map() {
     );
     let _ = session;
 }
+
+#[test]
+fn an_unclaimed_session_start_does_not_hide_the_recorded_snapshot() {
+    let mut f = fixture("fp-1", &[("G", "fp-1")], &[("W", "G")]);
+    claimed(&mut f, "executor");
+    // A later session binds the same work without a claim; its session.started
+    // payload carries no snapshot and must not mask the claim's one.
+    let expected = revision(&f);
+    f.store
+        .start_session(
+            f.project.id,
+            expected,
+            SessionDraft {
+                work_item_key: Some("W".into()),
+                agent_id: "observer".into(),
+                provider: "fixture".into(),
+                model: "test".into(),
+                branch_id: None,
+                claim: false,
+                claim_ttl_ms: None,
+            },
+        )
+        .unwrap();
+    // The goal changed under the still-recorded claim snapshot.
+    recommit(&mut f, |f| ProjectionBatch {
+        goals: vec![{
+            let mut g = goal(f, "G", "fp-2");
+            g.meta.id = existing_id(f, EntityKind::Goal, "G");
+            g
+        }],
+        work_items: vec![{
+            let mut w = work(f, "W");
+            w.meta.id = existing_id(f, EntityKind::WorkItem, "W");
+            w
+        }],
+        edges: vec![supports(f, "W", "G")],
+        ..Default::default()
+    });
+    let error = f
+        .store
+        .check_goal_currency(f.project.id, "W", None)
+        .unwrap_err();
+    let Error::GoalDrift { drifts, .. } = &error else {
+        panic!("expected GoalDrift, got {error:?}");
+    };
+    assert_eq!(drifts, &[("G".into(), "fp-1".into(), "fp-2".into())]);
+}
