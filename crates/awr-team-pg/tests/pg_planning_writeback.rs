@@ -403,6 +403,123 @@ async fn reviewed_workspace_contracts_roundtrip_reload_retain_and_replace_to_wor
     clippy::await_holding_lock,
     reason = "The guard serializes the shared PostgreSQL fixture for this entire async test."
 )]
+async fn independent_review_transition_to_simulated_members_survives_source_activation() {
+    use awr_team::{ExecutionSettlementMode, ExecutionSettlementPolicy, WorkContract};
+    use awr_team_pg::WorkstreamReadStore;
+
+    let (_g, admin, db, store) = store_and_roles().await;
+    let tmp = tempfile_ledger();
+    let before = draft("CLIENT-1", &["API-1"], DraftDefinitionState::Enabled);
+    let mut after = before.clone();
+    after.completion_policy = ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY.into();
+    after.execution_settlement = Some(ExecutionSettlementPolicy {
+        mode: ExecutionSettlementMode::IndependentWorkspaceV1,
+        workspace_id: "reviewed-client-workspace".into(),
+    });
+    after.verification_requirements = Some(vec!["Verify the delivered SDK".into()]);
+    let candidate = create_workspace_candidate(
+        &store,
+        DraftChange {
+            op: DraftOpKind::EditFields,
+            before: Some(before),
+            after: after.clone(),
+        },
+    )
+    .await;
+    let reloaded = SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let preview = reloaded
+        .preview_planning_candidate(
+            TENANT,
+            PROJECT,
+            A,
+            candidate["candidate_id"].as_str().unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        preview["diff"]["candidate_digest"],
+        candidate["candidate_digest"]
+    );
+    assert!(
+        preview["diff"]["field_diffs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field["field"] == "completion_policy")
+    );
+    let receipt = approve_workspace_candidate(&reloaded, &candidate).await;
+    reloaded
+        .activate_planning_writeback(
+            TENANT,
+            PROJECT,
+            A,
+            &workspace_activation(&tmp, receipt, "reviewed-simulated-policy-transition"),
+        )
+        .await
+        .unwrap();
+    let contract = activated_contract(&admin, "CLIENT-1").await;
+    assert_eq!(contract.codec, WorkContract::CODEC_V4);
+    assert_eq!(contract.completion_policy, after.completion_policy);
+    assert_eq!(contract.execution_settlement, after.execution_settlement);
+    assert_eq!(
+        contract.verification_requirements,
+        after.verification_requirements.unwrap()
+    );
+    let read = WorkstreamReadStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let prepared = prepare(&read, A, "CLIENT-1").await;
+    assert_eq!(
+        prepared["data"]["published_contract"]["completion_policy"],
+        ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY
+    );
+}
+
+#[tokio::test]
+#[expect(
+    clippy::await_holding_lock,
+    reason = "The guard serializes the shared PostgreSQL fixture for this entire async test."
+)]
+async fn simulated_policy_transition_without_workspace_refuses_before_source_mutation() {
+    use awr_team::ExecutionSettlementPolicy;
+
+    let (_g, admin, _db, store) = store_and_roles().await;
+    let tmp = tempfile_ledger();
+    let source_before = std::fs::read(tmp.root.join("ledger.yaml")).unwrap();
+    let contract_before = activated_contract(&admin, "a").await;
+    let before = draft("CLIENT-1", &["API-1"], DraftDefinitionState::Enabled);
+    let mut after = before.clone();
+    after.completion_policy = ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY.into();
+    after.verification_requirements = Some(vec!["Verify the delivered SDK".into()]);
+    let candidate = create_workspace_candidate(
+        &store,
+        DraftChange {
+            op: DraftOpKind::EditFields,
+            before: Some(before),
+            after,
+        },
+    )
+    .await;
+    let receipt = approve_workspace_candidate(&store, &candidate).await;
+    let result = store
+        .activate_planning_writeback(
+            TENANT,
+            PROJECT,
+            A,
+            &workspace_activation(&tmp, receipt, "missing-simulated-workspace"),
+        )
+        .await;
+    assert!(result.is_err(), "{result:?}");
+    assert_eq!(
+        std::fs::read(tmp.root.join("ledger.yaml")).unwrap(),
+        source_before
+    );
+    assert_eq!(activated_contract(&admin, "a").await, contract_before);
+}
+
+#[tokio::test]
+#[expect(
+    clippy::await_holding_lock,
+    reason = "The guard serializes the shared PostgreSQL fixture for this entire async test."
+)]
 async fn workspace_source_stale_priors_and_incomplete_retained_contracts_fail_before_mutation() {
     use awr_team::ExecutionSettlementPolicy as Policy;
     let (_g, admin, _db, store) = store_and_roles().await;

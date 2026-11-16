@@ -33,6 +33,16 @@ Task creation and edits write the approved `completion_policy` into the sole
 source. Recompiling and activating that source retains the reviewed policy;
 it must not silently fall back to the independent-review default.
 
+An authorized planning review can select
+`caller_managed_execution_and_simulated_member_review` for existing
+independent-review work. Publish the workspace declaration and verification
+requirements with the policy, then confirm the activated contract through
+`work.prepare`. Both policies retain independent-review protection against
+ordinary Agent review or author completion. The resulting receipts identify
+simulated members and preserve the original execution and review identities.
+See [dependency and workspace policies](team-planning.md#dependency-and-workspace-policies)
+for the required declarations and acceptance basis.
+
 Planning candidates without explicit dependency policies retain the closed
 `awr-team-planning-v1` wire format and original digest material. A candidate
 with `dependency_acceptance` in a before/after task uses

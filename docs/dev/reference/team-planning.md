@@ -156,6 +156,22 @@ It does not admit execution or renew a lease. New workspace or simulated-member
 tasks require an explicit settlement declaration, nonempty scope and verification
 requirements. Edits may retain existing declarations; publication checks them.
 
+An authorized, reviewed candidate can change `independent_review` to
+`caller_managed_execution_and_simulated_member_review`. Include the current
+definition in `before`, an explicit workspace declaration and verification
+requirements in `after`, then approve and publish the exact previewed digest.
+Planning protects both policies against a later change to ordinary Agent review
+or author completion. The simulated-member policy token must match exactly.
+
+Simulated-member acceptance requires distinct active member, actor and client
+identities, explicit Agent review permission, successful settled execution and
+the immutable artifact and review basis. A controller may operate both simulated
+members. Receipts record simulated acceptance and retain false human-approval
+and team-independent-acceptance flags. Previously captured origins remain
+unchanged, and existing executions need verification against the activated
+contract. Each dependent task must explicitly select the applicable
+`simulated_member_independent` assurance.
+
 ## Ordinary planning self-approval
 
 The optional nullable `self_approve_policy` object has exactly two required fields:

@@ -862,15 +862,13 @@ pub fn ensure_independent_review_not_downgraded(
     prior_policy: &str,
     next_policy: &str,
 ) -> TeamResult<()> {
-    let prior = prior_policy.trim().to_ascii_lowercase();
-    let next = next_policy.trim().to_ascii_lowercase();
-    if matches!(
-        prior.as_str(),
-        "independent_review" | "independent-review" | "trusted_execution_and_review"
-    ) && !matches!(
-        next.as_str(),
-        "independent_review" | "independent-review" | "trusted_execution_and_review"
-    ) {
+    let requires_independent_review = |policy: &str| {
+        matches!(
+            policy.trim().to_ascii_lowercase().as_str(),
+            "independent_review" | "independent-review" | "trusted_execution_and_review"
+        ) || policy == ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY
+    };
+    if requires_independent_review(prior_policy) && !requires_independent_review(next_policy) {
         return Err(TeamError::PermissionDenied(
             "independent delivery-review policy must not be downgraded by planning self-approve"
                 .into(),
@@ -1409,6 +1407,78 @@ mod tests {
                 .to_string()
                 .contains("downgrade")
         );
+    }
+
+    #[test]
+    fn independent_review_guard_accepts_simulated_member_transitions() {
+        let simulated = ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY;
+        for (before, after) in [
+            ("independent_review", simulated),
+            (simulated, "independent_review"),
+            (simulated, simulated),
+        ] {
+            ensure_independent_review_not_downgraded(before, after).unwrap();
+        }
+    }
+
+    #[test]
+    fn independent_review_guard_rejects_lower_assurance_from_simulated_members() {
+        let simulated = ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY;
+        for next in [
+            "caller_managed_execution_and_agent_review",
+            "author_may_complete",
+            "unrecognized_policy",
+        ] {
+            assert!(ensure_independent_review_not_downgraded(simulated, next).is_err());
+        }
+    }
+
+    #[test]
+    fn independent_review_guard_requires_exact_simulated_policy_token() {
+        let simulated = ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY;
+        for next in [
+            simulated.to_ascii_uppercase(),
+            format!(" {simulated}"),
+            format!("{simulated} "),
+        ] {
+            for prior in ["independent_review", simulated] {
+                assert!(ensure_independent_review_not_downgraded(prior, &next).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn simulated_member_planning_policy_preserves_independent_review() {
+        let simulated = ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY;
+        let policy = OrdinaryPlanningSelfApprovePolicy {
+            allow_self_approve_ordinary: true,
+            delivery_completion_policy: simulated.into(),
+        };
+        policy
+            .validate_no_delivery_downgrade("independent_review")
+            .unwrap();
+        policy.validate_no_delivery_downgrade(simulated).unwrap();
+    }
+
+    #[test]
+    fn candidate_can_select_explicit_simulated_member_review() {
+        let before = draft("A", &[]);
+        let mut after = before.clone();
+        after.completion_policy =
+            ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY.into();
+        after.execution_settlement = Some(ExecutionSettlementPolicy {
+            mode: crate::ExecutionSettlementMode::IndependentWorkspaceV1,
+            workspace_id: "reviewed-workspace".into(),
+        });
+        after.verification_requirements = Some(vec!["Verify the delivered artifact".into()]);
+        let mut candidate = candidate(vec![DraftChange {
+            op: DraftOpKind::EditFields,
+            before: Some(before),
+            after,
+        }]);
+        candidate.codec = planning_codec_for_changes(&candidate.changes).into();
+        assert_eq!(candidate.codec, PLANNING_CODEC_V4);
+        candidate.validate_structure().unwrap();
     }
 
     #[test]
