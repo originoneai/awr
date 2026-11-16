@@ -203,6 +203,7 @@ export interface WorkNextItem {
 
 export interface WorkResumeItem {
   work_id: string;
+  title?: string;
   session_id: string;
   session_version: string;
   next_query: WorkQuery;

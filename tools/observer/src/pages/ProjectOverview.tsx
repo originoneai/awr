@@ -88,7 +88,7 @@ function LastReport({ work, query }: { work: TeamWork; query?: SnapshotQuery }) 
 function OwnerCell({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
   const { i18n } = useTranslation();
   const owner = deriveOwner({
-    rowOwner: work.owner_person ?? work.agent,
+    rowOwner: work.owner_person,
     snapshot: query?.data?.result.data,
     readState: readStateOf(query),
   });

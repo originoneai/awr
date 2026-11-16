@@ -7,6 +7,19 @@ import { deriveOwner, ownerCellText, readsAsName } from './core/observation';
  * the overview row's owner fields are null and the name lives only here.
  */
 describe('deriveOwner', () => {
+  it('shows preserved historical attribution without creating a current assignment', () => {
+    const historical = { name: 'historic-developer', provenance: 'historical' };
+    const row = deriveOwner({ rowOwner: historical, snapshot: null, readState: 'ready' });
+    expect(row.source).toBe('historical');
+    expect(ownerCellText(row, { language: 'zh-CN' })).toBe('historic-developer （历史记录）');
+    const detail = deriveOwner({ rowOwner: null, snapshot: { observation: { responsibility: { historical } } }, readState: 'ready' });
+    expect(ownerCellText(detail, { language: 'en-US' })).toBe('historic-developer (historical record)');
+    expect(deriveOwner({ rowOwner: 'Current owner', snapshot: { observation: { responsibility: { historical } } }, readState: 'ready' }).name).toBe('Current owner');
+    expect(deriveOwner({ rowOwner: null, snapshot: { observation: { responsibility: { historical } } }, readState: 'failed' }).name).toBeNull();
+    expect(deriveOwner({ rowOwner: historical, snapshot: { observation: { responsibility: { owner: 'current', owner_name: 'Current owner', version: '1', historical } } }, readState: 'ready' }).name).toBe('Current owner');
+    expect(deriveOwner({ rowOwner: historical, snapshot: { observation: { responsibility: { owner: null, version: '2', historical } } }, readState: 'ready' }).source).not.toBe('historical');
+    expect(deriveOwner({ rowOwner: null, snapshot: { observation: { responsibility: { owner: null, version: '2', historical } } }, readState: 'ready' }).source).not.toBe('historical');
+  });
   const snapshot = (ownerName: unknown, owner: unknown) => ({
     observation: { responsibility: { owner_name: ownerName, owner } },
   });

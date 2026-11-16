@@ -89,6 +89,12 @@ describe('actorAliases', () => {
 });
 
 describe('workLabel', () => {
+  it.each(['zh-CN', 'en-US'])('preserves the subject of a recorded software task in %s', (language) => {
+    for (const title of ['Token Budget、稳定排序与 Context Hash', '实现认领、租约和检查点机制',
+      'OAuth connection recovery', 'Freeze the execution contract', '快照读取与数据一致性']) {
+      expect(workLabel(title, { language })).toMatchObject({ kind: 'named', text: title });
+    }
+  });
   it('shows a readable work name as it is and keeps the raw value for technical details', () => {
     expect(workLabel('issue-filter-page', { language: 'zh-CN' })).toEqual({ kind: 'named', text: 'issue-filter-page', technical: { raw: 'issue-filter-page' } });
     const realNamed = ITEMS.filter((item) => item.work_id).map((item) => workLabel(item.work_id, { language: 'zh-CN' }));

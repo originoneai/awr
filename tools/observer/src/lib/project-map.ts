@@ -9,6 +9,9 @@ export interface GraphWork {
   state: string;
   definition_state?: string;
   owner: string | null;
+  goals?: string[];
+  goal_titles?: Array<{ id: string; title: string }>;
+  historical_responsibility?: { name: string; provenance: 'historical' } | null;
   last_event_at: number | null;
   dependencies_complete: boolean;
   required_dependencies: string[];
@@ -43,7 +46,10 @@ export function teamProjectSnapshot(graph: TeamGraphResponse, language = 'en-US'
     display_key: '',
     status: item.state === 'unclaimed' ? 'planned' : snapshot.STATUSES.includes(item.state) ? item.state : 'unknown',
     source_status: item.state,
-    owner: item.owner && readsAsName(item.owner) ? item.owner : item.owner ? members.get(item.owner) : null,
+    owner: item.owner && readsAsName(item.owner) ? item.owner : item.owner ? members.get(item.owner)
+      : item.historical_responsibility?.provenance === 'historical' && readsAsName(item.historical_responsibility.name)
+        ? `${item.historical_responsibility.name} ${language.startsWith('zh') ? '（历史记录）' : '(historical record)'}` : null,
+    goals: item.goals ?? [],
     last_event_at: item.last_event_at, blocker: null, milestone: null,
     ready: null, archived: item.definition_state === 'archived', next_action: null, waits: [], diagnostics: [],
     claims: item.claims.map((claim) => ({
@@ -71,7 +77,9 @@ export function teamProjectSnapshot(graph: TeamGraphResponse, language = 'en-US'
       },
       team: graph.as_of, sessions: { count: sessions.length, truncated: false },
     },
-    nodes, edges, sessions, goals: [], doctor: { ok: null, findings: [] },
+    nodes, edges, sessions, goals: [...new Map(graph.items.flatMap(item => (item.goal_titles ?? []).map(goal =>
+      [goal.id, { ...goal, title: workLabel(goal.title, { language }).text }] as const))).values()],
+    doctor: { ok: null, findings: [] },
     unavailable: [
       { field: 'node.milestone', reason: 'Team graph has no milestone membership; swimlanes use the recorded work groups.' },
       { field: 'node.blocker', reason: 'Detailed reports are available through the authorized task read.' },

@@ -25,6 +25,7 @@ describe('Team projection into the shared project maps', () => {
     response.items = Array.from({ length: 14 }, (_, index) => ({
       ...response.items[0], work_id: `internal-${index}`, external_key: `INTERNAL-${String(index + 1).padStart(3, '0')}`,
       title: `Review document ${index + 1}`, state: index < 4 ? 'completed' : 'planned', required_dependencies: [],
+      goals: ['document-review'], goal_titles: [{ id: 'document-review', title: 'Project document review' }],
     }));
     response.items[4].state = 'in_progress';
     response.items[4].last_event_at = response.read_at_unix_ms;
@@ -36,6 +37,8 @@ describe('Team projection into the shared project maps', () => {
     container.innerHTML = rendered.body;
     const text = container.textContent ?? '';
     expect(text).toContain('Review document');
+    expect(text).toContain('Project document review');
+    expect(text).not.toMatch(/Work group \d|工作组 \d/);
     expect(text.match(/INTERNAL|internal-session|internal-claim|display configuration|展示配置|传递约简|revision|node\./)?.[0]).toBeUndefined();
     expect(text).not.toMatch(/WORK \d|INTERNAL \d/);
     expect(container.querySelector('[data-pm-action="copy-command"]')).toBeNull();

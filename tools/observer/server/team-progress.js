@@ -29,7 +29,7 @@ function mapObservation(data) {
   return {
     observation_available: true, observed_at_ms: data.observed_at_unix_ms,
     last_activity_at_ms: data.last_activity_at_unix_ms,
-    owner_person: owner.owner_name || owner.owner_person_id || null,
+    owner_person: owner.owner_name || owner.owner_person_id || owner.historical || null,
     claimant: claim?.state === 'active' && claim.lease_live ? session.actor_name || session.actor_id || null : null,
     last_participant: participant.actor_name || participant.actor_id || null,
     last_participation: data.last_participation || null,

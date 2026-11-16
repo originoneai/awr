@@ -136,6 +136,13 @@
     if (!isObject(overview)) throw new ConfigError('overview must be an object');
     if (overview.lanes === undefined) {
       cfg.overview = deriveLanes(keys);
+      for (const lane of cfg.overview.lanes) {
+        if (!lane.key_regex) continue;
+        const members = snapshot.nodes.filter((node) => new RegExp(lane.key_regex).test(node.key));
+        const common = (members[0]?.goals || []).filter((goal) => members.every((node) => (node.goals || []).includes(goal)));
+        const goal = common.map((id) => snapshot.goals.find((entry) => entry.id === id)).find((entry) => entry?.title);
+        if (goal) lane.name = goal.title;
+      }
     } else {
       if (!Array.isArray(overview.lanes) || overview.lanes.length < 1 || overview.lanes.length > 12) {
         throw new ConfigError('overview.lanes must list 1 to 12 lanes');

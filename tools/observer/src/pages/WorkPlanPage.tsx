@@ -138,7 +138,7 @@ export function WorkPlanPage({ project }: { project: string }) {
         if (row.kind !== 'work') return null;
         const query = snapshots[row.index];
         const owner = deriveOwner({
-          rowOwner: row.work.owner_person ?? row.work.agent,
+          rowOwner: row.work.owner_person,
           snapshot: query?.data?.result.data,
           readState: readStateOf(query),
         });

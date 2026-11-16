@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Alert, Button, Descriptions, Empty, Flex, List, Space, Spin, Typography } from 'antd';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { readsAsName } from '../core/observation';
+import { deriveOwner, ownerCellText, readsAsName } from '../core/observation';
 import { humanText } from '../i18n/human-language';
 import { hasObservationValue } from '../core/observation/values';
 import { isAuthError } from '../lib/api';
@@ -36,7 +36,9 @@ export function WorkResponsibility({ project, workId, snapshot }: { project: str
   }
   const reservation = claim === null ? 'unreserved' : claim?.lease_live === true ? 'reserved'
     : claim?.lease_live === false ? 'reservationEnded' : 'unavailable';
-  const owner = !responsibility ? t('collaboration.unavailable') : responsibility.owner === null
+  const retainedOwner = deriveOwner({ rowOwner: null, snapshot, readState: 'ready' });
+  const owner = retainedOwner.source === 'historical' ? ownerCellText(retainedOwner, { language: i18n.language })
+    : !responsibility ? t('collaboration.unavailable') : responsibility.owner === null
     ? t('collaboration.noOwner') : name(responsibility.owner_name);
   const executor = !responsibility ? t('collaboration.unavailable') : responsibility.current_executor === null
     ? t('collaboration.noExecutor') : name(responsibility.executor_person_name);

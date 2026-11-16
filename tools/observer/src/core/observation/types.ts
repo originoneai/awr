@@ -211,7 +211,7 @@ export interface WorkStateSnapshot {
     /** The reporter's own checkpoint; `next_action` is what the reporter says comes next. */
     progress?: { next_action?: unknown; phase?: unknown; reported_at_unix_ms?: unknown; stale?: unknown } | null;
     /** Who the service holds responsible for this work, when it says. */
-    responsibility?: { owner_name?: unknown; owner?: unknown } | null;
+    responsibility?: { owner_name?: unknown; owner?: unknown; version?: string; historical?: unknown } | null;
     /** What the service measured about this work's collaboration (integration, review). */
     collaboration?: { integration?: unknown; review?: unknown } | null;
     /** The service's own record of the last execution, when the observation carries one. */

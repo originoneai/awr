@@ -1,6 +1,6 @@
 import { ACTION_VOCABULARY, ARTIFACT_VOCABULARY, CHECK_VOCABULARY, FORBIDDEN_VISIBLE_PATTERNS, STATUS_LABELS, humanText } from '../../i18n/human-language';
 import { STATUS_FIELDS, statementText } from './values';
-import { readableNarrative } from './readable';
+import { containsDiagnosticContent, readableNarrative } from './readable';
 import { PROJECT_DOCUMENT_STATUSES } from './types';
 import type { ActionWordsResult, ActorAliasEntry, ActorAliasResult, ArtifactLabelResult, CheckLabelResult, DocumentLabelResult, WorkLabelResult } from './types';
 
@@ -38,8 +38,12 @@ export function actorAliases(
  */
 export function workLabel(workId: string | null | undefined, options: { language: string; fallback?: string }): WorkLabelResult {
   if (!present(workId)) return { kind: 'none', text: humanText('workNone', options.language), technical: { raw: null } };
-  const opaque = FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(workId))
-    || readableNarrative(workId, options.language) !== workId;
+  // Titles belong to the project. Technical subject matter is legitimate in a
+  // software task name, while identifiers and diagnostic payloads stay private.
+  const opaque = FORBIDDEN_VISIBLE_PATTERNS.some(({ id, pattern }) =>
+    !['engineering_word', 'engineering_copy', 'not_measured'].includes(id) && pattern.test(workId))
+    || /\bAWR-[A-Z0-9]+(?:-[A-Z0-9]+)+\b/.test(workId)
+    || containsDiagnosticContent(workId);
   if (opaque) return { kind: 'unnamed', text: options.fallback ?? humanText('workUnnamed', options.language), technical: { raw: workId } };
   return { kind: 'named', text: workId, technical: { raw: workId } };
 }

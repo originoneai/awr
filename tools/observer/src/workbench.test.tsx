@@ -251,6 +251,17 @@ describe('My work sourced rows and navigation', () => {
     expect(defaultVisibleText(resume)).not.toContain('W1');
   });
 
+  it('preserves a resumed title when that work is outside the current discovery page', async () => {
+    setupWorkbench({ next: makeNext([], [{
+      work_id: '01M69PHCX2R0Y5M588J945JDEH', title: 'OAuth connection recovery',
+      session_id: 'previous-session', session_version: '1',
+      next_query: { op: 'work.observe', protocol_version: 1, work_id: '01M69PHCX2R0Y5M588J945JDEH', workstream_id: 'WS1' },
+    }]) });
+    const resume = await screen.findByTestId('workbench-resume');
+    expect(within(resume).getByRole('link', { name: 'OAuth connection recovery' })).toBeTruthy();
+    expect(defaultVisibleText(resume)).not.toContain('某项工作');
+  });
+
   it('says the same words in English', async () => {
     await act(async () => { await i18n.changeLanguage('en-US'); });
     setupWorkbench({
