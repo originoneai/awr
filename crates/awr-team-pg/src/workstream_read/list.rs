@@ -2,6 +2,37 @@
 use super::*;
 use std::collections::BTreeMap;
 
+const LIST_PAGE_QUERY: &str = "WITH page AS MATERIALIZED (
+        SELECT c.work_id,c.title,c.contract_hash,c.tenant_id,c.project_id,c.scope_id,
+          o.workstream_id,o.ownership_version
+        FROM awr_team.work_contracts c
+        JOIN awr_team.workstream_snapshot_ownership o USING(tenant_id,project_id,snapshot_id,scope_id,work_id)
+        WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.snapshot_id=$3 AND o.workstream_id=$4
+          AND c.work_id>$5 AND strpos(lower(c.title),lower($6))>0 ORDER BY c.work_id LIMIT $7
+        )
+        SELECT c.work_id,c.title,c.contract_hash,c.ownership_version,
+        r.state,t.owner_person_id,p.display_name,s.id,s.client_info_json,
+        (extract(epoch FROM statement_timestamp())*1000)::bigint
+        FROM page c
+        LEFT JOIN awr_team.work_runtime r USING(tenant_id,project_id,scope_id,work_id)
+        LEFT JOIN awr_team.task_responsibilities t
+          ON (t.tenant_id,t.project_id,t.work_id)=(c.tenant_id,c.project_id,c.work_id)
+        LEFT JOIN awr_team.persons p
+          ON (p.tenant_id,p.project_id,p.id)=(t.tenant_id,t.project_id,t.owner_person_id)
+        LEFT JOIN LATERAL (
+          SELECT s.id,s.client_info_json FROM awr_team.sessions s
+          LEFT JOIN awr_team.checkpoints cp
+            ON (cp.tenant_id,cp.project_id,cp.session_id,cp.id)=(s.tenant_id,s.project_id,s.id,s.latest_checkpoint_id)
+          WHERE s.tenant_id=c.tenant_id AND s.project_id=c.project_id AND s.scope_id=c.scope_id
+            AND s.work_id=c.work_id AND s.workstream_id=c.workstream_id AND s.ownership_version=c.ownership_version
+          ORDER BY EXISTS(SELECT 1 FROM awr_team.claims cl
+            WHERE (cl.tenant_id,cl.project_id,cl.session_id,cl.work_id,cl.scope_id,cl.workstream_id,cl.ownership_version)
+              =(s.tenant_id,s.project_id,s.id,s.work_id,s.scope_id,s.workstream_id,s.ownership_version)
+              AND cl.coordinator_epoch=$8 AND cl.state='active' AND cl.expires_at>clock_timestamp()) DESC,
+            (s.state='active') DESC,cp.created_at DESC NULLS LAST,s.id DESC LIMIT 1
+        ) s ON true
+        ORDER BY c.work_id";
+
 fn field(value: Value, at: i64, missing: &str) -> Value {
     if value.is_null() {
         json!({"value":null,"as_of_unix_ms":null,"reason":missing})
@@ -27,33 +58,23 @@ pub(super) async fn read(
         WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.snapshot_id=$3 AND o.workstream_id=$4
           AND strpos(lower(c.title),lower($5))>0",
         &[&tenant,&project,&auth.snapshot,&stream,&term]).await?.get(0);
-    // Lateral selection is part of this single statement, never one client round trip per item.
-    // Select the same current ownership/session as observation::read_for_prepare.
-    let rows = tx.query("SELECT c.work_id,c.title,c.contract_hash,o.ownership_version,
-        r.state,t.owner_person_id,p.display_name,s.id,s.client_info_json,
-        (extract(epoch FROM statement_timestamp())*1000)::bigint
-        FROM awr_team.work_contracts c
-        JOIN awr_team.workstream_snapshot_ownership o USING(tenant_id,project_id,snapshot_id,scope_id,work_id)
-        LEFT JOIN awr_team.work_runtime r USING(tenant_id,project_id,scope_id,work_id)
-        LEFT JOIN awr_team.task_responsibilities t
-          ON (t.tenant_id,t.project_id,t.work_id)=(c.tenant_id,c.project_id,c.work_id)
-        LEFT JOIN awr_team.persons p
-          ON (p.tenant_id,p.project_id,p.id)=(t.tenant_id,t.project_id,t.owner_person_id)
-        LEFT JOIN LATERAL (
-          SELECT s.id,s.client_info_json FROM awr_team.sessions s
-          LEFT JOIN awr_team.checkpoints cp
-            ON (cp.tenant_id,cp.project_id,cp.session_id,cp.id)=(s.tenant_id,s.project_id,s.id,s.latest_checkpoint_id)
-          WHERE s.tenant_id=c.tenant_id AND s.project_id=c.project_id AND s.scope_id=c.scope_id
-            AND s.work_id=c.work_id AND s.workstream_id=o.workstream_id AND s.ownership_version=o.ownership_version
-          ORDER BY EXISTS(SELECT 1 FROM awr_team.claims cl
-            WHERE (cl.tenant_id,cl.project_id,cl.session_id,cl.work_id,cl.scope_id,cl.workstream_id,cl.ownership_version)
-              =(s.tenant_id,s.project_id,s.id,s.work_id,s.scope_id,s.workstream_id,s.ownership_version)
-              AND cl.coordinator_epoch=$8 AND cl.state='active' AND cl.expires_at>clock_timestamp()) DESC,
-            (s.state='active') DESC,cp.created_at DESC NULLS LAST,s.id DESC LIMIT 1
-        ) s ON true
-        WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.snapshot_id=$3 AND o.workstream_id=$4
-          AND c.work_id>$5 AND strpos(lower(c.title),lower($6))>0 ORDER BY c.work_id LIMIT $7",
-        &[&tenant,&project,&auth.snapshot,&stream,&cursor.key,&term,&(limit+1),&auth.epoch]).await?;
+    // Bound the page before metadata joins, including the look-ahead row.
+    // Lateral selection retains the same ownership/session as observation::read_for_prepare.
+    let rows = tx
+        .query(
+            LIST_PAGE_QUERY,
+            &[
+                &tenant,
+                &project,
+                &auth.snapshot,
+                &stream,
+                &cursor.key,
+                &term,
+                &(limit + 1),
+                &auth.epoch,
+            ],
+        )
+        .await?;
     let bindings: Vec<(String, i64)> = rows
         .iter()
         .take(limit as usize)
@@ -118,4 +139,28 @@ pub(super) async fn read(
         Value::Null
     };
     Ok(json!({"items":items,"total":total,"next_cursor":next}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LIST_PAGE_QUERY;
+
+    #[test]
+    fn list_page_is_bounded_before_metadata_joins() {
+        let normalized = LIST_PAGE_QUERY
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let (page, metadata) = normalized
+            .split_once(") SELECT c.work_id")
+            .expect("The selected page must be an explicit query boundary");
+        assert!(page.starts_with("WITH page AS MATERIALIZED ("));
+        assert!(page.contains("c.work_id>$5"));
+        assert!(page.contains("strpos(lower(c.title),lower($6))>0"));
+        assert!(page.contains("ORDER BY c.work_id LIMIT $7"));
+        assert!(!page.contains("LEFT JOIN"));
+        assert!(metadata.contains("FROM page c"));
+        assert!(metadata.contains("LEFT JOIN LATERAL"));
+        assert!(!metadata.contains("LIMIT $7"));
+    }
 }
