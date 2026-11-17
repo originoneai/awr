@@ -7,11 +7,12 @@
 //!
 //! A finding stops the intake only in a document the mapping being applied lists: a source found by its
 //! conventional name, README.md and AGENTS.md, a file under a mapped directory, or a file a reviewed draft lists.
-//! Any other document is listed by path and size without a fingerprint, and one observation of the draft names it
-//! with the line and category of its finding. Its content reaches no output and nothing under `.awr/`.
+//! Any other document is listed by path and size without a fingerprint; one observation of the draft and the
+//! `refused_documents` field of the JSON preview name it with the line and category of its finding. Its content
+//! reaches no output and nothing under `.awr/`.
 
 use awr_core::Id;
-use serde_json::Value;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
@@ -131,6 +132,11 @@ fn listed<'a>(draft: &'a Value, path: &str) -> &'a Value {
         .iter()
         .find(|f| f["path"] == path)
         .unwrap_or_else(|| panic!("{path} is not listed"))
+}
+
+/// The `refused_documents` entry the JSON preview gives for one refused document.
+fn refused_place(path: &str, line: u64, category: &str) -> Value {
+    json!({ "path": path, "line": line, "category": category })
 }
 
 /// The observation of a draft about refused documents the intake does not map, if any.
@@ -265,6 +271,19 @@ fn a_finding_in_a_document_the_intake_does_not_map_is_listed_and_the_intake_goes
             && observation.contains("docs/guide.md:4 (labelled_value)"),
         "{observation}"
     );
+    let refused_documents = &preview["refused_documents"];
+    assert_eq!(refused_documents["total"], 1, "{preview}");
+    assert_eq!(
+        refused_documents["documents"],
+        json!([refused_place("docs/guide.md", 4, "labelled_value")])
+    );
+    assert!(
+        refused_documents["meaning"]
+            .as_str()
+            .unwrap()
+            .contains("not fingerprinted"),
+        "{refused_documents}"
+    );
     assert!(!all.contains("hunter2") && !all.contains(&digest), "{all}");
 
     let (_, all) = p.ok(&["init", "--accept"]);
@@ -296,6 +315,13 @@ fn a_reviewed_draft_that_maps_a_refused_document_stops_at_that_file() {
     let draft = draft_file("reviewed");
     let draft_arg = draft.to_string_lossy().into_owned();
     p.ok(&["init", "--write-draft", &draft_arg]);
+    // Unchanged, the draft goes on and its preview names the document it leaves out.
+    let (preview, _) = p.ok(&["init", "--from-draft", &draft_arg]);
+    assert_eq!(
+        preview["refused_documents"]["documents"],
+        json!([refused_place("docs/guide.md", 4, "labelled_value")]),
+        "{preview}"
+    );
 
     // The reviewer maps the listed document as one more supporting source.
     let mut value: Value = serde_json::from_slice(&fs::read(&draft).unwrap()).unwrap();
@@ -356,6 +382,7 @@ fn redacting_a_listed_document_after_the_draft_asks_for_a_new_review() {
     let (preview, _) = p.ok(&["init"]);
     assert!(listed(&preview["draft"], "docs/guide.md")["sha256"].is_string());
     assert_eq!(refused_observation(&preview["draft"]), None);
+    assert!(preview.get("refused_documents").is_none(), "{preview}");
     let _ = fs::remove_file(draft);
 }
 
@@ -366,28 +393,94 @@ fn a_project_without_findings_gets_no_observation_about_them() {
     p.write("docs/guide.md", "# Guide\n\nnothing here\n");
     let (preview, _) = p.ok(&["init"]);
     assert_eq!(refused_observation(&preview["draft"]), None);
+    assert!(preview.get("refused_documents").is_none(), "{preview}");
     for file in preview["draft"]["inventory"].as_array().unwrap() {
         assert!(file["sha256"].is_string(), "{file}");
     }
 }
 
 #[test]
-fn the_observation_names_ten_documents_and_counts_all_of_them() {
+fn the_preview_names_ten_refused_documents_and_counts_all_of_them() {
     let p = Project::new("observed");
     p.write("README.md", "# P\n");
     for n in 0..12 {
         p.write(&format!("docs/note-{n:02}.md"), &secret(&n.to_string()));
     }
     let (preview, all) = p.ok(&["init"]);
+    let refused = &preview["refused_documents"];
+    assert_eq!(refused["total"], 12, "{refused}");
+    let documents = refused["documents"].as_array().unwrap();
+    assert_eq!(documents.len(), 10, "{refused}");
+    assert_eq!(
+        documents[9],
+        refused_place("docs/note-09.md", 4, "labelled_value")
+    );
     let observation = refused_observation(&preview["draft"]).unwrap();
     assert!(
-        observation.starts_with("12 documents hold content the secret boundary refuses"),
+        observation.starts_with("12 documents hold content the secret boundary refuses")
+            && observation.contains("and 2 more."),
         "{observation}"
     );
-    assert!(
-        observation.contains("docs/note-09.md:4 (labelled_value), and 2 more."),
-        "{observation}"
-    );
-    assert!(!observation.contains("docs/note-10.md"), "{observation}");
     assert!(!all.contains("hunter2"));
+}
+
+#[test]
+fn a_document_left_out_of_a_manifest_and_mapped_in_review_is_refused_as_a_source() {
+    // With a manifest the intake never reads the documents the manifest leaves out, so none of them is refused or
+    // named. A reviewer who maps one anyway gets no secret boundary stop from the inventory; the preview reads the
+    // new source and reports it as a source issue, and accepting the draft is refused.
+    let p = Project::new("manifest");
+    p.write("PLAN.md", "# Plan\n\n## Goals\n\n- Ship it\n");
+    let refused = secret("a");
+    p.write("docs/guide.md", &refused);
+    let digest = sha256(&refused);
+    let manifest = std::env::temp_dir().join(format!("awr-findings-manifest-{}.toml", Id::new()));
+    fs::write(
+        &manifest,
+        "[project]\nname = \"p\"\nauthority_mode = \"source_first\"\n\n[[sources]]\ndomain = \"plan\"\nrole = \"primary\"\npath = \"PLAN.md\"\nadapter = \"markdown-heading-v1\"\n",
+    )
+    .unwrap();
+    let draft = draft_file("manifest");
+    let draft_arg = draft.to_string_lossy().into_owned();
+    let (preview, mut all) = p.ok(&[
+        "init",
+        "--manifest",
+        &manifest.to_string_lossy(),
+        "--write-draft",
+        &draft_arg,
+    ]);
+    assert!(preview.get("refused_documents").is_none(), "{preview}");
+    assert_eq!(refused_observation(&preview["draft"]), None);
+    assert_eq!(
+        listed(&preview["draft"], "docs/guide.md")["sha256"],
+        Value::Null
+    );
+
+    let mut value: Value = serde_json::from_slice(&fs::read(&draft).unwrap()).unwrap();
+    let sources = value["authority_mapping"]["sources"]
+        .as_array_mut()
+        .unwrap();
+    let mut guide = sources[0].clone();
+    guide["path"] = Value::String("docs/guide.md".into());
+    guide["role"] = Value::String("supporting".into());
+    sources.push(guide);
+    fs::write(&draft, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+
+    let (preview, shown) = p.ok(&["init", "--from-draft", &draft_arg]);
+    all.push_str(&shown);
+    assert_eq!(preview["preview"]["can_apply"], false, "{preview}");
+    let issues = preview["preview"]["source_issues"].as_array().unwrap();
+    assert!(
+        issues
+            .iter()
+            .any(|issue| issue["source"]["path"] == "docs/guide.md"),
+        "{issues:?}"
+    );
+    let (report, shown) = p.fails(&["init", "--from-draft", &draft_arg, "--accept"]);
+    all.push_str(&shown);
+    assert_eq!(report["code"], "SourceStale", "{report}");
+    assert!(!p.0.join(".awr").exists(), "nothing was initialized");
+    assert!(!all.contains("hunter2") && !all.contains(&digest), "{all}");
+    let _ = fs::remove_file(draft);
+    let _ = fs::remove_file(manifest);
 }

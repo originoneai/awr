@@ -68,6 +68,18 @@ impl Project {
         self.run(&args)
     }
 
+    /// A takeover as an owner runs it, with plain output.
+    fn takeover_plain(&self) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_awr"))
+            .arg("--project")
+            .arg(&self.root)
+            .arg("takeover")
+            .arg("--state-dir")
+            .arg(&self.state)
+            .output()
+            .unwrap()
+    }
+
     /// Every file under the project except the given top-level names, by relative path.
     fn snapshot(&self, skip: &[&str]) -> BTreeMap<String, Vec<u8>> {
         fn walk(dir: &Path, base: &Path, skip: &[&str], out: &mut BTreeMap<String, Vec<u8>>) {
@@ -234,6 +246,10 @@ fn a_readme_only_project_is_taken_over_without_touching_its_files() {
     assert_eq!(receipt["git"]["committed"], false);
     assert_eq!(receipt["git"]["pushed"], false);
     assert_eq!(receipt["reviewed"]["by_reviewer"], false);
+    assert!(
+        receipt.get("refused_documents").is_none(),
+        "no document was refused: {receipt}"
+    );
     assert_eq!(
         receipt["awaiting_confirmation"][0]["key"], "intake-goal",
         "the generated goal waits for its owner"
@@ -885,21 +901,56 @@ fn a_credential_in_a_document_the_takeover_does_not_map_is_listed_and_the_run_co
     let digest = format!("{:x}", Sha256::digest(DATABASE_NOTES.as_bytes()));
     let before = p.snapshot(&[".awr", ".gitignore"]);
 
-    let out = p.takeover(&[]);
+    let out = p.takeover_plain();
     assert!(
         out.status.success(),
         "{}\n{}",
         text(&out.stdout),
         text(&out.stderr)
     );
-    let done = outcome(&out);
-    assert_eq!(done["outcome"], "completed");
+    // The owner learns that a document was left out, and where it is listed.
+    assert!(
+        text(&out.stdout).contains("left 1 document(s) unmapped and unfingerprinted because the secret boundary refuses their content; .awr/intake/inventory.json lists them"),
+        "{}",
+        text(&out.stdout)
+    );
+    let done = p.ok(&[
+        "takeover",
+        "--state-dir",
+        &p.state.to_string_lossy(),
+        "status",
+    ]);
+    assert_eq!(done["record"]["status"], "completed");
     assert_eq!(
         p.snapshot(&[".awr", ".gitignore"]),
         before,
         "the project's own files stay byte-identical"
     );
     let receipt = p.receipt();
+    // The record and the receipt name the document and the kind of content, never the content.
+    let steps = &done["record"]["steps"];
+    for refused in [
+        &steps["preview"]["result"]["refused_documents"],
+        &steps["accept"]["result"]["refused_documents"],
+        &receipt["refused_documents"],
+        &done["receipt"]["refused_documents"],
+    ] {
+        assert_eq!(refused["total"], 1, "{refused}");
+        assert_eq!(
+            refused["documents"],
+            json!([{ "path": "docs/database.md", "line": 3, "category": "credential" }]),
+        );
+        assert!(
+            refused["meaning"]
+                .as_str()
+                .is_some_and(|m| m.contains("not fingerprinted")),
+            "{refused}"
+        );
+    }
+    assert_eq!(
+        receipt["refused_documents"]["inventory"],
+        ".awr/intake/inventory.json"
+    );
     let sources: Vec<&str> = receipt["mapped"]["sources"]
         .as_array()
         .unwrap()
@@ -938,6 +989,7 @@ fn a_credential_in_a_document_the_takeover_does_not_map_is_listed_and_the_run_co
     for (label, shown) in [
         ("stdout", text(&out.stdout)),
         ("stderr", text(&out.stderr)),
+        ("status", done.to_string()),
         ("state", p.state_text()),
     ] {
         assert!(
@@ -996,6 +1048,12 @@ fn a_reviewed_answer_that_maps_a_refused_document_stops_at_the_secret_boundary()
     assert_eq!(stop["step"], "accept");
     assert_eq!(stop["detail"]["path"], "docs/database.md");
     assert_eq!(stop["detail"]["line"], 3);
+    // The file is in the reviewed mapping, so leaving it out of a manifest is not the way on.
+    let message = stop["message"].as_str().unwrap();
+    assert!(
+        message.ends_with(" The reviewed draft maps this file: redact the value, or leave the file out of the reviewed mapping."),
+        "{message}"
+    );
     for (label, shown) in [
         ("stdout", text(&out.stdout)),
         ("stderr", text(&out.stderr)),

@@ -250,17 +250,29 @@ fn manifest_scope(manifest: &Manifest) -> Vec<String> {
 }
 /// A document the secret boundary refused while the intake listed the project.
 #[derive(Debug)]
-struct Finding {
+struct InventoryFinding {
     /// The project-relative path, as the inventory lists it.
     path: String,
     error: Error,
+}
+impl InventoryFinding {
+    /// Where the finding is and what kind of content it is, never the content: `path`, `line` (null when the
+    /// finding has none) and `category`.
+    fn place(&self) -> Value {
+        let details = self.error.report().details.unwrap_or_default();
+        json!({
+            "path": self.path,
+            "line": details["location"]["line"],
+            "category": details["category"],
+        })
+    }
 }
 /// The files of a project as the intake lists them, and the documents among them that the secret boundary refused.
 /// A refused document is listed by path and size only; whether it stops the intake depends on the mapping being
 /// applied (see [`refuse_mapped`]).
 struct Inventory {
     files: Vec<FileFact>,
-    findings: Vec<Finding>,
+    findings: Vec<InventoryFinding>,
 }
 fn inventory(root: &Path, scope: Option<&[String]>) -> Result<Inventory> {
     let mut skipped = vec![];
@@ -277,7 +289,7 @@ fn inventory_with_skips(
         depth: usize,
         out: &mut Vec<FileFact>,
         skipped: &mut Vec<String>,
-        findings: &mut Vec<Finding>,
+        findings: &mut Vec<InventoryFinding>,
         scope: Option<&[String]>,
     ) -> Result<()> {
         if depth > DEPTH_LIMIT {
@@ -340,7 +352,7 @@ fn inventory_with_skips(
                     {
                         Ok(content) => Some(format!("{:x}", Sha256::digest(content))),
                         Err(error @ Error::SensitiveSource { .. }) => {
-                            findings.push(Finding {
+                            findings.push(InventoryFinding {
                                 path: relative.clone(),
                                 error,
                             });
@@ -370,7 +382,10 @@ fn inventory_with_skips(
 /// so the stop is the one an owner has always seen: a single finding as it is, several summarized by
 /// [`all_findings`]. A refused document outside the mapping is not read as a source; it is returned so that the
 /// draft can say where it is, never what it holds.
-fn refuse_mapped(findings: Vec<Finding>, mapped: &[String]) -> Result<Vec<Finding>> {
+fn refuse_mapped(
+    findings: Vec<InventoryFinding>,
+    mapped: &[String],
+) -> Result<Vec<InventoryFinding>> {
     let (mapped, unmapped): (Vec<_>, Vec<_>) = findings
         .into_iter()
         .partition(|finding| in_scope(&finding.path, Some(mapped)));
@@ -381,12 +396,25 @@ fn refuse_mapped(findings: Vec<Finding>, mapped: &[String]) -> Result<Vec<Findin
     }
     Ok(unmapped)
 }
-/// Refused documents outside the mapping named in the draft's observation; the count is always exact.
+/// Check a reviewed draft against the project as it is now. A refused document its mapping includes stops the intake
+/// before the fingerprint is compared, so that a reviewer who maps one learns which file to redact; any other change
+/// of the inventory or the Git state is a `SourceConflict` with `changed` as its message. Returns the refused
+/// documents outside the mapping.
+fn recheck(root: &Path, draft: &IntakeDraft, changed: &str) -> Result<Vec<InventoryFinding>> {
+    let Inventory { files, findings } = inventory(root, draft.inventory_scope.as_deref())?;
+    let unmapped = refuse_mapped(findings, &manifest_scope(&draft.authority_mapping))?;
+    if draft.inventory_fingerprint != fingerprint(&files, &git(root))? {
+        return Err(Error::SourceConflict(changed.into()));
+    }
+    Ok(unmapped)
+}
+/// Refused documents outside the mapping named in the draft's observation and in the JSON preview; the count is
+/// always exact.
 const MAX_OBSERVED_FINDINGS: usize = 10;
 
 /// The observation for refused documents outside the mapping: the path of each, with the line and category of its
 /// finding when known, and never any of its content.
-fn unmapped_observation(findings: &[Finding]) -> Option<String> {
+fn unmapped_observation(findings: &[InventoryFinding]) -> Option<String> {
     if findings.is_empty() {
         return None;
     }
@@ -394,15 +422,15 @@ fn unmapped_observation(findings: &[Finding]) -> Option<String> {
         .iter()
         .take(MAX_OBSERVED_FINDINGS)
         .map(|finding| {
-            let details = finding.error.report().details.unwrap_or_default();
-            let place = match details["location"]["line"].as_u64() {
-                Some(line) => format!("{}:{line}", finding.path),
-                None => finding.path.clone(),
-            };
-            match details["category"].as_str() {
-                Some(category) => format!("{place} ({category})"),
-                None => place,
+            let place = finding.place();
+            let mut text = finding.path.clone();
+            if let Some(line) = place["line"].as_u64() {
+                text.push_str(&format!(":{line}"));
             }
+            if let Some(category) = place["category"].as_str() {
+                text.push_str(&format!(" ({category})"));
+            }
+            text
         })
         .collect::<Vec<_>>()
         .join(", ");
@@ -422,6 +450,23 @@ fn unmapped_observation(findings: &[Finding]) -> Option<String> {
             findings.len()
         )
     })
+}
+/// The same refused documents for the JSON preview, so that a host does not have to parse the observation: the exact
+/// `total`, the place of the first ones (see [`InventoryFinding::place`]) and what being listed means. `None` when
+/// there are none, so that the preview of a project without such documents is unchanged.
+fn refused_documents(findings: &[InventoryFinding]) -> Option<Value> {
+    if findings.is_empty() {
+        return None;
+    }
+    Some(json!({
+        "total": findings.len(),
+        "documents": findings
+            .iter()
+            .take(MAX_OBSERVED_FINDINGS)
+            .map(InventoryFinding::place)
+            .collect::<Vec<_>>(),
+        "meaning": "Documents holding content the secret boundary refuses that the mapping does not include. The inventory lists them by path and size; they were not fingerprinted and are not read as sources. Redact one before mapping it.",
+    }))
 }
 fn git(root: &Path) -> Value {
     let run = |args: &[&str]| {
@@ -513,8 +558,13 @@ fn supporting_defaults(
 /// Build the intake draft. With `explicit` (a manifest the owner wrote) the draft maps exactly its sources: nothing
 /// is discovered, no conventional file names are added and README.md/AGENTS.md are not mapped on their own, so a
 /// file the owner left out is not read again. Missing goal and ledger sources are still proposed under
-/// `.awr/intake/`, as for any other draft.
-fn draft(root: &Path, goal: Option<&str>, explicit: Option<Manifest>) -> Result<IntakeDraft> {
+/// `.awr/intake/`, as for any other draft. Also returns the documents the secret boundary refused that the draft does
+/// not map.
+fn draft(
+    root: &Path,
+    goal: Option<&str>,
+    explicit: Option<Manifest>,
+) -> Result<(IntakeDraft, Vec<InventoryFinding>)> {
     let mut skipped = vec![];
     let scope = explicit.as_ref().map(manifest_scope);
     let Inventory { files, findings } = inventory_with_skips(root, &mut skipped, scope.as_deref())?;
@@ -637,7 +687,6 @@ fn draft(root: &Path, goal: Option<&str>, explicit: Option<Manifest>) -> Result<
             .map(String::from),
     );
     let unmapped = refuse_mapped(findings, &mapped)?;
-    observations.extend(unmapped_observation(&unmapped));
     // Goals can live in a primary YAML ledger; do not introduce a second authority just for layout.
     let mut embedded_goals = false;
     for spec in mapping
@@ -716,12 +765,9 @@ fn draft(root: &Path, goal: Option<&str>, explicit: Option<Manifest>) -> Result<
             .sources
             .push(source("plan", name, "markdown-heading-v1", false));
     }
-    debug_assert!(
-        unmapped
-            .iter()
-            .all(|finding| !in_scope(&finding.path, Some(&manifest_scope(&mapping)))),
-        "the draft maps a document the secret boundary refused"
-    );
+    // The mapping is final: a refused document it includes stops the draft, even one the prediction above missed.
+    let unmapped = refuse_mapped(unmapped, &manifest_scope(&mapping))?;
+    observations.extend(unmapped_observation(&unmapped));
     if owner_chose {
         observations.push("The source list is the supplied manifest; other project files were not mapped or read as sources.".into());
     }
@@ -732,7 +778,7 @@ fn draft(root: &Path, goal: Option<&str>, explicit: Option<Manifest>) -> Result<
     {
         observations.push("The existing Markdown ledger remains authoritative and read-only in AWR; source edits stay in that file and are reindexed.".into());
     }
-    Ok(IntakeDraft {
+    let draft = IntakeDraft {
         schema_version: 1,
         project_root: root.to_string_lossy().into_owned(),
         inventory_fingerprint: fingerprint(&files, &git)?,
@@ -744,7 +790,8 @@ fn draft(root: &Path, goal: Option<&str>, explicit: Option<Manifest>) -> Result<
         gaps,
         ambiguous_domains,
         observations,
-    })
+    };
+    Ok((draft, unmapped))
 }
 
 pub fn run(root: &Path, args: &InitArgs, json_output: bool) -> Result<()> {
@@ -783,27 +830,20 @@ pub fn run(root: &Path, args: &InitArgs, json_output: bool) -> Result<()> {
             args.expected_preview.as_deref(),
         );
     }
-    let mut candidate = if let Some(path) = &args.from_draft {
+    let (mut candidate, refused) = if let Some(path) = &args.from_draft {
         let bytes = awr_source::read_source_capped(&path.canonicalize()?, 4 * 1024 * 1024)?;
         let value: IntakeDraft = serde_json::from_slice(&bytes)
             .map_err(|_| Error::InvalidInput("invalid intake draft JSON".into()))?;
-        let stale = || {
-            Error::SourceConflict("project inventory changed or draft belongs to another directory; regenerate and review the intake draft".into())
-        };
+        let stale = "project inventory changed or draft belongs to another directory; regenerate and review the intake draft";
         if value.schema_version != 1 || value.project_root != root.to_string_lossy() {
-            return Err(stale());
+            return Err(Error::SourceConflict(stale.into()));
         }
-        // The reviewed mapping decides which refused documents stop the intake. They are checked before the
-        // fingerprint, so that a reviewer who maps one learns which file to redact.
-        let Inventory { files, findings } = inventory(&root, value.inventory_scope.as_deref())?;
-        refuse_mapped(findings, &manifest_scope(&value.authority_mapping))?;
-        if value.inventory_fingerprint != fingerprint(&files, &git(&root))? {
-            return Err(stale());
-        }
-        value
+        // The reviewed mapping decides which refused documents stop the intake.
+        let refused = recheck(&root, &value, stale)?;
+        (value, refused)
     } else {
         match draft(&root, args.goal.as_deref(), manifest) {
-            Ok(draft) => draft,
+            Ok(built) => built,
             Err(error) => {
                 if let Some(path) = &args.write_draft {
                     if error
@@ -921,12 +961,11 @@ pub fn run(root: &Path, args: &InitArgs, json_output: bool) -> Result<()> {
         } else {
             "standard"
         };
-        println!(
-            "{}",
-            serde_json::to_string_pretty(
-                &json!({"status":"preview","requires_accept":true,"preview":preview,"draft":candidate,"organization":organization,"ambiguous_domains":candidate.ambiguous_domains,"authority_mapping":if candidate.ambiguous_domains.is_empty(){Some(&candidate.authority_mapping)}else{None},"next_action":"Review the draft and organization actions. Use init --accept, or edit an external --write-draft before init --from-draft <file> --accept. Then run awr intake inspect."})
-            )?
-        );
+        let mut output = json!({"status":"preview","requires_accept":true,"preview":preview,"draft":candidate,"organization":organization,"ambiguous_domains":candidate.ambiguous_domains,"authority_mapping":if candidate.ambiguous_domains.is_empty(){Some(&candidate.authority_mapping)}else{None},"next_action":"Review the draft and organization actions. Use init --accept, or edit an external --write-draft before init --from-draft <file> --accept. Then run awr intake inspect."});
+        if let Some(refused) = refused_documents(&refused) {
+            output["refused_documents"] = refused;
+        }
+        println!("{}", serde_json::to_string_pretty(&output)?);
         return Ok(());
     }
     if !candidate.ambiguous_domains.is_empty() {
@@ -979,13 +1018,11 @@ pub fn run(root: &Path, args: &InitArgs, json_output: bool) -> Result<()> {
             .map_err(|e| Error::InvalidInput(e.to_string()))?,
     )?;
     // Recheck after staging, before making the intake authoritative.
-    let Inventory { files, findings } = inventory(&root, candidate.inventory_scope.as_deref())?;
-    refuse_mapped(findings, &manifest_scope(&candidate.authority_mapping))?;
-    if candidate.inventory_fingerprint != fingerprint(&files, &git(&root))? {
-        return Err(Error::SourceConflict(
-            "project changed during intake; staged draft retained for inspection".into(),
-        ));
-    }
+    recheck(
+        &root,
+        &candidate,
+        "project changed during intake; staged draft retained for inspection",
+    )?;
     // Staging is inside the ignored runtime; published targets and sources must
     // still match the effect inventory accepted by the host.
     if args.expected_preview.is_some() {
@@ -1016,11 +1053,11 @@ mod tests {
 
     const SECRET: &str = "# Notes\n\nsetup\npassword: hunter2hunter2hunter2\n";
 
-    fn finding(path: &str) -> Finding {
+    fn finding(path: &str) -> InventoryFinding {
         let error =
             awr_core::ensure_public_source_strict(SECRET.as_bytes(), &format!("file:///p/{path}"))
                 .unwrap_err();
-        Finding {
+        InventoryFinding {
             path: path.into(),
             error,
         }
@@ -1089,7 +1126,7 @@ mod tests {
             "{one}"
         );
 
-        let many: Vec<Finding> = (0..12)
+        let many: Vec<InventoryFinding> = (0..12)
             .map(|n| finding(&format!("docs/note-{n:02}.md")))
             .collect();
         let text = unmapped_observation(&many).unwrap();
@@ -1105,6 +1142,27 @@ mod tests {
                 "{text}"
             );
         }
+    }
+
+    #[test]
+    fn the_json_preview_counts_refused_documents_and_names_only_where_they_are() {
+        assert_eq!(refused_documents(&[]), None);
+        let many: Vec<InventoryFinding> = (0..12)
+            .map(|n| finding(&format!("docs/note-{n:02}.md")))
+            .collect();
+        let summary = refused_documents(&many).unwrap();
+        assert_eq!(summary["total"], 12, "{summary}");
+        let documents = summary["documents"].as_array().unwrap();
+        assert_eq!(documents.len(), MAX_OBSERVED_FINDINGS, "{summary}");
+        assert_eq!(
+            documents[0],
+            json!({"path": "docs/note-00.md", "line": 4, "category": "labelled_value"})
+        );
+        let text = summary.to_string();
+        assert!(
+            !text.contains("hunter2") && !text.contains("file://") && !text.contains("repair"),
+            "{text}"
+        );
     }
 
     #[test]
