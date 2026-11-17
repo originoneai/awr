@@ -69,7 +69,7 @@ A host checks for the command before it calls it: `awr capabilities` lists `inta
 | Work | A ledger returned with no work items gets the draft's `work_items:` section back, so a conversation can bind to a work item |
 | Authority | A draft that still lists ambiguous domains stops the run |
 | Writes | An `init` preview that lists a path outside `.awr/` other than `.gitignore` stops the run before accept |
-| Secrets | A stop names the category, the path and the line of the source; the value appears nowhere. A reviewed draft that maps a document the secret boundary refuses stops at `accept` |
+| Secrets | A stop names the category, the path and the line of the source; the value appears nowhere. A reviewed draft that maps a document the secret boundary refuses stops at `accept`; with `--manifest`, a document outside the manifest that the reviewed draft maps is refused as a source when `accept` applies it |
 
 ### Stops
 
@@ -77,7 +77,7 @@ A stopped run records `step`, `reason` and a message in `takeover.json`, prints 
 
 | Reason | Meaning | Next action |
 | --- | --- | --- |
-| `secret_boundary` | A source the run maps holds content that looks like a credential; such a document the run does not map is listed in the draft's observations instead and does not stop it | Redact the line, or run again with `--manifest <file>` listing the sources AWR may read |
+| `secret_boundary` | A source the run maps holds content that looks like a credential; such a document the run does not map is listed in `refused_documents` instead and does not stop it | At `preview`: redact the line, or run again with `--manifest <file>` listing the sources AWR may read. At `accept`: redact the line, or leave the file out of the reviewed mapping |
 | `source_unreadable` | AWR cannot read a source | Fix the file named in `detail`, then run again |
 | `ambiguous_authority` | Several candidates own one domain | Name the authoritative source in the reviewed draft; the next run reviews again |
 | `inventory_changed` | The sources changed during review for more than `--max-rounds` rounds | Run again once the project is quiet |
@@ -88,7 +88,7 @@ A stopped run records `step`, `reason` and a message in `takeover.json`, prints 
 
 ### Output
 
-`--json` prints `{outcome, record, receipt, run_dir}`; plain output prints a summary. `takeover status` shows the record and receipt of the last run. Records use snake_case keys. The receipt lists `mapped` sources, `created` writes, `reviewed` notes, the `organization` state, goals in `awaiting_confirmation`, and `git` with `committed` and `pushed` set to `false`.
+`--json` prints `{outcome, record, receipt, run_dir}`; plain output prints a summary. `takeover status` shows the record and receipt of the last run. Records use snake_case keys. The receipt lists `mapped` sources, `created` writes, `reviewed` notes, the `organization` state, goals in `awaiting_confirmation`, and `git` with `committed` and `pushed` set to `false`. When the run leaves documents the secret boundary refuses unmapped, the receipt adds `refused_documents`: their `total`, up to ten `{path, line, category}` entries, a `meaning` and the `inventory` file that lists them, never their content. The `preview` and `accept` step results carry the same summary, and plain output prints the count.
 
 ## Limits
 

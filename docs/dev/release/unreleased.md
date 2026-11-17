@@ -106,17 +106,14 @@ The Team/Observer changes and standalone library work below remain outside the p
 ## Changed
 
 - `awr init` and `awr takeover` stop at the secret boundary only for the documents the intake maps (#661):
-  the sources found by conventional name or directory, `README.md` and `AGENTS.md`, the sources of a
-  `--manifest`, or the sources of a reviewed draft. A refused document outside the mapping is listed by path
-  and size with `sha256: null` and named in one observation of the draft as `path:line (category)` (ten at
-  most, with the exact count, never the content), and the intake goes on; AWR does not read it as a source.
-  Before, a credential in any Markdown, YAML, TOML or JSON document stopped the intake, so a project with
-  an example connection string in a document AWR never maps could not be taken over without a manifest.
-  A finding in a mapped document stops exactly as before, with `secret_boundary` and the `--manifest`
-  hint in a takeover. `--from-draft` and the recheck before `--accept` apply the reviewed draft's
-  mapping, so a reviewed draft that maps a refused document stops at that document, and redacting a listed
-  document changes the inventory fingerprint and asks for a new review. Projects without findings get the
-  same draft as before.
+  sources found by conventional name or directory, `README.md` and `AGENTS.md`, `--manifest` sources, or
+  the sources of a reviewed draft. A refused document outside the mapping no longer stops the intake: it is
+  listed by path and size with `sha256: null`, is not read as a source, and is named without its content as
+  `path:line (category)` (ten at most, with the exact count) in a draft observation, in `refused_documents`
+  of the `init --json` preview, and in the takeover record and receipt; plain takeover output prints the
+  count. A finding in a mapped document stops as before. A reviewed draft that maps a refused document stops
+  at it, and a takeover then suggests leaving the file out of the reviewed mapping. Projects without findings
+  get the same draft and output as before.
 
 - Follow-ups of the early digest check: `delivery.integration.prepare` now refuses evidence whose declared output digest or
   stored artifact digest differs from the settled execution's reported output with the same 409 `EvidenceInvalid` reasons,
