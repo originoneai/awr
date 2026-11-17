@@ -41,6 +41,16 @@ impl Drop for Project {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
+/// Whether a draft fingerprinted `path`. A document the secret boundary refuses
+/// and the intake does not map is listed without a fingerprint instead of
+/// stopping the intake (#661), so public-content checks assert this as well.
+fn fingerprinted(draft: &Value, path: &str) -> bool {
+    draft["inventory"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|file| file["path"] == path && file["sha256"].is_string())
+}
 #[test]
 fn empty_and_code_only_projects_get_a_real_work_entry_without_invented_history() {
     for code in [false, true] {
@@ -264,6 +274,7 @@ fn public_measurement_notes_support_preview_draft_accept_and_retry() {
     );
     let preview = p.ok(&["init", "--goal", "Reproduce public measurements"]);
     assert_eq!(preview["status"], "preview");
+    assert!(fingerprinted(&preview["draft"], "docs/measurement.md"));
     assert!(!p.0.join(".awr").exists());
     // Keep the draft outside the scanned inventory.
     let draft = p.0.join(".local/draft.json");
@@ -304,6 +315,7 @@ fn boolean_gloss_notes_support_preview_draft_accept_and_retry_without_rewriting_
         assert_eq!(preview["status"], "preview");
         assert_eq!(preview["preview"]["source_issues"], serde_json::json!([]));
         assert_eq!(preview["preview"]["can_apply"], true);
+        assert!(fingerprinted(&preview["draft"], "notes.json"));
         assert!(!p.0.join(".awr").exists());
         assert_eq!(fs::read(p.0.join("notes.json")).unwrap(), before);
 
@@ -384,12 +396,14 @@ fn boolean_gloss_prefixes_do_not_allow_environment_or_secret_content() {
         // Diagnostic locators may legitimately contain fixture-value substrings,
         // as Windows runneradmin paths do. Exercise that collision on every host.
         let p = Project::named("runneradmin hunter");
-        p.write("notes.json", notes);
-        let expected_locator =
-            awr_source::Locator::File(p.0.join("notes.json").canonicalize().unwrap())
-                .identity()
-                .unwrap();
-        let before = fs::read(p.0.join("notes.json")).unwrap();
+        // A file under a mapped directory source, so its finding stops the intake;
+        // a document the intake does not map is only listed (#661).
+        let notes_path = p.0.join("docs/decisions/notes.json");
+        p.write("docs/decisions/notes.json", notes);
+        let expected_locator = awr_source::Locator::File(notes_path.canonicalize().unwrap())
+            .identity()
+            .unwrap();
+        let before = fs::read(&notes_path).unwrap();
         let draft = p.0.join(".local/draft.json");
         fs::create_dir(p.0.join(".local")).unwrap();
         let goal = "Review public boolean gloss notes";
@@ -441,7 +455,7 @@ fn boolean_gloss_prefixes_do_not_allow_environment_or_secret_content() {
                     "content_review_required"
                 );
             }
-            assert_eq!(fs::read(p.0.join("notes.json")).unwrap(), before);
+            assert_eq!(fs::read(&notes_path).unwrap(), before);
             reports.push(report);
         }
         assert_eq!(reports[0], reports[1]);
@@ -464,7 +478,9 @@ fn rejected_measurement_sources_have_consistent_locations_and_leave_no_partial_i
     ] {
         let p = Project::new();
         let body = format!("{MEASUREMENT}\n{tail}");
-        p.write("docs/measurement.md", &body);
+        // A file under a mapped directory source, so its finding stops the intake;
+        // a document the intake does not map is only listed (#661).
+        p.write("docs/decisions/measurement.md", &body);
         let draft = p.0.join(".local/draft.json");
         fs::create_dir(p.0.join(".local")).unwrap();
         let mut reports = Vec::new();
@@ -488,7 +504,7 @@ fn rejected_measurement_sources_have_consistent_locations_and_leave_no_partial_i
                 report["details"]["location"]["locator"]
                     .as_str()
                     .unwrap()
-                    .ends_with("docs/measurement.md")
+                    .ends_with("docs/decisions/measurement.md")
             );
             assert!(!String::from_utf8_lossy(&out.stderr).contains("synthetic-private-value"));
             assert!(!String::from_utf8_lossy(&out.stdout).contains("synthetic-private-value"));
@@ -502,14 +518,14 @@ fn rejected_measurement_sources_have_consistent_locations_and_leave_no_partial_i
                 );
             }
             assert_eq!(
-                fs::read_to_string(p.0.join("docs/measurement.md")).unwrap(),
+                fs::read_to_string(p.0.join("docs/decisions/measurement.md")).unwrap(),
                 body
             );
             reports.push(report);
         }
         assert_eq!(reports[0], reports[1]);
         assert_eq!(reports[0], reports[2]);
-        p.write("docs/measurement.md", MEASUREMENT);
+        p.write("docs/decisions/measurement.md", MEASUREMENT);
         p.ok(&[
             "init",
             "--accept",

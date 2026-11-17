@@ -248,7 +248,21 @@ fn manifest_scope(manifest: &Manifest) -> Vec<String> {
     paths.dedup();
     paths
 }
-fn inventory(root: &Path, scope: Option<&[String]>) -> Result<Vec<FileFact>> {
+/// A document the secret boundary refused while the intake listed the project.
+#[derive(Debug)]
+struct Finding {
+    /// The project-relative path, as the inventory lists it.
+    path: String,
+    error: Error,
+}
+/// The files of a project as the intake lists them, and the documents among them that the secret boundary refused.
+/// A refused document is listed by path and size only; whether it stops the intake depends on the mapping being
+/// applied (see [`refuse_mapped`]).
+struct Inventory {
+    files: Vec<FileFact>,
+    findings: Vec<Finding>,
+}
+fn inventory(root: &Path, scope: Option<&[String]>) -> Result<Inventory> {
     let mut skipped = vec![];
     inventory_with_skips(root, &mut skipped, scope)
 }
@@ -256,14 +270,14 @@ fn inventory_with_skips(
     root: &Path,
     skipped: &mut Vec<String>,
     scope: Option<&[String]>,
-) -> Result<Vec<FileFact>> {
+) -> Result<Inventory> {
     fn walk(
         root: &Path,
         dir: &Path,
         depth: usize,
         out: &mut Vec<FileFact>,
         skipped: &mut Vec<String>,
-        findings: &mut Vec<Error>,
+        findings: &mut Vec<Finding>,
         scope: Option<&[String]>,
     ) -> Result<()> {
         if depth > DEPTH_LIMIT {
@@ -316,8 +330,8 @@ fn inventory_with_skips(
                     .to_string_lossy()
                     .replace('\\', "/");
                 // A document outside the scope is listed with its size and never read. A file the secret boundary
-                // refuses is noted and the walk goes on, so that every such file is reported at once. Any other
-                // error ends the walk as before.
+                // refuses is listed the same way and noted, and the walk goes on, so that every such file is
+                // reported at once. Any other error ends the walk as before.
                 let hash = if document(&path)
                     && bytes <= awr_source::YAML_READ_CAP
                     && in_scope(&relative, scope)
@@ -326,7 +340,10 @@ fn inventory_with_skips(
                     {
                         Ok(content) => Some(format!("{:x}", Sha256::digest(content))),
                         Err(error @ Error::SensitiveSource { .. }) => {
-                            findings.push(error);
+                            findings.push(Finding {
+                                path: relative.clone(),
+                                error,
+                            });
                             None
                         }
                         Err(error) => return Err(error),
@@ -346,10 +363,65 @@ fn inventory_with_skips(
     let mut files = vec![];
     let mut findings = vec![];
     walk(root, root, 0, &mut files, skipped, &mut findings, scope)?;
-    if !findings.is_empty() {
-        return Err(all_findings(findings));
+    Ok(Inventory { files, findings })
+}
+/// Stop at the secret boundary when a refused document belongs to the mapping being applied (`mapped`, as built by
+/// [`manifest_scope`]; a directory source covers the files under it). Those are the documents AWR reads as sources,
+/// so the stop is the one an owner has always seen: a single finding as it is, several summarized by
+/// [`all_findings`]. A refused document outside the mapping is not read as a source; it is returned so that the
+/// draft can say where it is, never what it holds.
+fn refuse_mapped(findings: Vec<Finding>, mapped: &[String]) -> Result<Vec<Finding>> {
+    let (mapped, unmapped): (Vec<_>, Vec<_>) = findings
+        .into_iter()
+        .partition(|finding| in_scope(&finding.path, Some(mapped)));
+    if !mapped.is_empty() {
+        return Err(all_findings(
+            mapped.into_iter().map(|finding| finding.error).collect(),
+        ));
     }
-    Ok(files)
+    Ok(unmapped)
+}
+/// Refused documents outside the mapping named in the draft's observation; the count is always exact.
+const MAX_OBSERVED_FINDINGS: usize = 10;
+
+/// The observation for refused documents outside the mapping: the path of each, with the line and category of its
+/// finding when known, and never any of its content.
+fn unmapped_observation(findings: &[Finding]) -> Option<String> {
+    if findings.is_empty() {
+        return None;
+    }
+    let mut listed = findings
+        .iter()
+        .take(MAX_OBSERVED_FINDINGS)
+        .map(|finding| {
+            let details = finding.error.report().details.unwrap_or_default();
+            let place = match details["location"]["line"].as_u64() {
+                Some(line) => format!("{}:{line}", finding.path),
+                None => finding.path.clone(),
+            };
+            match details["category"].as_str() {
+                Some(category) => format!("{place} ({category})"),
+                None => place,
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    if findings.len() > MAX_OBSERVED_FINDINGS {
+        listed.push_str(&format!(
+            ", and {} more",
+            findings.len() - MAX_OBSERVED_FINDINGS
+        ));
+    }
+    Some(if findings.len() == 1 {
+        format!(
+            "1 document holds content the secret boundary refuses and is not a mapped source; it is listed by path and size and was not fingerprinted: {listed}. AWR does not read it as a source; map it only after redacting it."
+        )
+    } else {
+        format!(
+            "{} documents hold content the secret boundary refuses and are not mapped sources; they are listed by path and size and were not fingerprinted: {listed}. AWR does not read them as sources; map one only after redacting it.",
+            findings.len()
+        )
+    })
 }
 fn git(root: &Path) -> Value {
     let run = |args: &[&str]| {
@@ -419,6 +491,25 @@ fn intake_goal_markdown(goal: Option<&str>) -> String {
         intake_goal_provenance(goal)
     )
 }
+/// The supporting documents a draft maps on its own: README.md and AGENTS.md at the project root, unless the owner
+/// supplied the manifest or the mapping already lists them.
+fn supporting_defaults(
+    files: &[FileFact],
+    mapping: &Manifest,
+    owner_chose: bool,
+) -> Vec<&'static str> {
+    ["README.md", "AGENTS.md"]
+        .into_iter()
+        .filter(|name| {
+            !owner_chose
+                && files.iter().any(|f| f.path == *name)
+                && !mapping
+                    .sources
+                    .iter()
+                    .any(|s| s.path.as_deref() == Some(Path::new(name)))
+        })
+        .collect()
+}
 /// Build the intake draft. With `explicit` (a manifest the owner wrote) the draft maps exactly its sources: nothing
 /// is discovered, no conventional file names are added and README.md/AGENTS.md are not mapped on their own, so a
 /// file the owner left out is not read again. Missing goal and ledger sources are still proposed under
@@ -426,7 +517,7 @@ fn intake_goal_markdown(goal: Option<&str>) -> String {
 fn draft(root: &Path, goal: Option<&str>, explicit: Option<Manifest>) -> Result<IntakeDraft> {
     let mut skipped = vec![];
     let scope = explicit.as_ref().map(manifest_scope);
-    let files = inventory_with_skips(root, &mut skipped, scope.as_deref())?;
+    let Inventory { files, findings } = inventory_with_skips(root, &mut skipped, scope.as_deref())?;
     let git = git(root);
     let owner_chose = explicit.is_some();
     let (existing, candidates, ambiguous) = match explicit {
@@ -536,6 +627,17 @@ fn draft(root: &Path, goal: Option<&str>, explicit: Option<Manifest>) -> Result<
             ambiguous_domains.push(domain.into());
         }
     }
+    // Every project file the draft maps is known here: the sources found so far and README.md/AGENTS.md, which are
+    // added below; the rest are generated under `.awr/intake/`, which the walk never lists. A refused document
+    // among them stops the draft before any source is read, so that every such file is named in one stop.
+    let mut mapped = manifest_scope(&mapping);
+    mapped.extend(
+        supporting_defaults(&files, &mapping, owner_chose)
+            .into_iter()
+            .map(String::from),
+    );
+    let unmapped = refuse_mapped(findings, &mapped)?;
+    observations.extend(unmapped_observation(&unmapped));
     // Goals can live in a primary YAML ledger; do not introduce a second authority just for layout.
     let mut embedded_goals = false;
     for spec in mapping
@@ -608,20 +710,18 @@ fn draft(root: &Path, goal: Option<&str>, explicit: Option<Manifest>) -> Result<
             .sources
             .push(source("goal", &path, "markdown-heading-v1", true));
     }
-    for name in ["README.md", "AGENTS.md"] {
-        if !owner_chose
-            && files.iter().any(|f| f.path == name)
-            && !mapping
-                .sources
-                .iter()
-                .any(|s| s.path.as_deref() == Some(Path::new(name)))
-        {
-            // These are supporting material; a heading is not automatically a hard rule.
-            mapping
-                .sources
-                .push(source("plan", name, "markdown-heading-v1", false));
-        }
+    for name in supporting_defaults(&files, &mapping, owner_chose) {
+        // These are supporting material; a heading is not automatically a hard rule.
+        mapping
+            .sources
+            .push(source("plan", name, "markdown-heading-v1", false));
     }
+    debug_assert!(
+        unmapped
+            .iter()
+            .all(|finding| !in_scope(&finding.path, Some(&manifest_scope(&mapping)))),
+        "the draft maps a document the secret boundary refused"
+    );
     if owner_chose {
         observations.push("The source list is the supplied manifest; other project files were not mapped or read as sources.".into());
     }
@@ -687,15 +787,18 @@ pub fn run(root: &Path, args: &InitArgs, json_output: bool) -> Result<()> {
         let bytes = awr_source::read_source_capped(&path.canonicalize()?, 4 * 1024 * 1024)?;
         let value: IntakeDraft = serde_json::from_slice(&bytes)
             .map_err(|_| Error::InvalidInput("invalid intake draft JSON".into()))?;
-        if value.schema_version != 1
-            || value.project_root != root.to_string_lossy()
-            || value.inventory_fingerprint
-                != fingerprint(
-                    &inventory(&root, value.inventory_scope.as_deref())?,
-                    &git(&root),
-                )?
-        {
-            return Err(Error::SourceConflict("project inventory changed or draft belongs to another directory; regenerate and review the intake draft".into()));
+        let stale = || {
+            Error::SourceConflict("project inventory changed or draft belongs to another directory; regenerate and review the intake draft".into())
+        };
+        if value.schema_version != 1 || value.project_root != root.to_string_lossy() {
+            return Err(stale());
+        }
+        // The reviewed mapping decides which refused documents stop the intake. They are checked before the
+        // fingerprint, so that a reviewer who maps one learns which file to redact.
+        let Inventory { files, findings } = inventory(&root, value.inventory_scope.as_deref())?;
+        refuse_mapped(findings, &manifest_scope(&value.authority_mapping))?;
+        if value.inventory_fingerprint != fingerprint(&files, &git(&root))? {
+            return Err(stale());
         }
         value
     } else {
@@ -876,12 +979,9 @@ pub fn run(root: &Path, args: &InitArgs, json_output: bool) -> Result<()> {
             .map_err(|e| Error::InvalidInput(e.to_string()))?,
     )?;
     // Recheck after staging, before making the intake authoritative.
-    if candidate.inventory_fingerprint
-        != fingerprint(
-            &inventory(&root, candidate.inventory_scope.as_deref())?,
-            &git(&root),
-        )?
-    {
+    let Inventory { files, findings } = inventory(&root, candidate.inventory_scope.as_deref())?;
+    refuse_mapped(findings, &manifest_scope(&candidate.authority_mapping))?;
+    if candidate.inventory_fingerprint != fingerprint(&files, &git(&root))? {
         return Err(Error::SourceConflict(
             "project changed during intake; staged draft retained for inspection".into(),
         ));
@@ -908,4 +1008,136 @@ pub fn run(root: &Path, args: &InitArgs, json_output: bool) -> Result<()> {
         },
         other => other,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SECRET: &str = "# Notes\n\nsetup\npassword: hunter2hunter2hunter2\n";
+
+    fn finding(path: &str) -> Finding {
+        let error =
+            awr_core::ensure_public_source_strict(SECRET.as_bytes(), &format!("file:///p/{path}"))
+                .unwrap_err();
+        Finding {
+            path: path.into(),
+            error,
+        }
+    }
+
+    fn scope(paths: &[&str]) -> Vec<String> {
+        paths.iter().map(|path| path.to_string()).collect()
+    }
+
+    #[test]
+    fn findings_outside_the_mapping_are_returned_instead_of_stopping() {
+        let unmapped = refuse_mapped(
+            vec![finding("docs/guide.md"), finding("docs/decisions-old/a.md")],
+            &scope(&["README.md", "docs/decisions"]),
+        )
+        .unwrap();
+        let paths: Vec<&str> = unmapped.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, ["docs/guide.md", "docs/decisions-old/a.md"]);
+        assert!(refuse_mapped(vec![], &[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn one_mapped_finding_stops_as_it_always_has() {
+        let error = refuse_mapped(
+            vec![finding("docs/guide.md"), finding("docs/decisions/a.md")],
+            &scope(&["README.md", "docs/decisions"]),
+        )
+        .unwrap_err();
+        assert!(matches!(error, Error::SensitiveSource { .. }), "{error:?}");
+        let details = error.report().details.unwrap();
+        assert_eq!(
+            details["location"]["locator"],
+            "file:///p/docs/decisions/a.md"
+        );
+        assert!(details.get("finding_total").is_none(), "{details}");
+    }
+
+    #[test]
+    fn several_mapped_findings_stop_together_and_leave_the_unmapped_ones_out() {
+        let error = refuse_mapped(
+            vec![
+                finding("README.md"),
+                finding("docs/guide.md"),
+                finding("AGENTS.md"),
+            ],
+            &scope(&["AGENTS.md", "README.md"]),
+        )
+        .unwrap_err();
+        let report = error.report();
+        assert_eq!(report.code, "RuleViolation");
+        let details = report.details.unwrap();
+        assert_eq!(details["finding_total"], 2, "{details}");
+        assert!(!details.to_string().contains("docs/guide.md"), "{details}");
+    }
+
+    #[test]
+    fn the_observation_names_places_and_categories_and_never_content() {
+        assert_eq!(unmapped_observation(&[]), None);
+
+        let one = unmapped_observation(&[finding("docs/guide.md")]).unwrap();
+        assert!(
+            one.starts_with(
+                "1 document holds content the secret boundary refuses and is not a mapped source;"
+            ) && one
+                .contains(": docs/guide.md:4 (labelled_value). AWR does not read it as a source;"),
+            "{one}"
+        );
+
+        let many: Vec<Finding> = (0..12)
+            .map(|n| finding(&format!("docs/note-{n:02}.md")))
+            .collect();
+        let text = unmapped_observation(&many).unwrap();
+        assert!(text.starts_with("12 documents hold content"), "{text}");
+        assert!(
+            text.contains("docs/note-09.md:4 (labelled_value), and 2 more. AWR does not read them"),
+            "{text}"
+        );
+        assert!(!text.contains("docs/note-10.md"), "{text}");
+        for text in [one, text] {
+            assert!(
+                !text.contains("hunter2") && !text.contains("file://"),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn readme_and_agents_are_mapped_by_default_only_when_present_and_not_chosen() {
+        let file = |path: &str| FileFact {
+            path: path.into(),
+            bytes: 1,
+            sha256: None,
+        };
+        let files = [file("README.md"), file("AGENTS.md"), file("docs/README.md")];
+        let mut mapping = Manifest {
+            team: Default::default(),
+            project: ProjectConfig {
+                name: "p".into(),
+                external_key: None,
+                authority_mode: AuthorityMode::SourceFirst,
+                authorized_roots: vec![],
+                context_profile: awr_source::ContextProfile::Minimal,
+            },
+            sources: vec![],
+        };
+        assert_eq!(
+            supporting_defaults(&files, &mapping, false),
+            ["README.md", "AGENTS.md"]
+        );
+        assert!(supporting_defaults(&files, &mapping, true).is_empty());
+        assert_eq!(
+            supporting_defaults(&files[1..], &mapping, false),
+            ["AGENTS.md"]
+        );
+        mapping
+            .sources
+            .push(source("plan", "AGENTS.md", "markdown-heading-v1", true));
+        assert_eq!(supporting_defaults(&files, &mapping, false), ["README.md"]);
+    }
 }

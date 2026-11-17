@@ -4,10 +4,12 @@
 //! caller relies on: the project's own files stay byte-identical, only `.awr/` and the `.gitignore` entries AWR
 //! lists itself are written, nothing is committed, a secret source stops the run with its place and never its
 //! value, a reviewer cannot raise a goal above `candidate` or leave the ledger without work, and a stopped run
-//! resumes after the steps that finished.
+//! resumes after the steps that finished. A secret in a document the takeover does not map lists that document by
+//! path and size and lets the run go on (issue #661).
 
 use awr_core::Id;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs,
@@ -870,4 +872,139 @@ fn a_reviewed_answer_can_be_given_up_front_and_the_review_flags_exclude_each_oth
     assert_eq!(outcome(&out)["outcome"], "completed");
     assert!(p.ledger_text().contains("id: count-words"));
     assert_eq!(p.receipt()["reviewed"]["by_reviewer"], true);
+}
+
+/// A document with a credential that no conventional name, directory or default maps.
+const DATABASE_NOTES: &str = "# Local database\n\npostgres://u:hunter2@127.0.0.1/db\n";
+
+#[test]
+fn a_credential_in_a_document_the_takeover_does_not_map_is_listed_and_the_run_completes() {
+    let p = Project::new("unmapped");
+    p.write("README.md", README);
+    p.write("docs/database.md", DATABASE_NOTES);
+    let digest = format!("{:x}", Sha256::digest(DATABASE_NOTES.as_bytes()));
+    let before = p.snapshot(&[".awr", ".gitignore"]);
+
+    let out = p.takeover(&[]);
+    assert!(
+        out.status.success(),
+        "{}\n{}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    let done = outcome(&out);
+    assert_eq!(done["outcome"], "completed");
+    assert_eq!(
+        p.snapshot(&[".awr", ".gitignore"]),
+        before,
+        "the project's own files stay byte-identical"
+    );
+    let receipt = p.receipt();
+    let sources: Vec<&str> = receipt["mapped"]["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["path"].as_str())
+        .collect();
+    assert!(
+        sources.contains(&"README.md") && !sources.contains(&"docs/database.md"),
+        "{sources:?}"
+    );
+
+    // The draft of the run and the recorded inventory list the document by path and size, with an observation.
+    let draft: Value = serde_json::from_slice(
+        &fs::read(Path::new(done["run_dir"].as_str().unwrap()).join("draft.json")).unwrap(),
+    )
+    .unwrap();
+    let inventory: Value =
+        serde_json::from_slice(&fs::read(p.root.join(".awr/intake/inventory.json")).unwrap())
+            .unwrap();
+    for recorded in [&draft, &inventory] {
+        let listed = recorded["inventory"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["path"] == "docs/database.md")
+            .unwrap();
+        assert_eq!(listed["sha256"], Value::Null, "{listed}");
+        assert_eq!(listed["bytes"], DATABASE_NOTES.len());
+        let observations = recorded["observations"].to_string();
+        assert!(
+            observations.contains("docs/database.md:3 (credential)"),
+            "{observations}"
+        );
+    }
+
+    for (label, shown) in [
+        ("stdout", text(&out.stdout)),
+        ("stderr", text(&out.stderr)),
+        ("state", p.state_text()),
+    ] {
+        assert!(
+            !shown.contains("hunter2") && !shown.contains(&digest),
+            "the refused document reached {label}"
+        );
+    }
+    for (path, bytes) in p.snapshot(&[]) {
+        if path.starts_with(".awr/") || path == ".gitignore" {
+            let shown = String::from_utf8_lossy(&bytes);
+            assert!(
+                !shown.contains("hunter2") && !shown.contains(&digest),
+                "the refused document reached {path}"
+            );
+        }
+    }
+    assert!(p.ok(&["status"])["project_revision"].is_number());
+}
+
+#[test]
+fn a_reviewed_answer_that_maps_a_refused_document_stops_at_the_secret_boundary() {
+    let p = Project::new("maps-refused");
+    p.write("README.md", README);
+    p.write("docs/database.md", DATABASE_NOTES);
+    let waiting = outcome(&p.takeover(&["--await-review"]));
+    assert_eq!(waiting["outcome"], "awaiting_review");
+    let request: Value = serde_json::from_slice(
+        &fs::read(
+            waiting["record"]["stop"]["detail"]["request_path"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    // The host maps the listed document as one more supporting source.
+    let mut mapping = request["draft"]["authority_mapping"].clone();
+    let sources = mapping["sources"].as_array_mut().unwrap();
+    let mut database = sources
+        .iter()
+        .find(|s| s["path"] == "README.md")
+        .unwrap()
+        .clone();
+    database["path"] = json!("docs/database.md");
+    sources.push(database);
+    let answer = p.state_file(
+        "answer.json",
+        &json!({ "generated_files": { LEDGER: REVIEWED_LEDGER }, "authority_mapping": mapping }),
+    );
+
+    let out = p.takeover(&["--reviewed", &answer.to_string_lossy()]);
+    assert!(!out.status.success());
+    let stop = &outcome(&out)["record"]["stop"];
+    assert_eq!(stop["reason"], "secret_boundary", "{stop}");
+    assert_eq!(stop["step"], "accept");
+    assert_eq!(stop["detail"]["path"], "docs/database.md");
+    assert_eq!(stop["detail"]["line"], 3);
+    for (label, shown) in [
+        ("stdout", text(&out.stdout)),
+        ("stderr", text(&out.stderr)),
+        ("state", p.state_text()),
+    ] {
+        assert!(
+            !shown.contains("hunter2"),
+            "the secret value reached {label}"
+        );
+    }
+    assert!(!p.root.join(".awr").exists(), "nothing was written");
 }
