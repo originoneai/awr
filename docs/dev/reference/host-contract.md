@@ -95,7 +95,11 @@ same input/mapping arguments. Changed sources, mapping semantics, existing manif
 bytes or ignore contents reject the old preview. Existing clients may omit the new
 flag; semantic preflight still applies. A draft file's original inventory fingerprint
 is still checked; editing a draft requires previewing that edited draft before
-acceptance. Multiple source candidates remain an explicit ambiguity.
+acceptance. A draft that maps a document the secret boundary refuses is rejected
+with that document's `RuleViolation` before the fingerprint check. A refused
+document outside the mapping appears in the draft and in `.awr/intake/inventory.json`
+with `sha256: null` and is named in `observations` without its content; redacting it
+changes the fingerprint. Multiple source candidates remain an explicit ambiguity.
 
 Repeated initialization keeps the existing manifest, project/work identities,
 events, sessions and checkpoints. Non-Git projects are supported. Preview can read

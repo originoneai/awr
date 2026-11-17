@@ -69,7 +69,7 @@ A host checks for the command before it calls it: `awr capabilities` lists `inta
 | Work | A ledger returned with no work items gets the draft's `work_items:` section back, so a conversation can bind to a work item |
 | Authority | A draft that still lists ambiguous domains stops the run |
 | Writes | An `init` preview that lists a path outside `.awr/` other than `.gitignore` stops the run before accept |
-| Secrets | A stop names the category, the path and the line of the source; the value appears nowhere |
+| Secrets | A stop names the category, the path and the line of the source; the value appears nowhere. A reviewed draft that maps a document the secret boundary refuses stops at `accept` |
 
 ### Stops
 
@@ -77,7 +77,7 @@ A stopped run records `step`, `reason` and a message in `takeover.json`, prints 
 
 | Reason | Meaning | Next action |
 | --- | --- | --- |
-| `secret_boundary` | A source holds content that looks like a credential | Redact the line, or run again with `--manifest <file>` listing the sources AWR may read |
+| `secret_boundary` | A source the run maps holds content that looks like a credential; such a document the run does not map is listed in the draft's observations instead and does not stop it | Redact the line, or run again with `--manifest <file>` listing the sources AWR may read |
 | `source_unreadable` | AWR cannot read a source | Fix the file named in `detail`, then run again |
 | `ambiguous_authority` | Several candidates own one domain | Name the authoritative source in the reviewed draft; the next run reviews again |
 | `inventory_changed` | The sources changed during review for more than `--max-rounds` rounds | Run again once the project is quiet |

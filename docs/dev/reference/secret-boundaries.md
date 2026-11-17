@@ -22,7 +22,9 @@ The current `awr-core` secret policy is 11. Component contract `tests/security/p
 
 写入前检查原文和解析结构：来源及直接解析、Manifest、投影及配置、提案 patch、事件、checkpoint digest/列表、证据和产物元数据。拒绝返回 `RuleViolation`、`details.policy_version`、`details.category` 和分类 `next_action`/`repair`。真实凭据与环境转储存于注册来源之外的 env/secret 管理，以 `${VAR}` 引用；`labelled_value` 同时提示秘密安置路径和公开 schema 写法。来源问题保留分类，CLI/MCP 共用合同。
 
-An intake scan (`awr init`, `--write-draft`, `awr takeover`) that finds credentials in several documents reports all of them in one `RuleViolation`: `details.findings` lists the category and location of each file (50 at most, never the content) and `details.finding_total` counts them, so the owner deals with every file in one round. The first finding keeps the existing fields, and one finding is reported as before.
+An intake scan (`awr init`, `--write-draft`, `awr takeover`) stops only for the documents of the mapping it applies: the sources it finds by conventional name or directory together with `README.md` and `AGENTS.md`, the sources of a `--manifest`, or the sources of a reviewed draft, checked by `--from-draft` and again before `--accept` writes. When several of them hold credentials it reports all of them in one `RuleViolation`: `details.findings` lists the category and location of each file (50 at most, never the content) and `details.finding_total` counts them, so the owner deals with every file in one round. The first finding keeps the existing fields, and one finding is reported as before.
+
+A refused document outside that mapping does not stop the intake. The inventory lists it by path and size with `sha256: null`, since refused bytes are never hashed, and one observation of the draft names up to ten such documents as `path:line (category)` with the exact count, never the content. AWR does not read such a document as a source. Redact it before mapping it: the redaction changes the inventory fingerprint, so a reviewed draft needs a new review, and a reviewed draft that maps a document still refused stops at that document.
 
 识别范围包括：
 
