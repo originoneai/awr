@@ -8,6 +8,16 @@
     <script nonce="__CSP_NONCE_ATTR__">
       window.__CSP_NONCE__ = "__CSP_NONCE_VALUE__";
     </script>
+    <script nonce="__CSP_NONCE_ATTR__">
+      (() => {
+        let saved = null;
+        try { saved = localStorage.getItem("awr-observer-theme"); } catch { /* Storage can be blocked. */ }
+        const theme = saved === "light" || saved === "dark" ? saved
+          : typeof matchMedia === "function" && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

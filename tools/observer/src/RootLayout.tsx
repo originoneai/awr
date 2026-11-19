@@ -5,9 +5,9 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Outlet, ScrollRestoration } from 'react-router';
 import { AppShell } from './components/AppShell';
+import { CraftThemeProvider } from './components/CraftThemeProvider';
 import { RevocationProvider } from './lib/revocation';
 import { ScopeProvider } from './lib/scope';
-import { themeConfig } from './theme';
 
 export function antdLocale(language: string) {
   return language === 'zh-CN' ? zhCN : enUS;
@@ -28,20 +28,21 @@ export function RootLayout() {
   return (
     <ConfigProvider
       locale={locale}
-      theme={themeConfig}
       csp={{ nonce: typeof window !== 'undefined' ? window.__CSP_NONCE__ : undefined }}
       button={{ autoInsertSpace: false }}
     >
-      <AntdApp>
-        <RevocationProvider>
-          <ScopeProvider>
-            <AppShell>
-              <Outlet />
-            </AppShell>
-            <ScrollRestoration />
-          </ScopeProvider>
-        </RevocationProvider>
-      </AntdApp>
+      <CraftThemeProvider>
+        <AntdApp>
+          <RevocationProvider>
+            <ScopeProvider>
+              <AppShell>
+                <Outlet />
+              </AppShell>
+              <ScrollRestoration />
+            </ScopeProvider>
+          </RevocationProvider>
+        </AntdApp>
+      </CraftThemeProvider>
     </ConfigProvider>
   );
 }

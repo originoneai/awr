@@ -119,6 +119,8 @@ const zhCN = {
     later: '该功能尚未开放',
     openNav: '打开导航',
     closeNav: '关闭导航',
+    switchToLight: '浅色',
+    switchToDark: '深色',
   },
   projectMaps: {
     search: '搜索工作',

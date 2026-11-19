@@ -28,7 +28,7 @@ describe('craft details', () => {
   });
 
   it('keeps metadata quiet and tabular', () => {
-    expect(craftValueStyle.color).toBe(craftTokens.color.secondary);
+    expect(craftValueStyle.color).toBe('var(--craft-color-secondary)');
     expect(craftValueStyle.fontVariantNumeric).toBe('tabular-nums');
   });
 });

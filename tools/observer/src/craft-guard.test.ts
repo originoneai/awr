@@ -77,13 +77,54 @@ describe('craft source scanner self-test', () => {
       ]);
     }
   });
+
+  it.each(['light', 'dark'])('rejects an injected non-token color in a %s themed component', (mode) => {
+    const source = `<div data-theme="${mode}" style={{ backgroundColor: 'rebeccapurple', color: 'var(--craft-color-ink)' }} />`;
+    expect(scanCraftSource(source, 'tsx', `components/ThemeProbe.tsx`).map((violation) => violation.rule))
+      .toContain('named-color');
+  });
+
+  it.each(['light', 'dark'])('accepts token references in a %s themed component', (mode) => {
+    const source = `<div data-theme="${mode}" style={{ backgroundColor: 'var(--craft-color-surface)', color: 'var(--craft-color-ink)' }} />`;
+    expect(scanCraftSource(source, 'tsx', 'components/ThemeProbe.tsx')).toEqual([]);
+  });
+
+  it.each(['light', 'dark'])('rejects CSS declarations and color words in %s shorthands', (mode) => {
+    const probes: Array<['css' | 'tsx', string]> = [
+      ['css', `.x[data-theme="${mode}"] { color: red; }`],
+      ['css', `.x[data-theme="${mode}"] { background: red; }`],
+      ['css', `.x[data-theme="${mode}"] { border-color: rebeccapurple; }`],
+      ['css', `.x[data-theme="${mode}"] { border: 1px solid red; }`],
+      ['tsx', `<div data-theme="${mode}" style={{ border: '1px solid red' }} />`],
+      ['tsx', `<div data-theme="${mode}" style={{ outline: '2px solid tomato' }} />`],
+      ['tsx', `<div data-theme="${mode}" style={{ boxShadow: '0 0 4px rebeccapurple' }} />`],
+      ['tsx', `<div data-theme="${mode}" style={{ background: 'center / cover no-repeat red' }} />`],
+    ];
+    for (const [fileType, source] of probes) {
+      expect(scanCraftSource(source, fileType, `components/ThemeProbe.${fileType}`).map((violation) => violation.rule), source)
+        .toContain('named-color');
+    }
+  });
+
+  it('allows token functions and non-color keywords in declarations and shorthands', () => {
+    const css = '.x { color: currentColor; background: transparent; border: 1px solid currentColor; outline: 2px solid transparent; box-shadow: none; }'
+      + '.y { background: url("red.png") no-repeat; border-color: inherit; }';
+    expect(scanCraftSource(css, 'css', 'components/ThemeProbe.css')).toEqual([]);
+    const tsx = `<div style={{
+      border: '1px solid currentColor', outline: '2px solid transparent',
+      background: 'var(--craft-color-surface)', boxShadow: 'inset 0 0 0 1px var(--ant-color-border-secondary)'
+    }} />`;
+    expect(scanCraftSource(tsx, 'tsx', 'components/ThemeProbe.tsx')).toEqual([]);
+  });
 });
 
 describe('craft workspace scan', () => {
   it('finds no forbidden pattern outside the explicit token/scanner/test exemptions', () => {
-    const exempt = new Set(['theme.ts', 'i18n/craft.ts', 'lib/craft-guard.ts', 'test-utils.tsx']);
+    // Only token definitions/mirrors are exempt; first-paint.test.ts pins the CSS mirror to theme.ts.
+    const exempt = new Set(['theme.ts', 'theme-fallback.css', 'i18n/craft.ts', 'lib/craft-guard.ts', 'test-utils.tsx']);
     const files = filesUnder('src').filter((file) => /\.(tsx?|css)$/.test(file)).filter((file) => {
       const relative = file.slice(4);
+      // Test files need literal token values; every production page and component remains scanned.
       return !exempt.has(relative) && !/\.test\.[cm]?[jt]sx?$/.test(relative);
     });
     const violations = files.flatMap((file) => {

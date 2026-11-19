@@ -39,6 +39,7 @@ import { projectLabel } from '../lib/project-label';
 import { useRevocation } from '../lib/revocation';
 import { useScope } from '../lib/scope';
 import { craftTokens } from '../theme';
+import { ThemeToggle } from './ThemeToggle';
 
 const { Header, Sider, Content } = Layout;
 
@@ -174,6 +175,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               advancedItems={advancedItems}
               selectedKey={selectedKey}
             />
+            <ThemeToggle />
           </div>
         </Sider>
       )}
@@ -274,6 +276,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           selectedKey={selectedKey}
           onNavigate={() => setNavigationOpen(false)}
         />
+        <ThemeToggle />
       </Drawer>
     </Layout>
   );

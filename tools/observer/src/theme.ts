@@ -1,7 +1,6 @@
-import type { ThemeConfig } from 'antd';
+import { theme as antdTheme, type ThemeConfig } from 'antd';
 
-/** Project craft tokens. Visual values are centralized here, not in pages. */
-export const craftTokens = {
+const sharedCraftTokens = {
   spacing: {
     page: 24,
     section: 32,
@@ -16,19 +15,6 @@ export const craftTokens = {
   // Smallest touch target the mobile acceptance allows (drawer rows, header entry).
   touchTarget: 40,
   contentMaxWidth: 1600,
-  color: {
-    page: '#F5F7FA',
-    surface: '#FFFFFF',
-    raised: '#ECEFF4',
-    ink: '#111827',
-    secondary: '#4B5565',
-    muted: '#626B7C',
-    hairline: 'rgba(17, 24, 39, 0.08)',
-    accent: '#1D4ED8',
-    positive: '#147B3B',
-    negative: '#B91C1C',
-    warning: '#925F0B',
-  },
   font: {
     interface: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif',
     meta: 'ui-monospace, "SFMono-Regular", "Cascadia Mono", "Roboto Mono", monospace',
@@ -47,8 +33,89 @@ export const craftTokens = {
   },
 } as const;
 
+/** Every visual role has a complete light and dark value; shared geometry uses the same scale. */
+export const craftThemes = {
+  light: {
+    ...sharedCraftTokens,
+    color: {
+      page: '#F3F5F9',
+      side: '#FFFFFF',
+      surface: '#FFFFFF',
+      raised: '#ECEFF4',
+      ink: '#111827',
+      secondary: '#4B5565',
+      muted: '#626B7C',
+      hairline: 'rgba(17, 24, 39, 0.08)',
+      hairlineStrong: 'rgba(17, 24, 39, 0.16)',
+      accent: '#1D4ED8',
+      onAccent: '#FFFFFF',
+      accentSoft: 'rgba(29, 78, 216, 0.08)',
+      positive: '#147B3B',
+      positiveSoft: 'rgba(20, 123, 59, 0.10)',
+      negative: '#B91C1C',
+      negativeSoft: 'rgba(185, 28, 28, 0.08)',
+      warning: '#925F0B',
+      warningSoft: 'rgba(146, 95, 11, 0.10)',
+    },
+    chart: {
+      series: ['#2A78D6', '#EB6834', '#1BAF7A', '#EDA100'],
+      completion: {
+        verified: '#104281',
+        reported: '#256ABF',
+        inProgress: '#5598E7',
+        notStarted: '#86B6EF',
+      },
+    },
+    shadow: {
+      small: '0 1px 2px rgba(17, 24, 39, 0.05)',
+      floating: '0 8px 24px rgba(17, 24, 39, 0.10)',
+    },
+  },
+  dark: {
+    ...sharedCraftTokens,
+    color: {
+      page: '#0B0D14',
+      side: '#07080D',
+      surface: '#11141C',
+      raised: '#1A1E28',
+      ink: '#EEF0F5',
+      secondary: '#A3A9B8',
+      muted: '#7E869A',
+      hairline: 'rgba(238, 240, 245, 0.08)',
+      hairlineStrong: 'rgba(238, 240, 245, 0.16)',
+      accent: '#8AB0FF',
+      onAccent: '#07080D',
+      accentSoft: 'rgba(138, 176, 255, 0.12)',
+      positive: '#4CC38A',
+      positiveSoft: 'rgba(76, 195, 138, 0.14)',
+      negative: '#F2686C',
+      negativeSoft: 'rgba(242, 104, 108, 0.14)',
+      warning: '#E0A63A',
+      warningSoft: 'rgba(224, 166, 58, 0.14)',
+    },
+    chart: {
+      series: ['#3987E5', '#D95926', '#199E70', '#C98500'],
+      completion: {
+        verified: '#86B6EF',
+        reported: '#3987E5',
+        inProgress: '#256ABF',
+        notStarted: '#184F95',
+      },
+    },
+    shadow: {
+      small: 'none',
+      floating: '0 16px 40px rgba(0, 0, 0, 0.50)',
+    },
+  },
+} as const;
+
+export type CraftThemeMode = keyof typeof craftThemes;
+
+/** Backwards-compatible light defaults; themed surfaces use craftThemes or the CSS variables below. */
+export const craftTokens = craftThemes.light;
+
 export const craftValueStyle = {
-  color: craftTokens.color.secondary,
+  color: 'var(--craft-color-secondary)',
   fontFamily: craftTokens.font.meta,
   fontVariantNumeric: 'tabular-nums',
   fontWeight: 400,
@@ -68,79 +135,154 @@ export function craftSelectionStyle(
   } as const;
 }
 
-export const themeConfig: ThemeConfig = {
-  token: {
-    fontFamily: craftTokens.font.interface,
-    fontFamilyCode: craftTokens.font.meta,
-    fontWeightStrong: 500,
-    motionEaseOut: craftTokens.motion.easing,
-    motionDurationFast: `${craftTokens.motion.feedbackMs}ms`,
-    motionDurationMid: `${craftTokens.motion.overlayMs}ms`,
-    motionDurationSlow: `${craftTokens.motion.enterMs}ms`,
-    fontSize: 14,
-    fontSizeSM: 12,
-    fontSizeHeading1: 32,
-    fontSizeHeading2: 28,
-    fontSizeHeading3: 24,
-    fontSizeHeading4: 20,
-    fontSizeHeading5: 16,
-    colorPrimary: craftTokens.color.accent,
-    colorLink: craftTokens.color.accent,
-    colorText: craftTokens.color.ink,
-    colorTextSecondary: craftTokens.color.secondary,
-    colorTextTertiary: craftTokens.color.muted,
-    colorBgLayout: craftTokens.color.page,
-    colorBgContainer: craftTokens.color.surface,
-    colorBgElevated: craftTokens.color.surface,
-    colorFillSecondary: craftTokens.color.raised,
-    colorBorder: craftTokens.color.hairline,
-    colorBorderSecondary: craftTokens.color.hairline,
-    colorSplit: craftTokens.color.hairline,
-    colorSuccess: craftTokens.color.positive,
-    colorSuccessBg: craftTokens.color.raised,
-    colorSuccessBorder: craftTokens.color.hairline,
-    colorError: craftTokens.color.negative,
-    colorErrorBg: craftTokens.color.raised,
-    colorErrorBorder: craftTokens.color.hairline,
-    colorWarning: craftTokens.color.warning,
-    colorWarningBg: craftTokens.color.raised,
-    colorWarningBorder: craftTokens.color.hairline,
-    colorInfo: craftTokens.color.accent,
-    colorInfoBg: craftTokens.color.raised,
-    colorInfoBorder: craftTokens.color.hairline,
-    borderRadius: craftTokens.radius.control,
-    borderRadiusLG: craftTokens.radius.card,
-    borderRadiusSM: craftTokens.radius.nested,
-    boxShadowTertiary: '0 1px 2px rgba(17, 24, 39, 0.05)',
-    boxShadowSecondary: '0 8px 24px rgba(17, 24, 39, 0.06)',
-    controlHeight: craftTokens.controlHeight,
-    padding: craftTokens.spacing.page,
-    paddingSM: craftTokens.spacing.group,
-    paddingXS: craftTokens.spacing.item,
-    margin: craftTokens.spacing.group,
-    marginSM: craftTokens.spacing.item,
-    marginXS: craftTokens.spacing.compact,
-  },
-  components: {
-    Layout: {
-      headerHeight: craftTokens.headerHeight,
-      headerBg: craftTokens.color.surface,
-      siderBg: craftTokens.color.surface,
-      bodyBg: craftTokens.color.page,
+function createBaseThemeConfig(mode: CraftThemeMode): ThemeConfig {
+  const tokens = craftThemes[mode];
+  const colors = tokens.color;
+  return {
+    algorithm: mode === 'dark' ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
+    token: {
+      fontFamily: tokens.font.interface,
+      fontFamilyCode: tokens.font.meta,
+      fontWeightStrong: 500,
+      motionEaseOut: tokens.motion.easing,
+      motionDurationFast: `${tokens.motion.feedbackMs}ms`,
+      motionDurationMid: `${tokens.motion.overlayMs}ms`,
+      motionDurationSlow: `${tokens.motion.enterMs}ms`,
+      fontSize: 14,
+      fontSizeSM: 12,
+      fontSizeHeading1: 32,
+      fontSizeHeading2: 28,
+      fontSizeHeading3: 24,
+      fontSizeHeading4: 20,
+      fontSizeHeading5: 16,
+      colorPrimary: colors.accent,
+      colorLink: colors.accent,
+      colorText: colors.ink,
+      colorTextSecondary: colors.secondary,
+      colorTextTertiary: colors.muted,
+      colorTextLightSolid: colors.onAccent,
+      colorBgLayout: colors.page,
+      colorBgContainer: colors.surface,
+      colorBgElevated: colors.surface,
+      colorFillSecondary: colors.raised,
+      colorBorder: colors.hairlineStrong,
+      colorBorderSecondary: colors.hairline,
+      colorSplit: colors.hairline,
+      colorSuccess: colors.positive,
+      colorSuccessBg: colors.positiveSoft,
+      colorSuccessBorder: colors.hairlineStrong,
+      colorError: colors.negative,
+      colorErrorBg: colors.negativeSoft,
+      colorErrorBorder: colors.hairlineStrong,
+      colorWarning: colors.warning,
+      colorWarningBg: colors.warningSoft,
+      colorWarningBorder: colors.hairlineStrong,
+      colorInfo: colors.accent,
+      colorInfoBg: colors.accentSoft,
+      colorInfoBorder: colors.hairlineStrong,
+      borderRadius: tokens.radius.control,
+      borderRadiusLG: tokens.radius.card,
+      borderRadiusSM: tokens.radius.nested,
+      boxShadowTertiary: tokens.shadow.small,
+      boxShadowSecondary: tokens.shadow.floating,
+      controlHeight: tokens.controlHeight,
+      padding: tokens.spacing.page,
+      paddingSM: tokens.spacing.group,
+      paddingXS: tokens.spacing.item,
+      margin: tokens.spacing.group,
+      marginSM: tokens.spacing.item,
+      marginXS: tokens.spacing.compact,
     },
-    Card: {
-      borderRadiusLG: craftTokens.radius.card,
+    components: {
+      Layout: {
+        headerHeight: tokens.headerHeight,
+        headerBg: colors.surface,
+        siderBg: colors.side,
+        bodyBg: colors.page,
+      },
+      Card: {
+        borderRadiusLG: tokens.radius.card,
+      },
+      Menu: {
+        itemHeight: tokens.navigationRowHeight,
+        itemBorderRadius: tokens.radius.control,
+        itemColor: colors.secondary,
+        itemHoverBg: colors.raised,
+        itemSelectedBg: colors.raised,
+        itemSelectedColor: colors.accent,
+        itemMarginInline: 12,
+        itemMarginBlock: tokens.spacing.compact,
+        iconSize: 16,
+      },
     },
-    Menu: {
-      itemHeight: craftTokens.navigationRowHeight,
-      itemBorderRadius: craftTokens.radius.control,
-      itemColor: craftTokens.color.secondary,
-      itemHoverBg: craftTokens.color.raised,
-      itemSelectedBg: craftTokens.color.raised,
-      itemSelectedColor: craftTokens.color.accent,
-      itemMarginInline: 12,
-      itemMarginBlock: craftTokens.spacing.compact,
-      iconSize: 16,
-    },
-  },
-};
+  };
+}
+
+export function createThemeConfig(mode: CraftThemeMode): ThemeConfig {
+  const config = createBaseThemeConfig(mode);
+  const baseAlgorithm = mode === 'dark' ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm;
+  return {
+    ...config,
+    cssVar: { key: 'awr-observer' },
+    // antd's dark algorithm derives a different primary from the seed. Reapply every project
+    // override to the algorithm result so runtime tokens exactly match the prototype values.
+    algorithm: (seed) => ({ ...baseAlgorithm(seed), ...config.token }),
+  };
+}
+
+export const themeConfig = createThemeConfig('light');
+
+/** CSS custom properties expose chart and completion roles that antd does not own. */
+export function craftCssVariables(mode: CraftThemeMode): Record<string, string> {
+  const tokens = craftThemes[mode];
+  const { color, chart, shadow, radius, motion, font } = tokens;
+  return {
+    '--craft-color-page': color.page,
+    '--craft-color-side': color.side,
+    '--craft-color-surface': color.surface,
+    '--craft-color-raised': color.raised,
+    '--craft-color-ink': color.ink,
+    '--craft-color-secondary': color.secondary,
+    '--craft-color-muted': color.muted,
+    '--craft-color-hairline': color.hairline,
+    '--craft-color-hairline-strong': color.hairlineStrong,
+    '--craft-color-accent': color.accent,
+    '--craft-color-on-accent': color.onAccent,
+    '--craft-color-accent-soft': color.accentSoft,
+    '--craft-color-positive': color.positive,
+    '--craft-color-positive-soft': color.positiveSoft,
+    '--craft-color-negative': color.negative,
+    '--craft-color-negative-soft': color.negativeSoft,
+    '--craft-color-warning': color.warning,
+    '--craft-color-warning-soft': color.warningSoft,
+    '--craft-chart-series-1': chart.series[0],
+    '--craft-chart-series-2': chart.series[1],
+    '--craft-chart-series-3': chart.series[2],
+    '--craft-chart-series-4': chart.series[3],
+    '--craft-completion-verified': chart.completion.verified,
+    '--craft-completion-reported': chart.completion.reported,
+    '--craft-completion-in-progress': chart.completion.inProgress,
+    '--craft-completion-not-started': chart.completion.notStarted,
+    '--craft-shadow-small': shadow.small,
+    '--craft-shadow-floating': shadow.floating,
+    '--craft-radius-control': `${radius.control}px`,
+    '--craft-radius-card': `${radius.card}px`,
+    '--craft-radius-panel': `${radius.panel}px`,
+    '--craft-radius-nested': `${radius.nested}px`,
+    '--craft-motion-easing': motion.easing,
+    '--craft-motion-feedback': `${motion.feedbackMs}ms`,
+    '--craft-motion-overlay': `${motion.overlayMs}ms`,
+    '--craft-motion-enter': `${motion.enterMs}ms`,
+    '--craft-font-interface': font.interface,
+    '--craft-font-meta': font.meta,
+  };
+}
+
+/** Apply root variables in a layout effect, before the browser paints a theme change. */
+export function applyCraftTheme(root: HTMLElement, mode: CraftThemeMode) {
+  root.dataset.theme = mode;
+  root.style.colorScheme = mode;
+  for (const [property, value] of Object.entries(craftCssVariables(mode))) {
+    root.style.setProperty(property, value);
+  }
+}

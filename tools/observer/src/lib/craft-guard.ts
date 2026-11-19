@@ -9,6 +9,30 @@ export interface CraftViolation {
 
 const ALLOWED_ANTD_COLORS = new Set(['success', 'error', 'warning', 'processing', 'default', 'currentColor', 'inherit']);
 const ALLOWED_RADII = new Set([4, 8, 12, 16]);
+const NAMED_COLOR_WORDS = new Set(`
+  aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown
+  burlywood cadetblue chartreuse chocolate coral cornflowerblue cornsilk crimson cyan darkblue darkcyan
+  darkgoldenrod darkgray darkgreen darkgrey darkkhaki darkmagenta darkolivegreen darkorange darkorchid darkred
+  darksalmon darkseagreen darkslateblue darkslategray darkslategrey darkturquoise darkviolet deeppink
+  deepskyblue dimgray dimgrey dodgerblue firebrick floralwhite forestgreen fuchsia gainsboro ghostwhite gold
+  goldenrod gray green greenyellow grey honeydew hotpink indianred indigo ivory khaki lavender lavenderblush
+  lawngreen lemonchiffon lightblue lightcoral lightcyan lightgoldenrodyellow lightgray lightgreen lightgrey
+  lightpink lightsalmon lightseagreen lightskyblue lightslategray lightslategrey lightsteelblue lightyellow lime
+  limegreen linen magenta maroon mediumaquamarine mediumblue mediumorchid mediumpurple mediumseagreen
+  mediumslateblue mediumspringgreen mediumturquoise mediumvioletred midnightblue mintcream mistyrose moccasin
+  navajowhite navy oldlace olive olivedrab orange orangered orchid palegoldenrod palegreen paleturquoise
+  palevioletred papayawhip peachpuff peru pink plum powderblue purple rebeccapurple red rosybrown royalblue
+  saddlebrown salmon sandybrown seagreen seashell sienna silver skyblue slateblue slategray slategrey snow
+  springgreen steelblue tan teal thistle tomato turquoise violet wheat white whitesmoke yellow yellowgreen
+  canvas canvastext linktext visitedtext activetext buttonface buttontext buttonborder field fieldtext
+  highlight highlighttext mark marktext graytext selecteditem selecteditemtext accentcolor accentcolortext
+`.trim().split(/\s+/));
+
+function containsNamedColor(value: string): boolean {
+  const withoutTokenFunctions = value.replace(/\b(?:var|url)\([^)]*\)/gi, '');
+  return [...withoutTokenFunctions.matchAll(/[A-Za-z]+/g)]
+    .some((match) => NAMED_COLOR_WORDS.has(match[0].toLowerCase()));
+}
 
 function copyLiterals(source: string, fileType: CraftFileType, filePath: string): Array<{ text: string; source: string }> {
   if (fileType === 'css') return [...source.matchAll(/(['"`])(?:\\.|(?!\1)[^\\\r\n])*\1/g)]
@@ -34,7 +58,21 @@ export function scanCraftSource(source: string, fileType: CraftFileType, filePat
   };
 
   add('hex-color', /#[0-9a-f]{3,8}\b/gi);
-  add('color-function', /\b(?:rgba?|hsla?)\s*\(/gi);
+  add('color-function', /\b(?:rgba?|hsla?|oklch|oklab|lch|lab|color|color-contrast)\s*\(/gi);
+  for (const match of source.matchAll(/\b(?:backgroundColor|background-color|background|border(?:Top|Right|Bottom|Left)?Color|border(?:-top|-right|-bottom|-left)?-color|outlineColor|outline-color|textDecorationColor|text-decoration-color|columnRuleColor|column-rule-color|caretColor|caret-color|fill|stroke)\s*:\s*['"]([A-Za-z]+)['"]/g)) {
+    if (!['currentColor', 'transparent', 'none', 'inherit', 'initial', 'unset', 'revert'].includes(match[1])) {
+      violations.push({ rule: 'named-color', match: match[0] });
+    }
+  }
+  if (fileType === 'css') {
+    for (const match of source.matchAll(/\b(?:color|background(?:-color)?|border(?:-(?:top|right|bottom|left))?-color|border(?:-(?:top|right|bottom|left))?|outline(?:-color)?|box-shadow|text-decoration-color|column-rule(?:-color)?|caret-color|fill|stroke)\s*:\s*([^;{}]+)/gi)) {
+      if (containsNamedColor(match[1])) violations.push({ rule: 'named-color', match: match[0] });
+    }
+  } else {
+    for (const match of source.matchAll(/\b(?:border(?:Top|Right|Bottom|Left)?|outline|boxShadow|background)\s*:\s*(['"`])(.*?)\1/g)) {
+      if (containsNamedColor(match[2])) violations.push({ rule: 'named-color', match: match[0] });
+    }
+  }
   add('gradient', /\b(?:linear-gradient|radial-gradient|conic-gradient)\s*\(/gi);
   add('colored-shadow', /(?:boxShadow|box-shadow|drop-shadow)[^\n;}]*(?:#|rgba?\(|hsla?\(|blue|red|green|purple|orange|violet|magenta|cyan)/gi);
   add('icon-package', /@ant-design\/icons/g);

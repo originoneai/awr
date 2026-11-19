@@ -1,0 +1,21 @@
+/* Pre-bundle token mirror. first-paint.test.ts pins every value to craftThemes in theme.ts. */
+:root {
+  --craft-color-page: #F3F5F9;
+  --craft-color-ink: #111827;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --craft-color-page: #0B0D14;
+  --craft-color-ink: #EEF0F5;
+  color-scheme: dark;
+}
+
+/* If the bootstrap is blocked, system dark still reaches the first paint. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --craft-color-page: #0B0D14;
+    --craft-color-ink: #EEF0F5;
+    color-scheme: dark;
+  }
+}
