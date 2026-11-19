@@ -2,11 +2,9 @@
 
 `update.record` saves a deterministic task-fact snapshot with every new update
 version. The caller supplies the judgment sentence and the service supplies the
-facts. The counting table below is the Team store's side of the shared fact
-contract; the words it shares with Observer's derived model (AWR-PPO-010) are
-mapped in [Shared words with Observer](#shared-words-with-observer) and defined
-on the Observer side in [overview-fact-semantics.md](overview-fact-semantics.md).
-Only explicit source records contribute to the counts.
+facts. Only explicit source records contribute to the counts. The words shared
+with Observer's derived model (AWR-PPO-010) are mapped in
+[Shared words with Observer](#shared-words-with-observer).
 
 ## Counting table
 
@@ -30,12 +28,12 @@ bodies, actor/person IDs, display names, and per-person aggregates are excluded.
 ## Shared words with Observer
 
 The mapping below is machine-checked on this side against the counting table,
-and `overview-fact-semantics.md` machine-checks the same words on the Observer
-side. Rows marked as open differences are recorded for the supervisor to
-resolve; neither table silently adopts the other's rule. Observer's bridge does
-not route `updates.list` or `update.inspect` yet (AWR-PPD-012 will add the
-routes), so today the two tables agree at the word level without one feeding
-the other.
+and [overview-fact-semantics.md](overview-fact-semantics.md) machine-checks the
+same words on the Observer side. Rows marked as open differences are recorded
+for the supervisor to resolve; neither table silently adopts the other's rule.
+Observer's bridge does not route `updates.list` or `update.inspect` yet
+(AWR-PPD-012 will add the routes), so today the two tables agree at the word
+level without one feeding the other.
 
 | Shared word | Service snapshot fields | Relationship to the Observer rule |
 | --- | --- | --- |
@@ -49,7 +47,9 @@ Count and coverage conventions match the shared `countDetails`, `coverage` and
 narrowed read keeps exact counts over visible work and discloses only the
 number of hidden tasks, and a schema-64 row without a snapshot reads back as
 unknown (`fact_snapshot` and `fact_snapshot_coverage` are null), never as zero
-counts.
+counts. The service's half-open `[start, end)` window is the same set of
+instants as Observer's `vcount` rule with inclusive bounds one millisecond
+apart: `[start, end)` equals `[start, end−1ms]` inclusive.
 
 ## Period and timezone
 
