@@ -954,8 +954,8 @@ test('coordination detail rejects a different review round or integration reques
 });
 
 
-test('the relocated bridge finds its default demonstration fixtures', async () => {
-  const bridge = await startBridge({ teamFixtureDir: undefined, demo: true });
+test('the relocated bridge finds explicitly selected legacy demonstration fixtures', async () => {
+  const bridge = await startBridge({ teamFixtureDir: FIXTURE_DIR, demo: true });
   try {
     const overview = await req(bridge.base, 'GET', '/api/team/overview?view=team&project=demo');
     assert.equal(overview.json.ok, true);
