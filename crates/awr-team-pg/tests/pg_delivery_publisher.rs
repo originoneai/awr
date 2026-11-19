@@ -111,7 +111,9 @@ async fn publication_replays_and_restarts_preserve_contract_status_and_source_by
             .get(0),
     )
     .unwrap();
-    let replay = prepare_delivery_source_note(text.as_bytes(), &note).unwrap();
+    let replay =
+        prepare_delivery_source_note(text.as_bytes(), &note, awr_source::SERVER_LEDGER_READ_CAP)
+            .unwrap();
     assert_eq!(replay.before_bytes, replay.after_bytes);
     assert!(replay.changed_external_keys.is_empty());
     assert_eq!(
@@ -798,6 +800,37 @@ async fn completion_notes_require_selected_candidate_bound_evidence_and_actual_a
             .count(),
         4
     );
+}
+
+// The registered server-directory fixture uses POSIX paths; set_len is not required to be sparse.
+#[cfg(unix)]
+#[tokio::test]
+async fn delivery_sync_reports_the_exact_server_ledger_limit() {
+    let f = setup_publisher().await;
+    let request = f.request("ledger-over-server-limit").await;
+    let ledger = std::fs::OpenOptions::new()
+        .write(true)
+        .open(f.root.join("ledger.yaml"))
+        .unwrap();
+    let actual = awr_source::SERVER_LEDGER_READ_CAP + 1;
+    ledger.set_len(actual).unwrap();
+    drop(ledger);
+    let error = f
+        .store
+        .prepare_source_publication(TENANT, PROJECT, A, request)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        PgError::SourcePackageTooLarge {
+            limit_kind: SourcePackageLimitKind::LedgerBytes,
+            file: Some(ref file),
+            actual: found,
+            limit: awr_source::SERVER_LEDGER_READ_CAP,
+            package_bytes,
+            files: 1,
+        } if file == "ledger.yaml" && found == actual && package_bytes == actual
+    ));
 }
 
 #[tokio::test]

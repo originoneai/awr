@@ -48,6 +48,10 @@ fn note() -> DeliverySourceNote {
     }
 }
 
+fn prepare_note(bytes: &[u8], note: &DeliverySourceNote) -> Result<LedgerWritebackPatch> {
+    prepare_delivery_source_note(bytes, note, YAML_READ_CAP)
+}
+
 struct Fixture {
     root: PathBuf,
 }
@@ -71,7 +75,7 @@ impl Drop for Fixture {
 
 #[test]
 fn exact_note_preserves_status_comments_other_fields_and_other_work_bytes() {
-    let patch = prepare_delivery_source_note(LEDGER.as_bytes(), &note()).unwrap();
+    let patch = prepare_note(LEDGER.as_bytes(), &note()).unwrap();
     let text = String::from_utf8(patch.after_bytes.clone()).unwrap();
     assert!(text.starts_with("# Authoritative fixture; preserve this comment.\n"));
     assert!(text.contains("status: planned # This is a source note, not domain acceptance."));
@@ -96,7 +100,7 @@ fn reindex_proves_unchanged_contract_identity_and_graph() {
         &PublishPrepOptions::default(),
     )
     .unwrap();
-    let patch = prepare_delivery_source_note(LEDGER.as_bytes(), &note()).unwrap();
+    let patch = prepare_note(LEDGER.as_bytes(), &note()).unwrap();
     let after = prepare_publish_from_ledger_bytes(
         &location,
         &f.root,
@@ -122,7 +126,7 @@ fn completion_reference_never_overwrites_status_or_finalizes_a_work() {
         artifact_id: "artifact-a".into(),
         artifact_sha256: "c".repeat(64),
     });
-    let patch = prepare_delivery_source_note(LEDGER.as_bytes(), &n).unwrap();
+    let patch = prepare_note(LEDGER.as_bytes(), &n).unwrap();
     let value: Value = serde_yaml_ng::from_slice(&patch.after_bytes).unwrap();
     assert_eq!(value["work_items"][0]["status"], "planned");
     assert!(
@@ -141,21 +145,21 @@ fn completion_reference_never_overwrites_status_or_finalizes_a_work() {
 
 #[test]
 fn identical_note_is_byte_preserving_and_older_or_inconsistent_notes_conflict() {
-    let first = prepare_delivery_source_note(LEDGER.as_bytes(), &note()).unwrap();
-    let replay = prepare_delivery_source_note(&first.after_bytes, &note()).unwrap();
+    let first = prepare_note(LEDGER.as_bytes(), &note()).unwrap();
+    let replay = prepare_note(&first.after_bytes, &note()).unwrap();
     assert_eq!(replay.before_bytes, replay.after_bytes);
     assert!(replay.changed_external_keys.is_empty());
     let mut stale = note();
     stale.publication_id = "other".into();
     assert!(matches!(
-        prepare_delivery_source_note(&first.after_bytes, &stale),
+        prepare_note(&first.after_bytes, &stale),
         Err(Error::SourceConflict(_))
     ));
     stale.metadata_revision = "2".into();
     stale.candidate_digest = "b".repeat(64);
-    assert!(prepare_delivery_source_note(&first.after_bytes, &stale).is_err());
+    assert!(prepare_note(&first.after_bytes, &stale).is_err());
     stale.selection_version = "2".into();
-    assert!(prepare_delivery_source_note(&first.after_bytes, &stale).is_ok());
+    assert!(prepare_note(&first.after_bytes, &stale).is_ok());
 }
 
 #[test]
@@ -166,7 +170,7 @@ fn malformed_duplicate_missing_and_unknown_source_records_are_refused() {
         "work_items: [{id: b}]",
         "work_items: [{id: a, delivery_sync: {manual: untouched}}]",
     ] {
-        assert!(prepare_delivery_source_note(text.as_bytes(), &note()).is_err());
+        assert!(prepare_note(text.as_bytes(), &note()).is_err());
     }
 }
 
@@ -176,7 +180,7 @@ fn flow_mapping_and_crlf_remain_supported() {
         "work_items: [{id: a, status: planned}]\n",
         "work_items:\r\n  - id: a\r\n    status: planned\r\n",
     ] {
-        let patch = prepare_delivery_source_note(text.as_bytes(), &note()).unwrap();
+        let patch = prepare_note(text.as_bytes(), &note()).unwrap();
         let value: Value = serde_yaml_ng::from_slice(&patch.after_bytes).unwrap();
         assert_eq!(value["work_items"][0]["delivery_sync"], json!(note()));
         assert_eq!(value["work_items"][0]["status"], "planned");
@@ -224,21 +228,21 @@ fn confined_replace_checks_before_bytes_and_recovers_by_observing_after_bytes() 
         fs::write(&source, LEDGER).unwrap();
         let guard = LockedSourceFile::open(&f.root, relative).unwrap();
         let identity = guard.identity().clone();
-        let patch = prepare_delivery_source_note(&guard.read().unwrap(), &note()).unwrap();
+        let patch = prepare_note(&guard.read(YAML_READ_CAP).unwrap(), &note()).unwrap();
         guard
-            .replace(&patch.before_fingerprint, &patch.after_bytes)
+            .replace(&patch.before_fingerprint, &patch.after_bytes, YAML_READ_CAP)
             .unwrap();
-        assert_eq!(guard.read().unwrap(), patch.after_bytes);
+        assert_eq!(guard.read(YAML_READ_CAP).unwrap(), patch.after_bytes);
         assert!(
             guard
-                .replace(&patch.before_fingerprint, LEDGER.as_bytes())
+                .replace(&patch.before_fingerprint, LEDGER.as_bytes(), YAML_READ_CAP)
                 .is_err()
         );
         drop(guard);
         let resumed = LockedSourceFile::open(&f.root, relative).unwrap();
         resumed.verify_identity(&identity).unwrap();
         assert_eq!(
-            fingerprint(&resumed.read().unwrap()),
+            fingerprint(&resumed.read(YAML_READ_CAP).unwrap()),
             patch.after_fingerprint
         );
         assert_eq!(
@@ -272,7 +276,7 @@ fn read_only_observation_preserves_live_locks_and_does_not_repair_missing_identi
     let guard = f.open();
     let identity = guard.identity().clone();
     assert_eq!(
-        LockedSourceFile::observe(&f.root, "ledger.yaml", &identity).unwrap(),
+        LockedSourceFile::observe(&f.root, "ledger.yaml", &identity, YAML_READ_CAP).unwrap(),
         LEDGER.as_bytes()
     );
     assert!(matches!(
@@ -286,7 +290,7 @@ fn read_only_observation_preserves_live_locks_and_does_not_repair_missing_identi
         .find(|p| p.file_name().unwrap().to_string_lossy().ends_with(".lock"))
         .unwrap();
     fs::rename(&lock, lock.with_extension("retained")).unwrap();
-    assert!(LockedSourceFile::observe(&f.root, "ledger.yaml", &identity).is_err());
+    assert!(LockedSourceFile::observe(&f.root, "ledger.yaml", &identity, YAML_READ_CAP).is_err());
     assert!(!lock.exists());
     assert_eq!(
         fs::read(f.root.join("ledger.yaml")).unwrap(),
@@ -301,20 +305,55 @@ fn external_edit_is_preserved_and_read_only_source_refuses_replacement() {
     fs::write(f.root.join("ledger.yaml"), b"external edit\n").unwrap();
     assert!(
         guard
-            .replace(&fingerprint(LEDGER.as_bytes()), b"overwritten")
+            .replace(
+                &fingerprint(LEDGER.as_bytes()),
+                b"overwritten",
+                YAML_READ_CAP,
+            )
             .is_err()
     );
-    assert_eq!(guard.read().unwrap(), b"external edit\n");
+    assert_eq!(guard.read(YAML_READ_CAP).unwrap(), b"external edit\n");
     let path = f.root.join("ledger.yaml");
     let permissions = fs::metadata(&path).unwrap().permissions();
     let mut readonly = permissions.clone();
     readonly.set_readonly(true);
     fs::set_permissions(&path, readonly).unwrap();
     let error = guard
-        .replace(&fingerprint(b"external edit\n"), b"overwritten")
+        .replace(
+            &fingerprint(b"external edit\n"),
+            b"overwritten",
+            YAML_READ_CAP,
+        )
         .unwrap_err();
     assert!(matches!(error, Error::Io(ref e) if e.kind()==std::io::ErrorKind::PermissionDenied));
     fs::set_permissions(&path, permissions).unwrap();
+}
+
+#[test]
+fn explicit_ledger_limits_are_inclusive_and_preserve_numeric_details() {
+    let f = Fixture::new();
+    fs::write(f.root.join("ledger.yaml"), b"123456789").unwrap();
+    let guard = f.open();
+    assert_eq!(guard.read(9).unwrap(), b"123456789");
+    let error = guard.read(8).unwrap_err();
+    assert_eq!(ledger_size_limit_exceeded(&error), Some((9, 8)));
+    let error = guard
+        .replace(&fingerprint(b"123456789"), b"1234567890", 9)
+        .unwrap_err();
+    assert_eq!(ledger_size_limit_exceeded(&error), Some((10, 9)));
+    assert_eq!(guard.read(9).unwrap(), b"123456789");
+
+    let error = prepare_delivery_source_note(LEDGER.as_bytes(), &note(), LEDGER.len() as u64 - 1)
+        .unwrap_err();
+    assert_eq!(
+        ledger_size_limit_exceeded(&error),
+        Some((LEDGER.len() as u64, LEDGER.len() as u64 - 1))
+    );
+    let limit = LEDGER.len() as u64 + 1;
+    let error = prepare_delivery_source_note(LEDGER.as_bytes(), &note(), limit).unwrap_err();
+    let (actual, found_limit) = ledger_size_limit_exceeded(&error).unwrap();
+    assert!(actual > limit);
+    assert_eq!(found_limit, limit);
 }
 
 #[test]
@@ -334,18 +373,18 @@ fn traversal_nonfiles_and_oversized_inputs_are_refused() {
     assert!(
         LockedSourceFile::open(&f.root, "directory")
             .unwrap()
-            .read()
+            .read(YAML_READ_CAP)
             .is_err()
     );
     fs::hard_link(f.root.join("ledger.yaml"), f.root.join("other-link")).unwrap();
-    assert!(f.open().read().is_err());
+    assert!(f.open().read(YAML_READ_CAP).is_err());
     fs::remove_file(f.root.join("other-link")).unwrap();
     fs::write(
         f.root.join("ledger.yaml"),
         vec![b'x'; YAML_READ_CAP as usize + 1],
     )
     .unwrap();
-    assert!(f.open().read().is_err());
+    assert!(f.open().read(YAML_READ_CAP).is_err());
 }
 
 #[cfg(unix)]
@@ -361,7 +400,7 @@ fn root_parent_leaf_and_lock_symlinks_are_refused() {
     let guard = f.open();
     fs::remove_file(f.root.join("ledger.yaml")).unwrap();
     symlink(f.root.join("real/ledger.yaml"), f.root.join("ledger.yaml")).unwrap();
-    assert!(guard.read().is_err());
+    assert!(guard.read(YAML_READ_CAP).is_err());
     fs::remove_file(f.root.join("ledger.yaml")).unwrap();
     fs::write(f.root.join("ledger.yaml"), LEDGER).unwrap();
     let lock = fs::read_dir(&f.root)
@@ -372,7 +411,7 @@ fn root_parent_leaf_and_lock_symlinks_are_refused() {
         .path();
     fs::remove_file(&lock).unwrap();
     symlink(f.root.join("ledger.yaml"), &lock).unwrap();
-    assert!(guard.read().is_err());
+    assert!(guard.read(YAML_READ_CAP).is_err());
     drop(guard);
     assert!(LockedSourceFile::open(&f.root, "ledger.yaml").is_err());
 }
@@ -390,7 +429,11 @@ fn directory_or_lock_replacement_invalidates_live_and_recovered_identity() {
     fs::write(f.root.join("nested/ledger.yaml"), LEDGER).unwrap();
     assert!(
         guard
-            .replace(&fingerprint(LEDGER.as_bytes()), b"wrong directory")
+            .replace(
+                &fingerprint(LEDGER.as_bytes()),
+                b"wrong directory",
+                YAML_READ_CAP,
+            )
             .is_err()
     );
     drop(guard);
@@ -415,7 +458,7 @@ fn directory_or_lock_replacement_invalidates_live_and_recovered_identity() {
         .path();
     fs::remove_file(&lock).unwrap();
     fs::write(lock, b"").unwrap();
-    assert!(guard.read().is_err());
+    assert!(guard.read(YAML_READ_CAP).is_err());
     drop(guard);
     assert!(f.open().verify_identity(&identity).is_err());
 }
@@ -435,7 +478,7 @@ fn changed_root_is_refused_even_when_the_leaf_parent_and_lock_keep_their_identit
     // Preserve the actual leaf parent and stable lock, changing only the bound
     // root. Comparing the leaf fingerprint/parent alone would miss this change.
     fs::rename(f.root.join("old-root/nested"), root.join("nested")).unwrap();
-    assert!(guard.read().is_err());
+    assert!(guard.read(YAML_READ_CAP).is_err());
     drop(guard);
     let recovered = LockedSourceFile::open(&root, "nested/ledger.yaml").unwrap();
     assert!(recovered.verify_identity(&identity).is_err());

@@ -36,6 +36,7 @@ function parseArgs(argv) {
     teamUrl: null,
     teamPublicUrl: null,
     teamFixtureDir: null,
+    demoVariant: process.env.AWR_OBSERVER_DEMO_VARIANT || 'full',
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -44,6 +45,7 @@ function parseArgs(argv) {
       if (Number.isInteger(n) && n >= 0 && n <= 65535) out.port = n;
     }
     else if (a === '--demo') out.demo = true;
+    else if (a === '--demo-variant') out.demoVariant = argv[++i] || 'full';
     else if (a === '--team-url') out.teamUrl = argv[++i] || null;
     else if (a === '--team-public-url') out.teamPublicUrl = argv[++i] || null;
     else if (a === '--team-fixture-dir') out.teamFixtureDir = path.resolve(argv[++i] || '.');
@@ -53,6 +55,7 @@ function parseArgs(argv) {
         '',
         '  --port <port>         Listening port (default: 7390; 0 picks a free port)',
         '  --demo                Serve fixture data (default when --team-url is absent)',
+        '  --demo-variant <name> full, empty, single, restricted or partial',
         '  --team-url <url>      Proxy Team Web to awr-server /v1/web entry',
         '  --team-public-url <url> Public Team service base URL for member MCP setup',
         '  --team-fixture-dir    Use on-disk team-web-loop fixtures (demo/tests)',
@@ -73,6 +76,7 @@ const teamBridge = createTeamBridge({
   teamPublicUrl: ARGS.teamPublicUrl,
   teamFixtureDir: ARGS.teamFixtureDir,
   demo: ARGS.demo,
+  demoVariant: ARGS.demoVariant,
   port: ARGS.port,
 });
 const routes = Object.assign({}, teamBridge.routes);

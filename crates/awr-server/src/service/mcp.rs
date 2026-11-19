@@ -1735,7 +1735,7 @@ fn catalog() -> Vec<Tool> {
             planning_approve.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(false).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_planning_publish",
-            "Publish an approved candidate (planning.publish). Optional activate uses the registered sole source only — no client path/URL/SQL. On disconnect, query outcome with the same request_id.",
+            "Publish an approved candidate (planning.publish). Optional activate uses the registered sole source only — no client path/URL/SQL. Size limits are fixed by code path, never by request fields: server-generated packages allow 256 files, 16 MiB per file and 64 MiB total; client uploads retain 64 files, 1 MiB per file and 4 MiB total. SourcePackageTooLarge (HTTP 413) reports limit_kind, a relative file when applicable, actual, limit, package_bytes and files; reduce plan content or ask a service operator to review the fixed limits. On disconnect, query outcome with the same request_id.",
             planning_publish.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(false).destructive(true).idempotent(true).open_world(false)),
         Tool::new("awr_team_planning_reject",
@@ -2237,6 +2237,84 @@ mod tests {
         assert_eq!(response["publication_performed"], false);
         assert_eq!(response["activation_performed"], false);
         assert!(serde_json::to_vec(&response).unwrap().len() < 1200);
+    }
+
+    #[tokio::test]
+    async fn source_package_size_errors_have_complete_http_mcp_fields_and_no_wire_override() {
+        fn error(index: usize) -> PgError {
+            let limits = awr_team_pg::SourcePackageLimits {
+                max_files: if index == 2 { 1 } else { 2 },
+                max_file_bytes: 8,
+                max_package_bytes: 8,
+            };
+            let files = match index {
+                0 => vec![("workstreams.json".into(), b"SECRET!!!".to_vec())],
+                1 => vec![
+                    ("one.json".into(), b"12345".to_vec()),
+                    ("two.json".into(), b"12345".to_vec()),
+                ],
+                2 => vec![
+                    ("one.json".into(), b"1".to_vec()),
+                    ("two.json".into(), b"2".to_vec()),
+                ],
+                _ => return PgError::source_ledger_too_large("ledger.yaml", 9, 8),
+            };
+            awr_team_pg::validate_package_with_limits(&files, limits).unwrap_err()
+        }
+        for (index, kind, file, actual, expected_limit, package_bytes, files) in [
+            (0, "file_bytes", json!("workstreams.json"), 9, 8, 9, 1),
+            (1, "package_bytes", Value::Null, 10, 8, 10, 2),
+            (2, "file_count", Value::Null, 2, 1, 2, 2),
+            (3, "ledger_bytes", json!("ledger.yaml"), 9, 8, 9, 1),
+        ] {
+            let (status, body) = public_error(error(index));
+            assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+            assert_eq!(body["code"], "SourcePackageTooLarge");
+            assert_eq!(body["limit_kind"], kind);
+            assert_eq!(body["file"], file);
+            assert_eq!(body["actual"], actual);
+            assert_eq!(body["limit"], expected_limit);
+            assert_eq!(body["package_bytes"], package_bytes);
+            assert_eq!(body["files"], files);
+            assert_eq!(body.as_object().unwrap().len(), 9, "{body}");
+            let next = body["next_step"].as_str().unwrap();
+            assert!(next.contains("Reduce the plan content"));
+            assert!(next.contains("service operator"));
+            assert!(!body.to_string().contains("SECRET"));
+
+            let response = error_response(error(index));
+            assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+            let bytes = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), body);
+            let mcp = CallToolResult::structured_error(body.clone());
+            assert_eq!(mcp.is_error, Some(true));
+            assert_eq!(mcp.structured_content, Some(body.clone()));
+            let (outcome_status, outcome) = command_failure("planning.outcome", error(index));
+            assert_eq!(outcome_status, StatusCode::PAYLOAD_TOO_LARGE);
+            assert_eq!(outcome, body);
+        }
+
+        let publish = catalog()
+            .into_iter()
+            .find(|tool| tool.name == "awr_team_planning_publish")
+            .unwrap();
+        assert_eq!(publish.input_schema["additionalProperties"], false);
+        for field in ["limits", "package_limits", "limit_profile", "generated"] {
+            assert!(publish.input_schema["properties"].get(field).is_none());
+        }
+        let decode = serde_json::from_value::<awr_team_pg::PlanningPublishRequest>(json!({
+            "request_id":"no-limit-override", "candidate_id":"candidate-example",
+            "candidate_digest":"a".repeat(64), "activate":true, "impact_proven":true,
+            "package_limits":"generated"
+        }))
+        .unwrap_err();
+        let (status, refusal) =
+            public_error(awr_team_pg::PlanningPublishRequest::decode_error(decode));
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(refusal["code"], "InvalidInput");
+        assert!(!refusal.to_string().contains("generated"));
     }
 
     #[test]

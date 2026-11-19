@@ -910,6 +910,30 @@ fn retryable_value() -> Value {
 
 // Shared by HTTP and MCP; never expose SQL, URLs, credentials or source bodies.
 fn public_error(error: PgError) -> (StatusCode, Value) {
+    if let PgError::SourcePackageTooLarge {
+        limit_kind,
+        file,
+        actual,
+        limit,
+        package_bytes,
+        files,
+    } = &error
+    {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            json!({
+                "code":"SourcePackageTooLarge",
+                "message":"source package or server ledger exceeds a deterministic size limit",
+                "limit_kind":limit_kind.as_str(),
+                "file":file,
+                "actual":actual,
+                "limit":limit,
+                "package_bytes":package_bytes,
+                "files":files,
+                "next_step":"Reduce the plan content that generated this package, or ask a service operator to review and adjust the fixed limits; then retry the reviewed operation."
+            }),
+        );
+    }
     if let Some(diagnostic) = error.evidence_input_binding_diagnostic() {
         return (StatusCode::CONFLICT, diagnostic);
     }
