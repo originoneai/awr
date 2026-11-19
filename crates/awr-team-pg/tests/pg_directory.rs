@@ -576,12 +576,21 @@ async fn hierarchy_faults_are_rejected_without_touching_the_directory() {
         name: " Scheduling ".into(),
         parent_id: Some("runtime".into()),
     });
+    // Two top-level departments whose names differ only by surrounding
+    // whitespace collide in the one top-level sibling group.
+    let mut top_level_rename = hierarchical_plan();
+    top_level_rename.departments.push(DirectoryDepartment {
+        id: "product".into(),
+        name: " Engineering ".into(),
+        parent_id: None,
+    });
     let mut unknown_parent = hierarchical_plan();
     unknown_parent.departments[1].parent_id = Some("unregistered".into());
     for (label, broken) in [
         ("cycle", cycle),
         ("too deep", too_deep),
         ("sibling rename", sibling_rename),
+        ("top-level rename", top_level_rename),
         ("unknown parent", unknown_parent),
     ] {
         assert!(
@@ -663,6 +672,36 @@ async fn directories_recorded_without_the_hierarchy_field_stay_readable_and_upgr
     );
     assert_eq!(legacy["members"][0]["display_name"], "Alex");
     assert_eq!(legacy["members"][0]["available"], true);
+    // A directory the older rules allowed: two same-named top-level
+    // departments. Reading keeps working; previewing the plan unchanged is
+    // refused until one of the two is renamed.
+    admin
+        .execute(
+            "UPDATE awr_team.project_directories SET plan_json=$3
+             WHERE tenant_id=$1 AND project_id=$2",
+            &[
+                &TENANT,
+                &PROJECT,
+                &json!({"organization":{"id":"example","name":"Example company"},
+                    "departments":[{"id":"engineering","name":"Engineering"},
+                        {"id":"product","name":"Engineering"}],
+                    "project_department_ids":["engineering","product"],
+                    "members":[{"person_id":"person-one","department_ids":["engineering"]}]}),
+            ],
+        )
+        .await
+        .unwrap();
+    let duplicated = directory.read(TENANT, PROJECT, A).await.unwrap();
+    assert_eq!(
+        duplicated["plan"]["departments"].as_array().unwrap().len(),
+        2
+    );
+    let unchanged: ProjectDirectoryPlan =
+        serde_json::from_value(duplicated["plan"].clone()).unwrap();
+    assert!(matches!(
+        directory.preview(TENANT, PROJECT, A, &unchanged).await,
+        Err(PgError::Protocol(_))
+    ));
     // The old directory upgrades to a hierarchy through the normal flow.
     let preview = directory
         .preview(TENANT, PROJECT, A, &hierarchical_plan())

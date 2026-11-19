@@ -404,6 +404,13 @@ mod tests {
             .departments
             .push(department("observability", " Runtime ", Some("platform")));
         assert!(siblings.validate().is_err());
+        // The top level is one sibling group too: two top-level departments
+        // whose names only differ by surrounding whitespace must collide.
+        let mut top_level = hierarchical();
+        top_level
+            .departments
+            .push(department("product", " Engineering ", None));
+        assert!(top_level.validate().is_err());
         let mut branched = hierarchical();
         branched
             .departments
