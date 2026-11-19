@@ -146,6 +146,43 @@ async function modelFixture(t, respond = () => undefined, options = {}) {
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function bigWorkItem(id, stream, unclaimed) {
+  const base = realWorkListItem();
+  return { ...base, work_id: id, workstream_id: stream,
+    summary: { ...base.summary, runtime: unclaimed ? { value: null, as_of_unix_ms: null, reason: 'no_runtime' } : base.summary.runtime } };
+}
+
+function bigProject(streams, perStream, unclaimedShare) {
+  const ids = [];
+  const items = {};
+  for (let s = 0; s < streams; s += 1) {
+    const sid = `stream-${s}`;
+    items[sid] = [];
+    for (let w = 0; w < perStream; w += 1) {
+      const unclaimed = w % 2 === 1 && unclaimedShare > 0;
+      const id = `w-${s}-${String(w).padStart(3, '0')}`;
+      items[sid].push(bigWorkItem(id, sid, unclaimed));
+      ids.push(id);
+    }
+  }
+  return { streams: Array.from({ length: streams }, (_, s) => ({ id: `stream-${s}`, external_key: `k${s}`, title: `S${s}` })), items, ids };
+}
+
+function respondFor(project, perReadDelayMs = 0) {
+  return async (query, state) => {
+    if (perReadDelayMs && query.op !== 'session') await delay(perReadDelayMs);
+    if (query.op === 'workstreams.list') return { body: { items: project.streams, total: project.streams.length, next_cursor: null } };
+    if (query.op === 'work.list') {
+      const items = project.items[query.workstream_id] || [];
+      return { body: { ...envelope(state, query), data: { items, total: items.length, next_cursor: null, truncated: false, execution_authorized: false, as_of: asOf(state) } } };
+    }
+    return undefined;
+  };
+}
+
+const nonSession = (state) => state.calls.filter((query) => query.op !== 'session');
+const reviewIds = (state) => state.calls.filter((query) => query.op === 'review.rounds').map((query) => query.work_id);
+
 test('overview-model composes canonical facts from real extracts without inventing absent facts', async (t) => {
   const { call, state } = await modelFixture(t);
   const result = await call();
@@ -169,7 +206,9 @@ test('overview-model composes canonical facts from real extracts without inventi
   assert.equal(result.freshness.authoritative.status, 'measured');
   assert.equal(result.freshness.authoritative.project_revision, '42');
   assert.equal(result.freshness.report_received.status, 'not_measured');
-  assert.equal(Object.hasOwn(result.input, 'approvals'), false);
+  assert.deepEqual(result.input.approvals, { coverage: 'unread', reason: 'not-read' });
+  assert.equal(result.coverage.approvals.status, 'unread');
+  assert.equal(result.coverage.approvals.reason, 'not-read');
   const ops = new Set(state.calls.map((call) => call.op));
   assert.deepEqual(ops, new Set(['session', 'workstreams.list', 'work.list', 'decisions.list',
     'dependencies.list', 'handoff.list', 'audit.development', 'directory.read', 'review.rounds']));
@@ -239,33 +278,120 @@ test('overview-model marks an unfinished cursor sequence truncated and retains i
   assert.equal(typeof result.coverage.activity.missing[0].next_cursor, 'string');
 });
 
-test('overview-model applies authoritative ordering when responses settle out of order', async (t) => {
-  let releaseOld;
-  let oldStarted;
-  const oldGate = new Promise((resolve) => { releaseOld = resolve; });
-  const started = new Promise((resolve) => { oldStarted = resolve; });
-  const { call, state } = await modelFixture(t, async (query) => {
-    if (query.op === 'work.list' && state.revision === '41') {
-      oldStarted();
-      await oldGate;
-    }
+test('overview-model shares one in-flight composition between overlapping calls', async (t) => {
+  const project = bigProject(1, 3, 0);
+  const respond = respondFor(project);
+  let release;
+  let started;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const waiting = new Promise((resolve) => { started = resolve; });
+  const { call, state } = await modelFixture(t, async (query, upstreamState) => {
+    if (query.op === 'work.list') { started(); await gate; }
+    return respond(query, upstreamState);
+  }, { readTimeoutMs: 1000, overviewDeadlineMs: 5000 });
+  const first = call();
+  await waiting;
+  const second = call();
+  await delay(20);
+  release();
+  const [left, right] = await Promise.all([first, second]);
+  assert.equal(left.ok, true, JSON.stringify(left));
+  assert.equal(right.ok, true, JSON.stringify(right));
+  assert.equal(left.read_at_unix_ms, right.read_at_unix_ms);
+  assert.equal(nonSession(state).length, 10);
+  assert.equal(state.calls.filter((query) => query.op === 'session').length, 2);
+});
+
+test('overview-model fails every caller sharing a composition revoked in flight', async (t) => {
+  let release;
+  let started;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const waiting = new Promise((resolve) => { started = resolve; });
+  const { bridge, call, state } = await modelFixture(t, async (query) => {
+    if (query.op === 'work.list') { started(); await gate; }
     return undefined;
   }, { readTimeoutMs: 1000, overviewDeadlineMs: 5000 });
-  state.revision = '41';
-  const oldRequest = call();
-  await started;
-  state.revision = '42';
-  const newer = await call();
-  assert.equal(newer.freshness.authoritative.project_revision, '42');
-  state.revision = '41';
-  releaseOld();
-  const older = await oldRequest;
-  assert.equal(older.freshness.authoritative.project_revision, '42');
-  assert.equal(older.read_at_unix_ms, newer.read_at_unix_ms);
-  state.revision = '42';
-  const held = await call();
-  assert.equal(held.freshness.authoritative.project_revision, '42');
-  assert.equal(held.read_at_unix_ms, newer.read_at_unix_ms);
+  const first = call();
+  await waiting;
+  const second = call();
+  await delay(20);
+  state.sessionRevoked = true;
+  const revocation = await call();
+  assert.equal(revocation.error.code, 'SessionExpired');
+  release();
+  const [left, right] = await Promise.all([first, second]);
+  for (const result of [left, right]) {
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'Unauthenticated');
+    assert.equal(result.input, undefined);
+  }
+  assert.equal(bridge.cacheSize(), 0);
+});
+
+test('overview-model spends the 50-work two-stream cap in deterministic list order within a priority', async (t) => {
+  const project = bigProject(2, 25, 0);
+  project.items['stream-1'][24].summary.phase = field('delivered');
+  project.items['stream-0'][0].summary.phase = field(null);
+  project.items['stream-0'][0].summary.report = field(null);
+  const { call, state } = await modelFixture(t, respondFor(project), { readTimeoutMs: 1000, overviewDeadlineMs: 5000 });
+  const result = await call();
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(nonSession(state).length, 47);
+  const reads = reviewIds(state);
+  assert.equal(reads.length, 39);
+  assert.equal(reads[0], 'w-1-024', 'the delivered result must be read first');
+  assert.ok(reads.includes('w-1-024'));
+  assert.ok(!reads.includes('w-0-000'), 'the quiet work must yield to informative work');
+  assert.equal(result.input.reviewRounds.coverage, 'unread');
+  assert.equal(result.input.reviewRounds.reason, 'truncated');
+  const missing = result.coverage.reviewRounds.missing.filter((gap) => gap.reason === 'truncated');
+  assert.equal(missing.length, 11);
+  assert.ok(missing.some((gap) => gap.work_id === 'w-0-000'));
+});
+
+test('overview-model gives no-runtime works known empty rounds without spending reads', async (t) => {
+  const project = bigProject(1, 60, 1);
+  const { call, state } = await modelFixture(t, respondFor(project), { readTimeoutMs: 1000, overviewDeadlineMs: 5000 });
+  const result = await call();
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(nonSession(state).length, 37);
+  const reads = reviewIds(state);
+  assert.equal(reads.length, 30);
+  assert.ok(reads.every((id) => Number(id.split('-')[2]) % 2 === 0));
+  assert.equal(result.input.reviewRounds.coverage, 'complete');
+  assert.deepEqual(result.input.reviewRounds.items, []);
+  assert.deepEqual(result.coverage.reviewRounds.missing, []);
+  assert.equal(result.coverage.reviewRounds.known_empty.length, 30);
+  assert.ok(result.coverage.reviewRounds.known_empty.every((entry) => entry.reason === 'no_runtime'
+    && Number(entry.work_id.split('-')[2]) % 2 === 1));
+  assert.equal(result.freshness.authoritative.status, 'measured');
+});
+
+test('overview-model caps a 100-work three-stream composition at 47 non-session reads', async (t) => {
+  const project = bigProject(3, 34, 0);
+  project.items['stream-1'] = project.items['stream-1'].slice(0, 33);
+  project.items['stream-2'] = project.items['stream-2'].slice(0, 33);
+  project.ids = Object.values(project.items).flat().map((item) => item.work_id);
+  assert.equal(project.ids.length, 100);
+  const { call, state } = await modelFixture(t, respondFor(project), { readTimeoutMs: 1000, overviewDeadlineMs: 5000 });
+  const result = await call();
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.input.tasks.items.length, 100);
+  assert.ok(nonSession(state).length <= 47);
+  assert.equal(nonSession(state).length, 47);
+  assert.equal(reviewIds(state).length, 38);
+  assert.equal(result.input.reviewRounds.reason, 'truncated');
+});
+
+test('overview-model makes only session reads during twelve polls inside the cache window', async (t) => {
+  const clock = AT;
+  const { call, state } = await modelFixture(t, () => undefined, { now: () => clock });
+  for (let poll = 0; poll < 12; poll += 1) {
+    const result = await call();
+    assert.equal(result.ok, true, JSON.stringify(result));
+  }
+  assert.equal(state.calls.filter((query) => query.op === 'session').length, 12);
+  assert.equal(nonSession(state).length, 8);
 });
 
 test('overview-model revocation clears the cached model and later reads return no restricted input', async (t) => {
@@ -327,4 +453,7 @@ test('the demo composition feeds the real deriveOverview input surface directly'
   const derived = deriveOverview(result.input);
   assert.equal(derived.tasks.length, result.input.tasks.items.length);
   assert.equal(derived.coverage.parts.tasks.state, result.input.tasks.coverage);
+  assert.deepEqual(result.input.approvals, { coverage: 'unread', reason: 'not-read' });
+  assert.equal(derived.coverage.parts.approvals.state, 'unread');
+  assert.equal(derived.coverage.parts.approvals.reason, 'not-read');
 });

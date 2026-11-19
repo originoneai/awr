@@ -969,6 +969,23 @@ function overviewReviewFromList(item, taskId) {
   return round;
 }
 
+function overviewReviewKnownEmpty(item) {
+  const runtime = item?.summary?.runtime;
+  return runtime?.value === null && runtime.reason === 'no_runtime';
+}
+
+function overviewReviewReadPriority(item) {
+  const summary = item?.summary;
+  const phase = summary?.phase?.value;
+  if (phase === 'delivered') return 0;
+  const integration = summary?.outcome?.value?.integration;
+  if (integration != null || phase === 'ready_for_review') return 1;
+  if (summary?.report?.value != null) return 2;
+  // A claimed but quiet work is the least informative tail. Only the explicit
+  // no_runtime reason skips a read; other missing runtime facts stay queued.
+  return 3;
+}
+
 function overviewHandoffFromList(item) {
   const handoff = {};
   copyOverviewField(handoff, 'id', item, 'handoff_id');
@@ -986,6 +1003,8 @@ function overviewMemberFromDirectory(item) {
   const member = {};
   copyOverviewField(member, 'personId', item?.member_ref, 'person_id');
   copyOverviewField(member, 'displayName', item, 'display_name');
+  // Today's service has departments as its smallest organizational unit; AWR-PPD-052
+  // adds smaller groups later. Multiple department memberships stay unknown.
   if (Array.isArray(item?.department_ids) && item.department_ids.length === 1) {
     member.groupId = item.department_ids[0];
   }
@@ -1020,7 +1039,11 @@ function overviewReadSlice(items, reads, additionalGaps = []) {
   const slice = reason === null ? { coverage: 'complete', items }
     : items.length ? { coverage: 'partial', items, reason }
       : { coverage: 'unread', reason };
-  return { slice, detail: { status: slice.coverage, ...(reason ? { reason } : {}), missing: gaps } };
+  const knownEmpty = reads.filter((read) => read.known_empty_reason).map((read) => ({
+    op: read.op, work_id: read.work_id, workstream_id: read.workstream_id, reason: read.known_empty_reason,
+  }));
+  return { slice, detail: { status: slice.coverage, ...(reason ? { reason } : {}), missing: gaps,
+    ...(knownEmpty.length ? { known_empty: knownEmpty } : {}) } };
 }
 
 function overviewModelWithCurrency(value, readAtMs) {
@@ -1249,6 +1272,7 @@ function createTeamBridge(opts) {
 
   const OVERVIEW_CACHE_TTL_MS = 60000;
   const overviewCache = new Map();
+  const overviewModelFlights = new Map();
   const overviewSessionExpiries = new WeakMap();
   const overviewCacheGenerations = new Map();
 
@@ -1617,10 +1641,18 @@ function createTeamBridge(opts) {
     const globalAuth = globalReads.find((read) => read.error && READ_AUTH_FAILURES.has(read.error.code));
     if (globalAuth) return { authError: globalAuth.error };
 
-    const reviewReads = await mapOverviewReads(listedTasks, OVERVIEW_MODEL_READ_CONCURRENCY, async ({ item, workstreamId }) => {
+    const reviewQueue = listedTasks.map((entry, index) => ({ ...entry, index }))
+      .sort((left, right) => overviewReviewReadPriority(left.item) - overviewReviewReadPriority(right.item)
+        || left.index - right.index);
+    const reviewReads = await mapOverviewReads(reviewQueue, OVERVIEW_MODEL_READ_CONCURRENCY, async ({ item, workstreamId }) => {
       if (!isBoundedId(item?.work_id)) {
         return { op: 'review.rounds', workstream_id: workstreamId, items: [], incomplete: true,
           truncated: false, next_cursor: null, as_of: null, readAt: now() };
+      }
+      if (overviewReviewKnownEmpty(item)) {
+        return { op: 'review.rounds', work_id: item.work_id, workstream_id: workstreamId,
+          items: [], total: 0, truncated: false, next_cursor: null, as_of: null, observed_at_unix_ms: null,
+          known_empty_reason: 'no_runtime', readAt: now() };
       }
       const result = await readList({ op: 'review.rounds', work_id: item.work_id, workstream_id: workstreamId,
         max_context_bytes: 262144 }, { work_id: item.work_id, workstream_id: workstreamId });
@@ -1642,11 +1674,20 @@ function createTeamBridge(opts) {
       handoffs: overviewReadSlice(handoffs.items.map(overviewHandoffFromList), [handoffs]),
       members: overviewReadSlice(members.items.map(overviewMemberFromDirectory), [members]),
       activity: overviewReadSlice(activityRead.items.map(overviewActivityFromAudit), [activityRead]),
+      approvals: {
+        slice: { coverage: 'unread', reason: 'not-read' },
+        detail: { status: 'unread', reason: 'not-read', missing: [],
+          note: 'No existing upstream read lists plan approvals or candidate lessons' },
+      },
     };
     const allReads = [streams, ...workReads, ...globalReads, ...reviewReads];
     const firstFailure = allReads.find((read) => read.error)?.error;
-    const complete = Object.values(parts).every((part) => part.slice.coverage === 'complete');
-    const measuredReads = allReads.filter((read) => !['workstreams.list', 'directory.read'].includes(read.op));
+    // The intentionally source-less approvals plane must not poison the other
+    // planes' shared authoritative measurement or their out-of-order comparison.
+    const complete = Object.entries(parts).filter(([part]) => part !== 'approvals')
+      .every(([, part]) => part.slice.coverage === 'complete');
+    const measuredReads = allReads.filter((read) => !read.known_empty_reason
+      && !['workstreams.list', 'directory.read'].includes(read.op));
     const triples = measuredReads.map((read) => read.as_of);
     const common = complete && triples.length > 0 && triples.every((triple) => triple)
       && new Set(triples.map((triple) => JSON.stringify(triple))).size === 1 ? triples[0] : null;
@@ -1671,6 +1712,7 @@ function createTeamBridge(opts) {
           handoffs: parts.handoffs.slice,
           members: parts.members.slice,
           activity: parts.activity.slice,
+          approvals: parts.approvals.slice,
           options: { nowUnixMs: readAt, stalledAfterDays: OVERVIEW_MODEL_STALLED_AFTER_DAYS },
         },
         coverage: Object.fromEntries(Object.entries(parts).map(([part, value]) => [part, value.detail])),
@@ -1681,6 +1723,52 @@ function createTeamBridge(opts) {
         },
       },
     };
+  }
+
+  function overviewModelReadFailure(code, message) {
+    return { ok: false, error: { code, message }, freshness: compositionFailedFreshness(code, now()) };
+  }
+
+  async function executeOverviewModelComposition(project, req, res, session) {
+    const generation = overviewCacheGeneration(req);
+    const composed = await composeOverviewModel(project, req, res, session);
+    if (composed.authError) {
+      clearOverviewCache(req);
+      return overviewModelReadFailure(composed.authError.code, composed.authError.message);
+    }
+    const cachedResult = cacheOverviewModel(req, project, composed.value, generation);
+    if (generation !== null && overviewCacheGeneration(req) !== generation || cachedResult.comparison === 'revoked') {
+      return overviewModelReadFailure('Unauthenticated', 'Observation access changed during the read');
+    }
+    if (cachedResult.comparison === 'incomparable') {
+      return {
+        ...composed.value,
+        ordering: 'incomparable',
+        freshness: { ...composed.value.freshness, authoritative: { status: 'not_measured', comparison: 'incomparable' } },
+      };
+    }
+    return overviewModelWithCurrency(cachedResult.value, now());
+  }
+
+  /** One in-flight composition per cookie session and project, pinned to its cache generation. */
+  async function sharedOverviewModelComposition(project, req, res, session) {
+    const sessionId = parseTeamCookie(req);
+    if (!sessionId) return executeOverviewModelComposition(project, req, res, session);
+    const key = `${sessionId}:overview-model:${project}`;
+    const generation = overviewCacheGeneration(req);
+    const existing = overviewModelFlights.get(key);
+    if (existing) {
+      return existing.generation === generation ? existing.promise
+        : overviewModelReadFailure('Unauthenticated', 'Observation access changed during the read');
+    }
+    const entry = { generation, promise: null };
+    entry.promise = executeOverviewModelComposition(project, req, res, session);
+    overviewModelFlights.set(key, entry);
+    const cleanup = () => {
+      if (overviewModelFlights.get(key) === entry) overviewModelFlights.delete(key);
+    };
+    entry.promise.then(cleanup, cleanup);
+    return entry.promise;
   }
 
   const routes = {
@@ -1713,29 +1801,9 @@ function createTeamBridge(opts) {
         const failure = liveError(session);
         return { ...failure, freshness: compositionFailedFreshness(failure.error.code, now()) };
       }
-      const generation = overviewCacheGeneration(req);
       const cached = cachedOverviewValue(req, 'overview-model', project);
       if (cached) return overviewModelWithCurrency(cached.value, now());
-
-      const composed = await composeOverviewModel(project, req, res, session);
-      if (composed.authError) {
-        clearOverviewCache(req);
-        return { ok: false, error: composed.authError,
-          freshness: compositionFailedFreshness(composed.authError.code, now()) };
-      }
-      const cachedResult = cacheOverviewModel(req, project, composed.value, generation);
-      if (generation !== null && overviewCacheGeneration(req) !== generation || cachedResult.comparison === 'revoked') {
-        return { ok: false, error: { code: 'Unauthenticated', message: 'Observation access changed during the read' },
-          freshness: compositionFailedFreshness('Unauthenticated', now()) };
-      }
-      if (cachedResult.comparison === 'incomparable') {
-        return {
-          ...composed.value,
-          ordering: 'incomparable',
-          freshness: { ...composed.value.freshness, authoritative: { status: 'not_measured', comparison: 'incomparable' } },
-        };
-      }
-      return overviewModelWithCurrency(cachedResult.value, now());
+      return sharedOverviewModelComposition(project, req, res, session);
     },
 
     'GET /api/team/projects': async (url, _body, req, res) => {

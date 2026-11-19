@@ -16,9 +16,10 @@ function model(revision: string, readAt: number): TeamOverviewModelResponse {
       handoffs: empty,
       members: empty,
       activity: empty,
+      approvals: { coverage: 'unread', reason: 'not-read' },
       options: { nowUnixMs: readAt, stalledAfterDays: 3 },
     },
-    coverage: Object.fromEntries(['tasks', 'dependencies', 'decisions', 'reviewRounds', 'handoffs', 'members', 'activity']
+    coverage: Object.fromEntries(['tasks', 'dependencies', 'decisions', 'reviewRounds', 'handoffs', 'approvals', 'members', 'activity']
       .map((part) => [part, { status: 'complete', missing: [] }])) as unknown as TeamOverviewModelResponse['coverage'],
     freshness: {
       report_received: { status: 'not_measured' },

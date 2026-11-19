@@ -99,6 +99,14 @@ export interface OverviewModelCoveragePart {
   status: 'complete' | 'partial' | 'unread';
   reason?: ReadCoverageReason;
   missing: OverviewModelCoverageGap[];
+  /** No-runtime works have a known empty review history without an upstream read. */
+  known_empty?: Array<{
+    op: string;
+    work_id: string;
+    workstream_id: string;
+    reason: 'no_runtime';
+  }>;
+  note?: string;
 }
 
 /** One session-scoped composition, directly consumable by deriveOverview. */
