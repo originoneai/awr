@@ -78,6 +78,46 @@ preserves this error instead of converting it to `SourceDivergence`. Path violat
 remain `UnsafeSourcePath`. Responses do not include source bodies, absolute source
 locations or request-supplied content.
 
+### Preflight, capacity preview and interrupted publication
+
+For a fresh `planning.publish` with `activate: true` and confirmed impact, the server
+reads the registered ledger, applies the candidate in memory, generates the complete
+package and runs the same generated-package and projection validation used by
+activation. Both the original and changed ledger must fit `SERVER_LEDGER_READ_CAP`.
+A deterministic size refusal happens before the command reservation and before the
+publication commits: no publish receipt, candidate-state change or reserved command
+receipt is left behind. The candidate can be edited, reviewed again and retried. An
+existing reserved or completed request keeps its immutable payload and original
+recovery behavior; preflight does not weaken request-idempotency checks.
+
+`planning.preview` adds `package_capacity` without taking a source writer lock or
+writing any state. It observes the same candidate and registered source as the diff.
+An available observation contains:
+
+| Field | Meaning |
+| --- | --- |
+| `status` | `available` when the package was generated, otherwise `unavailable` |
+| `largest_file` | Package-relative `path`, `bytes` and the generated per-file `limit` |
+| `package_bytes`, `package_limit` | Complete generated package bytes and its inclusive limit |
+| `file_count`, `file_limit` | Generated file count and its inclusive limit |
+| `ledger_bytes`, `ledger_limit` | Changed ledger bytes and `SERVER_LEDGER_READ_CAP` |
+| `would_fit` | Whether all displayed generated-package and changed-ledger bounds fit |
+
+If the active snapshot has no usable registered source, the ledger cannot be read
+within its limit, or the candidate package cannot be generated, the existing preview
+and diff still succeed. `package_capacity.status` is `unavailable`, `would_fit` is
+null and `reason` gives a bounded explanation without exposing source contents or an
+absolute source location. Capacity is an observation, not activation admission.
+
+For a reserved `planning.activate` receipt with no writeback journal,
+`planning.outcome` now returns `status: reserved`, `writeback: absent` and a null
+result rather than `SourceDivergence`/`Unavailable`. Its `next_step` says to retry the
+identical operation and payload, then gives the owner `writeback-inspect` command if
+the same failure persists. After an owner closes that unactivated publication, the
+completed original receipt contains the closure and its reviewed reason; an exact
+retry returns that closure without activating or writing source bytes. See
+[Team operator access management](team-operator-access.md#planning-writeback-recovery).
+
 ### Other fixed limits on the publish/read path
 
 This inventory distinguishes project-wide limits from per-request, per-document and
@@ -104,9 +144,9 @@ caller uses reviewed batches.
 | PostgreSQL JSONB/BYTEA values | Approximately 1 GiB per value. At the byte estimates above this is roughly 180,000 tasks for a snapshot JSON value or 400,000 for one ledger BYTEA, well after the explicit package/ledger limits | Unchanged |
 
 Every activation still stores a full snapshot, including full source text and a new
-projection. Sharding, snapshot deduplication, compact JSON, package-capacity preview,
-pre-publication size preflight and closure of interrupted `published / pending /
-unlogged` writeback states are intentionally not part of this limit correction.
+projection. Sharding, snapshot deduplication and compact JSON remain separate work;
+capacity preview, pre-publication size preflight and no-journal recovery do not change
+that storage model.
 
 ## Changes and task definitions
 

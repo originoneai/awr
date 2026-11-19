@@ -44,8 +44,10 @@ const OPERATOR_OPS: &[&str] = &[
     "quarantine.outcome",
     "writeback-inspect",
     "writeback-abandon",
+    "writeback-close-unlogged",
     "writeback.inspect",
     "writeback.abandon",
+    "writeback.close_unlogged",
     "execution-attribution-preview",
     "execution-attribution-apply",
     "execution-attribution-outcome",
@@ -253,11 +255,13 @@ async fn http_and_mcp_clients_cannot_reach_operator_only_surfaces() {
         "one/access/quarantine-preview",
         "one/access/writeback-inspect",
         "one/access/writeback-abandon",
+        "one/access/writeback-close-unlogged",
         "one/access/execution-attribution-preview",
         "one/access/backup-create",
         "one/operator/recovery-inspect",
         "one/operator/writeback-inspect",
         "one/operator/writeback-abandon",
+        "one/operator/writeback-close-unlogged",
     ] {
         let response = http()
             .post(format!("{}/{path}", server.url))
@@ -364,6 +368,7 @@ async fn http_and_mcp_clients_cannot_reach_operator_only_surfaces() {
         "awr_team_operator_recovery",
         "awr_team_writeback_inspect",
         "awr_team_writeback_abandon",
+        "awr_team_writeback_close_unlogged",
     ] {
         let denied = mcp_call(
             &mcp,
@@ -446,5 +451,32 @@ async fn http_and_mcp_clients_cannot_reach_operator_only_surfaces() {
         .unwrap();
     assert!(!refused.status.success());
     let stderr: Value = serde_json::from_slice(&refused.stderr).unwrap();
+    assert_eq!(stderr["code"], "WritebackRefused");
+    let refused_unlogged = Command::new(env!("CARGO_BIN_EXE_awr-server"))
+        .env("AWR_TEAM_DATABASE_URL", &owner)
+        .args([
+            "access",
+            "writeback-close-unlogged",
+            "--tenant-id",
+            TENANT,
+            "--project-id",
+            PROJECT,
+            "--request-id",
+            "never-existed-unlogged",
+            "--expected-candidate-id",
+            "synthetic-candidate",
+            "--expected-candidate-digest",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            "--expected-publish-receipt-id",
+            "synthetic-publication",
+            "--expected-request-hash",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            "--reason",
+            "smoke",
+        ])
+        .output()
+        .unwrap();
+    assert!(!refused_unlogged.status.success());
+    let stderr: Value = serde_json::from_slice(&refused_unlogged.stderr).unwrap();
     assert_eq!(stderr["code"], "WritebackRefused");
 }

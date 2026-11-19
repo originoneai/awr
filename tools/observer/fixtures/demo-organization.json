@@ -1,0 +1,5186 @@
+{
+  "schema": "awr-observer-demo-organization/v1",
+  "public_synthetic": true,
+  "now_unix_ms": 1795089600000,
+  "viewer": {
+    "person_id": "lin-yue",
+    "actor_id": "lin-yue-agent",
+    "client_id": "lin-yue-claude",
+    "role": "developer",
+    "business_roles": [
+      "developer"
+    ]
+  },
+  "organization": {
+    "id": "example-organization",
+    "name": "示例组织",
+    "departments": [
+      {
+        "id": "engineering",
+        "name": "研发部",
+        "parent_id": null
+      },
+      {
+        "id": "customer-delivery",
+        "name": "客户交付部",
+        "parent_id": null
+      },
+      {
+        "id": "applications",
+        "name": "应用小组",
+        "parent_id": "engineering"
+      },
+      {
+        "id": "platform",
+        "name": "平台小组",
+        "parent_id": "engineering"
+      },
+      {
+        "id": "delivery",
+        "name": "交付小组",
+        "parent_id": "customer-delivery"
+      }
+    ]
+  },
+  "people": [
+    {
+      "person_id": "zhou-ning",
+      "display_name": "周宁",
+      "group_id": "applications",
+      "group_name": "应用小组",
+      "role": "小组负责人",
+      "business_roles": [
+        "supervisor",
+        "administrator"
+      ],
+      "workstreams": "全部工作线",
+      "agents": [
+        {
+          "connection_id": "agent_2020a3c755a7c10adb5fa19c375bdc5139bb88bdb6beea3df81363277ccb1b88",
+          "kind": "agent",
+          "client_name": "Claude 桌面",
+          "state": "active",
+          "activity": "ready",
+          "can_revoke": true,
+          "revocation_scope": "connection",
+          "created_at_ms": 1792497600000,
+          "expires_at_ms": null,
+          "last_seen_ms": 1795088880000,
+          "revoked_at_ms": null,
+          "is_current": true
+        }
+      ]
+    },
+    {
+      "person_id": "lin-yue",
+      "display_name": "林悦",
+      "group_id": "applications",
+      "group_name": "应用小组",
+      "role": "开发",
+      "business_roles": [
+        "developer"
+      ],
+      "workstreams": "前端",
+      "agents": [
+        {
+          "connection_id": "agent_00c46b301a01ebbb016517f1cc96fe80fb25cad0e67c02c9c1b4a823ca4c9e67",
+          "kind": "agent",
+          "client_name": "Claude 桌面",
+          "state": "active",
+          "activity": "running",
+          "can_revoke": true,
+          "revocation_scope": "connection",
+          "created_at_ms": 1792497600000,
+          "expires_at_ms": null,
+          "last_seen_ms": 1795088880000,
+          "revoked_at_ms": null,
+          "is_current": true
+        },
+        {
+          "connection_id": "agent_9d82561598dd71d0007db9559ca2aa74fe36f6e3d311b3b4cdc9a03f926d83eb",
+          "kind": "agent",
+          "client_name": "Codex",
+          "state": "active",
+          "activity": "stalled",
+          "can_revoke": true,
+          "revocation_scope": "connection",
+          "created_at_ms": 1792584000000,
+          "expires_at_ms": null,
+          "last_seen_ms": 1794916800000,
+          "revoked_at_ms": null,
+          "is_current": false
+        }
+      ]
+    },
+    {
+      "person_id": "chen-yu",
+      "display_name": "陈宇",
+      "group_id": "applications",
+      "group_name": "应用小组",
+      "role": "开发",
+      "business_roles": [
+        "developer"
+      ],
+      "workstreams": "后端",
+      "agents": [
+        {
+          "connection_id": "agent_73a9e73bfd136b51eeb242c9e4ad89550313b89277657e6720a1163494f471fd",
+          "kind": "agent",
+          "client_name": "Codex",
+          "state": "active",
+          "activity": "ready",
+          "can_revoke": true,
+          "revocation_scope": "connection",
+          "created_at_ms": 1792497600000,
+          "expires_at_ms": null,
+          "last_seen_ms": 1795088880000,
+          "revoked_at_ms": null,
+          "is_current": true
+        }
+      ]
+    },
+    {
+      "person_id": "xu-ning",
+      "display_name": "许宁",
+      "group_id": "platform",
+      "group_name": "平台小组",
+      "role": "复核",
+      "business_roles": [
+        "reviewer"
+      ],
+      "workstreams": "前端、后端、验证",
+      "agents": [
+        {
+          "connection_id": "agent_4b8263cab1eeb060364de55a30c6a18bc3f3cd2e0b5b8c2a14e6365e8ae54227",
+          "kind": "agent",
+          "client_name": "Claude 桌面",
+          "state": "active",
+          "activity": "ready",
+          "can_revoke": true,
+          "revocation_scope": "connection",
+          "created_at_ms": 1792497600000,
+          "expires_at_ms": null,
+          "last_seen_ms": 1795088880000,
+          "revoked_at_ms": null,
+          "is_current": true
+        }
+      ]
+    },
+    {
+      "person_id": "wu-tong",
+      "display_name": "吴桐",
+      "group_id": "platform",
+      "group_name": "平台小组",
+      "role": "小组负责人",
+      "business_roles": [
+        "supervisor",
+        "administrator"
+      ],
+      "workstreams": "全部工作线",
+      "agents": [
+        {
+          "connection_id": "agent_e2c6cdc0a677182190492b104ec80893c027663bb9f688c8173658715ffadc50",
+          "kind": "agent",
+          "client_name": "Claude 桌面",
+          "state": "active",
+          "activity": "ready",
+          "can_revoke": true,
+          "revocation_scope": "connection",
+          "created_at_ms": 1792497600000,
+          "expires_at_ms": null,
+          "last_seen_ms": 1795088880000,
+          "revoked_at_ms": null,
+          "is_current": true
+        }
+      ]
+    },
+    {
+      "person_id": "zhao-heng",
+      "display_name": "赵衡",
+      "group_id": "platform",
+      "group_name": "平台小组",
+      "role": "开发",
+      "business_roles": [
+        "developer"
+      ],
+      "workstreams": "服务、接入",
+      "agents": [
+        {
+          "connection_id": "agent_9ef8709c2bab0cbe8124f73acfd65a64f7f722d325a2b9385413e94fe1c9f072",
+          "kind": "agent",
+          "client_name": "Codex",
+          "state": "active",
+          "activity": "running",
+          "can_revoke": true,
+          "revocation_scope": "connection",
+          "created_at_ms": 1792497600000,
+          "expires_at_ms": null,
+          "last_seen_ms": 1795088880000,
+          "revoked_at_ms": null,
+          "is_current": true
+        }
+      ]
+    },
+    {
+      "person_id": "zheng-lan",
+      "display_name": "郑岚",
+      "group_id": "delivery",
+      "group_name": "交付小组",
+      "role": "小组负责人",
+      "business_roles": [
+        "supervisor",
+        "administrator"
+      ],
+      "workstreams": "全部工作线",
+      "agents": [
+        {
+          "connection_id": "agent_40f61afdb54b82c6b0f2e372f601125e18abc6682b488788620244f3d519bc50",
+          "kind": "agent",
+          "client_name": "Claude 桌面",
+          "state": "active",
+          "activity": "ready",
+          "can_revoke": true,
+          "revocation_scope": "connection",
+          "created_at_ms": 1792497600000,
+          "expires_at_ms": null,
+          "last_seen_ms": 1795088880000,
+          "revoked_at_ms": null,
+          "is_current": true
+        }
+      ]
+    },
+    {
+      "person_id": "he-chuan",
+      "display_name": "何川",
+      "group_id": "delivery",
+      "group_name": "交付小组",
+      "role": "开发",
+      "business_roles": [
+        "developer"
+      ],
+      "workstreams": "接入流程、环境",
+      "agents": [
+        {
+          "connection_id": "agent_118ee75ac38f947241e6b7a3ae046e82668a46dbb1ef43d2902406e9cba5ffcb",
+          "kind": "agent",
+          "client_name": "Codex",
+          "state": "active",
+          "activity": "ready",
+          "can_revoke": true,
+          "revocation_scope": "connection",
+          "created_at_ms": 1792497600000,
+          "expires_at_ms": null,
+          "last_seen_ms": 1795088880000,
+          "revoked_at_ms": null,
+          "is_current": true
+        }
+      ]
+    }
+  ],
+  "projects": [
+    {
+      "key": "orders",
+      "project_id": "orders",
+      "title": "订单协作平台",
+      "lead_person_id": "zhou-ning",
+      "group_id": "applications",
+      "parent_department_id": "engineering",
+      "member_person_ids": [
+        "zhou-ning",
+        "lin-yue",
+        "chen-yu",
+        "xu-ning"
+      ],
+      "goal_ids": [
+        "g1"
+      ],
+      "workstreams": [
+        {
+          "id": "orders-fe",
+          "external_key": "fe",
+          "title": "前端",
+          "authority_version": "1"
+        },
+        {
+          "id": "orders-be",
+          "external_key": "be",
+          "title": "后端",
+          "authority_version": "1"
+        },
+        {
+          "id": "orders-qa",
+          "external_key": "qa",
+          "title": "验证",
+          "authority_version": "1"
+        }
+      ],
+      "update_period": "week",
+      "rules": [
+        {
+          "text": "提交的人和复核的人必须分开",
+          "kind": "硬规则",
+          "source": "项目规则文件"
+        },
+        {
+          "text": "下游只能采用通过复核的那一版",
+          "kind": "硬规则",
+          "source": "项目规则文件"
+        },
+        {
+          "text": "提交标题写成“类型(范围): 说明”",
+          "kind": "提示",
+          "source": "从历史里观察到，101 次里有 97 次"
+        }
+      ]
+    },
+    {
+      "key": "notify",
+      "project_id": "notify",
+      "title": "统一通知服务",
+      "lead_person_id": "wu-tong",
+      "group_id": "platform",
+      "parent_department_id": "engineering",
+      "member_person_ids": [
+        "wu-tong",
+        "zhao-heng",
+        "xu-ning"
+      ],
+      "goal_ids": [
+        "g2"
+      ],
+      "workstreams": [
+        {
+          "id": "notify-svc",
+          "external_key": "svc",
+          "title": "服务",
+          "authority_version": "1"
+        },
+        {
+          "id": "notify-adopt",
+          "external_key": "adopt",
+          "title": "接入",
+          "authority_version": "1"
+        }
+      ],
+      "update_period": "week",
+      "rules": [
+        {
+          "text": "提交的人和复核的人必须分开",
+          "kind": "硬规则",
+          "source": "项目规则文件"
+        },
+        {
+          "text": "新通道接入前先核对接口版本",
+          "kind": "小组规则",
+          "source": "采用自应用小组的一条经验"
+        }
+      ]
+    },
+    {
+      "key": "onboard",
+      "project_id": "onboard",
+      "title": "客户接入改造",
+      "lead_person_id": "zheng-lan",
+      "group_id": "delivery",
+      "parent_department_id": "customer-delivery",
+      "member_person_ids": [
+        "zheng-lan",
+        "he-chuan"
+      ],
+      "goal_ids": [
+        "g3"
+      ],
+      "workstreams": [
+        {
+          "id": "onboard-flow",
+          "external_key": "flow",
+          "title": "接入流程",
+          "authority_version": "1"
+        },
+        {
+          "id": "onboard-env",
+          "external_key": "env",
+          "title": "环境",
+          "authority_version": "1"
+        }
+      ],
+      "update_period": "week",
+      "rules": [
+        {
+          "text": "提交的人和复核的人必须分开",
+          "kind": "硬规则",
+          "source": "项目规则文件"
+        }
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "work_id": "T-101",
+      "external_key": "T-101",
+      "project_id": "orders",
+      "workstream_id": "orders-be",
+      "title": "订单查询接口",
+      "prototype_status": "verified",
+      "owner_person_id": "chen-yu",
+      "group_id": "applications",
+      "goal_ids": [
+        "g1"
+      ],
+      "agent_name": "Codex",
+      "week_committed": true,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-101-criterion-1",
+          "text": "按订单编号和手机号都能查到",
+          "evidence_state": "ok",
+          "evidence_detail": "测试 9 条通过"
+        },
+        {
+          "criterion_id": "T-101-criterion-2",
+          "text": "没有结果时返回空列表而不是报错",
+          "evidence_state": "ok",
+          "evidence_detail": "测试 3 条通过"
+        },
+        {
+          "criterion_id": "T-101-criterion-3",
+          "text": "1000 并发下 P95 低于 200 毫秒",
+          "evidence_state": "ok",
+          "evidence_detail": "压测 168 毫秒，加缓存层之后"
+        }
+      ],
+      "one_sentence": "已经核验：3 条完成标准都有依据，第 2 轮复核通过。",
+      "next_step": "没有下一步",
+      "report": {
+        "summary": "加了缓存层之后压测达标，已经通过复核。",
+        "completed_declaration": true,
+        "completed": [
+          "加缓存层和失效策略",
+          "压测达标"
+        ],
+        "blockers": [],
+        "tests": [
+          {
+            "name": "查询",
+            "outcome": "passed",
+            "reference": null
+          },
+          {
+            "name": "空结果",
+            "outcome": "passed",
+            "reference": null
+          },
+          {
+            "name": "压测",
+            "outcome": "passed",
+            "reference": null
+          }
+        ],
+        "artifacts": [
+          {
+            "label": "接口说明",
+            "reference": "artifact-t-101-"
+          },
+          {
+            "label": "压测报告",
+            "reference": "artifact-t-101-"
+          }
+        ],
+        "reporter": "Codex（陈宇的 Agent）",
+        "reported_at_unix_ms": 1794669000000
+      },
+      "submitted_result_at_unix_ms": 1794669000000,
+      "integrated": true,
+      "integration_note": "已合入",
+      "started": true,
+      "agent_active": false,
+      "verified_at_unix_ms": 1794657600000,
+      "delivery": {
+        "version_label": "第 2 版",
+        "checks": [
+          {
+            "check": "单元测试",
+            "outcome": "passed"
+          },
+          {
+            "check": "压测",
+            "outcome": "passed"
+          }
+        ],
+        "rounds": [
+          {
+            "round_id": "round-t-101-1",
+            "round_index": 1,
+            "state": "rejected",
+            "current": false,
+            "contract_matches_current": false,
+            "independent": true,
+            "author_person_id": "chen-yu",
+            "author_actor_id": "chen-yu-agent",
+            "reviewer_person_id": "xu-ning",
+            "reviewer_actor_id": "xu-ning-agent",
+            "reviewer_display_name": "许宁",
+            "opened_at_unix_ms": 1794582600000,
+            "decided_at_unix_ms": 1794657600000,
+            "reason_first_line": "压测不达标",
+            "evidence_id": "evidence-t-101-1",
+            "execution_id": "execution-t-101-1",
+            "claim_id": "claim-t-101-1",
+            "artifact_id": "artifact-t-101-1",
+            "artifact_digest": "29217d9d2ab32b6e1fb445056bd16ae7fe8141906a5ba105569285c21cd8ff53",
+            "bundle_hash": "9fdda97ccc1e1de9a722be49f21ddd8897eb9df947d0873fd51d47fe10c35a96"
+          },
+          {
+            "round_id": "round-t-101-2",
+            "round_index": 2,
+            "state": "approved",
+            "current": true,
+            "contract_matches_current": true,
+            "independent": true,
+            "author_person_id": "chen-yu",
+            "author_actor_id": "chen-yu-agent",
+            "reviewer_person_id": "xu-ning",
+            "reviewer_actor_id": "xu-ning-agent",
+            "reviewer_display_name": "许宁",
+            "opened_at_unix_ms": 1794669000000,
+            "decided_at_unix_ms": 1794657600000,
+            "reason_first_line": "加缓存层后达标",
+            "evidence_id": "evidence-t-101-2",
+            "execution_id": "execution-t-101-2",
+            "claim_id": "claim-t-101-2",
+            "artifact_id": "artifact-t-101-2",
+            "artifact_digest": "c59080d0d2626409b6001f45d91d8046c2173c5f078562187f38a8a26287f8f4",
+            "bundle_hash": "02d85ff2f36625c0cd8826d1eb986a43f6f2b86a5318c6c1533637f9e36a52e4"
+          }
+        ]
+      },
+      "dependencies": [],
+      "wait": null,
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-101-timeline-1",
+          "at_text": "11 月 14 日 17:30",
+          "at_unix_ms": 1794677400000,
+          "who": "许宁",
+          "what": "第 2 轮复核通过",
+          "next": null,
+          "note": null,
+          "tone": "ok"
+        },
+        {
+          "activity_id": "T-101-timeline-2",
+          "at_text": "11 月 14 日 15:10",
+          "at_unix_ms": 1794669000000,
+          "who": "Codex（陈宇）",
+          "what": "加缓存层，压测达标，重新提交",
+          "next": null,
+          "note": null,
+          "tone": null
+        },
+        {
+          "activity_id": "T-101-timeline-3",
+          "at_text": "11 月 13 日 11:00",
+          "at_unix_ms": 1794567600000,
+          "who": "林悦",
+          "what": "指出架构少了一层缓存",
+          "next": null,
+          "note": "这句话后来记成了一条经验候选",
+          "tone": null
+        },
+        {
+          "activity_id": "T-101-timeline-4",
+          "at_text": "11 月 13 日 09:40",
+          "at_unix_ms": 1794562800000,
+          "who": "许宁",
+          "what": "第 1 轮复核退回：压测不达标",
+          "next": null,
+          "note": null,
+          "tone": "bad"
+        }
+      ],
+      "lesson_ids": [
+        "l1"
+      ]
+    },
+    {
+      "work_id": "T-102",
+      "external_key": "T-102",
+      "project_id": "orders",
+      "workstream_id": "orders-be",
+      "title": "接口第 3 版：提交与错误反馈",
+      "prototype_status": "review",
+      "owner_person_id": "chen-yu",
+      "group_id": "applications",
+      "goal_ids": [
+        "g1"
+      ],
+      "agent_name": "Codex",
+      "week_committed": true,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-102-criterion-1",
+          "text": "提交成功返回订单编号",
+          "evidence_state": "ok",
+          "evidence_detail": "测试 12 条通过"
+        },
+        {
+          "criterion_id": "T-102-criterion-2",
+          "text": "提交失败时返回可读的错误原因",
+          "evidence_state": "ok",
+          "evidence_detail": "错误分支测试 5 条通过"
+        },
+        {
+          "criterion_id": "T-102-criterion-3",
+          "text": "同一请求重复提交不会重复下单",
+          "evidence_state": "wait",
+          "evidence_detail": "测试通过，等复核人确认是否覆盖了超时重发"
+        }
+      ],
+      "one_sentence": "在等复核，已经 2 天。3 条完成标准里 2 条有依据，1 条等复核人确认。",
+      "next_step": "等许宁复核；通过后林悦的页面联调改用第 3 版",
+      "report": {
+        "summary": "第 3 版已提交复核，补上了超时重发的处理。",
+        "completed_declaration": false,
+        "completed": [
+          "补重复提交的判断",
+          "补错误码对照表"
+        ],
+        "blockers": [
+          "在等复核"
+        ],
+        "tests": [
+          {
+            "name": "提交成功",
+            "outcome": "passed",
+            "reference": null
+          },
+          {
+            "name": "错误分支",
+            "outcome": "passed",
+            "reference": null
+          },
+          {
+            "name": "重复提交",
+            "outcome": "passed",
+            "reference": null
+          }
+        ],
+        "artifacts": [
+          {
+            "label": "接口第 3 版说明",
+            "reference": "artifact-t-102-3"
+          },
+          {
+            "label": "测试报告",
+            "reference": "artifact-t-102-"
+          }
+        ],
+        "reporter": "Codex（陈宇的 Agent）",
+        "reported_at_unix_ms": 1794932400000
+      },
+      "submitted_result_at_unix_ms": 1794932400000,
+      "integrated": false,
+      "integration_note": "复核通过后才能合入",
+      "started": true,
+      "agent_active": false,
+      "verified_at_unix_ms": null,
+      "delivery": {
+        "version_label": "第 3 版",
+        "checks": [
+          {
+            "check": "单元测试",
+            "outcome": "passed"
+          },
+          {
+            "check": "接口约定检查",
+            "outcome": "passed"
+          }
+        ],
+        "rounds": [
+          {
+            "round_id": "round-t-102-1",
+            "round_index": 1,
+            "state": "open",
+            "current": true,
+            "contract_matches_current": true,
+            "independent": true,
+            "author_person_id": "chen-yu",
+            "author_actor_id": "chen-yu-agent",
+            "reviewer_person_id": "xu-ning",
+            "reviewer_actor_id": "xu-ning-agent",
+            "reviewer_display_name": "许宁",
+            "opened_at_unix_ms": 1794916800000,
+            "decided_at_unix_ms": null,
+            "reason_first_line": "还没有结论，等了 2 天",
+            "evidence_id": "evidence-t-102-1",
+            "execution_id": "execution-t-102-1",
+            "claim_id": "claim-t-102-1",
+            "artifact_id": "artifact-t-102-1",
+            "artifact_digest": "aa0cf68cb48370be53182ecba9dfbee1c1d65baa129c0f3961876f3ea505577e",
+            "bundle_hash": "bee668c4fb933a4e606e5c44af255b28ea9d10506a9eb5d2b0d8abdac864279e"
+          }
+        ]
+      },
+      "dependencies": [],
+      "wait": {
+        "kind": "review",
+        "waiting_on_name": "许宁",
+        "what": "复核第 3 版",
+        "started_at_unix_ms": 1794916800000,
+        "prototype_days": 2,
+        "decision_id": null
+      },
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-102-timeline-1",
+          "at_text": "11 月 17 日 16:20",
+          "at_unix_ms": 1794932400000,
+          "who": "Codex（陈宇）",
+          "what": "提交第 3 版并请求复核",
+          "next": "等复核",
+          "note": "超时重发要不要设上限，还没定",
+          "tone": "now"
+        },
+        {
+          "activity_id": "T-102-timeline-2",
+          "at_text": "11 月 17 日 10:05",
+          "at_unix_ms": 1794909900000,
+          "who": "Codex（陈宇）",
+          "what": "开始补重复提交的处理",
+          "next": null,
+          "note": null,
+          "tone": null
+        },
+        {
+          "activity_id": "T-102-timeline-3",
+          "at_text": "11 月 15 日 14:00",
+          "at_unix_ms": 1794751200000,
+          "who": "许宁",
+          "what": "第 2 版通过复核",
+          "next": null,
+          "note": null,
+          "tone": "ok"
+        }
+      ],
+      "lesson_ids": [
+        "l3"
+      ]
+    },
+    {
+      "work_id": "T-103",
+      "external_key": "T-103",
+      "project_id": "orders",
+      "workstream_id": "orders-fe",
+      "title": "订单页面联调",
+      "prototype_status": "waiting",
+      "owner_person_id": "lin-yue",
+      "group_id": "applications",
+      "goal_ids": [
+        "g1"
+      ],
+      "agent_name": "Claude 桌面",
+      "week_committed": true,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-103-criterion-1",
+          "text": "列表分页和查询连通",
+          "evidence_state": "ok",
+          "evidence_detail": "联调记录 · 接口第 2 版"
+        },
+        {
+          "criterion_id": "T-103-criterion-2",
+          "text": "提交失败时保留已填内容",
+          "evidence_state": "wait",
+          "evidence_detail": "要等接口第 3 版"
+        },
+        {
+          "criterion_id": "T-103-criterion-3",
+          "text": "错误提示显示接口返回的原因",
+          "evidence_state": "wait",
+          "evidence_detail": "要等接口第 3 版"
+        }
+      ],
+      "one_sentence": "在等接口第 3 版通过复核。不依赖新接口的部分还在做。",
+      "next_step": "接口第 3 版通过复核后，改用第 3 版重新联调提交流程",
+      "report": {
+        "summary": "列表分页已接通，正在补错误提示。提交流程在等接口第 3 版。",
+        "completed_declaration": false,
+        "completed": [
+          "列表分页接通"
+        ],
+        "blockers": [
+          "提交流程要等接口第 3 版通过复核"
+        ],
+        "tests": [
+          {
+            "name": "分页联调",
+            "outcome": "passed",
+            "reference": null
+          }
+        ],
+        "artifacts": [
+          {
+            "label": "联调记录",
+            "reference": "artifact-t-103-"
+          }
+        ],
+        "reporter": "Claude 桌面（林悦的 Agent）",
+        "reported_at_unix_ms": 1795088880000
+      },
+      "submitted_result_at_unix_ms": null,
+      "integrated": false,
+      "integration_note": null,
+      "started": true,
+      "agent_active": true,
+      "verified_at_unix_ms": null,
+      "delivery": null,
+      "dependencies": [
+        {
+          "dependency_id": "edge-t-103-t-102",
+          "provider_work_id": "T-102",
+          "required_version_label": "通过复核的版本",
+          "adopted_version_label": "第 2 版",
+          "available_version_label": "第 3 版，等复核",
+          "satisfied": false,
+          "validity": "upstream_changed",
+          "reason": "upstream_changed",
+          "since_unix_ms": 1794916800000,
+          "version_policy": "current_contract",
+          "position": 1
+        },
+        {
+          "dependency_id": "edge-t-103-t-104",
+          "provider_work_id": "T-104",
+          "required_version_label": "已核验",
+          "adopted_version_label": "还没有",
+          "available_version_label": "停着，等一个回答",
+          "satisfied": false,
+          "validity": "unavailable",
+          "reason": "completion_unavailable",
+          "since_unix_ms": null,
+          "version_policy": "current_contract",
+          "position": 2
+        }
+      ],
+      "wait": {
+        "kind": "dependency",
+        "waiting_on_name": "陈宇",
+        "what": "接口第 3 版通过复核",
+        "started_at_unix_ms": 1794916800000,
+        "prototype_days": 2,
+        "decision_id": null
+      },
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-103-timeline-1",
+          "at_text": "12 分钟前",
+          "at_unix_ms": 1795088880000,
+          "who": "Claude 桌面（林悦）",
+          "what": "列表分页已接通，正在补错误提示",
+          "next": "继续做不依赖新接口的部分",
+          "note": "提交流程等接口第 3 版",
+          "tone": "now"
+        },
+        {
+          "activity_id": "T-103-timeline-2",
+          "at_text": "11 月 17 日 09:30",
+          "at_unix_ms": 1794907800000,
+          "who": "Claude 桌面（林悦）",
+          "what": "发现提交接口换了版本，停下提交流程",
+          "next": null,
+          "note": null,
+          "tone": null
+        },
+        {
+          "activity_id": "T-103-timeline-3",
+          "at_text": "11 月 16 日 15:00",
+          "at_unix_ms": 1794841200000,
+          "who": "林悦",
+          "what": "接下任务，交给 Claude 桌面去做",
+          "next": null,
+          "note": null,
+          "tone": null
+        }
+      ],
+      "lesson_ids": [
+        "l2"
+      ]
+    },
+    {
+      "work_id": "T-104",
+      "external_key": "T-104",
+      "project_id": "orders",
+      "workstream_id": "orders-fe",
+      "title": "空状态检查",
+      "prototype_status": "stalled",
+      "owner_person_id": "lin-yue",
+      "group_id": "applications",
+      "goal_ids": [
+        "g1"
+      ],
+      "agent_name": "Codex",
+      "week_committed": true,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-104-criterion-1",
+          "text": "列表为空时页面不报错",
+          "evidence_state": "ok",
+          "evidence_detail": "测试 2 条通过"
+        },
+        {
+          "criterion_id": "T-104-criterion-2",
+          "text": "空状态的文案和设计稿一致",
+          "evidence_state": "wait",
+          "evidence_detail": "要先定是否显示引导文案"
+        }
+      ],
+      "one_sentence": "停了 2 天，在等林悦回答一个问题。",
+      "next_step": "林悦回答后继续",
+      "report": {
+        "summary": "页面不报错已经做完。文案部分需要一个决定。",
+        "completed_declaration": false,
+        "completed": [
+          "空列表不报错"
+        ],
+        "blockers": [
+          "需要决定：空状态要不要显示引导文案"
+        ],
+        "tests": [
+          {
+            "name": "空列表",
+            "outcome": "passed",
+            "reference": null
+          }
+        ],
+        "artifacts": [],
+        "reporter": "Codex（林悦的 Agent）",
+        "reported_at_unix_ms": 1794924000000
+      },
+      "submitted_result_at_unix_ms": null,
+      "integrated": false,
+      "integration_note": null,
+      "started": true,
+      "agent_active": true,
+      "verified_at_unix_ms": null,
+      "delivery": null,
+      "dependencies": [],
+      "wait": {
+        "kind": "decision",
+        "waiting_on_name": "林悦",
+        "what": "回答：空状态要不要显示引导文案",
+        "started_at_unix_ms": 1794916800000,
+        "prototype_days": 2,
+        "decision_id": "a1"
+      },
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-104-timeline-1",
+          "at_text": "11 月 17 日 14:00",
+          "at_unix_ms": 1794924000000,
+          "who": "Codex（林悦）",
+          "what": "提出一个需要决定的问题，然后停下",
+          "next": "等回答",
+          "note": "空状态要不要显示引导文案",
+          "tone": "now"
+        },
+        {
+          "activity_id": "T-104-timeline-2",
+          "at_text": "11 月 16 日 17:10",
+          "at_unix_ms": 1794849000000,
+          "who": "Codex（林悦）",
+          "what": "空列表不报错，测试通过",
+          "next": null,
+          "note": null,
+          "tone": null
+        }
+      ],
+      "lesson_ids": []
+    },
+    {
+      "work_id": "T-105",
+      "external_key": "T-105",
+      "project_id": "orders",
+      "workstream_id": "orders-be",
+      "title": "登录异常处理",
+      "prototype_status": "returned",
+      "owner_person_id": "chen-yu",
+      "group_id": "applications",
+      "goal_ids": [
+        "g1"
+      ],
+      "agent_name": "Codex",
+      "week_committed": false,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-105-criterion-1",
+          "text": "登录过期时跳回登录页",
+          "evidence_state": "ok",
+          "evidence_detail": "测试 3 条通过"
+        },
+        {
+          "criterion_id": "T-105-criterion-2",
+          "text": "跳回后保留原来的页面地址",
+          "evidence_state": "ok",
+          "evidence_detail": "测试 2 条通过"
+        },
+        {
+          "criterion_id": "T-105-criterion-3",
+          "text": "错误提示说明下一步怎么办",
+          "evidence_state": "bad",
+          "evidence_detail": "复核时发现这个分支没有测试"
+        }
+      ],
+      "one_sentence": "复核退回：错误提示这个分支没有验证过。要不要返工，在等周宁决定。",
+      "next_step": "周宁决定返工还是接受现状",
+      "report": {
+        "summary": "功能做完并提交了复核。",
+        "completed_declaration": false,
+        "completed": [
+          "登录过期跳转",
+          "保留原地址"
+        ],
+        "blockers": [],
+        "tests": [
+          {
+            "name": "过期跳转",
+            "outcome": "passed",
+            "reference": null
+          },
+          {
+            "name": "保留地址",
+            "outcome": "passed",
+            "reference": null
+          }
+        ],
+        "artifacts": [
+          {
+            "label": "实现说明",
+            "reference": "artifact-t-105-"
+          }
+        ],
+        "reporter": "Codex（陈宇的 Agent）",
+        "reported_at_unix_ms": 1794913200000
+      },
+      "submitted_result_at_unix_ms": 1794913200000,
+      "integrated": false,
+      "integration_note": "没有合入",
+      "started": true,
+      "agent_active": false,
+      "verified_at_unix_ms": null,
+      "delivery": {
+        "version_label": "第 1 版",
+        "checks": [
+          {
+            "check": "单元测试",
+            "outcome": "passed"
+          }
+        ],
+        "rounds": [
+          {
+            "round_id": "round-t-105-1",
+            "round_index": 1,
+            "state": "rejected",
+            "current": true,
+            "contract_matches_current": true,
+            "independent": true,
+            "author_person_id": "chen-yu",
+            "author_actor_id": "chen-yu-agent",
+            "reviewer_person_id": "xu-ning",
+            "reviewer_actor_id": "xu-ning-agent",
+            "reviewer_display_name": "许宁",
+            "opened_at_unix_ms": 1794913200000,
+            "decided_at_unix_ms": 1794916800000,
+            "reason_first_line": "错误提示分支没有验证",
+            "evidence_id": "evidence-t-105-1",
+            "execution_id": "execution-t-105-1",
+            "claim_id": "claim-t-105-1",
+            "artifact_id": "artifact-t-105-1",
+            "artifact_digest": "dc53835610b0ee96f73b2af3ef18e12feadffaee0d0ec1ea5c9b2a458c44fd63",
+            "bundle_hash": "e9e4154839739730f935f80dadf81cad47133c9e806173d0681c33b65cdf0a9e"
+          }
+        ]
+      },
+      "dependencies": [],
+      "wait": {
+        "kind": "decision",
+        "waiting_on_name": "周宁",
+        "what": "决定：要不要返工",
+        "started_at_unix_ms": 1795003200000,
+        "prototype_days": 1,
+        "decision_id": "b2"
+      },
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-105-timeline-1",
+          "at_text": "11 月 18 日 10:02",
+          "at_unix_ms": 1794996120000,
+          "who": "许宁",
+          "what": "请周宁决定：要不要返工",
+          "next": "等周宁回答",
+          "note": null,
+          "tone": "now"
+        },
+        {
+          "activity_id": "T-105-timeline-2",
+          "at_text": "11 月 18 日 10:00",
+          "at_unix_ms": 1794996000000,
+          "who": "许宁",
+          "what": "复核退回：错误提示分支没有验证",
+          "next": null,
+          "note": null,
+          "tone": "bad"
+        },
+        {
+          "activity_id": "T-105-timeline-3",
+          "at_text": "11 月 17 日 11:00",
+          "at_unix_ms": 1794913200000,
+          "who": "Codex（陈宇）",
+          "what": "提交第 1 版并请求复核",
+          "next": null,
+          "note": null,
+          "tone": null
+        }
+      ],
+      "lesson_ids": []
+    },
+    {
+      "work_id": "T-106",
+      "external_key": "T-106",
+      "project_id": "orders",
+      "workstream_id": "orders-qa",
+      "title": "业务验收",
+      "prototype_status": "planned",
+      "owner_person_id": "xu-ning",
+      "group_id": "applications",
+      "goal_ids": [
+        "g1"
+      ],
+      "agent_name": null,
+      "week_committed": true,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-106-criterion-1",
+          "text": "按验收清单走完 8 个场景",
+          "evidence_state": "none",
+          "evidence_detail": "还没有开始"
+        }
+      ],
+      "one_sentence": "还没有开始，要等订单页面联调核验之后。",
+      "next_step": "等订单页面联调",
+      "report": null,
+      "submitted_result_at_unix_ms": null,
+      "integrated": false,
+      "integration_note": null,
+      "started": false,
+      "agent_active": false,
+      "verified_at_unix_ms": null,
+      "delivery": null,
+      "dependencies": [
+        {
+          "dependency_id": "edge-t-106-t-103",
+          "provider_work_id": "T-103",
+          "required_version_label": "已核验",
+          "adopted_version_label": "还没有",
+          "available_version_label": "在等上游",
+          "satisfied": false,
+          "validity": "unavailable",
+          "reason": "completion_unavailable",
+          "since_unix_ms": null,
+          "version_policy": "current_contract",
+          "position": 1
+        }
+      ],
+      "wait": null,
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-106-timeline-1",
+          "at_text": "11 月 8 日",
+          "at_unix_ms": 1794139200000,
+          "who": "周宁",
+          "what": "批准拆解时建立，完成标准取自验收清单",
+          "next": null,
+          "note": null,
+          "tone": null
+        }
+      ],
+      "lesson_ids": []
+    },
+    {
+      "work_id": "T-107",
+      "external_key": "T-107",
+      "project_id": "orders",
+      "workstream_id": "orders-fe",
+      "title": "订单列表分页",
+      "prototype_status": "verified",
+      "owner_person_id": "lin-yue",
+      "group_id": "applications",
+      "goal_ids": [
+        "g1"
+      ],
+      "agent_name": "Claude 桌面",
+      "week_committed": true,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-107-criterion-1",
+          "text": "每页 20 条，可以翻页",
+          "evidence_state": "ok",
+          "evidence_detail": "测试 6 条通过"
+        },
+        {
+          "criterion_id": "T-107-criterion-2",
+          "text": "翻页后保留查询条件",
+          "evidence_state": "ok",
+          "evidence_detail": "测试 2 条通过"
+        }
+      ],
+      "one_sentence": "已经核验：2 条完成标准都有依据，复核通过。",
+      "next_step": "没有下一步",
+      "report": {
+        "summary": "分页和查询条件保留都做完了，测试通过。",
+        "completed_declaration": true,
+        "completed": [
+          "分页",
+          "翻页保留查询条件"
+        ],
+        "blockers": [],
+        "tests": [
+          {
+            "name": "分页",
+            "outcome": "passed",
+            "reference": null
+          },
+          {
+            "name": "保留条件",
+            "outcome": "passed",
+            "reference": null
+          }
+        ],
+        "artifacts": [
+          {
+            "label": "实现说明",
+            "reference": "artifact-t-107-"
+          }
+        ],
+        "reporter": "Claude 桌面（林悦的 Agent）",
+        "reported_at_unix_ms": 1794764400000
+      },
+      "submitted_result_at_unix_ms": 1794764400000,
+      "integrated": true,
+      "integration_note": "已合入",
+      "started": true,
+      "agent_active": false,
+      "verified_at_unix_ms": 1794830400000,
+      "delivery": {
+        "version_label": "第 1 版",
+        "checks": [
+          {
+            "check": "单元测试",
+            "outcome": "passed"
+          }
+        ],
+        "rounds": [
+          {
+            "round_id": "round-t-107-1",
+            "round_index": 1,
+            "state": "approved",
+            "current": true,
+            "contract_matches_current": true,
+            "independent": true,
+            "author_person_id": "lin-yue",
+            "author_actor_id": "lin-yue-agent",
+            "reviewer_person_id": "xu-ning",
+            "reviewer_actor_id": "xu-ning-agent",
+            "reviewer_display_name": "许宁",
+            "opened_at_unix_ms": 1794764400000,
+            "decided_at_unix_ms": 1794830400000,
+            "reason_first_line": "通过",
+            "evidence_id": "evidence-t-107-1",
+            "execution_id": "execution-t-107-1",
+            "claim_id": "claim-t-107-1",
+            "artifact_id": "artifact-t-107-1",
+            "artifact_digest": "9bb9bd35c60c13440347575fe60c171eebddc611c537165e0c50f580e23c6532",
+            "bundle_hash": "fb5fe77fc922982fd13d73c503bb3c267669ca2bf8fd0bcf192383cbccbe6198"
+          }
+        ]
+      },
+      "dependencies": [],
+      "wait": null,
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-107-timeline-1",
+          "at_text": "11 月 16 日 10:20",
+          "at_unix_ms": 1794824400000,
+          "who": "许宁",
+          "what": "复核通过",
+          "next": null,
+          "note": null,
+          "tone": "ok"
+        },
+        {
+          "activity_id": "T-107-timeline-2",
+          "at_text": "11 月 15 日 17:40",
+          "at_unix_ms": 1794764400000,
+          "who": "Claude 桌面（林悦）",
+          "what": "提交第 1 版并请求复核",
+          "next": null,
+          "note": null,
+          "tone": null
+        },
+        {
+          "activity_id": "T-107-timeline-3",
+          "at_text": "11 月 13 日 14:00",
+          "at_unix_ms": 1794578400000,
+          "who": "林悦",
+          "what": "接下任务，交给 Claude 桌面去做",
+          "next": null,
+          "note": null,
+          "tone": null
+        }
+      ],
+      "lesson_ids": []
+    },
+    {
+      "work_id": "T-108",
+      "external_key": "T-108",
+      "project_id": "orders",
+      "workstream_id": "orders-fe",
+      "title": "提交按钮防重复",
+      "prototype_status": "verified",
+      "owner_person_id": "lin-yue",
+      "group_id": "applications",
+      "goal_ids": [
+        "g1"
+      ],
+      "agent_name": "Claude 桌面",
+      "week_committed": true,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-108-criterion-1",
+          "text": "连点两次只提交一次",
+          "evidence_state": "ok",
+          "evidence_detail": "测试 4 条通过"
+        }
+      ],
+      "one_sentence": "已经核验：完成标准有依据，复核通过。",
+      "next_step": "没有下一步",
+      "report": {
+        "summary": "连点只提交一次。结果不明确时先查询，再决定要不要重发。",
+        "completed_declaration": true,
+        "completed": [
+          "按钮防重复",
+          "结果不明确时先查询"
+        ],
+        "blockers": [],
+        "tests": [
+          {
+            "name": "连点",
+            "outcome": "passed",
+            "reference": null
+          }
+        ],
+        "artifacts": [
+          {
+            "label": "实现说明",
+            "reference": "artifact-t-108-"
+          }
+        ],
+        "reporter": "Claude 桌面（林悦的 Agent）",
+        "reported_at_unix_ms": 1794844800000
+      },
+      "submitted_result_at_unix_ms": 1794844800000,
+      "integrated": true,
+      "integration_note": "已合入",
+      "started": true,
+      "agent_active": false,
+      "verified_at_unix_ms": 1794916800000,
+      "delivery": {
+        "version_label": "第 1 版",
+        "checks": [
+          {
+            "check": "单元测试",
+            "outcome": "passed"
+          }
+        ],
+        "rounds": [
+          {
+            "round_id": "round-t-108-1",
+            "round_index": 1,
+            "state": "approved",
+            "current": true,
+            "contract_matches_current": true,
+            "independent": true,
+            "author_person_id": "lin-yue",
+            "author_actor_id": "lin-yue-agent",
+            "reviewer_person_id": "xu-ning",
+            "reviewer_actor_id": "xu-ning-agent",
+            "reviewer_display_name": "许宁",
+            "opened_at_unix_ms": 1794844800000,
+            "decided_at_unix_ms": 1794916800000,
+            "reason_first_line": "通过",
+            "evidence_id": "evidence-t-108-1",
+            "execution_id": "execution-t-108-1",
+            "claim_id": "claim-t-108-1",
+            "artifact_id": "artifact-t-108-1",
+            "artifact_digest": "b8d889982e6ae6bf6a4a319d523ba6b8cf4862e441d22ba2288127c57a00099d",
+            "bundle_hash": "4c807e348dfc2e34d0be1eb70ccb1e9347ee8b3ca9c086451d96a7464c427270"
+          }
+        ]
+      },
+      "dependencies": [],
+      "wait": null,
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-108-timeline-1",
+          "at_text": "11 月 17 日 09:50",
+          "at_unix_ms": 1794909000000,
+          "who": "许宁",
+          "what": "复核通过",
+          "next": null,
+          "note": null,
+          "tone": "ok"
+        },
+        {
+          "activity_id": "T-108-timeline-2",
+          "at_text": "11 月 16 日 16:00",
+          "at_unix_ms": 1794844800000,
+          "who": "Claude 桌面（林悦）",
+          "what": "提交第 1 版并请求复核",
+          "next": null,
+          "note": null,
+          "tone": null
+        },
+        {
+          "activity_id": "T-108-timeline-3",
+          "at_text": "11 月 16 日 11:30",
+          "at_unix_ms": 1794828600000,
+          "who": "陈宇",
+          "what": "提醒：结果不明确时先查询再重试",
+          "next": null,
+          "note": "这句话后来记成了一条经验",
+          "tone": null
+        }
+      ],
+      "lesson_ids": [
+        "l3"
+      ]
+    },
+    {
+      "work_id": "T-109",
+      "external_key": "T-109",
+      "project_id": "orders",
+      "workstream_id": "orders-be",
+      "title": "提交失败的错误码表",
+      "prototype_status": "review",
+      "owner_person_id": "chen-yu",
+      "group_id": "applications",
+      "goal_ids": [
+        "g1"
+      ],
+      "agent_name": "Codex",
+      "week_committed": false,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-109-criterion-1",
+          "text": "每个错误码有一句给用户看的话",
+          "evidence_state": "ok",
+          "evidence_detail": "对照表 18 条，格式检查通过"
+        }
+      ],
+      "one_sentence": "在等复核，已经 1 天。",
+      "next_step": "等许宁复核",
+      "report": {
+        "summary": "18 个错误码各配了一句给用户看的话，已提交复核。",
+        "completed_declaration": false,
+        "completed": [
+          "18 条对照"
+        ],
+        "blockers": [
+          "在等复核"
+        ],
+        "tests": [],
+        "artifacts": [
+          {
+            "label": "错误码对照表",
+            "reference": "artifact-t-109-"
+          }
+        ],
+        "reporter": "Codex（陈宇的 Agent）",
+        "reported_at_unix_ms": 1794999600000
+      },
+      "submitted_result_at_unix_ms": 1794999600000,
+      "integrated": false,
+      "integration_note": "复核通过后才能合入",
+      "started": true,
+      "agent_active": false,
+      "verified_at_unix_ms": null,
+      "delivery": {
+        "version_label": "第 1 版",
+        "checks": [
+          {
+            "check": "格式检查",
+            "outcome": "passed"
+          }
+        ],
+        "rounds": [
+          {
+            "round_id": "round-t-109-1",
+            "round_index": 1,
+            "state": "open",
+            "current": true,
+            "contract_matches_current": true,
+            "independent": true,
+            "author_person_id": "chen-yu",
+            "author_actor_id": "chen-yu-agent",
+            "reviewer_person_id": "xu-ning",
+            "reviewer_actor_id": "xu-ning-agent",
+            "reviewer_display_name": "许宁",
+            "opened_at_unix_ms": 1795003200000,
+            "decided_at_unix_ms": null,
+            "reason_first_line": "还没有结论，等了 1 天",
+            "evidence_id": "evidence-t-109-1",
+            "execution_id": "execution-t-109-1",
+            "claim_id": "claim-t-109-1",
+            "artifact_id": "artifact-t-109-1",
+            "artifact_digest": "d8fec3f846d00eb3764dd4b9d9ff2b93d7786e691adcfb7e7b74962891d1469a",
+            "bundle_hash": "d3a9f7ef5586b13e8c0766bf145536e7b831f2f88908f7cfb5df323ee6e9e527"
+          }
+        ]
+      },
+      "dependencies": [],
+      "wait": {
+        "kind": "review",
+        "waiting_on_name": "许宁",
+        "what": "复核错误码表",
+        "started_at_unix_ms": 1795003200000,
+        "prototype_days": 1,
+        "decision_id": null
+      },
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-109-timeline-1",
+          "at_text": "11 月 18 日 11:00",
+          "at_unix_ms": 1794999600000,
+          "who": "Codex（陈宇）",
+          "what": "提交第 1 版并请求复核",
+          "next": "等复核",
+          "note": null,
+          "tone": "now"
+        }
+      ],
+      "lesson_ids": []
+    },
+    {
+      "work_id": "T-110",
+      "external_key": "T-110",
+      "project_id": "orders",
+      "workstream_id": "orders-be",
+      "title": "订单状态机说明",
+      "prototype_status": "review",
+      "owner_person_id": "chen-yu",
+      "group_id": "applications",
+      "goal_ids": [
+        "g1"
+      ],
+      "agent_name": "Codex",
+      "week_committed": false,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-110-criterion-1",
+          "text": "7 个状态和它们之间的转换都写明",
+          "evidence_state": "ok",
+          "evidence_detail": "说明文档，格式检查通过"
+        }
+      ],
+      "one_sentence": "在等复核，已经 1 天。",
+      "next_step": "等许宁复核",
+      "report": {
+        "summary": "7 个状态和转换条件都写明了，已提交复核。",
+        "completed_declaration": false,
+        "completed": [
+          "状态机说明"
+        ],
+        "blockers": [
+          "在等复核"
+        ],
+        "tests": [],
+        "artifacts": [
+          {
+            "label": "状态机说明",
+            "reference": "artifact-t-110-"
+          }
+        ],
+        "reporter": "Codex（陈宇的 Agent）",
+        "reported_at_unix_ms": 1795012200000
+      },
+      "submitted_result_at_unix_ms": 1795012200000,
+      "integrated": false,
+      "integration_note": "复核通过后才能合入",
+      "started": true,
+      "agent_active": false,
+      "verified_at_unix_ms": null,
+      "delivery": {
+        "version_label": "第 1 版",
+        "checks": [
+          {
+            "check": "格式检查",
+            "outcome": "passed"
+          }
+        ],
+        "rounds": [
+          {
+            "round_id": "round-t-110-1",
+            "round_index": 1,
+            "state": "open",
+            "current": true,
+            "contract_matches_current": true,
+            "independent": true,
+            "author_person_id": "chen-yu",
+            "author_actor_id": "chen-yu-agent",
+            "reviewer_person_id": "xu-ning",
+            "reviewer_actor_id": "xu-ning-agent",
+            "reviewer_display_name": "许宁",
+            "opened_at_unix_ms": 1795003200000,
+            "decided_at_unix_ms": null,
+            "reason_first_line": "还没有结论，等了 1 天",
+            "evidence_id": "evidence-t-110-1",
+            "execution_id": "execution-t-110-1",
+            "claim_id": "claim-t-110-1",
+            "artifact_id": "artifact-t-110-1",
+            "artifact_digest": "776ab9cf943ef38aa187757a43d62040aa38f73e3730bdacee2c86c9eb0744f6",
+            "bundle_hash": "22d661350ed40c0f8c18de4a9ddc8189f31d68705c8cf3244b865fba8858f98c"
+          }
+        ]
+      },
+      "dependencies": [],
+      "wait": {
+        "kind": "review",
+        "waiting_on_name": "许宁",
+        "what": "复核状态机说明",
+        "started_at_unix_ms": 1795003200000,
+        "prototype_days": 1,
+        "decision_id": null
+      },
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-110-timeline-1",
+          "at_text": "11 月 18 日 14:30",
+          "at_unix_ms": 1795012200000,
+          "who": "Codex（陈宇）",
+          "what": "提交第 1 版并请求复核",
+          "next": "等复核",
+          "note": null,
+          "tone": "now"
+        }
+      ],
+      "lesson_ids": []
+    },
+    {
+      "work_id": "T-111",
+      "external_key": "T-111",
+      "project_id": "orders",
+      "workstream_id": "orders-fe",
+      "title": "导出功能",
+      "prototype_status": "waiting",
+      "owner_person_id": "lin-yue",
+      "group_id": "applications",
+      "goal_ids": [
+        "g1"
+      ],
+      "agent_name": null,
+      "week_committed": false,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-111-criterion-1",
+          "text": "导出的字段和甲方确认的清单一致",
+          "evidence_state": "none",
+          "evidence_detail": "清单还没有确认"
+        }
+      ],
+      "one_sentence": "开不了工：在等甲方确认导出字段，已经 5 天。",
+      "next_step": "甲方确认后开始",
+      "report": null,
+      "submitted_result_at_unix_ms": null,
+      "integrated": false,
+      "integration_note": null,
+      "started": true,
+      "agent_active": false,
+      "verified_at_unix_ms": null,
+      "delivery": null,
+      "dependencies": [],
+      "wait": {
+        "kind": "ext",
+        "waiting_on_name": "甲方",
+        "what": "确认导出字段",
+        "started_at_unix_ms": 1794657600000,
+        "prototype_days": 5,
+        "decision_id": null
+      },
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-111-timeline-1",
+          "at_text": "11 月 14 日",
+          "at_unix_ms": 1794657600000,
+          "who": "林悦",
+          "what": "把字段清单发给甲方，等确认",
+          "next": null,
+          "note": null,
+          "tone": "now"
+        }
+      ],
+      "lesson_ids": []
+    },
+    {
+      "work_id": "T-112",
+      "external_key": "T-112",
+      "project_id": "orders",
+      "workstream_id": "orders-fe",
+      "title": "导出按钮的权限判断",
+      "prototype_status": "ready",
+      "owner_person_id": "lin-yue",
+      "group_id": "applications",
+      "goal_ids": [
+        "g1"
+      ],
+      "agent_name": null,
+      "week_committed": false,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-112-criterion-1",
+          "text": "没有导出权限的人看不到按钮",
+          "evidence_state": "none",
+          "evidence_detail": "还没有开始"
+        }
+      ],
+      "one_sentence": "周宁今天把这件派给了林悦，等本人接下。完成标准已经写好。",
+      "next_step": "林悦接下后交给 Agent 去做",
+      "report": null,
+      "submitted_result_at_unix_ms": null,
+      "integrated": false,
+      "integration_note": null,
+      "started": false,
+      "agent_active": false,
+      "verified_at_unix_ms": null,
+      "delivery": null,
+      "dependencies": [],
+      "wait": null,
+      "assignment": {
+        "handoff_id": "handoff-t-112",
+        "from_person_id": "zhou-ning",
+        "to_person_id": "lin-yue",
+        "created_at_unix_ms": 1795081200000,
+        "pending_id": "a3"
+      },
+      "timeline": [
+        {
+          "activity_id": "T-112-timeline-1",
+          "at_text": "今天 09:40",
+          "at_unix_ms": 1795081200000,
+          "who": "周宁（通过 Claude 桌面）",
+          "what": "把这件任务派给林悦",
+          "next": "等林悦接下",
+          "note": null,
+          "tone": "now"
+        },
+        {
+          "activity_id": "T-112-timeline-2",
+          "at_text": "11 月 8 日",
+          "at_unix_ms": 1794139200000,
+          "who": "周宁",
+          "what": "批准拆解时建立",
+          "next": null,
+          "note": null,
+          "tone": null
+        }
+      ],
+      "lesson_ids": []
+    },
+    {
+      "work_id": "T-113",
+      "external_key": "T-113",
+      "project_id": "orders",
+      "workstream_id": "orders-qa",
+      "title": "压测脚本",
+      "prototype_status": "verified",
+      "owner_person_id": "xu-ning",
+      "group_id": "applications",
+      "goal_ids": [
+        "g1"
+      ],
+      "agent_name": "Claude 桌面",
+      "week_committed": true,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-113-criterion-1",
+          "text": "能模拟 1000 并发查询",
+          "evidence_state": "ok",
+          "evidence_detail": "脚本和一次运行记录"
+        }
+      ],
+      "one_sentence": "已经核验：完成标准有依据，复核通过。",
+      "next_step": "没有下一步",
+      "report": {
+        "summary": "脚本能模拟 1000 并发查询，试运行了一次，结果已经保存。",
+        "completed_declaration": true,
+        "completed": [
+          "压测脚本",
+          "一次试运行"
+        ],
+        "blockers": [],
+        "tests": [
+          {
+            "name": "试运行",
+            "outcome": "passed",
+            "reference": null
+          }
+        ],
+        "artifacts": [
+          {
+            "label": "压测脚本",
+            "reference": "artifact-t-113-"
+          },
+          {
+            "label": "运行记录",
+            "reference": "artifact-t-113-"
+          }
+        ],
+        "reporter": "Claude 桌面（许宁的 Agent）",
+        "reported_at_unix_ms": 1794481200000
+      },
+      "submitted_result_at_unix_ms": 1794481200000,
+      "integrated": true,
+      "integration_note": "已合入",
+      "started": true,
+      "agent_active": false,
+      "verified_at_unix_ms": 1794484800000,
+      "delivery": {
+        "version_label": "第 1 版",
+        "checks": [
+          {
+            "check": "试运行",
+            "outcome": "passed"
+          }
+        ],
+        "rounds": [
+          {
+            "round_id": "round-t-113-1",
+            "round_index": 1,
+            "state": "approved",
+            "current": true,
+            "contract_matches_current": true,
+            "independent": true,
+            "author_person_id": "xu-ning",
+            "author_actor_id": "xu-ning-agent",
+            "reviewer_person_id": "zhou-ning",
+            "reviewer_actor_id": "zhou-ning-agent",
+            "reviewer_display_name": "周宁",
+            "opened_at_unix_ms": 1794481200000,
+            "decided_at_unix_ms": 1794484800000,
+            "reason_first_line": "通过",
+            "evidence_id": "evidence-t-113-1",
+            "execution_id": "execution-t-113-1",
+            "claim_id": "claim-t-113-1",
+            "artifact_id": "artifact-t-113-1",
+            "artifact_digest": "12ff0f34b25369ef32ae21716b0570a03545fb198ee31744717f2f10777baee1",
+            "bundle_hash": "f309113c266fbe1c9256920efb748a15d56cef846fe230ed489663c162e7cfaf"
+          }
+        ]
+      },
+      "dependencies": [],
+      "wait": null,
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-113-timeline-1",
+          "at_text": "11 月 12 日 15:00",
+          "at_unix_ms": 1794495600000,
+          "who": "周宁",
+          "what": "复核通过",
+          "next": null,
+          "note": null,
+          "tone": "ok"
+        },
+        {
+          "activity_id": "T-113-timeline-2",
+          "at_text": "11 月 12 日 11:00",
+          "at_unix_ms": 1794481200000,
+          "who": "Claude 桌面（许宁）",
+          "what": "提交第 1 版并请求复核",
+          "next": null,
+          "note": null,
+          "tone": null
+        }
+      ],
+      "lesson_ids": []
+    },
+    {
+      "work_id": "T-114",
+      "external_key": "T-114",
+      "project_id": "orders",
+      "workstream_id": "orders-fe",
+      "title": "错误提示文案",
+      "prototype_status": "claimed",
+      "owner_person_id": "lin-yue",
+      "group_id": "applications",
+      "goal_ids": [
+        "g1"
+      ],
+      "agent_name": "Claude 桌面",
+      "week_committed": false,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-114-criterion-1",
+          "text": "12 条错误提示都说明下一步怎么办",
+          "evidence_state": "wait",
+          "evidence_detail": "自己说做完了，没有依据"
+        }
+      ],
+      "one_sentence": "标了完成，但还没有核验：没有提交复核。",
+      "next_step": "提交复核",
+      "report": {
+        "summary": "12 条文案都写完了。",
+        "completed_declaration": true,
+        "completed": [
+          "12 条文案"
+        ],
+        "blockers": [],
+        "tests": [],
+        "artifacts": [
+          {
+            "label": "文案清单",
+            "reference": "artifact-t-114-"
+          }
+        ],
+        "reporter": "Claude 桌面（林悦的 Agent）",
+        "reported_at_unix_ms": 1795022400000
+      },
+      "submitted_result_at_unix_ms": null,
+      "integrated": false,
+      "integration_note": null,
+      "started": true,
+      "agent_active": false,
+      "verified_at_unix_ms": null,
+      "delivery": null,
+      "dependencies": [],
+      "wait": null,
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-114-timeline-1",
+          "at_text": "昨天 17:20",
+          "at_unix_ms": 1795022400000,
+          "who": "Claude 桌面（林悦）",
+          "what": "报告：12 条文案都写完了",
+          "next": null,
+          "note": "没有提交复核，所以还不算核验",
+          "tone": "now"
+        }
+      ],
+      "lesson_ids": []
+    },
+    {
+      "work_id": "T-201",
+      "external_key": "T-201",
+      "project_id": "notify",
+      "workstream_id": "notify-svc",
+      "title": "统一发送接口",
+      "prototype_status": "verified",
+      "owner_person_id": "zhao-heng",
+      "group_id": "platform",
+      "goal_ids": [
+        "g2"
+      ],
+      "agent_name": "Codex",
+      "week_committed": false,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-201-criterion-1",
+          "text": "三类通知用同一个接口发送",
+          "evidence_state": "ok",
+          "evidence_detail": "测试 14 条通过"
+        },
+        {
+          "criterion_id": "T-201-criterion-2",
+          "text": "每条通知有唯一编号，可以查到结果",
+          "evidence_state": "ok",
+          "evidence_detail": "测试 6 条通过"
+        }
+      ],
+      "one_sentence": "已经核验：2 条完成标准都有依据，复核通过。",
+      "next_step": "没有下一步",
+      "report": {
+        "summary": "发送接口做完了，三类通知共用。",
+        "completed_declaration": true,
+        "completed": [
+          "发送接口",
+          "结果查询"
+        ],
+        "blockers": [],
+        "tests": [
+          {
+            "name": "发送",
+            "outcome": "passed",
+            "reference": null
+          },
+          {
+            "name": "结果查询",
+            "outcome": "passed",
+            "reference": null
+          }
+        ],
+        "artifacts": [
+          {
+            "label": "接口说明",
+            "reference": "artifact-t-201-"
+          }
+        ],
+        "reporter": "Codex（赵衡的 Agent）",
+        "reported_at_unix_ms": 1792512000000
+      },
+      "submitted_result_at_unix_ms": 1792512000000,
+      "integrated": true,
+      "integration_note": "已合入",
+      "started": true,
+      "agent_active": false,
+      "verified_at_unix_ms": 1792584000000,
+      "delivery": {
+        "version_label": "第 1 版",
+        "checks": [
+          {
+            "check": "单元测试",
+            "outcome": "passed"
+          }
+        ],
+        "rounds": [
+          {
+            "round_id": "round-t-201-1",
+            "round_index": 1,
+            "state": "approved",
+            "current": true,
+            "contract_matches_current": true,
+            "independent": true,
+            "author_person_id": "zhao-heng",
+            "author_actor_id": "zhao-heng-agent",
+            "reviewer_person_id": "wu-tong",
+            "reviewer_actor_id": "wu-tong-agent",
+            "reviewer_display_name": "吴桐",
+            "opened_at_unix_ms": 1792512000000,
+            "decided_at_unix_ms": 1792584000000,
+            "reason_first_line": "通过",
+            "evidence_id": "evidence-t-201-1",
+            "execution_id": "execution-t-201-1",
+            "claim_id": "claim-t-201-1",
+            "artifact_id": "artifact-t-201-1",
+            "artifact_digest": "d37b832ce9666bb8235ec1f6482c98576f6764b0b3abea1aab78cca23195b716",
+            "bundle_hash": "bb822884505623e38fe1808eaebb659125801e6bf3fbfc02342d95586018abd0"
+          }
+        ]
+      },
+      "dependencies": [],
+      "wait": null,
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-201-timeline-1",
+          "at_text": "10 月 21 日",
+          "at_unix_ms": 1792584000000,
+          "who": "吴桐",
+          "what": "复核通过",
+          "next": null,
+          "note": null,
+          "tone": "ok"
+        },
+        {
+          "activity_id": "T-201-timeline-2",
+          "at_text": "10 月 20 日 16:00",
+          "at_unix_ms": 1792512000000,
+          "who": "Codex（赵衡）",
+          "what": "提交第 1 版并请求复核",
+          "next": null,
+          "note": null,
+          "tone": null
+        }
+      ],
+      "lesson_ids": []
+    },
+    {
+      "work_id": "T-202",
+      "external_key": "T-202",
+      "project_id": "notify",
+      "workstream_id": "notify-svc",
+      "title": "失败重发",
+      "prototype_status": "verified",
+      "owner_person_id": "zhao-heng",
+      "group_id": "platform",
+      "goal_ids": [
+        "g2"
+      ],
+      "agent_name": "Codex",
+      "week_committed": false,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-202-criterion-1",
+          "text": "发送失败的通知可以重发",
+          "evidence_state": "ok",
+          "evidence_detail": "测试 8 条通过"
+        },
+        {
+          "criterion_id": "T-202-criterion-2",
+          "text": "重发不会让同一条通知到达两次",
+          "evidence_state": "ok",
+          "evidence_detail": "测试 5 条通过"
+        }
+      ],
+      "one_sentence": "已经核验：第 1 轮被退回，改后第 2 轮通过。",
+      "next_step": "没有下一步",
+      "report": {
+        "summary": "失败重发做完了，补上了重复判断。",
+        "completed_declaration": true,
+        "completed": [
+          "失败重发",
+          "重复判断"
+        ],
+        "blockers": [],
+        "tests": [
+          {
+            "name": "重发",
+            "outcome": "passed",
+            "reference": null
+          },
+          {
+            "name": "不重复",
+            "outcome": "passed",
+            "reference": null
+          }
+        ],
+        "artifacts": [
+          {
+            "label": "实现说明",
+            "reference": "artifact-t-202-"
+          }
+        ],
+        "reporter": "Codex（赵衡的 Agent）",
+        "reported_at_unix_ms": 1793115000000
+      },
+      "submitted_result_at_unix_ms": 1793115000000,
+      "integrated": true,
+      "integration_note": "已合入",
+      "started": true,
+      "agent_active": false,
+      "verified_at_unix_ms": 1793188800000,
+      "delivery": {
+        "version_label": "第 2 版",
+        "checks": [
+          {
+            "check": "单元测试",
+            "outcome": "passed"
+          }
+        ],
+        "rounds": [
+          {
+            "round_id": "round-t-202-1",
+            "round_index": 1,
+            "state": "rejected",
+            "current": false,
+            "contract_matches_current": false,
+            "independent": true,
+            "author_person_id": "zhao-heng",
+            "author_actor_id": "zhao-heng-agent",
+            "reviewer_person_id": "wu-tong",
+            "reviewer_actor_id": "wu-tong-agent",
+            "reviewer_display_name": "吴桐",
+            "opened_at_unix_ms": 1793028600000,
+            "decided_at_unix_ms": 1793188800000,
+            "reason_first_line": "重发可能让同一条通知到达两次",
+            "evidence_id": "evidence-t-202-1",
+            "execution_id": "execution-t-202-1",
+            "claim_id": "claim-t-202-1",
+            "artifact_id": "artifact-t-202-1",
+            "artifact_digest": "1fa540b7f810584c9163ecd3e450450419b1672d893cc4a79ac78c1820384676",
+            "bundle_hash": "e5b5ac51f74a1f420e9868285f19e6924eee1d54e348c323740ba6d63f1c1a72"
+          },
+          {
+            "round_id": "round-t-202-2",
+            "round_index": 2,
+            "state": "approved",
+            "current": true,
+            "contract_matches_current": true,
+            "independent": true,
+            "author_person_id": "zhao-heng",
+            "author_actor_id": "zhao-heng-agent",
+            "reviewer_person_id": "wu-tong",
+            "reviewer_actor_id": "wu-tong-agent",
+            "reviewer_display_name": "吴桐",
+            "opened_at_unix_ms": 1793115000000,
+            "decided_at_unix_ms": 1793188800000,
+            "reason_first_line": "加了重复判断后通过",
+            "evidence_id": "evidence-t-202-2",
+            "execution_id": "execution-t-202-2",
+            "claim_id": "claim-t-202-2",
+            "artifact_id": "artifact-t-202-2",
+            "artifact_digest": "e99e85245b1db47022984d25f94034de30a1b9083d2ae9238d70af3fa47b7929",
+            "bundle_hash": "c7d7c4f953ebdadf70e72baacbe399add39a836a7e56fcee542e1b73b96e743c"
+          }
+        ]
+      },
+      "dependencies": [],
+      "wait": null,
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-202-timeline-1",
+          "at_text": "10 月 28 日",
+          "at_unix_ms": 1793188800000,
+          "who": "吴桐",
+          "what": "第 2 轮复核通过",
+          "next": null,
+          "note": null,
+          "tone": "ok"
+        },
+        {
+          "activity_id": "T-202-timeline-2",
+          "at_text": "10 月 27 日 15:30",
+          "at_unix_ms": 1793115000000,
+          "who": "Codex（赵衡）",
+          "what": "补上重复判断，重新提交",
+          "next": null,
+          "note": null,
+          "tone": null
+        },
+        {
+          "activity_id": "T-202-timeline-3",
+          "at_text": "10 月 24 日",
+          "at_unix_ms": 1792843200000,
+          "who": "吴桐",
+          "what": "第 1 轮复核退回：重发可能重复到达",
+          "next": null,
+          "note": null,
+          "tone": "bad"
+        }
+      ],
+      "lesson_ids": []
+    },
+    {
+      "work_id": "T-203",
+      "external_key": "T-203",
+      "project_id": "notify",
+      "workstream_id": "notify-adopt",
+      "title": "短信通道接入",
+      "prototype_status": "verified",
+      "owner_person_id": "zhao-heng",
+      "group_id": "platform",
+      "goal_ids": [
+        "g2"
+      ],
+      "agent_name": "Codex",
+      "week_committed": false,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-203-criterion-1",
+          "text": "短信走统一发送接口",
+          "evidence_state": "ok",
+          "evidence_detail": "测试 6 条通过"
+        }
+      ],
+      "one_sentence": "已经核验。",
+      "next_step": "没有下一步",
+      "report": {
+        "summary": "短信通道已经改走统一发送接口。",
+        "completed_declaration": true,
+        "completed": [
+          "短信通道接入"
+        ],
+        "blockers": [],
+        "tests": [
+          {
+            "name": "短信发送",
+            "outcome": "passed",
+            "reference": null
+          }
+        ],
+        "artifacts": [
+          {
+            "label": "接入说明",
+            "reference": "artifact-t-203-"
+          }
+        ],
+        "reporter": "Codex（赵衡的 Agent）",
+        "reported_at_unix_ms": 1793638800000
+      },
+      "submitted_result_at_unix_ms": 1793638800000,
+      "integrated": true,
+      "integration_note": "已合入",
+      "started": true,
+      "agent_active": false,
+      "verified_at_unix_ms": 1793707200000,
+      "delivery": {
+        "version_label": "第 1 版",
+        "checks": [
+          {
+            "check": "单元测试",
+            "outcome": "passed"
+          }
+        ],
+        "rounds": [
+          {
+            "round_id": "round-t-203-1",
+            "round_index": 1,
+            "state": "approved",
+            "current": true,
+            "contract_matches_current": true,
+            "independent": true,
+            "author_person_id": "zhao-heng",
+            "author_actor_id": "zhao-heng-agent",
+            "reviewer_person_id": "wu-tong",
+            "reviewer_actor_id": "wu-tong-agent",
+            "reviewer_display_name": "吴桐",
+            "opened_at_unix_ms": 1793638800000,
+            "decided_at_unix_ms": 1793707200000,
+            "reason_first_line": "通过",
+            "evidence_id": "evidence-t-203-1",
+            "execution_id": "execution-t-203-1",
+            "claim_id": "claim-t-203-1",
+            "artifact_id": "artifact-t-203-1",
+            "artifact_digest": "91116c641cb8946c05ac0637591ee48ea439026fbce20ade15ba7b4ece39bbd7",
+            "bundle_hash": "78a5995d2772a6899a03d1e38862acc8402978dec6f80073f4037b82b15382a7"
+          }
+        ]
+      },
+      "dependencies": [
+        {
+          "dependency_id": "edge-t-203-t-201",
+          "provider_work_id": "T-201",
+          "required_version_label": "通过复核的版本",
+          "adopted_version_label": "第 1 版",
+          "available_version_label": "第 1 版",
+          "satisfied": true,
+          "validity": "valid",
+          "reason": null,
+          "since_unix_ms": null,
+          "version_policy": "current_contract",
+          "position": 1
+        }
+      ],
+      "wait": null,
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-203-timeline-1",
+          "at_text": "11 月 3 日",
+          "at_unix_ms": 1793707200000,
+          "who": "吴桐",
+          "what": "复核通过",
+          "next": null,
+          "note": null,
+          "tone": "ok"
+        },
+        {
+          "activity_id": "T-203-timeline-2",
+          "at_text": "11 月 2 日 17:00",
+          "at_unix_ms": 1793638800000,
+          "who": "Codex（赵衡）",
+          "what": "提交第 1 版并请求复核",
+          "next": null,
+          "note": null,
+          "tone": null
+        }
+      ],
+      "lesson_ids": []
+    },
+    {
+      "work_id": "T-204",
+      "external_key": "T-204",
+      "project_id": "notify",
+      "workstream_id": "notify-adopt",
+      "title": "邮件通道接入",
+      "prototype_status": "verified",
+      "owner_person_id": "zhao-heng",
+      "group_id": "platform",
+      "goal_ids": [
+        "g2"
+      ],
+      "agent_name": "Codex",
+      "week_committed": false,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-204-criterion-1",
+          "text": "邮件走统一发送接口",
+          "evidence_state": "ok",
+          "evidence_detail": "测试 5 条通过"
+        }
+      ],
+      "one_sentence": "已经核验。",
+      "next_step": "没有下一步",
+      "report": {
+        "summary": "邮件通道已经改走统一发送接口。接入前先核对了接口版本。",
+        "completed_declaration": true,
+        "completed": [
+          "邮件通道接入"
+        ],
+        "blockers": [],
+        "tests": [
+          {
+            "name": "邮件发送",
+            "outcome": "passed",
+            "reference": null
+          }
+        ],
+        "artifacts": [
+          {
+            "label": "接入说明",
+            "reference": "artifact-t-204-"
+          }
+        ],
+        "reporter": "Codex（赵衡的 Agent）",
+        "reported_at_unix_ms": 1793809200000
+      },
+      "submitted_result_at_unix_ms": 1793809200000,
+      "integrated": true,
+      "integration_note": "已合入",
+      "started": true,
+      "agent_active": false,
+      "verified_at_unix_ms": 1793880000000,
+      "delivery": {
+        "version_label": "第 1 版",
+        "checks": [
+          {
+            "check": "单元测试",
+            "outcome": "passed"
+          }
+        ],
+        "rounds": [
+          {
+            "round_id": "round-t-204-1",
+            "round_index": 1,
+            "state": "approved",
+            "current": true,
+            "contract_matches_current": true,
+            "independent": true,
+            "author_person_id": "zhao-heng",
+            "author_actor_id": "zhao-heng-agent",
+            "reviewer_person_id": "wu-tong",
+            "reviewer_actor_id": "wu-tong-agent",
+            "reviewer_display_name": "吴桐",
+            "opened_at_unix_ms": 1793809200000,
+            "decided_at_unix_ms": 1793880000000,
+            "reason_first_line": "通过",
+            "evidence_id": "evidence-t-204-1",
+            "execution_id": "execution-t-204-1",
+            "claim_id": "claim-t-204-1",
+            "artifact_id": "artifact-t-204-1",
+            "artifact_digest": "43e404901913267f0fefd232d4cb357a1b7c00558c3aae617a4c25ab08e66bc6",
+            "bundle_hash": "ae81103d0b427c7f3fe6a71f949e7f4d324c64ea9eb280e72824c8aef869d953"
+          }
+        ]
+      },
+      "dependencies": [
+        {
+          "dependency_id": "edge-t-204-t-201",
+          "provider_work_id": "T-201",
+          "required_version_label": "通过复核的版本",
+          "adopted_version_label": "第 1 版",
+          "available_version_label": "第 1 版",
+          "satisfied": true,
+          "validity": "valid",
+          "reason": null,
+          "since_unix_ms": null,
+          "version_policy": "current_contract",
+          "position": 1
+        }
+      ],
+      "wait": null,
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-204-timeline-1",
+          "at_text": "11 月 5 日",
+          "at_unix_ms": 1793880000000,
+          "who": "吴桐",
+          "what": "复核通过",
+          "next": null,
+          "note": null,
+          "tone": "ok"
+        },
+        {
+          "activity_id": "T-204-timeline-2",
+          "at_text": "11 月 4 日 16:20",
+          "at_unix_ms": 1793809200000,
+          "who": "Codex（赵衡）",
+          "what": "提交第 1 版并请求复核",
+          "next": null,
+          "note": null,
+          "tone": null
+        }
+      ],
+      "lesson_ids": [
+        "l2"
+      ]
+    },
+    {
+      "work_id": "T-205",
+      "external_key": "T-205",
+      "project_id": "notify",
+      "workstream_id": "notify-adopt",
+      "title": "站内信通道接入",
+      "prototype_status": "verified",
+      "owner_person_id": "zhao-heng",
+      "group_id": "platform",
+      "goal_ids": [
+        "g2"
+      ],
+      "agent_name": "Codex",
+      "week_committed": false,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-205-criterion-1",
+          "text": "站内信走统一发送接口",
+          "evidence_state": "ok",
+          "evidence_detail": "测试 5 条通过"
+        }
+      ],
+      "one_sentence": "已经核验。",
+      "next_step": "没有下一步",
+      "report": {
+        "summary": "站内信通道已经改走统一发送接口。",
+        "completed_declaration": true,
+        "completed": [
+          "站内信通道接入"
+        ],
+        "blockers": [],
+        "tests": [
+          {
+            "name": "站内信发送",
+            "outcome": "passed",
+            "reference": null
+          }
+        ],
+        "artifacts": [
+          {
+            "label": "接入说明",
+            "reference": "artifact-t-205-"
+          }
+        ],
+        "reporter": "Codex（赵衡的 Agent）",
+        "reported_at_unix_ms": 1793901600000
+      },
+      "submitted_result_at_unix_ms": 1793901600000,
+      "integrated": true,
+      "integration_note": "已合入",
+      "started": true,
+      "agent_active": false,
+      "verified_at_unix_ms": 1793966400000,
+      "delivery": {
+        "version_label": "第 1 版",
+        "checks": [
+          {
+            "check": "单元测试",
+            "outcome": "passed"
+          }
+        ],
+        "rounds": [
+          {
+            "round_id": "round-t-205-1",
+            "round_index": 1,
+            "state": "approved",
+            "current": true,
+            "contract_matches_current": true,
+            "independent": true,
+            "author_person_id": "zhao-heng",
+            "author_actor_id": "zhao-heng-agent",
+            "reviewer_person_id": "wu-tong",
+            "reviewer_actor_id": "wu-tong-agent",
+            "reviewer_display_name": "吴桐",
+            "opened_at_unix_ms": 1793901600000,
+            "decided_at_unix_ms": 1793966400000,
+            "reason_first_line": "通过",
+            "evidence_id": "evidence-t-205-1",
+            "execution_id": "execution-t-205-1",
+            "claim_id": "claim-t-205-1",
+            "artifact_id": "artifact-t-205-1",
+            "artifact_digest": "a0145ebd35a16a7550fb8dbfabfe6544e1e18184909c86440b2f197efb273345",
+            "bundle_hash": "95c86e82a9f2e62466d8caad8a53a40658e2ccfed4356478569d267c56470e8c"
+          }
+        ]
+      },
+      "dependencies": [
+        {
+          "dependency_id": "edge-t-205-t-201",
+          "provider_work_id": "T-201",
+          "required_version_label": "通过复核的版本",
+          "adopted_version_label": "第 1 版",
+          "available_version_label": "第 1 版",
+          "satisfied": true,
+          "validity": "valid",
+          "reason": null,
+          "since_unix_ms": null,
+          "version_policy": "current_contract",
+          "position": 1
+        }
+      ],
+      "wait": null,
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-205-timeline-1",
+          "at_text": "11 月 6 日",
+          "at_unix_ms": 1793966400000,
+          "who": "吴桐",
+          "what": "复核通过",
+          "next": null,
+          "note": null,
+          "tone": "ok"
+        },
+        {
+          "activity_id": "T-205-timeline-2",
+          "at_text": "11 月 5 日 18:00",
+          "at_unix_ms": 1793901600000,
+          "who": "Codex（赵衡）",
+          "what": "提交第 1 版并请求复核",
+          "next": null,
+          "note": null,
+          "tone": null
+        }
+      ],
+      "lesson_ids": []
+    },
+    {
+      "work_id": "T-206",
+      "external_key": "T-206",
+      "project_id": "notify",
+      "workstream_id": "notify-svc",
+      "title": "试运行两周",
+      "prototype_status": "running",
+      "owner_person_id": "zhao-heng",
+      "group_id": "platform",
+      "goal_ids": [
+        "g2"
+      ],
+      "agent_name": "Codex",
+      "week_committed": false,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-206-criterion-1",
+          "text": "两周内发送成功率不低于 99.5%",
+          "evidence_state": "wait",
+          "evidence_detail": "第一周 99.8%，第二周进行中"
+        },
+        {
+          "criterion_id": "T-206-criterion-2",
+          "text": "没有丢失的通知",
+          "evidence_state": "ok",
+          "evidence_detail": "第一周逐条核对，一致"
+        }
+      ],
+      "one_sentence": "试运行第二周，没有新问题。",
+      "next_step": "11 月 23 日试运行结束后提交观察记录",
+      "report": {
+        "summary": "第二周前三天发送成功率 99.7%，没有新问题。",
+        "completed_declaration": false,
+        "completed": [
+          "第一周观察记录"
+        ],
+        "blockers": [],
+        "tests": [
+          {
+            "name": "第一周核对",
+            "outcome": "passed",
+            "reference": null
+          }
+        ],
+        "artifacts": [
+          {
+            "label": "试运行观察记录",
+            "reference": "artifact-t-206-"
+          }
+        ],
+        "reporter": "Codex（赵衡的 Agent）",
+        "reported_at_unix_ms": 1795078800000
+      },
+      "submitted_result_at_unix_ms": null,
+      "integrated": false,
+      "integration_note": null,
+      "started": true,
+      "agent_active": true,
+      "verified_at_unix_ms": null,
+      "delivery": null,
+      "dependencies": [],
+      "wait": null,
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-206-timeline-1",
+          "at_text": "今天 09:00",
+          "at_unix_ms": 1795078800000,
+          "who": "Codex（赵衡）",
+          "what": "第二周前三天发送成功率 99.7%",
+          "next": "继续观察到 11 月 23 日",
+          "note": null,
+          "tone": "now"
+        },
+        {
+          "activity_id": "T-206-timeline-2",
+          "at_text": "11 月 16 日",
+          "at_unix_ms": 1794830400000,
+          "who": "Codex（赵衡）",
+          "what": "第一周观察记录：成功率 99.8%",
+          "next": null,
+          "note": null,
+          "tone": null
+        },
+        {
+          "activity_id": "T-206-timeline-3",
+          "at_text": "11 月 9 日",
+          "at_unix_ms": 1794225600000,
+          "who": "赵衡",
+          "what": "试运行开始",
+          "next": null,
+          "note": null,
+          "tone": null
+        }
+      ],
+      "lesson_ids": []
+    },
+    {
+      "work_id": "T-207",
+      "external_key": "T-207",
+      "project_id": "notify",
+      "workstream_id": "notify-svc",
+      "title": "发送量和失败率的查看页",
+      "prototype_status": "verified",
+      "owner_person_id": "zhao-heng",
+      "group_id": "platform",
+      "goal_ids": [
+        "g2"
+      ],
+      "agent_name": "Codex",
+      "week_committed": false,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-207-criterion-1",
+          "text": "能按通道看每天的发送量和失败率",
+          "evidence_state": "ok",
+          "evidence_detail": "测试 5 条通过"
+        }
+      ],
+      "one_sentence": "已经核验。",
+      "next_step": "没有下一步",
+      "report": {
+        "summary": "查看页做完了，能按通道看每天的发送量和失败率。",
+        "completed_declaration": true,
+        "completed": [
+          "查看页"
+        ],
+        "blockers": [],
+        "tests": [
+          {
+            "name": "查看页",
+            "outcome": "passed",
+            "reference": null
+          }
+        ],
+        "artifacts": [
+          {
+            "label": "页面说明",
+            "reference": "artifact-t-207-"
+          }
+        ],
+        "reporter": "Codex（赵衡的 Agent）",
+        "reported_at_unix_ms": 1794236400000
+      },
+      "submitted_result_at_unix_ms": 1794236400000,
+      "integrated": true,
+      "integration_note": "已合入",
+      "started": true,
+      "agent_active": false,
+      "verified_at_unix_ms": 1794312000000,
+      "delivery": {
+        "version_label": "第 1 版",
+        "checks": [
+          {
+            "check": "单元测试",
+            "outcome": "passed"
+          }
+        ],
+        "rounds": [
+          {
+            "round_id": "round-t-207-1",
+            "round_index": 1,
+            "state": "approved",
+            "current": true,
+            "contract_matches_current": true,
+            "independent": true,
+            "author_person_id": "zhao-heng",
+            "author_actor_id": "zhao-heng-agent",
+            "reviewer_person_id": "xu-ning",
+            "reviewer_actor_id": "xu-ning-agent",
+            "reviewer_display_name": "许宁",
+            "opened_at_unix_ms": 1794236400000,
+            "decided_at_unix_ms": 1794312000000,
+            "reason_first_line": "通过",
+            "evidence_id": "evidence-t-207-1",
+            "execution_id": "execution-t-207-1",
+            "claim_id": "claim-t-207-1",
+            "artifact_id": "artifact-t-207-1",
+            "artifact_digest": "e169b58b38603c0065afbd4d5dea5a5c2fb9022e806cf6b5147aea149cb31372",
+            "bundle_hash": "87baa49d62ae9724b82a3836cbd95d0a4fd9bcfe1677c649a9735a862db449da"
+          }
+        ]
+      },
+      "dependencies": [],
+      "wait": null,
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-207-timeline-1",
+          "at_text": "11 月 10 日",
+          "at_unix_ms": 1794312000000,
+          "who": "许宁",
+          "what": "复核通过",
+          "next": null,
+          "note": null,
+          "tone": "ok"
+        },
+        {
+          "activity_id": "T-207-timeline-2",
+          "at_text": "11 月 9 日 15:00",
+          "at_unix_ms": 1794236400000,
+          "who": "Codex（赵衡）",
+          "what": "提交第 1 版并请求复核",
+          "next": null,
+          "note": null,
+          "tone": null
+        }
+      ],
+      "lesson_ids": []
+    },
+    {
+      "work_id": "T-208",
+      "external_key": "T-208",
+      "project_id": "notify",
+      "workstream_id": "notify-adopt",
+      "title": "下线三处旧的通知代码",
+      "prototype_status": "planned",
+      "owner_person_id": "zhao-heng",
+      "group_id": "platform",
+      "goal_ids": [
+        "g2"
+      ],
+      "agent_name": null,
+      "week_committed": false,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-208-criterion-1",
+          "text": "三处旧代码都删除，功能不受影响",
+          "evidence_state": "none",
+          "evidence_detail": "要等试运行结束"
+        }
+      ],
+      "one_sentence": "还没有开始，要等试运行两周核验之后。",
+      "next_step": "等试运行结束",
+      "report": null,
+      "submitted_result_at_unix_ms": null,
+      "integrated": false,
+      "integration_note": null,
+      "started": false,
+      "agent_active": false,
+      "verified_at_unix_ms": null,
+      "delivery": null,
+      "dependencies": [
+        {
+          "dependency_id": "edge-t-208-t-206",
+          "provider_work_id": "T-206",
+          "required_version_label": "已核验",
+          "adopted_version_label": "还没有",
+          "available_version_label": "在做",
+          "satisfied": false,
+          "validity": "unavailable",
+          "reason": "completion_unavailable",
+          "since_unix_ms": null,
+          "version_policy": "current_contract",
+          "position": 1
+        }
+      ],
+      "wait": null,
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-208-timeline-1",
+          "at_text": "10 月 14 日",
+          "at_unix_ms": 1791979200000,
+          "who": "吴桐",
+          "what": "批准拆解时建立",
+          "next": null,
+          "note": null,
+          "tone": null
+        }
+      ],
+      "lesson_ids": []
+    },
+    {
+      "work_id": "T-301",
+      "external_key": "T-301",
+      "project_id": "onboard",
+      "workstream_id": "onboard-flow",
+      "title": "梳理现在的接入步骤",
+      "prototype_status": "verified",
+      "owner_person_id": "he-chuan",
+      "group_id": "delivery",
+      "goal_ids": [
+        "g3"
+      ],
+      "agent_name": "Codex",
+      "week_committed": false,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-301-criterion-1",
+          "text": "列出现在的全部接入步骤和每步由谁来做",
+          "evidence_state": "ok",
+          "evidence_detail": "清单列出 9 步，郑岚逐条核对过"
+        }
+      ],
+      "one_sentence": "已经核验。",
+      "next_step": "没有下一步",
+      "report": {
+        "summary": "现在的接入一共 9 步，其中 4 步要客户自己做。",
+        "completed_declaration": true,
+        "completed": [
+          "9 步清单"
+        ],
+        "blockers": [],
+        "tests": [],
+        "artifacts": [
+          {
+            "label": "接入流程现状",
+            "reference": "artifact-t-301-"
+          }
+        ],
+        "reporter": "Codex（何川的 Agent）",
+        "reported_at_unix_ms": 1793725200000
+      },
+      "submitted_result_at_unix_ms": 1793725200000,
+      "integrated": true,
+      "integration_note": "已合入",
+      "started": true,
+      "agent_active": false,
+      "verified_at_unix_ms": 1793793600000,
+      "delivery": {
+        "version_label": "第 1 版",
+        "checks": [
+          {
+            "check": "格式检查",
+            "outcome": "passed"
+          }
+        ],
+        "rounds": [
+          {
+            "round_id": "round-t-301-1",
+            "round_index": 1,
+            "state": "approved",
+            "current": true,
+            "contract_matches_current": true,
+            "independent": true,
+            "author_person_id": "he-chuan",
+            "author_actor_id": "he-chuan-agent",
+            "reviewer_person_id": "zheng-lan",
+            "reviewer_actor_id": "zheng-lan-agent",
+            "reviewer_display_name": "郑岚",
+            "opened_at_unix_ms": 1793725200000,
+            "decided_at_unix_ms": 1793793600000,
+            "reason_first_line": "通过",
+            "evidence_id": "evidence-t-301-1",
+            "execution_id": "execution-t-301-1",
+            "claim_id": "claim-t-301-1",
+            "artifact_id": "artifact-t-301-1",
+            "artifact_digest": "3bfe270effd9a0a9f514ca710ebe2bef0a5e45af0f7c51057a05cb9d3ae7b934",
+            "bundle_hash": "aea48d61a891864dcf00a304645eb88293bd35e3b10d6dfec1a1fd62e21f6930"
+          }
+        ]
+      },
+      "dependencies": [],
+      "wait": null,
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-301-timeline-1",
+          "at_text": "11 月 4 日",
+          "at_unix_ms": 1793793600000,
+          "who": "郑岚",
+          "what": "复核通过",
+          "next": null,
+          "note": null,
+          "tone": "ok"
+        },
+        {
+          "activity_id": "T-301-timeline-2",
+          "at_text": "11 月 3 日 17:00",
+          "at_unix_ms": 1793725200000,
+          "who": "Codex（何川）",
+          "what": "提交第 1 版并请求复核",
+          "next": null,
+          "note": null,
+          "tone": null
+        }
+      ],
+      "lesson_ids": []
+    },
+    {
+      "work_id": "T-302",
+      "external_key": "T-302",
+      "project_id": "onboard",
+      "workstream_id": "onboard-flow",
+      "title": "接入步骤精简方案",
+      "prototype_status": "verified",
+      "owner_person_id": "he-chuan",
+      "group_id": "delivery",
+      "goal_ids": [
+        "g3"
+      ],
+      "agent_name": "Codex",
+      "week_committed": false,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-302-criterion-1",
+          "text": "方案把步骤减到 5 步以内",
+          "evidence_state": "ok",
+          "evidence_detail": "方案写明 5 步"
+        },
+        {
+          "criterion_id": "T-302-criterion-2",
+          "text": "每一步写明谁来做、要多久",
+          "evidence_state": "ok",
+          "evidence_detail": "方案里逐步写明"
+        }
+      ],
+      "one_sentence": "已经核验。",
+      "next_step": "没有下一步",
+      "report": {
+        "summary": "方案把 9 步减到 5 步，客户自己做的只剩 2 步。",
+        "completed_declaration": true,
+        "completed": [
+          "精简方案"
+        ],
+        "blockers": [],
+        "tests": [],
+        "artifacts": [
+          {
+            "label": "精简方案",
+            "reference": "artifact-t-302-"
+          }
+        ],
+        "reporter": "Codex（何川的 Agent）",
+        "reported_at_unix_ms": 1793903400000
+      },
+      "submitted_result_at_unix_ms": 1793903400000,
+      "integrated": true,
+      "integration_note": "已合入",
+      "started": true,
+      "agent_active": false,
+      "verified_at_unix_ms": 1793966400000,
+      "delivery": {
+        "version_label": "第 1 版",
+        "checks": [
+          {
+            "check": "格式检查",
+            "outcome": "passed"
+          }
+        ],
+        "rounds": [
+          {
+            "round_id": "round-t-302-1",
+            "round_index": 1,
+            "state": "approved",
+            "current": true,
+            "contract_matches_current": true,
+            "independent": true,
+            "author_person_id": "he-chuan",
+            "author_actor_id": "he-chuan-agent",
+            "reviewer_person_id": "zheng-lan",
+            "reviewer_actor_id": "zheng-lan-agent",
+            "reviewer_display_name": "郑岚",
+            "opened_at_unix_ms": 1793903400000,
+            "decided_at_unix_ms": 1793966400000,
+            "reason_first_line": "通过",
+            "evidence_id": "evidence-t-302-1",
+            "execution_id": "execution-t-302-1",
+            "claim_id": "claim-t-302-1",
+            "artifact_id": "artifact-t-302-1",
+            "artifact_digest": "59881c73bec44731d382a0e8159a50b729ea390c446e07601271d75a65a7fad0",
+            "bundle_hash": "855ee22bea203142f018a753216df40c4b4294ba2a84a7396be3fd9ad93d9047"
+          }
+        ]
+      },
+      "dependencies": [
+        {
+          "dependency_id": "edge-t-302-t-301",
+          "provider_work_id": "T-301",
+          "required_version_label": "通过复核的版本",
+          "adopted_version_label": "第 1 版",
+          "available_version_label": "第 1 版",
+          "satisfied": true,
+          "validity": "valid",
+          "reason": null,
+          "since_unix_ms": null,
+          "version_policy": "current_contract",
+          "position": 1
+        }
+      ],
+      "wait": null,
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-302-timeline-1",
+          "at_text": "11 月 6 日",
+          "at_unix_ms": 1793966400000,
+          "who": "郑岚",
+          "what": "复核通过",
+          "next": null,
+          "note": null,
+          "tone": "ok"
+        },
+        {
+          "activity_id": "T-302-timeline-2",
+          "at_text": "11 月 5 日 18:30",
+          "at_unix_ms": 1793903400000,
+          "who": "Codex（何川）",
+          "what": "提交第 1 版并请求复核",
+          "next": null,
+          "note": null,
+          "tone": null
+        }
+      ],
+      "lesson_ids": []
+    },
+    {
+      "work_id": "T-303",
+      "external_key": "T-303",
+      "project_id": "onboard",
+      "workstream_id": "onboard-env",
+      "title": "在甲方的测试环境走通 5 步接入",
+      "prototype_status": "waiting",
+      "owner_person_id": "he-chuan",
+      "group_id": "delivery",
+      "goal_ids": [
+        "g3"
+      ],
+      "agent_name": null,
+      "week_committed": false,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-303-criterion-1",
+          "text": "在甲方的测试环境按 5 步走通一次",
+          "evidence_state": "none",
+          "evidence_detail": "没有账号，开不了工"
+        }
+      ],
+      "one_sentence": "开不了工：在等甲方给测试环境账号，已经 9 天。",
+      "next_step": "拿到账号后开始",
+      "report": {
+        "summary": "已经把账号申请发给甲方，在等回复。",
+        "completed_declaration": false,
+        "completed": [],
+        "blockers": [
+          "在等甲方给测试环境账号"
+        ],
+        "tests": [],
+        "artifacts": [],
+        "reporter": "何川",
+        "reported_at_unix_ms": 1794312000000
+      },
+      "submitted_result_at_unix_ms": null,
+      "integrated": false,
+      "integration_note": null,
+      "started": true,
+      "agent_active": false,
+      "verified_at_unix_ms": null,
+      "delivery": null,
+      "dependencies": [
+        {
+          "dependency_id": "edge-t-303-t-302",
+          "provider_work_id": "T-302",
+          "required_version_label": "通过复核的版本",
+          "adopted_version_label": "第 1 版",
+          "available_version_label": "第 1 版",
+          "satisfied": true,
+          "validity": "valid",
+          "reason": null,
+          "since_unix_ms": null,
+          "version_policy": "current_contract",
+          "position": 1
+        }
+      ],
+      "wait": {
+        "kind": "ext",
+        "waiting_on_name": "甲方",
+        "what": "给测试环境账号",
+        "started_at_unix_ms": 1794312000000,
+        "prototype_days": 9,
+        "decision_id": null
+      },
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-303-timeline-1",
+          "at_text": "11 月 10 日",
+          "at_unix_ms": 1794312000000,
+          "who": "郑岚",
+          "what": "请最高层决定：目标先暂停，还是出面找甲方",
+          "next": "等回答",
+          "note": "9 天没有回答",
+          "tone": "now"
+        },
+        {
+          "activity_id": "T-303-timeline-2",
+          "at_text": "11 月 10 日",
+          "at_unix_ms": 1794312000000,
+          "who": "何川",
+          "what": "把账号申请发给甲方，等回复",
+          "next": null,
+          "note": null,
+          "tone": null
+        }
+      ],
+      "lesson_ids": []
+    },
+    {
+      "work_id": "T-304",
+      "external_key": "T-304",
+      "project_id": "onboard",
+      "workstream_id": "onboard-flow",
+      "title": "接入向导页面",
+      "prototype_status": "claimed",
+      "owner_person_id": "he-chuan",
+      "group_id": "delivery",
+      "goal_ids": [
+        "g3"
+      ],
+      "agent_name": "Codex",
+      "week_committed": false,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-304-criterion-1",
+          "text": "向导按 5 步引导客户完成接入",
+          "evidence_state": "wait",
+          "evidence_detail": "自己说做完了，没有依据"
+        }
+      ],
+      "one_sentence": "标了完成，但还没有核验：没有提交复核。",
+      "next_step": "提交复核",
+      "report": {
+        "summary": "向导页面做完了。",
+        "completed_declaration": true,
+        "completed": [
+          "5 步向导"
+        ],
+        "blockers": [],
+        "tests": [],
+        "artifacts": [
+          {
+            "label": "页面说明",
+            "reference": "artifact-t-304-"
+          }
+        ],
+        "reporter": "Codex（何川的 Agent）",
+        "reported_at_unix_ms": 1793876400000
+      },
+      "submitted_result_at_unix_ms": null,
+      "integrated": false,
+      "integration_note": null,
+      "started": true,
+      "agent_active": false,
+      "verified_at_unix_ms": null,
+      "delivery": null,
+      "dependencies": [],
+      "wait": null,
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-304-timeline-1",
+          "at_text": "11 月 5 日 11:00",
+          "at_unix_ms": 1793876400000,
+          "who": "Codex（何川）",
+          "what": "报告：向导页面做完了",
+          "next": null,
+          "note": "没有提交复核，所以还不算核验",
+          "tone": "now"
+        }
+      ],
+      "lesson_ids": []
+    },
+    {
+      "work_id": "T-305",
+      "external_key": "T-305",
+      "project_id": "onboard",
+      "workstream_id": "onboard-env",
+      "title": "首单演练",
+      "prototype_status": "planned",
+      "owner_person_id": "he-chuan",
+      "group_id": "delivery",
+      "goal_ids": [
+        "g3"
+      ],
+      "agent_name": null,
+      "week_committed": false,
+      "acceptance_final": true,
+      "acceptance": [
+        {
+          "criterion_id": "T-305-criterion-1",
+          "text": "接入后一天内下第一单",
+          "evidence_state": "none",
+          "evidence_detail": "还没有开始"
+        }
+      ],
+      "one_sentence": "还没有开始，要等在甲方的环境里走通之后。",
+      "next_step": "等上一件",
+      "report": null,
+      "submitted_result_at_unix_ms": null,
+      "integrated": false,
+      "integration_note": null,
+      "started": false,
+      "agent_active": false,
+      "verified_at_unix_ms": null,
+      "delivery": null,
+      "dependencies": [
+        {
+          "dependency_id": "edge-t-305-t-303",
+          "provider_work_id": "T-303",
+          "required_version_label": "已核验",
+          "adopted_version_label": "还没有",
+          "available_version_label": "开不了工",
+          "satisfied": false,
+          "validity": "unavailable",
+          "reason": "completion_unavailable",
+          "since_unix_ms": null,
+          "version_policy": "current_contract",
+          "position": 1
+        }
+      ],
+      "wait": null,
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-305-timeline-1",
+          "at_text": "10 月 30 日",
+          "at_unix_ms": 1793361600000,
+          "who": "郑岚",
+          "what": "批准拆解时建立",
+          "next": null,
+          "note": null,
+          "tone": null
+        }
+      ],
+      "lesson_ids": []
+    },
+    {
+      "work_id": "T-306",
+      "external_key": "T-306",
+      "project_id": "onboard",
+      "workstream_id": "onboard-flow",
+      "title": "接入手册",
+      "prototype_status": "planned",
+      "owner_person_id": "zheng-lan",
+      "group_id": "delivery",
+      "goal_ids": [
+        "g3"
+      ],
+      "agent_name": null,
+      "week_committed": false,
+      "acceptance_final": false,
+      "acceptance": [
+        {
+          "criterion_id": "T-306-criterion-1",
+          "text": "手册按 5 步写，每步配一张图",
+          "evidence_state": "none",
+          "evidence_detail": "还没有开始"
+        }
+      ],
+      "one_sentence": "还没有开始。",
+      "next_step": "排期",
+      "report": null,
+      "submitted_result_at_unix_ms": null,
+      "integrated": false,
+      "integration_note": null,
+      "started": false,
+      "agent_active": false,
+      "verified_at_unix_ms": null,
+      "delivery": null,
+      "dependencies": [],
+      "wait": null,
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-306-timeline-1",
+          "at_text": "10 月 30 日",
+          "at_unix_ms": 1793361600000,
+          "who": "郑岚",
+          "what": "批准拆解时建立",
+          "next": null,
+          "note": null,
+          "tone": null
+        }
+      ],
+      "lesson_ids": []
+    },
+    {
+      "work_id": "T-307",
+      "external_key": "T-307",
+      "project_id": "onboard",
+      "workstream_id": "onboard-flow",
+      "title": "接入后的回访清单",
+      "prototype_status": "planned",
+      "owner_person_id": "zheng-lan",
+      "group_id": "delivery",
+      "goal_ids": [
+        "g3"
+      ],
+      "agent_name": null,
+      "week_committed": false,
+      "acceptance_final": false,
+      "acceptance": [
+        {
+          "criterion_id": "T-307-criterion-1",
+          "text": "回访清单覆盖接入后的第一周",
+          "evidence_state": "none",
+          "evidence_detail": "还没有开始"
+        }
+      ],
+      "one_sentence": "还没有开始。",
+      "next_step": "排期",
+      "report": null,
+      "submitted_result_at_unix_ms": null,
+      "integrated": false,
+      "integration_note": null,
+      "started": false,
+      "agent_active": false,
+      "verified_at_unix_ms": null,
+      "delivery": null,
+      "dependencies": [],
+      "wait": null,
+      "assignment": null,
+      "timeline": [
+        {
+          "activity_id": "T-307-timeline-1",
+          "at_text": "10 月 30 日",
+          "at_unix_ms": 1793361600000,
+          "who": "郑岚",
+          "what": "批准拆解时建立",
+          "next": null,
+          "note": null,
+          "tone": null
+        }
+      ],
+      "lesson_ids": []
+    }
+  ],
+  "goals": [
+    {
+      "goal_id": "g1",
+      "project_id": "orders",
+      "department_id": "engineering",
+      "title": "订单从查询到提交在一个页面完成",
+      "status": "risk",
+      "health": "risk",
+      "summary": "卡在一次复核上，已经 2 天",
+      "trend": {
+        "direction": "down",
+        "label": "比上月变差"
+      },
+      "criteria": [
+        {
+          "criterion_id": "g1-criterion-1",
+          "text": "查询订单不离开当前页",
+          "state": "ok",
+          "evidence": "订单查询接口、订单列表分页都已核验"
+        },
+        {
+          "criterion_id": "g1-criterion-2",
+          "text": "提交失败时保留已填内容",
+          "state": "wait",
+          "evidence": "接口第 3 版在等复核，页面联调在等接口"
+        },
+        {
+          "criterion_id": "g1-criterion-3",
+          "text": "1000 并发下查询 P95 低于 200 毫秒",
+          "state": "ok",
+          "evidence": "压测脚本已核验，结果 168 毫秒"
+        }
+      ],
+      "task_ids": [
+        "T-101",
+        "T-102",
+        "T-103",
+        "T-104",
+        "T-105",
+        "T-106",
+        "T-107",
+        "T-108",
+        "T-109",
+        "T-110",
+        "T-111",
+        "T-112",
+        "T-113",
+        "T-114"
+      ]
+    },
+    {
+      "goal_id": "g2",
+      "project_id": "notify",
+      "department_id": "engineering",
+      "title": "通知统一到一个服务",
+      "status": "ok",
+      "health": "ok",
+      "summary": "试运行第二周，没有新问题",
+      "trend": {
+        "direction": "no_data",
+        "label": "和上月持平"
+      },
+      "criteria": [
+        {
+          "criterion_id": "g2-criterion-1",
+          "text": "三类通知走同一个服务",
+          "state": "ok",
+          "evidence": "短信、邮件、站内信三个通道都已核验"
+        },
+        {
+          "criterion_id": "g2-criterion-2",
+          "text": "失败的通知可以重发",
+          "state": "ok",
+          "evidence": "失败重发已核验"
+        },
+        {
+          "criterion_id": "g2-criterion-3",
+          "text": "试运行两周，发送成功率不低于 99.5%",
+          "state": "wait",
+          "evidence": "第一周 99.8%，第二周进行中"
+        }
+      ],
+      "task_ids": [
+        "T-201",
+        "T-202",
+        "T-203",
+        "T-204",
+        "T-205",
+        "T-206",
+        "T-207",
+        "T-208"
+      ]
+    },
+    {
+      "goal_id": "g3",
+      "project_id": "onboard",
+      "department_id": "customer-delivery",
+      "title": "新客户两周内接入",
+      "status": "not_updated",
+      "health": "none",
+      "summary": "12 天没有更新",
+      "trend": {
+        "direction": "no_data",
+        "label": "没有数据"
+      },
+      "criteria": [
+        {
+          "criterion_id": "g3-criterion-1",
+          "text": "接入步骤不超过 5 步",
+          "state": "wait",
+          "evidence": "方案通过了复核，还没有在甲方的环境里走通"
+        },
+        {
+          "criterion_id": "g3-criterion-2",
+          "text": "接入后一天内能下第一单",
+          "state": "none",
+          "evidence": "还没有开始"
+        }
+      ],
+      "task_ids": [
+        "T-301",
+        "T-302",
+        "T-303",
+        "T-304",
+        "T-305",
+        "T-306",
+        "T-307"
+      ]
+    }
+  ],
+  "documents": [
+    {
+      "document_id": "d1",
+      "project_id": "orders",
+      "path": "docs/orders/订单协作平台的目标.md",
+      "name": "订单协作平台的目标",
+      "summary": "目标与成功标准",
+      "body": "目标\n\n订单从查询到提交在一个页面完成，客服不用再在三个页面之间来回切换。\n\n成功标准\n\n• 查询订单不离开当前页\n\n• 提交失败时保留已填内容\n\n• 1000 并发下查询 P95 低于 200 毫秒\n\n这一期不做\n\n• 订单的批量修改\n\n• 移动端页面\n",
+      "sha256": "58dc0f9c4e5930d100a944c6dd8b4349e095be88ce50cb55d86725db6e8ecc4b",
+      "byte_length": 310,
+      "author_person_id": "zhou-ning",
+      "recorded_at_unix_ms": 1793620800000,
+      "used_task_ids": [
+        "T-101",
+        "T-102",
+        "T-103",
+        "T-104",
+        "T-105",
+        "T-106",
+        "T-107",
+        "T-108",
+        "T-109",
+        "T-110",
+        "T-111",
+        "T-112",
+        "T-113",
+        "T-114"
+      ]
+    },
+    {
+      "document_id": "d2",
+      "project_id": "orders",
+      "path": "docs/orders/接口约定.md",
+      "name": "接口约定",
+      "summary": "11 月 12 日改过",
+      "body": "提交订单\n\n提交成功返回订单编号。提交失败返回错误码，外加一句给用户看的原因。\n\n第 3 版改了什么\n\n• 失败时多返回一句可读的原因\n\n• 同一请求重复提交，返回第一次的结果，不会重复下单\n\n版本\n\n下游只能采用通过复核的那一版。现在通过复核的是第 2 版，第 3 版在等复核。\n",
+      "sha256": "a75917496775cf8c0f12c577b82d3f389055c7913acb000259fe159438b22142",
+      "byte_length": 375,
+      "author_person_id": "chen-yu",
+      "recorded_at_unix_ms": 1794484800000,
+      "used_task_ids": [
+        "T-102",
+        "T-103",
+        "T-109"
+      ]
+    },
+    {
+      "document_id": "d3",
+      "project_id": "orders",
+      "path": "docs/orders/验收清单.md",
+      "name": "验收清单",
+      "summary": "8 个场景",
+      "body": "8 个场景\n\n• 按订单编号查询\n\n• 按手机号查询\n\n• 查询没有结果\n\n• 翻页后保留查询条件\n\n• 提交成功\n\n• 提交失败并保留已填内容\n\n• 连点提交按钮\n\n• 登录过期后回到原来的页面\n",
+      "sha256": "bcbd3468d14e77b2e8a7d6852aac606b2477268105a095ec7403f10bd4c3cfc8",
+      "byte_length": 243,
+      "author_person_id": "xu-ning",
+      "recorded_at_unix_ms": 1793966400000,
+      "used_task_ids": [
+        "T-106"
+      ],
+      "content_work_id": "T-106"
+    },
+    {
+      "document_id": "d4",
+      "project_id": "orders",
+      "path": "docs/orders/甲方的导出字段清单.md",
+      "name": "甲方的导出字段清单",
+      "summary": "还没有确认",
+      "body": "这份清单 11 月 14 日发给了甲方，还没有收到确认。\n\n打算导出的字段\n\n• 订单编号、下单时间、客户名称\n\n• 商品、数量、金额\n\n• 订单状态、最后更新时间\n\n还没定的\n\n• 要不要导出客户手机号\n",
+      "sha256": "dfe46abe4f9f5af33524290937a2748915d7123315013d45524781c0b968c754",
+      "byte_length": 259,
+      "author_person_id": "lin-yue",
+      "recorded_at_unix_ms": 1794657600000,
+      "used_task_ids": [
+        "T-111"
+      ],
+      "content_work_id": "T-111"
+    },
+    {
+      "document_id": "d5",
+      "project_id": "notify",
+      "path": "docs/notify/通知服务的目标.md",
+      "name": "通知服务的目标",
+      "summary": "目标与成功标准",
+      "body": "目标\n\n短信、邮件、站内信三类通知统一到一个服务，不再各写各的。\n\n成功标准\n\n• 三类通知走同一个服务\n\n• 失败的通知可以重发\n\n• 试运行两周，发送成功率不低于 99.5%\n",
+      "sha256": "db571f7a3bc2780a1680cf361b9b6e0f9425a5e7369bcd8b679a06cda592a127",
+      "byte_length": 230,
+      "author_person_id": "wu-tong",
+      "recorded_at_unix_ms": 1791806400000,
+      "used_task_ids": [
+        "T-201",
+        "T-202",
+        "T-203",
+        "T-204",
+        "T-205",
+        "T-206",
+        "T-207",
+        "T-208"
+      ]
+    },
+    {
+      "document_id": "d6",
+      "project_id": "notify",
+      "path": "docs/notify/通道接入约定.md",
+      "name": "通道接入约定",
+      "summary": "三个通道共用",
+      "body": "接入一个通道要做的\n\n• 改走统一发送接口\n\n• 接入前先核对接口版本\n\n• 失败的通知交给统一的重发，不自己重试\n",
+      "sha256": "a00047e954c60c4fd43406ee31c18f73d76de529abb11ddc7655a14ba89011bc",
+      "byte_length": 154,
+      "author_person_id": "zhao-heng",
+      "recorded_at_unix_ms": 1792670400000,
+      "used_task_ids": [
+        "T-203",
+        "T-204",
+        "T-205"
+      ]
+    },
+    {
+      "document_id": "d7",
+      "project_id": "notify",
+      "path": "docs/notify/试运行观察记录.md",
+      "name": "试运行观察记录",
+      "summary": "第一周",
+      "body": "第一周\n\n• 发送 41,200 条，成功率 99.8%\n\n• 失败 82 条，全部重发成功\n\n• 逐条核对，没有丢失的通知\n\n第二周\n\n进行中，11 月 23 日结束。\n",
+      "sha256": "937a1f68880ebbf14944a54e2110d80c63ef8264b6e6eb32d4d81341f95169e4",
+      "byte_length": 180,
+      "author_person_id": "zhao-heng",
+      "recorded_at_unix_ms": 1794830400000,
+      "used_task_ids": [
+        "T-206"
+      ],
+      "content_work_id": "T-206"
+    },
+    {
+      "document_id": "d8",
+      "project_id": "onboard",
+      "path": "docs/onboard/接入流程现状.md",
+      "name": "接入流程现状",
+      "summary": "9 步",
+      "body": "现在接入一个新客户一共 9 步，其中 4 步要客户自己做，平均用 5 周。\n\n最慢的三步\n\n• 开通测试环境账号：平均 8 天\n\n• 客户自己填配置表：平均 6 天\n\n• 首单演练排期：平均 5 天\n",
+      "sha256": "5c02f899bc3add71db20c506b501c7ab37841a2cb11e3078f999dd49901a7c2d",
+      "byte_length": 240,
+      "author_person_id": "he-chuan",
+      "recorded_at_unix_ms": 1793707200000,
+      "used_task_ids": [
+        "T-302"
+      ],
+      "content_work_id": "T-302"
+    },
+    {
+      "document_id": "d9",
+      "project_id": "onboard",
+      "path": "docs/onboard/精简方案.md",
+      "name": "精简方案",
+      "summary": "9 步减到 5 步",
+      "body": "5 步\n\n• 签约当天开通测试环境账号\n\n• 客户按向导填 1 张配置表\n\n• 系统自动校验配置\n\n• 在测试环境走通一次\n\n• 首单演练\n\n前提\n\n要在甲方的测试环境里实际走通一次，才能确认 5 步够用。\n",
+      "sha256": "37ba8b1aa19abd56c5c0d2c79ead417b4ae418c8925390fd43f6df7e99b86003",
+      "byte_length": 256,
+      "author_person_id": "he-chuan",
+      "recorded_at_unix_ms": 1793966400000,
+      "used_task_ids": [
+        "T-303",
+        "T-304",
+        "T-306"
+      ]
+    }
+  ],
+  "updates": [
+    {
+      "update_id": "o47",
+      "project_id": "orders",
+      "period_kind": "week",
+      "period_key": "2026-W47",
+      "period_label": "第 47 周",
+      "starts_on": "2026-11-16",
+      "ends_on": "2026-11-22",
+      "status": "risk",
+      "summary": "接口第 3 版的复核拖了两天，页面联调在等。",
+      "author_person_id": "zhou-ning",
+      "recorded_at_unix_ms": 1795080600000,
+      "version": "1",
+      "supersedes_update_id": null,
+      "current": true,
+      "fact_snapshot": {
+        "fact_snapshot_ref": "facts-o47",
+        "facts": [
+          {
+            "label": "通过核验",
+            "detail": "订单列表分页、提交按钮防重复",
+            "item_ids": [
+              "T-107",
+              "T-108"
+            ],
+            "value_text": null
+          },
+          {
+            "label": "新出现的等待",
+            "detail": "3 件等复核，2 个等决定，1 件等上游",
+            "item_ids": [
+              "T-102",
+              "T-103",
+              "T-104",
+              "T-105",
+              "T-109",
+              "T-110"
+            ],
+            "value_text": null
+          },
+          {
+            "label": "解除的等待",
+            "detail": "",
+            "item_ids": [],
+            "value_text": null
+          },
+          {
+            "label": "复核退回",
+            "detail": "登录异常处理",
+            "item_ids": [
+              "T-105"
+            ],
+            "value_text": null
+          },
+          {
+            "label": "标了完成但没核验",
+            "detail": "错误提示文案",
+            "item_ids": [
+              "T-114"
+            ],
+            "value_text": null
+          }
+        ]
+      }
+    },
+    {
+      "update_id": "o46",
+      "project_id": "orders",
+      "period_kind": "week",
+      "period_key": "2026-W46",
+      "period_label": "第 46 周",
+      "starts_on": "2026-11-09",
+      "ends_on": "2026-11-15",
+      "status": "ok",
+      "summary": "查询接口加缓存层后压测达标，按计划推进。",
+      "author_person_id": "zhou-ning",
+      "recorded_at_unix_ms": 1794744000000,
+      "version": "1",
+      "supersedes_update_id": null,
+      "current": true,
+      "fact_snapshot": {
+        "fact_snapshot_ref": "facts-o46",
+        "facts": [
+          {
+            "label": "通过核验",
+            "detail": "订单查询接口、压测脚本",
+            "item_ids": [
+              "T-101",
+              "T-113"
+            ],
+            "value_text": null
+          },
+          {
+            "label": "新出现的等待",
+            "detail": "等甲方确认导出字段",
+            "item_ids": [
+              "T-111"
+            ],
+            "value_text": null
+          },
+          {
+            "label": "做出的决定",
+            "detail": "查询接口要加缓存层",
+            "item_ids": [
+              "decision-cache"
+            ],
+            "value_text": null
+          },
+          {
+            "label": "复核退回",
+            "detail": "订单查询接口第 1 版，改后通过",
+            "item_ids": [
+              "T-101"
+            ],
+            "value_text": null
+          }
+        ]
+      }
+    },
+    {
+      "update_id": "o45",
+      "project_id": "orders",
+      "period_kind": "week",
+      "period_key": "2026-W45",
+      "period_label": "第 45 周",
+      "starts_on": "2026-11-02",
+      "ends_on": "2026-11-08",
+      "status": "ok",
+      "summary": "完成拆解：14 件任务，其中 8 件进了本期承诺。",
+      "author_person_id": "zhou-ning",
+      "recorded_at_unix_ms": 1794139200000,
+      "version": "1",
+      "supersedes_update_id": null,
+      "current": true,
+      "fact_snapshot": {
+        "fact_snapshot_ref": "facts-o45",
+        "facts": [
+          {
+            "label": "批准的拆解",
+            "detail": "14 件任务，3 条工作线",
+            "item_ids": [
+              "plan-orders-w45"
+            ],
+            "value_text": null
+          },
+          {
+            "label": "通过核验",
+            "detail": "",
+            "item_ids": [],
+            "value_text": null
+          }
+        ]
+      }
+    },
+    {
+      "update_id": "n47",
+      "project_id": "notify",
+      "period_kind": "week",
+      "period_key": "2026-W47",
+      "period_label": "第 47 周",
+      "starts_on": "2026-11-16",
+      "ends_on": "2026-11-22",
+      "status": "ok",
+      "summary": "试运行第二周，没有新问题。",
+      "author_person_id": "wu-tong",
+      "recorded_at_unix_ms": 1794830400000,
+      "version": "1",
+      "supersedes_update_id": null,
+      "current": true,
+      "fact_snapshot": {
+        "fact_snapshot_ref": "facts-n47",
+        "facts": [
+          {
+            "label": "通过核验",
+            "detail": "试运行期间没有新的交付",
+            "item_ids": [],
+            "value_text": null
+          },
+          {
+            "label": "新出现的等待",
+            "detail": "",
+            "item_ids": [],
+            "value_text": null
+          },
+          {
+            "label": "试运行",
+            "detail": "前三天发送成功率 99.7%",
+            "item_ids": null,
+            "value_text": "第二周"
+          }
+        ]
+      }
+    },
+    {
+      "update_id": "n46",
+      "project_id": "notify",
+      "period_kind": "week",
+      "period_key": "2026-W46",
+      "period_label": "第 46 周",
+      "starts_on": "2026-11-09",
+      "ends_on": "2026-11-15",
+      "status": "ok",
+      "summary": "试运行第一周，发送成功率 99.8%。",
+      "author_person_id": "wu-tong",
+      "recorded_at_unix_ms": 1794571200000,
+      "version": "1",
+      "supersedes_update_id": null,
+      "current": true,
+      "fact_snapshot": {
+        "fact_snapshot_ref": "facts-n46",
+        "facts": [
+          {
+            "label": "通过核验",
+            "detail": "发送量和失败率的查看页",
+            "item_ids": [
+              "T-207"
+            ],
+            "value_text": null
+          },
+          {
+            "label": "做出的决定",
+            "detail": "旧通道保留到试运行结束",
+            "item_ids": [
+              "decision-notify-old-channel"
+            ],
+            "value_text": null
+          }
+        ]
+      }
+    },
+    {
+      "update_id": "n45",
+      "project_id": "notify",
+      "period_kind": "week",
+      "period_key": "2026-W45",
+      "period_label": "第 45 周",
+      "starts_on": "2026-11-02",
+      "ends_on": "2026-11-08",
+      "status": "ok",
+      "summary": "三个通道都已接入并通过核验。",
+      "author_person_id": "wu-tong",
+      "recorded_at_unix_ms": 1793966400000,
+      "version": "1",
+      "supersedes_update_id": null,
+      "current": true,
+      "fact_snapshot": {
+        "fact_snapshot_ref": "facts-n45",
+        "facts": [
+          {
+            "label": "通过核验",
+            "detail": "短信、邮件、站内信三个通道",
+            "item_ids": [
+              "T-203",
+              "T-204",
+              "T-205"
+            ],
+            "value_text": null
+          }
+        ]
+      }
+    },
+    {
+      "update_id": "b45",
+      "project_id": "onboard",
+      "period_kind": "week",
+      "period_key": "2026-W45",
+      "period_label": "第 45 周",
+      "starts_on": "2026-11-02",
+      "ends_on": "2026-11-08",
+      "status": "ok",
+      "summary": "精简方案通过复核，下一步要在甲方的环境里走通。",
+      "author_person_id": "zheng-lan",
+      "recorded_at_unix_ms": 1794052800000,
+      "version": "1",
+      "supersedes_update_id": null,
+      "current": true,
+      "fact_snapshot": {
+        "fact_snapshot_ref": "facts-b45",
+        "facts": [
+          {
+            "label": "通过核验",
+            "detail": "梳理现在的接入步骤、接入步骤精简方案",
+            "item_ids": [
+              "T-301",
+              "T-302"
+            ],
+            "value_text": null
+          },
+          {
+            "label": "标了完成但没核验",
+            "detail": "接入向导页面",
+            "item_ids": [
+              "T-304"
+            ],
+            "value_text": null
+          }
+        ]
+      }
+    },
+    {
+      "update_id": "b44",
+      "project_id": "onboard",
+      "period_kind": "week",
+      "period_key": "2026-W44",
+      "period_label": "第 44 周",
+      "starts_on": "2026-10-26",
+      "ends_on": "2026-11-01",
+      "status": "ok",
+      "summary": "完成拆解：7 件任务。",
+      "author_person_id": "zheng-lan",
+      "recorded_at_unix_ms": 1793361600000,
+      "version": "1",
+      "supersedes_update_id": null,
+      "current": true,
+      "fact_snapshot": {
+        "fact_snapshot_ref": "facts-b44",
+        "facts": [
+          {
+            "label": "批准的拆解",
+            "detail": "7 件任务，2 条工作线",
+            "item_ids": [
+              "plan-onboard-w44"
+            ],
+            "value_text": null
+          }
+        ]
+      }
+    }
+  ],
+  "decisions": [
+    {
+      "decision_id": "c1",
+      "request_key": "request-c1",
+      "project_id": "orders",
+      "work_id": "T-102",
+      "workstream_id": "orders-be",
+      "prototype_task_id": null,
+      "question": "订单协作平台能不能多一位复核人",
+      "impact": "订单协作平台本周的承诺有风险",
+      "state": "open",
+      "current": true,
+      "baseline_matches_current": true,
+      "decision_version": "1",
+      "requester_person_id": "zhou-ning",
+      "allowed_responder_person_ids": [
+        "department-lead"
+      ],
+      "allowed_responder_display_names": [
+        "部门负责人"
+      ],
+      "created_at_unix_ms": 1795003200000,
+      "reply": null,
+      "resolution": null
+    },
+    {
+      "decision_id": "a1",
+      "request_key": "request-a1",
+      "project_id": "orders",
+      "work_id": "T-104",
+      "workstream_id": "orders-fe",
+      "prototype_task_id": "T-104",
+      "question": "空状态要不要显示引导文案",
+      "impact": "后面压着 3 件：空状态检查、订单页面联调的收尾、业务验收",
+      "state": "open",
+      "current": true,
+      "baseline_matches_current": true,
+      "decision_version": "1",
+      "requester_person_id": "lin-yue",
+      "allowed_responder_person_ids": [
+        "lin-yue"
+      ],
+      "allowed_responder_display_names": [
+        "林悦"
+      ],
+      "created_at_unix_ms": 1794916800000,
+      "reply": null,
+      "resolution": null
+    },
+    {
+      "decision_id": "b2",
+      "request_key": "request-b2",
+      "project_id": "orders",
+      "work_id": "T-105",
+      "workstream_id": "orders-be",
+      "prototype_task_id": "T-105",
+      "question": "登录异常处理要不要返工",
+      "impact": "不决定的话，这件任务一直停在“复核退回”",
+      "state": "open",
+      "current": true,
+      "baseline_matches_current": true,
+      "decision_version": "1",
+      "requester_person_id": "chen-yu",
+      "allowed_responder_person_ids": [
+        "zhou-ning"
+      ],
+      "allowed_responder_display_names": [
+        "周宁"
+      ],
+      "created_at_unix_ms": 1795003200000,
+      "reply": null,
+      "resolution": null
+    },
+    {
+      "decision_id": "orders-decision-4",
+      "request_key": "request-orders-decision-4",
+      "project_id": "orders",
+      "work_id": "T-111",
+      "workstream_id": "orders-fe",
+      "prototype_task_id": "T-111",
+      "question": "导出字段以哪份清单为准",
+      "impact": "回答后，相关任务才能按这个事实继续。",
+      "state": "open",
+      "current": true,
+      "baseline_matches_current": true,
+      "decision_version": "1",
+      "requester_person_id": "lin-yue",
+      "allowed_responder_person_ids": [
+        "external-client"
+      ],
+      "allowed_responder_display_names": [
+        "甲方"
+      ],
+      "created_at_unix_ms": 1794657600000,
+      "reply": null,
+      "resolution": null
+    },
+    {
+      "decision_id": "decision-cache",
+      "request_key": "request-decision-cache",
+      "project_id": "orders",
+      "work_id": "T-101",
+      "workstream_id": "orders-be",
+      "prototype_task_id": "T-101",
+      "question": "查询接口要不要加缓存层",
+      "impact": "回答后，相关任务才能按这个事实继续。",
+      "state": "replied",
+      "current": true,
+      "baseline_matches_current": true,
+      "decision_version": "1",
+      "requester_person_id": "chen-yu",
+      "allowed_responder_person_ids": [
+        "lin-yue"
+      ],
+      "allowed_responder_display_names": [
+        "林悦"
+      ],
+      "created_at_unix_ms": 1794571200000,
+      "reply": "要",
+      "resolution": {
+        "kind": "replied",
+        "person_id": "lin-yue",
+        "display_name": "林悦",
+        "at_unix_ms": 1794574800000
+      }
+    },
+    {
+      "decision_id": "decision-notify-old-channel",
+      "request_key": "request-decision-notify-old-channel",
+      "project_id": "notify",
+      "work_id": "T-206",
+      "workstream_id": "notify-svc",
+      "prototype_task_id": "T-206",
+      "question": "试运行期间要不要保留旧通道",
+      "impact": "回答后，相关任务才能按这个事实继续。",
+      "state": "replied",
+      "current": true,
+      "baseline_matches_current": true,
+      "decision_version": "1",
+      "requester_person_id": "zhao-heng",
+      "allowed_responder_person_ids": [
+        "wu-tong"
+      ],
+      "allowed_responder_display_names": [
+        "吴桐"
+      ],
+      "created_at_unix_ms": 1794225600000,
+      "reply": "保留到试运行结束",
+      "resolution": {
+        "kind": "replied",
+        "person_id": "wu-tong",
+        "display_name": "吴桐",
+        "at_unix_ms": 1794229200000
+      }
+    },
+    {
+      "decision_id": "e1",
+      "request_key": "request-e1",
+      "project_id": "onboard",
+      "work_id": "T-303",
+      "workstream_id": "onboard-env",
+      "prototype_task_id": "T-303",
+      "question": "目标先暂停，还是请最高层出面找甲方",
+      "impact": "不回答的话，项目会一直停着，目标一直显示“没有更新”",
+      "state": "open",
+      "current": true,
+      "baseline_matches_current": true,
+      "decision_version": "1",
+      "requester_person_id": "zheng-lan",
+      "allowed_responder_person_ids": [
+        "executive-lead"
+      ],
+      "allowed_responder_display_names": [
+        "最高层"
+      ],
+      "created_at_unix_ms": 1794312000000,
+      "reply": null,
+      "resolution": null
+    },
+    {
+      "decision_id": "decision-onboard-entry",
+      "request_key": "request-decision-onboard-entry",
+      "project_id": "onboard",
+      "work_id": "T-304",
+      "workstream_id": "onboard-flow",
+      "prototype_task_id": "T-304",
+      "question": "接入向导放在哪个入口",
+      "impact": "回答后，相关任务才能按这个事实继续。",
+      "state": "replied",
+      "current": true,
+      "baseline_matches_current": true,
+      "decision_version": "1",
+      "requester_person_id": "he-chuan",
+      "allowed_responder_person_ids": [
+        "zheng-lan"
+      ],
+      "allowed_responder_display_names": [
+        "郑岚"
+      ],
+      "created_at_unix_ms": 1793793600000,
+      "reply": "放在首页",
+      "resolution": {
+        "kind": "replied",
+        "person_id": "zheng-lan",
+        "display_name": "郑岚",
+        "at_unix_ms": 1793797200000
+      }
+    }
+  ],
+  "handoffs": [
+    {
+      "handoff_id": "handoff-t-112",
+      "project_id": "orders",
+      "work_id": "T-112",
+      "workstream_id": "orders-fe",
+      "kind": "responsibility",
+      "status": "proposed",
+      "pending": true,
+      "expired": false,
+      "group": "pending",
+      "effective_status": "proposed",
+      "version": "1",
+      "from_person_id": "zhou-ning",
+      "to_person_id": "lin-yue",
+      "from_display_name": "周宁",
+      "to_display_name": "林悦",
+      "created_at_unix_ms": 1795081200000,
+      "updated_at_unix_ms": 1795081200000,
+      "expires_at_unix_ms": 1795176000000,
+      "pending_id": "a3"
+    }
+  ],
+  "planning_candidates": [
+    {
+      "candidate_id": "orders-recovery-candidate",
+      "project_id": "orders",
+      "title": "完善异常恢复",
+      "state": "drafting",
+      "draft_revision": 1,
+      "author_person_id": "chen-yu",
+      "author_display_name": "陈宇的 Agent",
+      "updated_at_unix_ms": 1795079400000,
+      "workstream_ids": [
+        "orders-be",
+        "orders-qa"
+      ],
+      "items": [
+        {
+          "work_id": "orders-recovery-1",
+          "title": "网络中断后恢复未提交的表单",
+          "workstream_id": "orders-be",
+          "kind": "实现"
+        },
+        {
+          "work_id": "orders-recovery-2",
+          "title": "提交超时后的自动重试",
+          "workstream_id": "orders-be",
+          "kind": "实现"
+        },
+        {
+          "work_id": "orders-recovery-3",
+          "title": "重试几次由谁来定",
+          "workstream_id": "orders-be",
+          "kind": "待决定"
+        },
+        {
+          "work_id": "orders-recovery-4",
+          "title": "异常恢复的验收场景",
+          "workstream_id": "orders-qa",
+          "kind": "文档"
+        }
+      ],
+      "baseline": {
+        "matches_current": true,
+        "source_manifest_digest": "83b07441e51d3be030d6364fb45d097257934c5c89d4b34e59a3fc369e8a5234"
+      },
+      "pending_id": "b1"
+    }
+  ],
+  "activity": [
+    {
+      "id": "activity-orders-01",
+      "project_id": "orders",
+      "work_id": "T-103",
+      "action": "execution.report",
+      "actor_id": "lin-yue-agent",
+      "actor_display_name": "Claude 桌面（林悦）",
+      "client_id": null,
+      "result": "committed",
+      "created_at_unix_ms": 1795088880000,
+      "credential_id": null,
+      "what": "报告了进度",
+      "kind": "报告"
+    },
+    {
+      "id": "activity-orders-02",
+      "project_id": "orders",
+      "work_id": "T-112",
+      "action": "task.assign",
+      "actor_id": "zhou-ning-agent",
+      "actor_display_name": "周宁（通过 Claude 桌面）",
+      "client_id": null,
+      "result": "committed",
+      "created_at_unix_ms": 1795081200000,
+      "credential_id": null,
+      "what": "把任务派给林悦，等本人接下",
+      "kind": "派工"
+    },
+    {
+      "id": "activity-orders-03",
+      "project_id": "orders",
+      "work_id": null,
+      "action": "update.record",
+      "actor_id": "zhou-ning-agent",
+      "actor_display_name": "周宁（通过 Claude 桌面）",
+      "client_id": null,
+      "result": "committed",
+      "created_at_unix_ms": 1795080600000,
+      "credential_id": null,
+      "what": "写了第 47 周的更新",
+      "kind": "更新"
+    },
+    {
+      "id": "activity-orders-04",
+      "project_id": "orders",
+      "work_id": null,
+      "action": "planning.propose",
+      "actor_id": "chen-yu-agent",
+      "actor_display_name": "陈宇的 Agent",
+      "client_id": null,
+      "result": "committed",
+      "created_at_unix_ms": 1795079400000,
+      "credential_id": null,
+      "what": "提出一份拆解：完善异常恢复，4 件任务",
+      "kind": "拆解"
+    },
+    {
+      "id": "activity-orders-05",
+      "project_id": "orders",
+      "work_id": null,
+      "action": "decision.request",
+      "actor_id": "zhou-ning-agent",
+      "actor_display_name": "周宁（通过 Claude 桌面）",
+      "client_id": null,
+      "result": "committed",
+      "created_at_unix_ms": 1795015200000,
+      "credential_id": null,
+      "what": "请部门负责人决定：能不能多一位复核人",
+      "kind": "决定"
+    },
+    {
+      "id": "activity-orders-06",
+      "project_id": "orders",
+      "work_id": "T-105",
+      "action": "decision.request",
+      "actor_id": "xu-ning-agent",
+      "actor_display_name": "许宁",
+      "client_id": null,
+      "result": "committed",
+      "created_at_unix_ms": 1794996120000,
+      "credential_id": null,
+      "what": "请周宁决定：要不要返工",
+      "kind": "决定"
+    },
+    {
+      "id": "activity-orders-07",
+      "project_id": "orders",
+      "work_id": "T-105",
+      "action": "review.decide",
+      "actor_id": "xu-ning-agent",
+      "actor_display_name": "许宁",
+      "client_id": null,
+      "result": "committed",
+      "created_at_unix_ms": 1794996000000,
+      "credential_id": null,
+      "what": "复核退回",
+      "kind": "复核"
+    },
+    {
+      "id": "activity-orders-08",
+      "project_id": "orders",
+      "work_id": "T-102",
+      "action": "delivery.submit_and_request_review",
+      "actor_id": "chen-yu-agent",
+      "actor_display_name": "Codex（陈宇）",
+      "client_id": null,
+      "result": "committed",
+      "created_at_unix_ms": 1794932400000,
+      "credential_id": null,
+      "what": "提交第 3 版并请求复核",
+      "kind": "交付"
+    },
+    {
+      "id": "activity-orders-09",
+      "project_id": "orders",
+      "work_id": "T-104",
+      "action": "decision.request",
+      "actor_id": "lin-yue-agent",
+      "actor_display_name": "Codex（林悦）",
+      "client_id": null,
+      "result": "committed",
+      "created_at_unix_ms": 1794924000000,
+      "credential_id": null,
+      "what": "提出一个需要回答的问题，然后停下",
+      "kind": "决定"
+    },
+    {
+      "id": "activity-orders-10",
+      "project_id": "orders",
+      "work_id": "T-108",
+      "action": "review.decide",
+      "actor_id": "xu-ning-agent",
+      "actor_display_name": "许宁",
+      "client_id": null,
+      "result": "committed",
+      "created_at_unix_ms": 1794909000000,
+      "credential_id": null,
+      "what": "复核通过",
+      "kind": "复核"
+    },
+    {
+      "id": "activity-orders-11",
+      "project_id": "orders",
+      "work_id": "T-103",
+      "action": "task.assign",
+      "actor_id": "lin-yue-agent",
+      "actor_display_name": "林悦",
+      "client_id": null,
+      "result": "committed",
+      "created_at_unix_ms": 1794841200000,
+      "credential_id": null,
+      "what": "接下任务，交给 Claude 桌面去做",
+      "kind": "派工"
+    },
+    {
+      "id": "activity-orders-12",
+      "project_id": "orders",
+      "work_id": "T-107",
+      "action": "review.decide",
+      "actor_id": "xu-ning-agent",
+      "actor_display_name": "许宁",
+      "client_id": null,
+      "result": "committed",
+      "created_at_unix_ms": 1794824400000,
+      "credential_id": null,
+      "what": "复核通过",
+      "kind": "复核"
+    },
+    {
+      "id": "activity-orders-13",
+      "project_id": "orders",
+      "work_id": "T-101",
+      "action": "review.decide",
+      "actor_id": "xu-ning-agent",
+      "actor_display_name": "许宁",
+      "client_id": null,
+      "result": "committed",
+      "created_at_unix_ms": 1794677400000,
+      "credential_id": null,
+      "what": "第 2 轮复核通过",
+      "kind": "复核"
+    },
+    {
+      "id": "activity-notify-14",
+      "project_id": "notify",
+      "work_id": "T-206",
+      "action": "execution.report",
+      "actor_id": "zhao-heng-agent",
+      "actor_display_name": "Codex（赵衡）",
+      "client_id": null,
+      "result": "committed",
+      "created_at_unix_ms": 1795078800000,
+      "credential_id": null,
+      "what": "报告了进度",
+      "kind": "报告"
+    },
+    {
+      "id": "activity-notify-15",
+      "project_id": "notify",
+      "work_id": null,
+      "action": "update.record",
+      "actor_id": "wu-tong-agent",
+      "actor_display_name": "吴桐（通过 Claude 桌面）",
+      "client_id": null,
+      "result": "committed",
+      "created_at_unix_ms": 1794830400000,
+      "credential_id": null,
+      "what": "写了第 47 周的更新",
+      "kind": "更新"
+    },
+    {
+      "id": "activity-notify-16",
+      "project_id": "notify",
+      "work_id": "T-207",
+      "action": "review.decide",
+      "actor_id": "xu-ning-agent",
+      "actor_display_name": "许宁",
+      "client_id": null,
+      "result": "committed",
+      "created_at_unix_ms": 1794312000000,
+      "credential_id": null,
+      "what": "复核通过",
+      "kind": "复核"
+    },
+    {
+      "id": "activity-notify-17",
+      "project_id": "notify",
+      "work_id": "T-206",
+      "action": "decision.request",
+      "actor_id": "wu-tong-agent",
+      "actor_display_name": "吴桐",
+      "client_id": null,
+      "result": "committed",
+      "created_at_unix_ms": 1794225600000,
+      "credential_id": null,
+      "what": "回答：旧通道保留到试运行结束",
+      "kind": "决定"
+    },
+    {
+      "id": "activity-notify-18",
+      "project_id": "notify",
+      "work_id": "T-205",
+      "action": "review.decide",
+      "actor_id": "wu-tong-agent",
+      "actor_display_name": "吴桐",
+      "client_id": null,
+      "result": "committed",
+      "created_at_unix_ms": 1793966400000,
+      "credential_id": null,
+      "what": "复核通过",
+      "kind": "复核"
+    },
+    {
+      "id": "activity-onboard-19",
+      "project_id": "onboard",
+      "work_id": "T-303",
+      "action": "decision.request",
+      "actor_id": "zheng-lan-agent",
+      "actor_display_name": "郑岚（通过 Claude 桌面）",
+      "client_id": null,
+      "result": "committed",
+      "created_at_unix_ms": 1794312000000,
+      "credential_id": null,
+      "what": "请最高层决定：目标先暂停，还是出面找甲方",
+      "kind": "决定"
+    },
+    {
+      "id": "activity-onboard-20",
+      "project_id": "onboard",
+      "work_id": "T-303",
+      "action": "execution.report",
+      "actor_id": "he-chuan-agent",
+      "actor_display_name": "何川",
+      "client_id": null,
+      "result": "committed",
+      "created_at_unix_ms": 1794312000000,
+      "credential_id": null,
+      "what": "报告：在等甲方给测试环境账号",
+      "kind": "报告"
+    },
+    {
+      "id": "activity-onboard-21",
+      "project_id": "onboard",
+      "work_id": null,
+      "action": "update.record",
+      "actor_id": "zheng-lan-agent",
+      "actor_display_name": "郑岚（通过 Claude 桌面）",
+      "client_id": null,
+      "result": "committed",
+      "created_at_unix_ms": 1794052800000,
+      "credential_id": null,
+      "what": "写了第 45 周的更新",
+      "kind": "更新"
+    },
+    {
+      "id": "activity-onboard-22",
+      "project_id": "onboard",
+      "work_id": "T-302",
+      "action": "review.decide",
+      "actor_id": "zheng-lan-agent",
+      "actor_display_name": "郑岚",
+      "client_id": null,
+      "result": "committed",
+      "created_at_unix_ms": 1793966400000,
+      "credential_id": null,
+      "what": "复核通过",
+      "kind": "复核"
+    },
+    {
+      "id": "activity-onboard-23",
+      "project_id": "onboard",
+      "work_id": "T-304",
+      "action": "execution.report",
+      "actor_id": "he-chuan-agent",
+      "actor_display_name": "Codex（何川）",
+      "client_id": null,
+      "result": "committed",
+      "created_at_unix_ms": 1793876400000,
+      "credential_id": null,
+      "what": "报告：向导页面做完了",
+      "kind": "报告"
+    }
+  ],
+  "lessons": [
+    {
+      "lesson_id": "l1",
+      "project_id": "orders",
+      "adopted_project_ids": [],
+      "title": "读多写少的查询接口先加缓存层",
+      "stage": "candidate",
+      "stage_label": "候选",
+      "state": "active",
+      "quote": "你这个架构少了一层 Cache。",
+      "author_person_id": "lin-yue",
+      "source_title": "订单查询接口",
+      "source_task_id": "T-101",
+      "applicable_when": "查询多、写入少，而且对响应时间有要求的接口",
+      "not_applicable_when": "对一致性要求特别高的写入路径",
+      "result": "改之前压测不达标，改之后 168 毫秒",
+      "usage_records": [],
+      "recheck_required": false,
+      "recheck_reason": null,
+      "disposition": "候选。等林悦本人在自己的 Agent 里确认，确认之前不会给别人用。",
+      "pending_id": "a2"
+    },
+    {
+      "lesson_id": "l2",
+      "project_id": "orders",
+      "adopted_project_ids": [
+        "notify"
+      ],
+      "title": "联调前核对接口版本",
+      "stage": "group",
+      "stage_label": "小组规则",
+      "state": "active",
+      "quote": "你联调的是哪一版接口？先对一下。",
+      "author_person_id": "xu-ning",
+      "source_title": "10 月的一次接口交接",
+      "source_task_id": null,
+      "applicable_when": "上下游交接、联调开始、接口版本有变化时",
+      "not_applicable_when": "只改文案、不动接口的任务",
+      "result": "少了一次因为版本不一致造成的返工",
+      "usage_records": [
+        {
+          "usage_id": "usage-l2-1",
+          "task_id": "T-103",
+          "session_id": "session-l2-1",
+          "used_at_unix_ms": 1794484800000,
+          "outcome": "not_applicable"
+        },
+        {
+          "usage_id": "usage-l2-2",
+          "task_id": "T-204",
+          "session_id": "session-l2-2",
+          "used_at_unix_ms": 1794571200000,
+          "outcome": "passed"
+        },
+        {
+          "usage_id": "usage-l2-3",
+          "task_id": "T-103",
+          "session_id": "session-l2-3",
+          "used_at_unix_ms": 1794657600000,
+          "outcome": "passed"
+        },
+        {
+          "usage_id": "usage-l2-4",
+          "task_id": "T-204",
+          "session_id": "session-l2-4",
+          "used_at_unix_ms": 1794744000000,
+          "outcome": "passed"
+        },
+        {
+          "usage_id": "usage-l2-5",
+          "task_id": "T-103",
+          "session_id": "session-l2-5",
+          "used_at_unix_ms": 1794830400000,
+          "outcome": "passed"
+        },
+        {
+          "usage_id": "usage-l2-6",
+          "task_id": "T-204",
+          "session_id": "session-l2-6",
+          "used_at_unix_ms": 1794916800000,
+          "outcome": "passed"
+        },
+        {
+          "usage_id": "usage-l2-7",
+          "task_id": "T-103",
+          "session_id": "session-l2-7",
+          "used_at_unix_ms": 1795003200000,
+          "outcome": "passed"
+        }
+      ],
+      "recheck_required": true,
+      "recheck_reason": "它依赖的“接口约定”11 月 12 日改过，用之前需要重新检查一次。",
+      "disposition": "小组规则。带着它开工的 Agent 会先提醒重新检查。",
+      "pending_id": null
+    },
+    {
+      "lesson_id": "l3",
+      "project_id": "orders",
+      "adopted_project_ids": [],
+      "title": "结果不明确时先查询再重试",
+      "stage": "project",
+      "stage_label": "项目内",
+      "state": "active",
+      "quote": "别直接重发，先查一下上次到底成没成。",
+      "author_person_id": "chen-yu",
+      "source_title": "提交按钮防重复",
+      "source_task_id": "T-108",
+      "applicable_when": "提交之后没有拿到明确结果",
+      "not_applicable_when": "本身可以安全重复的读取",
+      "result": "避免了一次重复下单",
+      "usage_records": [
+        {
+          "usage_id": "usage-l3-1",
+          "task_id": "T-108",
+          "session_id": "session-l3-1",
+          "used_at_unix_ms": 1794830400000,
+          "outcome": "passed"
+        },
+        {
+          "usage_id": "usage-l3-2",
+          "task_id": "T-102",
+          "session_id": "session-l3-2",
+          "used_at_unix_ms": 1794916800000,
+          "outcome": "passed"
+        },
+        {
+          "usage_id": "usage-l3-3",
+          "task_id": "T-109",
+          "session_id": "session-l3-3",
+          "used_at_unix_ms": 1795003200000,
+          "outcome": "passed"
+        }
+      ],
+      "recheck_required": false,
+      "recheck_reason": null,
+      "disposition": "项目内。要升为小组规则，由小组负责人在自己的 Agent 里提。",
+      "pending_id": null
+    },
+    {
+      "lesson_id": "l4",
+      "project_id": "orders",
+      "adopted_project_ids": [],
+      "title": "错误提示要说下一步怎么办",
+      "stage": "project",
+      "stage_label": "项目内",
+      "state": "revoked",
+      "quote": "只说“出错了”没用，要告诉人接下来点哪。",
+      "author_person_id": "lin-yue",
+      "source_title": "登录异常处理",
+      "source_task_id": "T-105",
+      "applicable_when": "任何给用户看的错误提示",
+      "not_applicable_when": "",
+      "result": "本人撤回：和设计规范重复了",
+      "usage_records": [
+        {
+          "usage_id": "usage-l4-1",
+          "task_id": "T-105",
+          "session_id": "session-l4-1",
+          "used_at_unix_ms": 1794916800000,
+          "outcome": "passed"
+        },
+        {
+          "usage_id": "usage-l4-2",
+          "task_id": "T-114",
+          "session_id": "session-l4-2",
+          "used_at_unix_ms": 1795003200000,
+          "outcome": "passed"
+        }
+      ],
+      "recheck_required": false,
+      "recheck_reason": null,
+      "disposition": "已撤回，不再给 Agent 用。",
+      "pending_id": null
+    }
+  ],
+  "pending": [
+    {
+      "pending_id": "a1",
+      "project_id": "orders",
+      "work_id": "T-104",
+      "goal_id": null,
+      "lesson_id": null,
+      "planning_candidate_id": null,
+      "kind": "回答",
+      "title": "空状态要不要显示引导文案",
+      "source": "你的 Agent「Codex」在问",
+      "age_text": "等了 2 天",
+      "created_at_unix_ms": null,
+      "recipient_person_id": "lin-yue",
+      "recipient_role": null,
+      "description": "「订单列表为空时，只显示“暂无订单”，还是加一句引导去创建？」这件事不回答，空状态检查就停在这里。",
+      "basis": [
+        {
+          "tone": "info",
+          "text": "任务：空状态检查"
+        },
+        {
+          "tone": "bad",
+          "text": "Agent 最后一次报告是 2 天前"
+        }
+      ],
+      "impact": "后面压着 3 件：空状态检查、订单页面联调的收尾、业务验收",
+      "agent_guidance": "你的「Codex」停在这件任务上。回到那个会话回答，它会接着做。",
+      "copy_text": "回答订单协作平台里“空状态检查”在等我的问题：空状态要不要显示引导文案",
+      "source_read": [
+        "a",
+        "decisions.list"
+      ]
+    },
+    {
+      "pending_id": "a3",
+      "project_id": "orders",
+      "work_id": "T-112",
+      "goal_id": null,
+      "lesson_id": null,
+      "planning_candidate_id": null,
+      "kind": "接任务",
+      "title": "周宁把“导出按钮的权限判断”派给了你",
+      "source": "周宁今天通过自己的 Agent 派的",
+      "age_text": "今天",
+      "created_at_unix_ms": 1795082400000,
+      "recipient_person_id": "lin-yue",
+      "recipient_role": null,
+      "description": "这件任务的完成标准已经写好。你接下之后它才算在你名下；接不了也可以说明原因，它会回到周宁那里。",
+      "basis": [
+        {
+          "tone": "info",
+          "text": "任务：导出按钮的权限判断"
+        },
+        {
+          "tone": "ok",
+          "text": "不依赖别的任务，接下就可以开始"
+        }
+      ],
+      "impact": "",
+      "agent_guidance": "在你的任意一个 Agent 里说一句，它会替你接下并开始做。",
+      "copy_text": "接下订单协作平台派给我的任务：导出按钮的权限判断",
+      "source_read": [
+        "a",
+        "/api/team/inbox：等你接下的派工"
+      ]
+    },
+    {
+      "pending_id": "a2",
+      "project_id": "orders",
+      "work_id": "T-101",
+      "goal_id": null,
+      "lesson_id": "l1",
+      "planning_candidate_id": null,
+      "kind": "确认经验",
+      "title": "读多写少的查询接口先加缓存层",
+      "source": "你的 Agent 在 11 月 13 日的会话里记下的",
+      "age_text": "6 天前",
+      "created_at_unix_ms": 1794571200000,
+      "recipient_person_id": "lin-yue",
+      "recipient_role": null,
+      "description": "你当时的原话是「你这个架构少了一层 Cache。」你的 Agent 把它记成了一条候选经验。留不留，由你在 Agent 里确认。",
+      "basis": [
+        {
+          "tone": "bad",
+          "text": "改之前：压测不达标"
+        },
+        {
+          "tone": "ok",
+          "text": "改之后：压测 168 毫秒，达标"
+        },
+        {
+          "tone": "info",
+          "text": "任务：订单查询接口"
+        }
+      ],
+      "impact": "",
+      "agent_guidance": "下次开工时，你的 Agent 会问你要不要留下这一条。也可以现在就告诉它。",
+      "copy_text": "确认我在订单协作平台的候选经验：读多写少的查询接口先加缓存层",
+      "source_read": [
+        "c",
+        "经验的采集还没有"
+      ]
+    },
+    {
+      "pending_id": "b2",
+      "project_id": "orders",
+      "work_id": "T-105",
+      "goal_id": null,
+      "lesson_id": null,
+      "planning_candidate_id": null,
+      "kind": "决定",
+      "title": "登录异常处理要不要返工",
+      "source": "许宁复核时提出",
+      "age_text": "等了 1 天",
+      "created_at_unix_ms": null,
+      "recipient_person_id": "zhou-ning",
+      "recipient_role": null,
+      "description": "复核发现“错误提示说明下一步怎么办”这个分支没有验证过。返工就要补这个分支的测试；接受现状就要把这个风险记下来。",
+      "basis": [
+        {
+          "tone": "ok",
+          "text": "完成标准 3 条，2 条有依据"
+        },
+        {
+          "tone": "bad",
+          "text": "没有依据的一条：错误提示说明下一步怎么办"
+        }
+      ],
+      "impact": "不决定的话，这件任务一直停在“复核退回”",
+      "agent_guidance": "这个问题只有你能答。在你的 Agent 里回答，陈宇的 Agent 下次开工时会读到。",
+      "copy_text": "回答订单协作平台里“登录异常处理”在等我的决定：要不要返工",
+      "source_read": [
+        "a",
+        "decisions.list"
+      ]
+    },
+    {
+      "pending_id": "b1",
+      "project_id": "orders",
+      "work_id": null,
+      "goal_id": null,
+      "lesson_id": null,
+      "planning_candidate_id": "orders-recovery-candidate",
+      "kind": "批准拆解",
+      "title": "“完善异常恢复”拆成了 4 件事",
+      "source": "陈宇的 Agent 提的",
+      "age_text": "今天",
+      "created_at_unix_ms": 1795082400000,
+      "recipient_person_id": "zhou-ning",
+      "recipient_role": null,
+      "description": "新目标“完善异常恢复”被拆成 4 件任务。其中 1 件是需要人来定的选择题：超时后自动重试几次。",
+      "basis": [
+        {
+          "tone": "ok",
+          "text": "4 件都挂在已有的工作线下"
+        },
+        {
+          "tone": "ok",
+          "text": "3 件写好了完成标准"
+        },
+        {
+          "tone": "ok",
+          "text": "1 件是待决定，没有藏在别的任务里"
+        }
+      ],
+      "impact": "批准后其中 2 件可以马上开始",
+      "agent_guidance": "在你的 Agent 里批准或者退回。批准之后，这 4 件才会出现在工作计划里。",
+      "copy_text": "看一下订单协作平台里“完善异常恢复”的拆解，我来决定批不批",
+      "source_read": [
+        "a",
+        "/api/team/plans"
+      ]
+    },
+    {
+      "pending_id": "c1",
+      "project_id": "orders",
+      "work_id": null,
+      "goal_id": null,
+      "lesson_id": null,
+      "planning_candidate_id": null,
+      "kind": "决定",
+      "title": "订单协作平台能不能多一位复核人",
+      "source": "周宁昨天提出",
+      "age_text": "等了 1 天",
+      "created_at_unix_ms": null,
+      "recipient_person_id": null,
+      "recipient_role": "department",
+      "description": "「现在能复核的只有许宁一位，排着 3 件，最久的等了 2 天。能不能给应用小组的林悦加上复核职责，或者从别的小组安排一位？」",
+      "basis": [
+        {
+          "tone": "bad",
+          "text": "3 件成果都在等同一位复核人"
+        },
+        {
+          "tone": "info",
+          "text": "提交的人不能复核自己的成果，所以陈宇不能自己来"
+        },
+        {
+          "tone": "info",
+          "text": "受影响的项目：订单协作平台"
+        }
+      ],
+      "impact": "订单协作平台本周的承诺有风险",
+      "agent_guidance": "在你的 Agent 里回答，周宁的 Agent 下次开工时会读到。给人加职责是成员权限的变更，由管理员在“管理设置”里做。",
+      "copy_text": "回答周宁在订单协作平台提的决定：能不能多一位复核人",
+      "source_read": [
+        "a",
+        "decisions.list"
+      ]
+    },
+    {
+      "pending_id": "e1",
+      "project_id": "onboard",
+      "work_id": null,
+      "goal_id": "g3",
+      "lesson_id": null,
+      "planning_candidate_id": null,
+      "kind": "决定",
+      "title": "“新客户两周内接入”这个目标要不要先暂停",
+      "source": "郑岚 11 月 10 日提出",
+      "age_text": "等了 9 天",
+      "created_at_unix_ms": null,
+      "recipient_person_id": null,
+      "recipient_role": "top",
+      "description": "「甲方一直没有给测试环境账号。这个目标先暂停，还是请你出面找甲方？」这个问题 9 天没有回答，项目就停在这里。",
+      "basis": [
+        {
+          "tone": "bad",
+          "text": "项目最后一次更新：12 天前"
+        },
+        {
+          "tone": "bad",
+          "text": "唯一的等待：等甲方给账号，9 天"
+        },
+        {
+          "tone": "info",
+          "text": "项目里已经核验 2 件，另有 1 件标了完成但没核验"
+        }
+      ],
+      "impact": "不回答的话，项目会一直停着，目标一直显示“没有更新”",
+      "agent_guidance": "这个问题只有你能答。在你的 Agent 里回答，郑岚的 Agent 下次开工时会读到。",
+      "copy_text": "回答郑岚在客户接入改造提的决定：目标先暂停，还是我出面找甲方",
+      "source_read": [
+        "a",
+        "decisions.list；目标本身还不是可以读取的对象"
+      ]
+    }
+  ],
+  "waits_between_groups": [
+    {
+      "wait_id": "w4",
+      "source_group": "applications",
+      "target_group": "platform",
+      "external_party": null,
+      "what": "接口第 3 版通过复核",
+      "started_at_unix_ms": 1794916800000,
+      "work_id": "T-102",
+      "kind": "review"
+    },
+    {
+      "wait_id": "w5",
+      "source_group": "delivery",
+      "target_group": null,
+      "external_party": "甲方",
+      "what": "给测试环境账号",
+      "started_at_unix_ms": 1794312000000,
+      "work_id": "T-303",
+      "kind": "ext"
+    }
+  ]
+}

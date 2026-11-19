@@ -672,6 +672,23 @@ impl SourceStore {
         authorize_candidate_readable_scope(&tx, &auth, tenant_id, project_id, &candidate).await?;
         let impacts = load_impacts(&tx, tenant_id, project_id, &candidate).await?;
         let diff = build_candidate_diff(&candidate, impacts).map_err(map_team)?;
+        let source = tx
+            .query_opt(
+                "SELECT s.source_ref_json FROM awr_team.projects p
+                 JOIN awr_team.source_snapshots s ON s.tenant_id=p.tenant_id
+                   AND s.project_id=p.id AND s.id=p.active_snapshot_id
+                 WHERE p.tenant_id=$1 AND p.id=$2",
+                &[&tenant_id, &project_id],
+            )
+            .await?;
+        let binding = source.and_then(|row| {
+            let source_ref: Value = row.get(0);
+            source_ref
+                .get("sole_source")
+                .filter(|value| !value.is_null())
+                .cloned()
+                .and_then(|value| serde_json::from_value(value).ok())
+        });
         let result = json!({
             "candidate_id": candidate_id,
             "state": match candidate.state {
@@ -686,6 +703,13 @@ impl SourceStore {
             "approval": candidate.approval,
         });
         tx.commit().await?;
+        let package_capacity = super::writeback::candidate_package_capacity(
+            binding.as_ref(),
+            project_id,
+            &candidate.changes,
+        );
+        let mut result = result;
+        result["package_capacity"] = package_capacity;
         Ok(result)
     }
 
