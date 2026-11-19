@@ -20,4 +20,10 @@ export const OVERVIEW_RULES = {
   countDetails: ['count-from-detail-array', 'unknown-count-is-null'],
   coverage: ['unread-is-not-empty', 'partial-count-is-unknown'],
   unknown: ['missing-is-unknown', 'unknown-is-not-zero'],
+  chains: ['non-dependency-roots', 'group-review-by-explicit-person', 'union-impact', 'sort-impact-descending'],
+  commitments: ['affected-task-commitments', 'unknown-commitments-are-not-empty'],
+  people: ['explicit-person-identity', 'pending-nondependency-and-handoff', 'prototype-in-progress', 'owned-waits', 'owed-provider-results'],
+  identity: ['explicit-equal-only', 'missing-is-neither-self-nor-other'],
+  views: ['four-metrics-in-prototype-order', 'caller-scopes-and-periods', 'unknown-scope-is-not-empty'],
+  vcount: ['verified-only', 'verified-at-in-inclusive-window'],
 } as const;

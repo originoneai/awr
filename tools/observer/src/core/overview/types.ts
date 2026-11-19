@@ -57,11 +57,25 @@ export interface OverviewExternalWait {
   sinceUnixMs?: number | null;
 }
 
+export interface OverviewCommitment {
+  id?: string | null;
+  title?: string | null;
+  kind?: 'project' | 'goal' | null;
+}
+
 export interface OverviewTask {
   id?: string | null;
   title?: string | null;
   ownerPersonId?: string | null;
   agentName?: string | null;
+  /** Explicit rollup scopes; an omitted scope remains unknown. */
+  projectId?: string | null;
+  groupId?: string | null;
+  goalIds?: readonly string[] | null;
+  /** Commitments affected when this task is held up; [] is known none, null/omitted is unknown. */
+  commitments?: readonly OverviewCommitment[] | null;
+  /** Verification time used by inclusive period counts; approval/report time is not a substitute. */
+  verifiedAtUnixMs?: number | null;
   acceptance?: readonly OverviewCriterion[] | null;
   report?: OverviewProgressReport | null;
   /** Null means no result was submitted. A review round also establishes a submission. */
@@ -126,6 +140,7 @@ export interface OverviewHandoff {
 export interface OverviewMember {
   personId?: string | null;
   displayName?: string | null;
+  groupId?: string | null;
 }
 
 export interface OverviewActivity {
@@ -136,11 +151,40 @@ export interface OverviewActivity {
   atUnixMs?: number | null;
 }
 
+/** Inclusive epoch-millisecond bounds; the caller owns calendar and timezone conversion. */
+export interface OverviewPeriod {
+  startUnixMs?: number | null;
+  endUnixMs?: number | null;
+}
+
+export interface OverviewPersonViewScope {
+  personId?: string | null;
+  projectId?: string | null;
+}
+
+export interface OverviewDepartmentViewScope {
+  personId?: string | null;
+  projectIds?: readonly string[] | null;
+}
+
+export interface OverviewViewOptions {
+  me?: OverviewPersonViewScope | null;
+  lead?: OverviewPersonViewScope | null;
+  department?: OverviewDepartmentViewScope | null;
+  top?: { personId?: string | null; goalIds?: readonly string[] | null } | null;
+  currentWeek?: OverviewPeriod | null;
+  previousWeek?: OverviewPeriod | null;
+  currentMonth?: OverviewPeriod | null;
+  previousMonth?: OverviewPeriod | null;
+}
+
 export interface OverviewDerivationOptions {
   /** The caller's common read time; the core never reads the wall clock. */
   nowUnixMs: number;
   /** Required on every call. There is deliberately no default stalled threshold. */
   stalledAfterDays: number;
+  /** Missing viewer scopes or periods produce unknown view metrics, never invented windows. */
+  views?: OverviewViewOptions | null;
 }
 
 export interface OverviewInput {
@@ -184,6 +228,13 @@ export interface DerivedTask {
   title: string | null;
   owner: PersonRef | null;
   agentName: string | null;
+  projectId: string | null;
+  groupId: string | null;
+  /** Null is unknown; an empty array explicitly says no goal is bound. */
+  goalIds: string[] | null;
+  /** Null is unknown; an empty array explicitly says no commitment is bound. */
+  commitments: OverviewCommitment[] | null;
+  verifiedAtUnixMs: number | null;
   status: DerivedTaskStatus;
   /** Stable semantic reason codes; UI wording belongs to the caller's vocabulary. */
   unknownReasons: string[];
@@ -233,23 +284,139 @@ export interface DerivedWait {
   behind: CountDetails<DerivedTask>;
 }
 
+export type ChainRootKind = Exclude<WaitKind, 'dependency'>;
+
+export interface DerivedChainRoot {
+  kind: ChainRootKind;
+  /** Explicit reviewer identity for a grouped queue; unknown reviewers stay in separate chains. */
+  person: PersonRef | null;
+  externalParty: string | null;
+  queue: CountDetails<DerivedWait>;
+  /** Null when any member of the queue has an unknown elapsed time. */
+  oldestDays: number | null;
+  /** The root is the red blocker marker in the prototype. */
+  tone: 'negative';
+}
+
+export interface ChainNode {
+  id: string;
+  kind: 'root' | 'task' | 'commitment';
+  root: boolean;
+  tone: 'negative' | null;
+  task: DerivedTask | null;
+  commitment: OverviewCommitment | null;
+}
+
+export interface ChainConnector {
+  fromNodeId: string;
+  toNodeId: string;
+  kind: 'blocks' | 'depends' | 'affects';
+}
+
+export interface DerivedChain {
+  id: string;
+  root: DerivedChainRoot;
+  nodes: ChainNode[];
+  connectors: ChainConnector[];
+  impact: CountDetails<DerivedTask>;
+  commitments: CountDetails<OverviewCommitment>;
+  /** Footer rendering uses the same count/detail objects as the chain, never separate totals. */
+  footer: {
+    impact: CountDetails<DerivedTask>;
+    commitments: CountDetails<OverviewCommitment>;
+  };
+}
+
+export interface PersonPendingItem {
+  kind: 'wait' | 'handoff';
+  task: DerivedTask | null;
+  wait: DerivedWait | null;
+  handoff: OverviewHandoff | null;
+}
+
+export interface PersonSummary {
+  person: PersonRef;
+  /** Non-dependency waits addressed to this person plus pending handoffs addressed to them. */
+  pending: CountDetails<PersonPendingItem>;
+  /** Prototype inProgress: review/stalled/returned/claimed/running, or waiting with an Agent. */
+  inProgress: CountDetails<DerivedTask>;
+  /** All four wait kinds recorded on tasks explicitly owned by this person. */
+  waitingOn: CountDetails<DerivedWait>;
+  /** Dependency waits whose provider result is explicitly owned by this person. */
+  owedBy: CountDetails<DerivedWait>;
+}
+
+export const VIEW_IDS = ['me', 'lead', 'department', 'top'] as const;
+export type ViewId = (typeof VIEW_IDS)[number];
+
+export type ViewMetricKey =
+  | 'verified-period'
+  | 'agents-running'
+  | 'waiting-by-me'
+  | 'pending-for-me'
+  | 'in-progress'
+  | 'waits'
+  | 'projects'
+  | 'cross-group-waits'
+  | 'goals'
+  | 'verified-total'
+  | 'blockers'
+  | 'decisions-for-me';
+
+export interface ViewAgentSummary {
+  agentName: string;
+  tasks: DerivedTask[];
+}
+
+export interface ViewUnit {
+  id: string;
+  kind: 'project' | 'goal';
+  tasks: DerivedTask[];
+}
+
+export interface ViewMetric<T> extends CountDetails<T> {
+  key: ViewMetricKey;
+  /** The same vcount rule over the caller's previous inclusive period. */
+  previousPeriod?: CountDetails<T>;
+  /** Top-level verified completion carries the prototype's claimed comparison. */
+  claimed?: CountDetails<DerivedTask>;
+}
+
+export interface OverviewViewSummary {
+  /** Exactly four metrics, in the prototype's left-to-right order. */
+  metrics: [ViewMetric<unknown>, ViewMetric<unknown>, ViewMetric<unknown>, ViewMetric<unknown>];
+}
+
 export interface OverviewPartCoverage {
   state: 'complete' | 'partial' | 'unread';
   reason: ReadCoverageReason | null;
   issues: CoverageIssue[];
 }
 
-export interface OverviewCoverage {
-  /** True only when every input plane, including planes reserved for the next slice, is complete. */
+export interface OverviewSectionCoverage {
+  complete: boolean;
+  issues: CoverageIssue[];
+}
+
+export interface OverviewBaseCoverage {
+  /** Coverage of the seven input planes; derived sections report their own additional gaps. */
   complete: boolean;
   parts: Record<OverviewPart, OverviewPartCoverage>;
   sections: {
-    status: { complete: boolean; issues: CoverageIssue[] };
-    waits: { complete: boolean; issues: CoverageIssue[] };
+    status: OverviewSectionCoverage;
+    waits: OverviewSectionCoverage;
   };
 }
 
-export interface OverviewDerivation {
+export interface OverviewCoverage extends OverviewBaseCoverage {
+  sections: OverviewBaseCoverage['sections'] & {
+    chains: OverviewSectionCoverage;
+    people: OverviewSectionCoverage;
+    views: OverviewSectionCoverage;
+  };
+}
+
+export interface OverviewStatusWaitingDerivation {
   tasks: DerivedTask[];
   waits: DerivedWait[];
   taskCounts: {
@@ -260,7 +427,14 @@ export interface OverviewDerivation {
     all: CountDetails<DerivedWait>;
     byKind: Record<WaitKind, CountDetails<DerivedWait>>;
   };
+  coverage: OverviewBaseCoverage;
+}
+
+export interface OverviewDerivation extends OverviewStatusWaitingDerivation {
+  chains: DerivedChain[];
+  chainCounts: { all: CountDetails<DerivedChain> };
+  people: PersonSummary[];
+  peopleCounts: { all: CountDetails<PersonSummary> };
+  views: Record<ViewId, OverviewViewSummary>;
   coverage: OverviewCoverage;
-  // The second PR adds chains, people and view summaries additively; these inputs and task/wait
-  // identities are stable so it does not need to replace the status/waiting derivation.
 }

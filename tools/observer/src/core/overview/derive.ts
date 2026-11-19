@@ -1,3 +1,4 @@
+import { deriveOverviewInsights } from './insights';
 import {
   OVERVIEW_PARTS,
   WAIT_KINDS,
@@ -6,7 +7,7 @@ import {
   type DerivedTask,
   type DerivedTaskStatus,
   type DerivedWait,
-  type OverviewCoverage,
+  type OverviewBaseCoverage,
   type OverviewCriterionEvidence,
   type OverviewDecision,
   type OverviewDependency,
@@ -380,6 +381,11 @@ export function deriveOverview(input: OverviewInput): OverviewDerivation {
       title: text(task.title),
       owner: person(task.ownerPersonId),
       agentName: text(task.agentName),
+      projectId: id(task.projectId),
+      groupId: id(task.groupId),
+      goalIds: Array.isArray(task.goalIds) ? [...task.goalIds] : null,
+      commitments: Array.isArray(task.commitments) ? task.commitments.map((commitment) => ({ ...commitment })) : null,
+      verifiedAtUnixMs: time(task.verifiedAtUnixMs),
       status: derived.status,
       unknownReasons: derived.unknownReasons,
       verification: derived.verification,
@@ -543,7 +549,7 @@ export function deriveOverview(input: OverviewInput): OverviewDerivation {
     state: slices[part].coverage,
     reason: slices[part].coverage === 'complete' ? null : slices[part].reason,
     issues: uniqueIssues(partIssues[part]),
-  }])) as OverviewCoverage['parts'];
+  }])) as OverviewBaseCoverage['parts'];
   const statusIssues = uniqueIssues([
     ...parts.tasks.issues, ...parts.dependencies.issues, ...parts.decisions.issues,
     ...parts.reviewRounds.issues, ...parts.activity.issues,
@@ -552,7 +558,7 @@ export function deriveOverview(input: OverviewInput): OverviewDerivation {
     ...parts.tasks.issues, ...parts.dependencies.issues, ...parts.decisions.issues,
     ...parts.reviewRounds.issues, ...parts.members.issues,
   ]);
-  const coverage: OverviewCoverage = {
+  const coverage: OverviewBaseCoverage = {
     complete: OVERVIEW_PARTS.every((part) => parts[part].state === 'complete' && parts[part].issues.length === 0),
     parts,
     sections: {
@@ -561,7 +567,7 @@ export function deriveOverview(input: OverviewInput): OverviewDerivation {
     },
   };
 
-  return {
+  const base = {
     tasks,
     waits,
     taskCounts: {
@@ -574,4 +580,5 @@ export function deriveOverview(input: OverviewInput): OverviewDerivation {
     },
     coverage,
   };
+  return { ...base, ...deriveOverviewInsights(input, base) };
 }
