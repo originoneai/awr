@@ -330,6 +330,35 @@ async fn record_versions_replay_and_read_verbatim_pages() {
 }
 
 #[tokio::test]
+async fn whitespace_only_summaries_are_invalid_input_and_write_nothing() {
+    let (_guard, admin, db, store) = setup().await;
+    supervisor(&admin, &db).await;
+    for (index, summary) in ["\u{3000}", "\u{00a0}", "", "   ", "\t", "\n", "\t\n"]
+        .into_iter()
+        .enumerate()
+    {
+        let invalid = request(&format!("blank-update-{index}"), "2026-W47", summary);
+        let error = record(&store, TENANT, A, &invalid).await.unwrap_err();
+        assert!(
+            error.is_invalid_command_fields(),
+            "blank summary must be InvalidInput, got {error:?}"
+        );
+    }
+    assert_eq!(update_rows(&admin).await, 0);
+    let counts = admin
+        .query_one(
+            "SELECT
+                (SELECT count(*) FROM awr_team.operations WHERE op='update.record'),
+                (SELECT count(*) FROM awr_team.events WHERE event_type='update.recorded')",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(counts.get::<_, i64>(0), 0);
+    assert_eq!(counts.get::<_, i64>(1), 0);
+}
+
+#[tokio::test]
 async fn every_write_refusal_leaves_no_update_operation_or_event() {
     let (_guard, admin, db, store) = setup().await;
     let req = request("denied-update", "2026-W47", "A synthetic status sentence.");
