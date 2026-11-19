@@ -368,18 +368,20 @@ describe('me-view running Agents', () => {
 
   it('does not count Agents on stalled, review, returned or claimed tasks', () => {
     const tasks = [
+      // Every task carries an explicitly active, named Agent, so only its status can keep it
+      // out of the metric — the test cannot pass just because the Agent looks idle.
       scopedTask('stalled-one', 'project-one', 'group-one', 'goal-one', {
         started: true, agentActive: true, agentName: 'Stalled Agent',
         report: { completed: false, reportedAtUnixMs: NOW - 4 * DAY },
       }),
       scopedTask('review-one', 'project-one', 'group-one', 'goal-one', {
-        started: true, agentActive: false, agentName: 'Review Agent', submittedResultAtUnixMs: NOW - DAY,
+        started: true, agentActive: true, agentName: 'Review Agent', submittedResultAtUnixMs: NOW - DAY,
       }),
       scopedTask('returned-one', 'project-one', 'group-one', 'goal-one', {
-        started: true, agentActive: false, agentName: 'Returned Agent', submittedResultAtUnixMs: NOW - DAY,
+        started: true, agentActive: true, agentName: 'Returned Agent', submittedResultAtUnixMs: NOW - DAY,
       }),
       scopedTask('claimed-one', 'project-one', 'group-one', 'goal-one', {
-        started: true, agentActive: false, agentName: 'Claimed Agent',
+        started: true, agentActive: true, agentName: 'Claimed Agent',
         report: { completed: true, reportedAtUnixMs: NOW - DAY }, submittedResultAtUnixMs: null,
       }),
     ];
