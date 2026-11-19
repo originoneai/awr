@@ -25,6 +25,21 @@ const sharedCraftTokens = {
     panel: 16,
     nested: 4,
   },
+  // Named typography and measure tokens for prototype values antd has no token for.
+  // theme.test pins the exact values; display.css and components consume them as CSS variables.
+  text: {
+    small: 13,
+    title: 22,
+  },
+  leading: {
+    tight: 16,
+    body: 20,
+    title: 28,
+    hero: 32,
+  },
+  measure: {
+    summary: 760,
+  },
   motion: {
     easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
     feedbackMs: 160,
@@ -237,7 +252,7 @@ export const themeConfig = createThemeConfig('light');
 /** CSS custom properties expose chart and completion roles that antd does not own. */
 export function craftCssVariables(mode: CraftThemeMode): Record<string, string> {
   const tokens = craftThemes[mode];
-  const { color, chart, shadow, radius, motion, font } = tokens;
+  const { color, chart, shadow, radius, motion, font, text, leading, measure } = tokens;
   return {
     '--craft-color-page': color.page,
     '--craft-color-side': color.side,
@@ -271,6 +286,13 @@ export function craftCssVariables(mode: CraftThemeMode): Record<string, string> 
     '--craft-radius-card': `${radius.card}px`,
     '--craft-radius-panel': `${radius.panel}px`,
     '--craft-radius-nested': `${radius.nested}px`,
+    '--craft-text-small': `${text.small}px`,
+    '--craft-text-title': `${text.title}px`,
+    '--craft-leading-tight': `${leading.tight}px`,
+    '--craft-leading-body': `${leading.body}px`,
+    '--craft-leading-title': `${leading.title}px`,
+    '--craft-leading-hero': `${leading.hero}px`,
+    '--craft-measure-summary': `${measure.summary}px`,
     '--craft-motion-easing': motion.easing,
     '--craft-motion-feedback': `${motion.feedbackMs}ms`,
     '--craft-motion-overlay': `${motion.overlayMs}ms`,
