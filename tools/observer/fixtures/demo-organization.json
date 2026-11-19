@@ -3,50 +3,55 @@
   "public_synthetic": true,
   "now_unix_ms": 1795089600000,
   "viewer": {
-    "person_id": "lin-yue",
-    "actor_id": "lin-yue-agent",
-    "client_id": "lin-yue-claude",
+    "person_id": "M-002",
+    "actor_id": "M-002-agent",
+    "client_id": "M-002-claude",
     "role": "developer",
     "business_roles": [
       "developer"
     ]
   },
   "organization": {
-    "id": "example-organization",
+    "id": "ORG-001",
     "name": "示例组织",
     "departments": [
       {
-        "id": "engineering",
+        "id": "G-004",
         "name": "研发部",
         "parent_id": null
       },
       {
-        "id": "customer-delivery",
+        "id": "G-005",
         "name": "客户交付部",
         "parent_id": null
       },
       {
-        "id": "applications",
+        "id": "G-001",
         "name": "应用小组",
-        "parent_id": "engineering"
+        "parent_id": "G-004"
       },
       {
-        "id": "platform",
+        "id": "G-002",
         "name": "平台小组",
-        "parent_id": "engineering"
+        "parent_id": "G-004"
       },
       {
-        "id": "delivery",
+        "id": "G-003",
         "name": "交付小组",
-        "parent_id": "customer-delivery"
+        "parent_id": "G-005"
+      },
+      {
+        "id": "G-006",
+        "name": "管理层",
+        "parent_id": null
       }
     ]
   },
   "people": [
     {
-      "person_id": "zhou-ning",
+      "person_id": "M-001",
       "display_name": "周宁",
-      "group_id": "applications",
+      "group_id": "G-001",
       "group_name": "应用小组",
       "role": "小组负责人",
       "business_roles": [
@@ -72,9 +77,9 @@
       ]
     },
     {
-      "person_id": "lin-yue",
+      "person_id": "M-002",
       "display_name": "林悦",
-      "group_id": "applications",
+      "group_id": "G-001",
       "group_name": "应用小组",
       "role": "开发",
       "business_roles": [
@@ -113,9 +118,9 @@
       ]
     },
     {
-      "person_id": "chen-yu",
+      "person_id": "M-003",
       "display_name": "陈宇",
-      "group_id": "applications",
+      "group_id": "G-001",
       "group_name": "应用小组",
       "role": "开发",
       "business_roles": [
@@ -140,9 +145,9 @@
       ]
     },
     {
-      "person_id": "xu-ning",
+      "person_id": "M-004",
       "display_name": "许宁",
-      "group_id": "platform",
+      "group_id": "G-002",
       "group_name": "平台小组",
       "role": "复核",
       "business_roles": [
@@ -167,9 +172,9 @@
       ]
     },
     {
-      "person_id": "wu-tong",
+      "person_id": "M-005",
       "display_name": "吴桐",
-      "group_id": "platform",
+      "group_id": "G-002",
       "group_name": "平台小组",
       "role": "小组负责人",
       "business_roles": [
@@ -195,9 +200,9 @@
       ]
     },
     {
-      "person_id": "zhao-heng",
+      "person_id": "M-006",
       "display_name": "赵衡",
-      "group_id": "platform",
+      "group_id": "G-002",
       "group_name": "平台小组",
       "role": "开发",
       "business_roles": [
@@ -222,9 +227,9 @@
       ]
     },
     {
-      "person_id": "zheng-lan",
+      "person_id": "M-007",
       "display_name": "郑岚",
-      "group_id": "delivery",
+      "group_id": "G-003",
       "group_name": "交付小组",
       "role": "小组负责人",
       "business_roles": [
@@ -250,9 +255,9 @@
       ]
     },
     {
-      "person_id": "he-chuan",
+      "person_id": "M-008",
       "display_name": "何川",
-      "group_id": "delivery",
+      "group_id": "G-003",
       "group_name": "交付小组",
       "role": "开发",
       "business_roles": [
@@ -279,37 +284,37 @@
   ],
   "projects": [
     {
-      "key": "orders",
-      "project_id": "orders",
+      "key": "P-001",
+      "project_id": "P-001",
       "title": "订单协作平台",
-      "lead_person_id": "zhou-ning",
-      "group_id": "applications",
-      "parent_department_id": "engineering",
+      "lead_person_id": "M-001",
+      "group_id": "G-001",
+      "parent_department_id": "G-004",
       "member_person_ids": [
-        "zhou-ning",
-        "lin-yue",
-        "chen-yu",
-        "xu-ning"
+        "M-001",
+        "M-002",
+        "M-003",
+        "M-004"
       ],
       "goal_ids": [
-        "g1"
+        "GOAL-001"
       ],
       "workstreams": [
         {
-          "id": "orders-fe",
-          "external_key": "fe",
+          "id": "WS-001",
+          "external_key": "WS-001",
           "title": "前端",
           "authority_version": "1"
         },
         {
-          "id": "orders-be",
-          "external_key": "be",
+          "id": "WS-002",
+          "external_key": "WS-002",
           "title": "后端",
           "authority_version": "1"
         },
         {
-          "id": "orders-qa",
-          "external_key": "qa",
+          "id": "WS-003",
+          "external_key": "WS-003",
           "title": "验证",
           "authority_version": "1"
         }
@@ -334,30 +339,30 @@
       ]
     },
     {
-      "key": "notify",
-      "project_id": "notify",
+      "key": "P-002",
+      "project_id": "P-002",
       "title": "统一通知服务",
-      "lead_person_id": "wu-tong",
-      "group_id": "platform",
-      "parent_department_id": "engineering",
+      "lead_person_id": "M-005",
+      "group_id": "G-002",
+      "parent_department_id": "G-004",
       "member_person_ids": [
-        "wu-tong",
-        "zhao-heng",
-        "xu-ning"
+        "M-005",
+        "M-006",
+        "M-004"
       ],
       "goal_ids": [
-        "g2"
+        "GOAL-002"
       ],
       "workstreams": [
         {
-          "id": "notify-svc",
-          "external_key": "svc",
+          "id": "WS-004",
+          "external_key": "WS-004",
           "title": "服务",
           "authority_version": "1"
         },
         {
-          "id": "notify-adopt",
-          "external_key": "adopt",
+          "id": "WS-005",
+          "external_key": "WS-005",
           "title": "接入",
           "authority_version": "1"
         }
@@ -377,29 +382,29 @@
       ]
     },
     {
-      "key": "onboard",
-      "project_id": "onboard",
+      "key": "P-003",
+      "project_id": "P-003",
       "title": "客户接入改造",
-      "lead_person_id": "zheng-lan",
-      "group_id": "delivery",
-      "parent_department_id": "customer-delivery",
+      "lead_person_id": "M-007",
+      "group_id": "G-003",
+      "parent_department_id": "G-005",
       "member_person_ids": [
-        "zheng-lan",
-        "he-chuan"
+        "M-007",
+        "M-008"
       ],
       "goal_ids": [
-        "g3"
+        "GOAL-003"
       ],
       "workstreams": [
         {
-          "id": "onboard-flow",
-          "external_key": "flow",
+          "id": "WS-007",
+          "external_key": "WS-007",
           "title": "接入流程",
           "authority_version": "1"
         },
         {
-          "id": "onboard-env",
-          "external_key": "env",
+          "id": "WS-008",
+          "external_key": "WS-008",
           "title": "环境",
           "authority_version": "1"
         }
@@ -418,14 +423,14 @@
     {
       "work_id": "T-101",
       "external_key": "T-101",
-      "project_id": "orders",
-      "workstream_id": "orders-be",
+      "project_id": "P-001",
+      "workstream_id": "WS-002",
       "title": "订单查询接口",
       "prototype_status": "verified",
-      "owner_person_id": "chen-yu",
-      "group_id": "applications",
+      "owner_person_id": "M-003",
+      "group_id": "G-001",
       "goal_ids": [
-        "g1"
+        "GOAL-001"
       ],
       "agent_name": "Codex",
       "week_committed": true,
@@ -516,10 +521,10 @@
             "current": false,
             "contract_matches_current": false,
             "independent": true,
-            "author_person_id": "chen-yu",
-            "author_actor_id": "chen-yu-agent",
-            "reviewer_person_id": "xu-ning",
-            "reviewer_actor_id": "xu-ning-agent",
+            "author_person_id": "M-003",
+            "author_actor_id": "M-003-agent",
+            "reviewer_person_id": "M-004",
+            "reviewer_actor_id": "M-004-agent",
             "reviewer_display_name": "许宁",
             "opened_at_unix_ms": 1794582600000,
             "decided_at_unix_ms": 1794657600000,
@@ -538,10 +543,10 @@
             "current": true,
             "contract_matches_current": true,
             "independent": true,
-            "author_person_id": "chen-yu",
-            "author_actor_id": "chen-yu-agent",
-            "reviewer_person_id": "xu-ning",
-            "reviewer_actor_id": "xu-ning-agent",
+            "author_person_id": "M-003",
+            "author_actor_id": "M-003-agent",
+            "reviewer_person_id": "M-004",
+            "reviewer_actor_id": "M-004-agent",
             "reviewer_display_name": "许宁",
             "opened_at_unix_ms": 1794669000000,
             "decided_at_unix_ms": 1794657600000,
@@ -601,20 +606,20 @@
         }
       ],
       "lesson_ids": [
-        "l1"
+        "L-001"
       ]
     },
     {
       "work_id": "T-102",
       "external_key": "T-102",
-      "project_id": "orders",
-      "workstream_id": "orders-be",
+      "project_id": "P-001",
+      "workstream_id": "WS-002",
       "title": "接口第 3 版：提交与错误反馈",
       "prototype_status": "review",
-      "owner_person_id": "chen-yu",
-      "group_id": "applications",
+      "owner_person_id": "M-003",
+      "group_id": "G-001",
       "goal_ids": [
-        "g1"
+        "GOAL-001"
       ],
       "agent_name": "Codex",
       "week_committed": true,
@@ -707,10 +712,10 @@
             "current": true,
             "contract_matches_current": true,
             "independent": true,
-            "author_person_id": "chen-yu",
-            "author_actor_id": "chen-yu-agent",
-            "reviewer_person_id": "xu-ning",
-            "reviewer_actor_id": "xu-ning-agent",
+            "author_person_id": "M-003",
+            "author_actor_id": "M-003-agent",
+            "reviewer_person_id": "M-004",
+            "reviewer_actor_id": "M-004-agent",
             "reviewer_display_name": "许宁",
             "opened_at_unix_ms": 1794916800000,
             "decided_at_unix_ms": null,
@@ -767,20 +772,20 @@
         }
       ],
       "lesson_ids": [
-        "l3"
+        "L-003"
       ]
     },
     {
       "work_id": "T-103",
       "external_key": "T-103",
-      "project_id": "orders",
-      "workstream_id": "orders-fe",
+      "project_id": "P-001",
+      "workstream_id": "WS-001",
       "title": "订单页面联调",
       "prototype_status": "waiting",
-      "owner_person_id": "lin-yue",
-      "group_id": "applications",
+      "owner_person_id": "M-002",
+      "group_id": "G-001",
       "goal_ids": [
-        "g1"
+        "GOAL-001"
       ],
       "agent_name": "Claude 桌面",
       "week_committed": true,
@@ -805,11 +810,11 @@
           "evidence_detail": "要等接口第 3 版"
         }
       ],
-      "one_sentence": "在等接口第 3 版通过复核。不依赖新接口的部分还在做。",
-      "next_step": "接口第 3 版通过复核后，改用第 3 版重新联调提交流程",
+      "one_sentence": "标了完成，但还没有提交复核；提交流程仍等接口第 3 版。",
+      "next_step": "补交复核材料；接口第 3 版通过复核后确认提交流程",
       "report": {
-        "summary": "列表分页已接通，正在补错误提示。提交流程在等接口第 3 版。",
-        "completed_declaration": false,
+        "summary": "页面联调已标完成，复核材料还没有提交；提交流程仍等接口第 3 版。",
+        "completed_declaration": true,
         "completed": [
           "列表分页接通"
         ],
@@ -836,7 +841,7 @@
       "integrated": false,
       "integration_note": null,
       "started": true,
-      "agent_active": true,
+      "agent_active": false,
       "verified_at_unix_ms": null,
       "delivery": null,
       "dependencies": [
@@ -852,19 +857,6 @@
           "since_unix_ms": 1794916800000,
           "version_policy": "current_contract",
           "position": 1
-        },
-        {
-          "dependency_id": "edge-t-103-t-104",
-          "provider_work_id": "T-104",
-          "required_version_label": "已核验",
-          "adopted_version_label": "还没有",
-          "available_version_label": "停着，等一个回答",
-          "satisfied": false,
-          "validity": "unavailable",
-          "reason": "completion_unavailable",
-          "since_unix_ms": null,
-          "version_policy": "current_contract",
-          "position": 2
         }
       ],
       "wait": {
@@ -909,20 +901,21 @@
         }
       ],
       "lesson_ids": [
-        "l2"
-      ]
+        "L-002"
+      ],
+      "demo_status": "claimed"
     },
     {
       "work_id": "T-104",
       "external_key": "T-104",
-      "project_id": "orders",
-      "workstream_id": "orders-fe",
+      "project_id": "P-001",
+      "workstream_id": "WS-001",
       "title": "空状态检查",
       "prototype_status": "stalled",
-      "owner_person_id": "lin-yue",
-      "group_id": "applications",
+      "owner_person_id": "M-002",
+      "group_id": "G-001",
       "goal_ids": [
-        "g1"
+        "GOAL-001"
       ],
       "agent_name": "Codex",
       "week_committed": true,
@@ -977,7 +970,7 @@
         "what": "回答：空状态要不要显示引导文案",
         "started_at_unix_ms": 1794916800000,
         "prototype_days": 2,
-        "decision_id": "a1"
+        "decision_id": "Q-001"
       },
       "assignment": null,
       "timeline": [
@@ -1007,14 +1000,14 @@
     {
       "work_id": "T-105",
       "external_key": "T-105",
-      "project_id": "orders",
-      "workstream_id": "orders-be",
+      "project_id": "P-001",
+      "workstream_id": "WS-002",
       "title": "登录异常处理",
       "prototype_status": "returned",
-      "owner_person_id": "chen-yu",
-      "group_id": "applications",
+      "owner_person_id": "M-003",
+      "group_id": "G-001",
       "goal_ids": [
-        "g1"
+        "GOAL-001"
       ],
       "agent_name": "Codex",
       "week_committed": false,
@@ -1092,10 +1085,10 @@
             "current": true,
             "contract_matches_current": true,
             "independent": true,
-            "author_person_id": "chen-yu",
-            "author_actor_id": "chen-yu-agent",
-            "reviewer_person_id": "xu-ning",
-            "reviewer_actor_id": "xu-ning-agent",
+            "author_person_id": "M-003",
+            "author_actor_id": "M-003-agent",
+            "reviewer_person_id": "M-004",
+            "reviewer_actor_id": "M-004-agent",
             "reviewer_display_name": "许宁",
             "opened_at_unix_ms": 1794913200000,
             "decided_at_unix_ms": 1794916800000,
@@ -1116,7 +1109,7 @@
         "what": "决定：要不要返工",
         "started_at_unix_ms": 1795003200000,
         "prototype_days": 1,
-        "decision_id": "b2"
+        "decision_id": "Q-002"
       },
       "assignment": null,
       "timeline": [
@@ -1156,14 +1149,14 @@
     {
       "work_id": "T-106",
       "external_key": "T-106",
-      "project_id": "orders",
-      "workstream_id": "orders-qa",
+      "project_id": "P-001",
+      "workstream_id": "WS-003",
       "title": "业务验收",
       "prototype_status": "planned",
-      "owner_person_id": "xu-ning",
-      "group_id": "applications",
+      "owner_person_id": "M-004",
+      "group_id": "G-001",
       "goal_ids": [
-        "g1"
+        "GOAL-001"
       ],
       "agent_name": null,
       "week_committed": true,
@@ -1220,14 +1213,14 @@
     {
       "work_id": "T-107",
       "external_key": "T-107",
-      "project_id": "orders",
-      "workstream_id": "orders-fe",
+      "project_id": "P-001",
+      "workstream_id": "WS-001",
       "title": "订单列表分页",
       "prototype_status": "verified",
-      "owner_person_id": "lin-yue",
-      "group_id": "applications",
+      "owner_person_id": "M-002",
+      "group_id": "G-001",
       "goal_ids": [
-        "g1"
+        "GOAL-001"
       ],
       "agent_name": "Claude 桌面",
       "week_committed": true,
@@ -1299,10 +1292,10 @@
             "current": true,
             "contract_matches_current": true,
             "independent": true,
-            "author_person_id": "lin-yue",
-            "author_actor_id": "lin-yue-agent",
-            "reviewer_person_id": "xu-ning",
-            "reviewer_actor_id": "xu-ning-agent",
+            "author_person_id": "M-002",
+            "author_actor_id": "M-002-agent",
+            "reviewer_person_id": "M-004",
+            "reviewer_actor_id": "M-004-agent",
             "reviewer_display_name": "许宁",
             "opened_at_unix_ms": 1794764400000,
             "decided_at_unix_ms": 1794830400000,
@@ -1356,14 +1349,14 @@
     {
       "work_id": "T-108",
       "external_key": "T-108",
-      "project_id": "orders",
-      "workstream_id": "orders-fe",
+      "project_id": "P-001",
+      "workstream_id": "WS-001",
       "title": "提交按钮防重复",
       "prototype_status": "verified",
-      "owner_person_id": "lin-yue",
-      "group_id": "applications",
+      "owner_person_id": "M-002",
+      "group_id": "G-001",
       "goal_ids": [
-        "g1"
+        "GOAL-001"
       ],
       "agent_name": "Claude 桌面",
       "week_committed": true,
@@ -1424,10 +1417,10 @@
             "current": true,
             "contract_matches_current": true,
             "independent": true,
-            "author_person_id": "lin-yue",
-            "author_actor_id": "lin-yue-agent",
-            "reviewer_person_id": "xu-ning",
-            "reviewer_actor_id": "xu-ning-agent",
+            "author_person_id": "M-002",
+            "author_actor_id": "M-002-agent",
+            "reviewer_person_id": "M-004",
+            "reviewer_actor_id": "M-004-agent",
             "reviewer_display_name": "许宁",
             "opened_at_unix_ms": 1794844800000,
             "decided_at_unix_ms": 1794916800000,
@@ -1477,20 +1470,20 @@
         }
       ],
       "lesson_ids": [
-        "l3"
+        "L-003"
       ]
     },
     {
       "work_id": "T-109",
       "external_key": "T-109",
-      "project_id": "orders",
-      "workstream_id": "orders-be",
+      "project_id": "P-001",
+      "workstream_id": "WS-002",
       "title": "提交失败的错误码表",
       "prototype_status": "review",
-      "owner_person_id": "chen-yu",
-      "group_id": "applications",
+      "owner_person_id": "M-003",
+      "group_id": "G-001",
       "goal_ids": [
-        "g1"
+        "GOAL-001"
       ],
       "agent_name": "Codex",
       "week_committed": false,
@@ -1546,10 +1539,10 @@
             "current": true,
             "contract_matches_current": true,
             "independent": true,
-            "author_person_id": "chen-yu",
-            "author_actor_id": "chen-yu-agent",
-            "reviewer_person_id": "xu-ning",
-            "reviewer_actor_id": "xu-ning-agent",
+            "author_person_id": "M-003",
+            "author_actor_id": "M-003-agent",
+            "reviewer_person_id": "M-004",
+            "reviewer_actor_id": "M-004-agent",
             "reviewer_display_name": "许宁",
             "opened_at_unix_ms": 1795003200000,
             "decided_at_unix_ms": null,
@@ -1590,14 +1583,14 @@
     {
       "work_id": "T-110",
       "external_key": "T-110",
-      "project_id": "orders",
-      "workstream_id": "orders-be",
+      "project_id": "P-001",
+      "workstream_id": "WS-002",
       "title": "订单状态机说明",
       "prototype_status": "review",
-      "owner_person_id": "chen-yu",
-      "group_id": "applications",
+      "owner_person_id": "M-003",
+      "group_id": "G-001",
       "goal_ids": [
-        "g1"
+        "GOAL-001"
       ],
       "agent_name": "Codex",
       "week_committed": false,
@@ -1653,10 +1646,10 @@
             "current": true,
             "contract_matches_current": true,
             "independent": true,
-            "author_person_id": "chen-yu",
-            "author_actor_id": "chen-yu-agent",
-            "reviewer_person_id": "xu-ning",
-            "reviewer_actor_id": "xu-ning-agent",
+            "author_person_id": "M-003",
+            "author_actor_id": "M-003-agent",
+            "reviewer_person_id": "M-004",
+            "reviewer_actor_id": "M-004-agent",
             "reviewer_display_name": "许宁",
             "opened_at_unix_ms": 1795003200000,
             "decided_at_unix_ms": null,
@@ -1697,14 +1690,14 @@
     {
       "work_id": "T-111",
       "external_key": "T-111",
-      "project_id": "orders",
-      "workstream_id": "orders-fe",
+      "project_id": "P-001",
+      "workstream_id": "WS-001",
       "title": "导出功能",
       "prototype_status": "waiting",
-      "owner_person_id": "lin-yue",
-      "group_id": "applications",
+      "owner_person_id": "M-002",
+      "group_id": "G-001",
       "goal_ids": [
-        "g1"
+        "GOAL-001"
       ],
       "agent_name": null,
       "week_committed": false,
@@ -1754,14 +1747,14 @@
     {
       "work_id": "T-112",
       "external_key": "T-112",
-      "project_id": "orders",
-      "workstream_id": "orders-fe",
+      "project_id": "P-001",
+      "workstream_id": "WS-001",
       "title": "导出按钮的权限判断",
       "prototype_status": "ready",
-      "owner_person_id": "lin-yue",
-      "group_id": "applications",
+      "owner_person_id": "M-002",
+      "group_id": "G-001",
       "goal_ids": [
-        "g1"
+        "GOAL-001"
       ],
       "agent_name": null,
       "week_committed": false,
@@ -1787,11 +1780,11 @@
       "dependencies": [],
       "wait": null,
       "assignment": {
-        "handoff_id": "handoff-t-112",
-        "from_person_id": "zhou-ning",
-        "to_person_id": "lin-yue",
+        "handoff_id": "H-001",
+        "from_person_id": "M-001",
+        "to_person_id": "M-002",
         "created_at_unix_ms": 1795081200000,
-        "pending_id": "a3"
+        "pending_id": "A-003"
       },
       "timeline": [
         {
@@ -1820,14 +1813,14 @@
     {
       "work_id": "T-113",
       "external_key": "T-113",
-      "project_id": "orders",
-      "workstream_id": "orders-qa",
+      "project_id": "P-001",
+      "workstream_id": "WS-003",
       "title": "压测脚本",
       "prototype_status": "verified",
-      "owner_person_id": "xu-ning",
-      "group_id": "applications",
+      "owner_person_id": "M-004",
+      "group_id": "G-001",
       "goal_ids": [
-        "g1"
+        "GOAL-001"
       ],
       "agent_name": "Claude 桌面",
       "week_committed": true,
@@ -1892,10 +1885,10 @@
             "current": true,
             "contract_matches_current": true,
             "independent": true,
-            "author_person_id": "xu-ning",
-            "author_actor_id": "xu-ning-agent",
-            "reviewer_person_id": "zhou-ning",
-            "reviewer_actor_id": "zhou-ning-agent",
+            "author_person_id": "M-004",
+            "author_actor_id": "M-004-agent",
+            "reviewer_person_id": "M-001",
+            "reviewer_actor_id": "M-001-agent",
             "reviewer_display_name": "周宁",
             "opened_at_unix_ms": 1794481200000,
             "decided_at_unix_ms": 1794484800000,
@@ -1939,14 +1932,14 @@
     {
       "work_id": "T-114",
       "external_key": "T-114",
-      "project_id": "orders",
-      "workstream_id": "orders-fe",
+      "project_id": "P-001",
+      "workstream_id": "WS-001",
       "title": "错误提示文案",
       "prototype_status": "claimed",
-      "owner_person_id": "lin-yue",
-      "group_id": "applications",
+      "owner_person_id": "M-002",
+      "group_id": "G-001",
       "goal_ids": [
-        "g1"
+        "GOAL-001"
       ],
       "agent_name": "Claude 桌面",
       "week_committed": false,
@@ -1959,11 +1952,11 @@
           "evidence_detail": "自己说做完了，没有依据"
         }
       ],
-      "one_sentence": "标了完成，但还没有核验：没有提交复核。",
-      "next_step": "提交复核",
+      "one_sentence": "Agent 正在补齐复核依据，最近有报告。",
+      "next_step": "补齐依据后提交复核",
       "report": {
-        "summary": "12 条文案都写完了。",
-        "completed_declaration": true,
+        "summary": "正在补齐错误提示的复核依据，还没有标完成。",
+        "completed_declaration": false,
         "completed": [
           "12 条文案"
         ],
@@ -1982,7 +1975,7 @@
       "integrated": false,
       "integration_note": null,
       "started": true,
-      "agent_active": false,
+      "agent_active": true,
       "verified_at_unix_ms": null,
       "delivery": null,
       "dependencies": [],
@@ -2000,19 +1993,20 @@
           "tone": "now"
         }
       ],
-      "lesson_ids": []
+      "lesson_ids": [],
+      "demo_status": "running"
     },
     {
       "work_id": "T-201",
       "external_key": "T-201",
-      "project_id": "notify",
-      "workstream_id": "notify-svc",
+      "project_id": "P-002",
+      "workstream_id": "WS-004",
       "title": "统一发送接口",
       "prototype_status": "verified",
-      "owner_person_id": "zhao-heng",
-      "group_id": "platform",
+      "owner_person_id": "M-006",
+      "group_id": "G-002",
       "goal_ids": [
-        "g2"
+        "GOAL-002"
       ],
       "agent_name": "Codex",
       "week_committed": false,
@@ -2084,10 +2078,10 @@
             "current": true,
             "contract_matches_current": true,
             "independent": true,
-            "author_person_id": "zhao-heng",
-            "author_actor_id": "zhao-heng-agent",
-            "reviewer_person_id": "wu-tong",
-            "reviewer_actor_id": "wu-tong-agent",
+            "author_person_id": "M-006",
+            "author_actor_id": "M-006-agent",
+            "reviewer_person_id": "M-005",
+            "reviewer_actor_id": "M-005-agent",
             "reviewer_display_name": "吴桐",
             "opened_at_unix_ms": 1792512000000,
             "decided_at_unix_ms": 1792584000000,
@@ -2131,14 +2125,14 @@
     {
       "work_id": "T-202",
       "external_key": "T-202",
-      "project_id": "notify",
-      "workstream_id": "notify-svc",
+      "project_id": "P-002",
+      "workstream_id": "WS-004",
       "title": "失败重发",
       "prototype_status": "verified",
-      "owner_person_id": "zhao-heng",
-      "group_id": "platform",
+      "owner_person_id": "M-006",
+      "group_id": "G-002",
       "goal_ids": [
-        "g2"
+        "GOAL-002"
       ],
       "agent_name": "Codex",
       "week_committed": false,
@@ -2210,10 +2204,10 @@
             "current": false,
             "contract_matches_current": false,
             "independent": true,
-            "author_person_id": "zhao-heng",
-            "author_actor_id": "zhao-heng-agent",
-            "reviewer_person_id": "wu-tong",
-            "reviewer_actor_id": "wu-tong-agent",
+            "author_person_id": "M-006",
+            "author_actor_id": "M-006-agent",
+            "reviewer_person_id": "M-005",
+            "reviewer_actor_id": "M-005-agent",
             "reviewer_display_name": "吴桐",
             "opened_at_unix_ms": 1793028600000,
             "decided_at_unix_ms": 1793188800000,
@@ -2232,10 +2226,10 @@
             "current": true,
             "contract_matches_current": true,
             "independent": true,
-            "author_person_id": "zhao-heng",
-            "author_actor_id": "zhao-heng-agent",
-            "reviewer_person_id": "wu-tong",
-            "reviewer_actor_id": "wu-tong-agent",
+            "author_person_id": "M-006",
+            "author_actor_id": "M-006-agent",
+            "reviewer_person_id": "M-005",
+            "reviewer_actor_id": "M-005-agent",
             "reviewer_display_name": "吴桐",
             "opened_at_unix_ms": 1793115000000,
             "decided_at_unix_ms": 1793188800000,
@@ -2289,14 +2283,14 @@
     {
       "work_id": "T-203",
       "external_key": "T-203",
-      "project_id": "notify",
-      "workstream_id": "notify-adopt",
+      "project_id": "P-002",
+      "workstream_id": "WS-005",
       "title": "短信通道接入",
       "prototype_status": "verified",
-      "owner_person_id": "zhao-heng",
-      "group_id": "platform",
+      "owner_person_id": "M-006",
+      "group_id": "G-002",
       "goal_ids": [
-        "g2"
+        "GOAL-002"
       ],
       "agent_name": "Codex",
       "week_committed": false,
@@ -2356,10 +2350,10 @@
             "current": true,
             "contract_matches_current": true,
             "independent": true,
-            "author_person_id": "zhao-heng",
-            "author_actor_id": "zhao-heng-agent",
-            "reviewer_person_id": "wu-tong",
-            "reviewer_actor_id": "wu-tong-agent",
+            "author_person_id": "M-006",
+            "author_actor_id": "M-006-agent",
+            "reviewer_person_id": "M-005",
+            "reviewer_actor_id": "M-005-agent",
             "reviewer_display_name": "吴桐",
             "opened_at_unix_ms": 1793638800000,
             "decided_at_unix_ms": 1793707200000,
@@ -2417,14 +2411,14 @@
     {
       "work_id": "T-204",
       "external_key": "T-204",
-      "project_id": "notify",
-      "workstream_id": "notify-adopt",
+      "project_id": "P-002",
+      "workstream_id": "WS-005",
       "title": "邮件通道接入",
       "prototype_status": "verified",
-      "owner_person_id": "zhao-heng",
-      "group_id": "platform",
+      "owner_person_id": "M-006",
+      "group_id": "G-002",
       "goal_ids": [
-        "g2"
+        "GOAL-002"
       ],
       "agent_name": "Codex",
       "week_committed": false,
@@ -2484,10 +2478,10 @@
             "current": true,
             "contract_matches_current": true,
             "independent": true,
-            "author_person_id": "zhao-heng",
-            "author_actor_id": "zhao-heng-agent",
-            "reviewer_person_id": "wu-tong",
-            "reviewer_actor_id": "wu-tong-agent",
+            "author_person_id": "M-006",
+            "author_actor_id": "M-006-agent",
+            "reviewer_person_id": "M-005",
+            "reviewer_actor_id": "M-005-agent",
             "reviewer_display_name": "吴桐",
             "opened_at_unix_ms": 1793809200000,
             "decided_at_unix_ms": 1793880000000,
@@ -2541,20 +2535,20 @@
         }
       ],
       "lesson_ids": [
-        "l2"
+        "L-002"
       ]
     },
     {
       "work_id": "T-205",
       "external_key": "T-205",
-      "project_id": "notify",
-      "workstream_id": "notify-adopt",
+      "project_id": "P-002",
+      "workstream_id": "WS-005",
       "title": "站内信通道接入",
       "prototype_status": "verified",
-      "owner_person_id": "zhao-heng",
-      "group_id": "platform",
+      "owner_person_id": "M-006",
+      "group_id": "G-002",
       "goal_ids": [
-        "g2"
+        "GOAL-002"
       ],
       "agent_name": "Codex",
       "week_committed": false,
@@ -2614,10 +2608,10 @@
             "current": true,
             "contract_matches_current": true,
             "independent": true,
-            "author_person_id": "zhao-heng",
-            "author_actor_id": "zhao-heng-agent",
-            "reviewer_person_id": "wu-tong",
-            "reviewer_actor_id": "wu-tong-agent",
+            "author_person_id": "M-006",
+            "author_actor_id": "M-006-agent",
+            "reviewer_person_id": "M-005",
+            "reviewer_actor_id": "M-005-agent",
             "reviewer_display_name": "吴桐",
             "opened_at_unix_ms": 1793901600000,
             "decided_at_unix_ms": 1793966400000,
@@ -2675,14 +2669,14 @@
     {
       "work_id": "T-206",
       "external_key": "T-206",
-      "project_id": "notify",
-      "workstream_id": "notify-svc",
+      "project_id": "P-002",
+      "workstream_id": "WS-004",
       "title": "试运行两周",
       "prototype_status": "running",
-      "owner_person_id": "zhao-heng",
-      "group_id": "platform",
+      "owner_person_id": "M-006",
+      "group_id": "G-002",
       "goal_ids": [
-        "g2"
+        "GOAL-002"
       ],
       "agent_name": "Codex",
       "week_committed": false,
@@ -2773,14 +2767,14 @@
     {
       "work_id": "T-207",
       "external_key": "T-207",
-      "project_id": "notify",
-      "workstream_id": "notify-svc",
+      "project_id": "P-002",
+      "workstream_id": "WS-004",
       "title": "发送量和失败率的查看页",
       "prototype_status": "verified",
-      "owner_person_id": "zhao-heng",
-      "group_id": "platform",
+      "owner_person_id": "M-006",
+      "group_id": "G-002",
       "goal_ids": [
-        "g2"
+        "GOAL-002"
       ],
       "agent_name": "Codex",
       "week_committed": false,
@@ -2840,10 +2834,10 @@
             "current": true,
             "contract_matches_current": true,
             "independent": true,
-            "author_person_id": "zhao-heng",
-            "author_actor_id": "zhao-heng-agent",
-            "reviewer_person_id": "xu-ning",
-            "reviewer_actor_id": "xu-ning-agent",
+            "author_person_id": "M-006",
+            "author_actor_id": "M-006-agent",
+            "reviewer_person_id": "M-004",
+            "reviewer_actor_id": "M-004-agent",
             "reviewer_display_name": "许宁",
             "opened_at_unix_ms": 1794236400000,
             "decided_at_unix_ms": 1794312000000,
@@ -2887,14 +2881,14 @@
     {
       "work_id": "T-208",
       "external_key": "T-208",
-      "project_id": "notify",
-      "workstream_id": "notify-adopt",
+      "project_id": "P-002",
+      "workstream_id": "WS-005",
       "title": "下线三处旧的通知代码",
       "prototype_status": "planned",
-      "owner_person_id": "zhao-heng",
-      "group_id": "platform",
+      "owner_person_id": "M-006",
+      "group_id": "G-002",
       "goal_ids": [
-        "g2"
+        "GOAL-002"
       ],
       "agent_name": null,
       "week_committed": false,
@@ -2951,14 +2945,14 @@
     {
       "work_id": "T-301",
       "external_key": "T-301",
-      "project_id": "onboard",
-      "workstream_id": "onboard-flow",
+      "project_id": "P-003",
+      "workstream_id": "WS-007",
       "title": "梳理现在的接入步骤",
       "prototype_status": "verified",
-      "owner_person_id": "he-chuan",
-      "group_id": "delivery",
+      "owner_person_id": "M-008",
+      "group_id": "G-003",
       "goal_ids": [
-        "g3"
+        "GOAL-003"
       ],
       "agent_name": "Codex",
       "week_committed": false,
@@ -3012,10 +3006,10 @@
             "current": true,
             "contract_matches_current": true,
             "independent": true,
-            "author_person_id": "he-chuan",
-            "author_actor_id": "he-chuan-agent",
-            "reviewer_person_id": "zheng-lan",
-            "reviewer_actor_id": "zheng-lan-agent",
+            "author_person_id": "M-008",
+            "author_actor_id": "M-008-agent",
+            "reviewer_person_id": "M-007",
+            "reviewer_actor_id": "M-007-agent",
             "reviewer_display_name": "郑岚",
             "opened_at_unix_ms": 1793725200000,
             "decided_at_unix_ms": 1793793600000,
@@ -3059,14 +3053,14 @@
     {
       "work_id": "T-302",
       "external_key": "T-302",
-      "project_id": "onboard",
-      "workstream_id": "onboard-flow",
+      "project_id": "P-003",
+      "workstream_id": "WS-007",
       "title": "接入步骤精简方案",
       "prototype_status": "verified",
-      "owner_person_id": "he-chuan",
-      "group_id": "delivery",
+      "owner_person_id": "M-008",
+      "group_id": "G-003",
       "goal_ids": [
-        "g3"
+        "GOAL-003"
       ],
       "agent_name": "Codex",
       "week_committed": false,
@@ -3126,10 +3120,10 @@
             "current": true,
             "contract_matches_current": true,
             "independent": true,
-            "author_person_id": "he-chuan",
-            "author_actor_id": "he-chuan-agent",
-            "reviewer_person_id": "zheng-lan",
-            "reviewer_actor_id": "zheng-lan-agent",
+            "author_person_id": "M-008",
+            "author_actor_id": "M-008-agent",
+            "reviewer_person_id": "M-007",
+            "reviewer_actor_id": "M-007-agent",
             "reviewer_display_name": "郑岚",
             "opened_at_unix_ms": 1793903400000,
             "decided_at_unix_ms": 1793966400000,
@@ -3187,14 +3181,14 @@
     {
       "work_id": "T-303",
       "external_key": "T-303",
-      "project_id": "onboard",
-      "workstream_id": "onboard-env",
+      "project_id": "P-003",
+      "workstream_id": "WS-008",
       "title": "在甲方的测试环境走通 5 步接入",
       "prototype_status": "waiting",
-      "owner_person_id": "he-chuan",
-      "group_id": "delivery",
+      "owner_person_id": "M-008",
+      "group_id": "G-003",
       "goal_ids": [
-        "g3"
+        "GOAL-003"
       ],
       "agent_name": null,
       "week_committed": false,
@@ -3279,14 +3273,14 @@
     {
       "work_id": "T-304",
       "external_key": "T-304",
-      "project_id": "onboard",
-      "workstream_id": "onboard-flow",
+      "project_id": "P-003",
+      "workstream_id": "WS-007",
       "title": "接入向导页面",
       "prototype_status": "claimed",
-      "owner_person_id": "he-chuan",
-      "group_id": "delivery",
+      "owner_person_id": "M-008",
+      "group_id": "G-003",
       "goal_ids": [
-        "g3"
+        "GOAL-003"
       ],
       "agent_name": "Codex",
       "week_committed": false,
@@ -3345,14 +3339,14 @@
     {
       "work_id": "T-305",
       "external_key": "T-305",
-      "project_id": "onboard",
-      "workstream_id": "onboard-env",
+      "project_id": "P-003",
+      "workstream_id": "WS-008",
       "title": "首单演练",
       "prototype_status": "planned",
-      "owner_person_id": "he-chuan",
-      "group_id": "delivery",
+      "owner_person_id": "M-008",
+      "group_id": "G-003",
       "goal_ids": [
-        "g3"
+        "GOAL-003"
       ],
       "agent_name": null,
       "week_committed": false,
@@ -3409,14 +3403,14 @@
     {
       "work_id": "T-306",
       "external_key": "T-306",
-      "project_id": "onboard",
-      "workstream_id": "onboard-flow",
+      "project_id": "P-003",
+      "workstream_id": "WS-007",
       "title": "接入手册",
       "prototype_status": "planned",
-      "owner_person_id": "zheng-lan",
-      "group_id": "delivery",
+      "owner_person_id": "M-007",
+      "group_id": "G-003",
       "goal_ids": [
-        "g3"
+        "GOAL-003"
       ],
       "agent_name": null,
       "week_committed": false,
@@ -3459,14 +3453,14 @@
     {
       "work_id": "T-307",
       "external_key": "T-307",
-      "project_id": "onboard",
-      "workstream_id": "onboard-flow",
+      "project_id": "P-003",
+      "workstream_id": "WS-007",
       "title": "接入后的回访清单",
       "prototype_status": "planned",
-      "owner_person_id": "zheng-lan",
-      "group_id": "delivery",
+      "owner_person_id": "M-007",
+      "group_id": "G-003",
       "goal_ids": [
-        "g3"
+        "GOAL-003"
       ],
       "agent_name": null,
       "week_committed": false,
@@ -3509,9 +3503,9 @@
   ],
   "goals": [
     {
-      "goal_id": "g1",
-      "project_id": "orders",
-      "department_id": "engineering",
+      "goal_id": "GOAL-001",
+      "project_id": "P-001",
+      "department_id": "G-004",
       "title": "订单从查询到提交在一个页面完成",
       "status": "risk",
       "health": "risk",
@@ -3522,19 +3516,19 @@
       },
       "criteria": [
         {
-          "criterion_id": "g1-criterion-1",
+          "criterion_id": "GOAL-001-criterion-1",
           "text": "查询订单不离开当前页",
           "state": "ok",
           "evidence": "订单查询接口、订单列表分页都已核验"
         },
         {
-          "criterion_id": "g1-criterion-2",
+          "criterion_id": "GOAL-001-criterion-2",
           "text": "提交失败时保留已填内容",
           "state": "wait",
           "evidence": "接口第 3 版在等复核，页面联调在等接口"
         },
         {
-          "criterion_id": "g1-criterion-3",
+          "criterion_id": "GOAL-001-criterion-3",
           "text": "1000 并发下查询 P95 低于 200 毫秒",
           "state": "ok",
           "evidence": "压测脚本已核验，结果 168 毫秒"
@@ -3558,9 +3552,9 @@
       ]
     },
     {
-      "goal_id": "g2",
-      "project_id": "notify",
-      "department_id": "engineering",
+      "goal_id": "GOAL-002",
+      "project_id": "P-002",
+      "department_id": "G-004",
       "title": "通知统一到一个服务",
       "status": "ok",
       "health": "ok",
@@ -3571,19 +3565,19 @@
       },
       "criteria": [
         {
-          "criterion_id": "g2-criterion-1",
+          "criterion_id": "GOAL-002-criterion-1",
           "text": "三类通知走同一个服务",
           "state": "ok",
           "evidence": "短信、邮件、站内信三个通道都已核验"
         },
         {
-          "criterion_id": "g2-criterion-2",
+          "criterion_id": "GOAL-002-criterion-2",
           "text": "失败的通知可以重发",
           "state": "ok",
           "evidence": "失败重发已核验"
         },
         {
-          "criterion_id": "g2-criterion-3",
+          "criterion_id": "GOAL-002-criterion-3",
           "text": "试运行两周，发送成功率不低于 99.5%",
           "state": "wait",
           "evidence": "第一周 99.8%，第二周进行中"
@@ -3601,9 +3595,9 @@
       ]
     },
     {
-      "goal_id": "g3",
-      "project_id": "onboard",
-      "department_id": "customer-delivery",
+      "goal_id": "GOAL-003",
+      "project_id": "P-003",
+      "department_id": "G-005",
       "title": "新客户两周内接入",
       "status": "not_updated",
       "health": "none",
@@ -3614,13 +3608,13 @@
       },
       "criteria": [
         {
-          "criterion_id": "g3-criterion-1",
+          "criterion_id": "GOAL-003-criterion-1",
           "text": "接入步骤不超过 5 步",
           "state": "wait",
           "evidence": "方案通过了复核，还没有在甲方的环境里走通"
         },
         {
-          "criterion_id": "g3-criterion-2",
+          "criterion_id": "GOAL-003-criterion-2",
           "text": "接入后一天内能下第一单",
           "state": "none",
           "evidence": "还没有开始"
@@ -3639,15 +3633,15 @@
   ],
   "documents": [
     {
-      "document_id": "d1",
-      "project_id": "orders",
-      "path": "docs/orders/订单协作平台的目标.md",
+      "document_id": "DOC-001",
+      "project_id": "P-001",
+      "path": "docs/P-001/DOC-001.md",
       "name": "订单协作平台的目标",
       "summary": "目标与成功标准",
       "body": "目标\n\n订单从查询到提交在一个页面完成，客服不用再在三个页面之间来回切换。\n\n成功标准\n\n• 查询订单不离开当前页\n\n• 提交失败时保留已填内容\n\n• 1000 并发下查询 P95 低于 200 毫秒\n\n这一期不做\n\n• 订单的批量修改\n\n• 移动端页面\n",
       "sha256": "58dc0f9c4e5930d100a944c6dd8b4349e095be88ce50cb55d86725db6e8ecc4b",
       "byte_length": 310,
-      "author_person_id": "zhou-ning",
+      "author_person_id": "M-001",
       "recorded_at_unix_ms": 1793620800000,
       "used_task_ids": [
         "T-101",
@@ -3667,15 +3661,15 @@
       ]
     },
     {
-      "document_id": "d2",
-      "project_id": "orders",
-      "path": "docs/orders/接口约定.md",
+      "document_id": "DOC-002",
+      "project_id": "P-001",
+      "path": "docs/P-001/DOC-002.md",
       "name": "接口约定",
       "summary": "11 月 12 日改过",
       "body": "提交订单\n\n提交成功返回订单编号。提交失败返回错误码，外加一句给用户看的原因。\n\n第 3 版改了什么\n\n• 失败时多返回一句可读的原因\n\n• 同一请求重复提交，返回第一次的结果，不会重复下单\n\n版本\n\n下游只能采用通过复核的那一版。现在通过复核的是第 2 版，第 3 版在等复核。\n",
       "sha256": "a75917496775cf8c0f12c577b82d3f389055c7913acb000259fe159438b22142",
       "byte_length": 375,
-      "author_person_id": "chen-yu",
+      "author_person_id": "M-003",
       "recorded_at_unix_ms": 1794484800000,
       "used_task_ids": [
         "T-102",
@@ -3684,15 +3678,15 @@
       ]
     },
     {
-      "document_id": "d3",
-      "project_id": "orders",
-      "path": "docs/orders/验收清单.md",
+      "document_id": "DOC-003",
+      "project_id": "P-001",
+      "path": "docs/P-001/DOC-003.md",
       "name": "验收清单",
       "summary": "8 个场景",
       "body": "8 个场景\n\n• 按订单编号查询\n\n• 按手机号查询\n\n• 查询没有结果\n\n• 翻页后保留查询条件\n\n• 提交成功\n\n• 提交失败并保留已填内容\n\n• 连点提交按钮\n\n• 登录过期后回到原来的页面\n",
       "sha256": "bcbd3468d14e77b2e8a7d6852aac606b2477268105a095ec7403f10bd4c3cfc8",
       "byte_length": 243,
-      "author_person_id": "xu-ning",
+      "author_person_id": "M-004",
       "recorded_at_unix_ms": 1793966400000,
       "used_task_ids": [
         "T-106"
@@ -3700,15 +3694,15 @@
       "content_work_id": "T-106"
     },
     {
-      "document_id": "d4",
-      "project_id": "orders",
-      "path": "docs/orders/甲方的导出字段清单.md",
+      "document_id": "DOC-004",
+      "project_id": "P-001",
+      "path": "docs/P-001/DOC-004.md",
       "name": "甲方的导出字段清单",
       "summary": "还没有确认",
       "body": "这份清单 11 月 14 日发给了甲方，还没有收到确认。\n\n打算导出的字段\n\n• 订单编号、下单时间、客户名称\n\n• 商品、数量、金额\n\n• 订单状态、最后更新时间\n\n还没定的\n\n• 要不要导出客户手机号\n",
       "sha256": "dfe46abe4f9f5af33524290937a2748915d7123315013d45524781c0b968c754",
       "byte_length": 259,
-      "author_person_id": "lin-yue",
+      "author_person_id": "M-002",
       "recorded_at_unix_ms": 1794657600000,
       "used_task_ids": [
         "T-111"
@@ -3716,15 +3710,15 @@
       "content_work_id": "T-111"
     },
     {
-      "document_id": "d5",
-      "project_id": "notify",
-      "path": "docs/notify/通知服务的目标.md",
+      "document_id": "DOC-005",
+      "project_id": "P-002",
+      "path": "docs/P-002/DOC-005.md",
       "name": "通知服务的目标",
       "summary": "目标与成功标准",
       "body": "目标\n\n短信、邮件、站内信三类通知统一到一个服务，不再各写各的。\n\n成功标准\n\n• 三类通知走同一个服务\n\n• 失败的通知可以重发\n\n• 试运行两周，发送成功率不低于 99.5%\n",
       "sha256": "db571f7a3bc2780a1680cf361b9b6e0f9425a5e7369bcd8b679a06cda592a127",
       "byte_length": 230,
-      "author_person_id": "wu-tong",
+      "author_person_id": "M-005",
       "recorded_at_unix_ms": 1791806400000,
       "used_task_ids": [
         "T-201",
@@ -3738,15 +3732,15 @@
       ]
     },
     {
-      "document_id": "d6",
-      "project_id": "notify",
-      "path": "docs/notify/通道接入约定.md",
+      "document_id": "DOC-006",
+      "project_id": "P-002",
+      "path": "docs/P-002/DOC-006.md",
       "name": "通道接入约定",
       "summary": "三个通道共用",
       "body": "接入一个通道要做的\n\n• 改走统一发送接口\n\n• 接入前先核对接口版本\n\n• 失败的通知交给统一的重发，不自己重试\n",
       "sha256": "a00047e954c60c4fd43406ee31c18f73d76de529abb11ddc7655a14ba89011bc",
       "byte_length": 154,
-      "author_person_id": "zhao-heng",
+      "author_person_id": "M-006",
       "recorded_at_unix_ms": 1792670400000,
       "used_task_ids": [
         "T-203",
@@ -3755,15 +3749,15 @@
       ]
     },
     {
-      "document_id": "d7",
-      "project_id": "notify",
-      "path": "docs/notify/试运行观察记录.md",
+      "document_id": "DOC-007",
+      "project_id": "P-002",
+      "path": "docs/P-002/DOC-007.md",
       "name": "试运行观察记录",
       "summary": "第一周",
       "body": "第一周\n\n• 发送 41,200 条，成功率 99.8%\n\n• 失败 82 条，全部重发成功\n\n• 逐条核对，没有丢失的通知\n\n第二周\n\n进行中，11 月 23 日结束。\n",
       "sha256": "937a1f68880ebbf14944a54e2110d80c63ef8264b6e6eb32d4d81341f95169e4",
       "byte_length": 180,
-      "author_person_id": "zhao-heng",
+      "author_person_id": "M-006",
       "recorded_at_unix_ms": 1794830400000,
       "used_task_ids": [
         "T-206"
@@ -3771,15 +3765,15 @@
       "content_work_id": "T-206"
     },
     {
-      "document_id": "d8",
-      "project_id": "onboard",
-      "path": "docs/onboard/接入流程现状.md",
+      "document_id": "DOC-008",
+      "project_id": "P-003",
+      "path": "docs/P-003/DOC-008.md",
       "name": "接入流程现状",
       "summary": "9 步",
       "body": "现在接入一个新客户一共 9 步，其中 4 步要客户自己做，平均用 5 周。\n\n最慢的三步\n\n• 开通测试环境账号：平均 8 天\n\n• 客户自己填配置表：平均 6 天\n\n• 首单演练排期：平均 5 天\n",
       "sha256": "5c02f899bc3add71db20c506b501c7ab37841a2cb11e3078f999dd49901a7c2d",
       "byte_length": 240,
-      "author_person_id": "he-chuan",
+      "author_person_id": "M-008",
       "recorded_at_unix_ms": 1793707200000,
       "used_task_ids": [
         "T-302"
@@ -3787,15 +3781,15 @@
       "content_work_id": "T-302"
     },
     {
-      "document_id": "d9",
-      "project_id": "onboard",
-      "path": "docs/onboard/精简方案.md",
+      "document_id": "DOC-009",
+      "project_id": "P-003",
+      "path": "docs/P-003/DOC-009.md",
       "name": "精简方案",
       "summary": "9 步减到 5 步",
       "body": "5 步\n\n• 签约当天开通测试环境账号\n\n• 客户按向导填 1 张配置表\n\n• 系统自动校验配置\n\n• 在测试环境走通一次\n\n• 首单演练\n\n前提\n\n要在甲方的测试环境里实际走通一次，才能确认 5 步够用。\n",
       "sha256": "37ba8b1aa19abd56c5c0d2c79ead417b4ae418c8925390fd43f6df7e99b86003",
       "byte_length": 256,
-      "author_person_id": "he-chuan",
+      "author_person_id": "M-008",
       "recorded_at_unix_ms": 1793966400000,
       "used_task_ids": [
         "T-303",
@@ -3806,8 +3800,8 @@
   ],
   "updates": [
     {
-      "update_id": "o47",
-      "project_id": "orders",
+      "update_id": "U-001",
+      "project_id": "P-001",
       "period_kind": "week",
       "period_key": "2026-W47",
       "period_label": "第 47 周",
@@ -3815,13 +3809,13 @@
       "ends_on": "2026-11-22",
       "status": "risk",
       "summary": "接口第 3 版的复核拖了两天，页面联调在等。",
-      "author_person_id": "zhou-ning",
+      "author_person_id": "M-001",
       "recorded_at_unix_ms": 1795080600000,
       "version": "1",
       "supersedes_update_id": null,
       "current": true,
       "fact_snapshot": {
-        "fact_snapshot_ref": "facts-o47",
+        "fact_snapshot_ref": "F-001",
         "facts": [
           {
             "label": "通过核验",
@@ -3871,8 +3865,8 @@
       }
     },
     {
-      "update_id": "o46",
-      "project_id": "orders",
+      "update_id": "U-002",
+      "project_id": "P-001",
       "period_kind": "week",
       "period_key": "2026-W46",
       "period_label": "第 46 周",
@@ -3880,13 +3874,13 @@
       "ends_on": "2026-11-15",
       "status": "ok",
       "summary": "查询接口加缓存层后压测达标，按计划推进。",
-      "author_person_id": "zhou-ning",
+      "author_person_id": "M-001",
       "recorded_at_unix_ms": 1794744000000,
       "version": "1",
       "supersedes_update_id": null,
       "current": true,
       "fact_snapshot": {
-        "fact_snapshot_ref": "facts-o46",
+        "fact_snapshot_ref": "F-002",
         "facts": [
           {
             "label": "通过核验",
@@ -3909,7 +3903,7 @@
             "label": "做出的决定",
             "detail": "查询接口要加缓存层",
             "item_ids": [
-              "decision-cache"
+              "Q-005"
             ],
             "value_text": null
           },
@@ -3925,8 +3919,8 @@
       }
     },
     {
-      "update_id": "o45",
-      "project_id": "orders",
+      "update_id": "U-003",
+      "project_id": "P-001",
       "period_kind": "week",
       "period_key": "2026-W45",
       "period_label": "第 45 周",
@@ -3934,19 +3928,19 @@
       "ends_on": "2026-11-08",
       "status": "ok",
       "summary": "完成拆解：14 件任务，其中 8 件进了本期承诺。",
-      "author_person_id": "zhou-ning",
+      "author_person_id": "M-001",
       "recorded_at_unix_ms": 1794139200000,
       "version": "1",
       "supersedes_update_id": null,
       "current": true,
       "fact_snapshot": {
-        "fact_snapshot_ref": "facts-o45",
+        "fact_snapshot_ref": "F-003",
         "facts": [
           {
             "label": "批准的拆解",
             "detail": "14 件任务，3 条工作线",
             "item_ids": [
-              "plan-orders-w45"
+              "PLAN-001"
             ],
             "value_text": null
           },
@@ -3960,8 +3954,8 @@
       }
     },
     {
-      "update_id": "n47",
-      "project_id": "notify",
+      "update_id": "U-004",
+      "project_id": "P-002",
       "period_kind": "week",
       "period_key": "2026-W47",
       "period_label": "第 47 周",
@@ -3969,13 +3963,13 @@
       "ends_on": "2026-11-22",
       "status": "ok",
       "summary": "试运行第二周，没有新问题。",
-      "author_person_id": "wu-tong",
+      "author_person_id": "M-005",
       "recorded_at_unix_ms": 1794830400000,
       "version": "1",
       "supersedes_update_id": null,
       "current": true,
       "fact_snapshot": {
-        "fact_snapshot_ref": "facts-n47",
+        "fact_snapshot_ref": "F-004",
         "facts": [
           {
             "label": "通过核验",
@@ -3999,8 +3993,8 @@
       }
     },
     {
-      "update_id": "n46",
-      "project_id": "notify",
+      "update_id": "U-005",
+      "project_id": "P-002",
       "period_kind": "week",
       "period_key": "2026-W46",
       "period_label": "第 46 周",
@@ -4008,13 +4002,13 @@
       "ends_on": "2026-11-15",
       "status": "ok",
       "summary": "试运行第一周，发送成功率 99.8%。",
-      "author_person_id": "wu-tong",
+      "author_person_id": "M-005",
       "recorded_at_unix_ms": 1794571200000,
       "version": "1",
       "supersedes_update_id": null,
       "current": true,
       "fact_snapshot": {
-        "fact_snapshot_ref": "facts-n46",
+        "fact_snapshot_ref": "F-005",
         "facts": [
           {
             "label": "通过核验",
@@ -4028,7 +4022,7 @@
             "label": "做出的决定",
             "detail": "旧通道保留到试运行结束",
             "item_ids": [
-              "decision-notify-old-channel"
+              "Q-006"
             ],
             "value_text": null
           }
@@ -4036,8 +4030,8 @@
       }
     },
     {
-      "update_id": "n45",
-      "project_id": "notify",
+      "update_id": "U-006",
+      "project_id": "P-002",
       "period_kind": "week",
       "period_key": "2026-W45",
       "period_label": "第 45 周",
@@ -4045,13 +4039,13 @@
       "ends_on": "2026-11-08",
       "status": "ok",
       "summary": "三个通道都已接入并通过核验。",
-      "author_person_id": "wu-tong",
+      "author_person_id": "M-005",
       "recorded_at_unix_ms": 1793966400000,
       "version": "1",
       "supersedes_update_id": null,
       "current": true,
       "fact_snapshot": {
-        "fact_snapshot_ref": "facts-n45",
+        "fact_snapshot_ref": "F-006",
         "facts": [
           {
             "label": "通过核验",
@@ -4067,8 +4061,8 @@
       }
     },
     {
-      "update_id": "b45",
-      "project_id": "onboard",
+      "update_id": "U-007",
+      "project_id": "P-003",
       "period_kind": "week",
       "period_key": "2026-W45",
       "period_label": "第 45 周",
@@ -4076,13 +4070,13 @@
       "ends_on": "2026-11-08",
       "status": "ok",
       "summary": "精简方案通过复核，下一步要在甲方的环境里走通。",
-      "author_person_id": "zheng-lan",
+      "author_person_id": "M-007",
       "recorded_at_unix_ms": 1794052800000,
       "version": "1",
       "supersedes_update_id": null,
       "current": true,
       "fact_snapshot": {
-        "fact_snapshot_ref": "facts-b45",
+        "fact_snapshot_ref": "F-007",
         "facts": [
           {
             "label": "通过核验",
@@ -4105,8 +4099,8 @@
       }
     },
     {
-      "update_id": "b44",
-      "project_id": "onboard",
+      "update_id": "U-008",
+      "project_id": "P-003",
       "period_kind": "week",
       "period_key": "2026-W44",
       "period_label": "第 44 周",
@@ -4114,19 +4108,19 @@
       "ends_on": "2026-11-01",
       "status": "ok",
       "summary": "完成拆解：7 件任务。",
-      "author_person_id": "zheng-lan",
+      "author_person_id": "M-007",
       "recorded_at_unix_ms": 1793361600000,
       "version": "1",
       "supersedes_update_id": null,
       "current": true,
       "fact_snapshot": {
-        "fact_snapshot_ref": "facts-b44",
+        "fact_snapshot_ref": "F-008",
         "facts": [
           {
             "label": "批准的拆解",
             "detail": "7 件任务，2 条工作线",
             "item_ids": [
-              "plan-onboard-w44"
+              "PLAN-002"
             ],
             "value_text": null
           }
@@ -4136,35 +4130,11 @@
   ],
   "decisions": [
     {
-      "decision_id": "c1",
-      "request_key": "request-c1",
-      "project_id": "orders",
-      "work_id": "T-102",
-      "workstream_id": "orders-be",
-      "prototype_task_id": null,
-      "question": "订单协作平台能不能多一位复核人",
-      "impact": "订单协作平台本周的承诺有风险",
-      "state": "open",
-      "current": true,
-      "baseline_matches_current": true,
-      "decision_version": "1",
-      "requester_person_id": "zhou-ning",
-      "allowed_responder_person_ids": [
-        "department-lead"
-      ],
-      "allowed_responder_display_names": [
-        "部门负责人"
-      ],
-      "created_at_unix_ms": 1795003200000,
-      "reply": null,
-      "resolution": null
-    },
-    {
-      "decision_id": "a1",
-      "request_key": "request-a1",
-      "project_id": "orders",
+      "decision_id": "Q-001",
+      "request_key": "RQ-001",
+      "project_id": "P-001",
       "work_id": "T-104",
-      "workstream_id": "orders-fe",
+      "workstream_id": "WS-001",
       "prototype_task_id": "T-104",
       "question": "空状态要不要显示引导文案",
       "impact": "后面压着 3 件：空状态检查、订单页面联调的收尾、业务验收",
@@ -4172,9 +4142,9 @@
       "current": true,
       "baseline_matches_current": true,
       "decision_version": "1",
-      "requester_person_id": "lin-yue",
+      "requester_person_id": "M-002",
       "allowed_responder_person_ids": [
-        "lin-yue"
+        "M-002"
       ],
       "allowed_responder_display_names": [
         "林悦"
@@ -4184,11 +4154,11 @@
       "resolution": null
     },
     {
-      "decision_id": "b2",
-      "request_key": "request-b2",
-      "project_id": "orders",
+      "decision_id": "Q-002",
+      "request_key": "RQ-002",
+      "project_id": "P-001",
       "work_id": "T-105",
-      "workstream_id": "orders-be",
+      "workstream_id": "WS-002",
       "prototype_task_id": "T-105",
       "question": "登录异常处理要不要返工",
       "impact": "不决定的话，这件任务一直停在“复核退回”",
@@ -4196,9 +4166,9 @@
       "current": true,
       "baseline_matches_current": true,
       "decision_version": "1",
-      "requester_person_id": "chen-yu",
+      "requester_person_id": "M-003",
       "allowed_responder_person_ids": [
-        "zhou-ning"
+        "M-001"
       ],
       "allowed_responder_display_names": [
         "周宁"
@@ -4208,35 +4178,11 @@
       "resolution": null
     },
     {
-      "decision_id": "orders-decision-4",
-      "request_key": "request-orders-decision-4",
-      "project_id": "orders",
-      "work_id": "T-111",
-      "workstream_id": "orders-fe",
-      "prototype_task_id": "T-111",
-      "question": "导出字段以哪份清单为准",
-      "impact": "回答后，相关任务才能按这个事实继续。",
-      "state": "open",
-      "current": true,
-      "baseline_matches_current": true,
-      "decision_version": "1",
-      "requester_person_id": "lin-yue",
-      "allowed_responder_person_ids": [
-        "external-client"
-      ],
-      "allowed_responder_display_names": [
-        "甲方"
-      ],
-      "created_at_unix_ms": 1794657600000,
-      "reply": null,
-      "resolution": null
-    },
-    {
-      "decision_id": "decision-cache",
-      "request_key": "request-decision-cache",
-      "project_id": "orders",
+      "decision_id": "Q-005",
+      "request_key": "RQ-005",
+      "project_id": "P-001",
       "work_id": "T-101",
-      "workstream_id": "orders-be",
+      "workstream_id": "WS-002",
       "prototype_task_id": "T-101",
       "question": "查询接口要不要加缓存层",
       "impact": "回答后，相关任务才能按这个事实继续。",
@@ -4244,9 +4190,9 @@
       "current": true,
       "baseline_matches_current": true,
       "decision_version": "1",
-      "requester_person_id": "chen-yu",
+      "requester_person_id": "M-003",
       "allowed_responder_person_ids": [
-        "lin-yue"
+        "M-002"
       ],
       "allowed_responder_display_names": [
         "林悦"
@@ -4255,17 +4201,17 @@
       "reply": "要",
       "resolution": {
         "kind": "replied",
-        "person_id": "lin-yue",
+        "person_id": "M-002",
         "display_name": "林悦",
         "at_unix_ms": 1794574800000
       }
     },
     {
-      "decision_id": "decision-notify-old-channel",
-      "request_key": "request-decision-notify-old-channel",
-      "project_id": "notify",
+      "decision_id": "Q-006",
+      "request_key": "RQ-006",
+      "project_id": "P-002",
       "work_id": "T-206",
-      "workstream_id": "notify-svc",
+      "workstream_id": "WS-004",
       "prototype_task_id": "T-206",
       "question": "试运行期间要不要保留旧通道",
       "impact": "回答后，相关任务才能按这个事实继续。",
@@ -4273,9 +4219,9 @@
       "current": true,
       "baseline_matches_current": true,
       "decision_version": "1",
-      "requester_person_id": "zhao-heng",
+      "requester_person_id": "M-006",
       "allowed_responder_person_ids": [
-        "wu-tong"
+        "M-005"
       ],
       "allowed_responder_display_names": [
         "吴桐"
@@ -4284,41 +4230,17 @@
       "reply": "保留到试运行结束",
       "resolution": {
         "kind": "replied",
-        "person_id": "wu-tong",
+        "person_id": "M-005",
         "display_name": "吴桐",
         "at_unix_ms": 1794229200000
       }
     },
     {
-      "decision_id": "e1",
-      "request_key": "request-e1",
-      "project_id": "onboard",
-      "work_id": "T-303",
-      "workstream_id": "onboard-env",
-      "prototype_task_id": "T-303",
-      "question": "目标先暂停，还是请最高层出面找甲方",
-      "impact": "不回答的话，项目会一直停着，目标一直显示“没有更新”",
-      "state": "open",
-      "current": true,
-      "baseline_matches_current": true,
-      "decision_version": "1",
-      "requester_person_id": "zheng-lan",
-      "allowed_responder_person_ids": [
-        "executive-lead"
-      ],
-      "allowed_responder_display_names": [
-        "最高层"
-      ],
-      "created_at_unix_ms": 1794312000000,
-      "reply": null,
-      "resolution": null
-    },
-    {
-      "decision_id": "decision-onboard-entry",
-      "request_key": "request-decision-onboard-entry",
-      "project_id": "onboard",
+      "decision_id": "Q-008",
+      "request_key": "RQ-008",
+      "project_id": "P-003",
       "work_id": "T-304",
-      "workstream_id": "onboard-flow",
+      "workstream_id": "WS-007",
       "prototype_task_id": "T-304",
       "question": "接入向导放在哪个入口",
       "impact": "回答后，相关任务才能按这个事实继续。",
@@ -4326,9 +4248,9 @@
       "current": true,
       "baseline_matches_current": true,
       "decision_version": "1",
-      "requester_person_id": "he-chuan",
+      "requester_person_id": "M-008",
       "allowed_responder_person_ids": [
-        "zheng-lan"
+        "M-007"
       ],
       "allowed_responder_display_names": [
         "郑岚"
@@ -4337,7 +4259,7 @@
       "reply": "放在首页",
       "resolution": {
         "kind": "replied",
-        "person_id": "zheng-lan",
+        "person_id": "M-007",
         "display_name": "郑岚",
         "at_unix_ms": 1793797200000
       }
@@ -4345,10 +4267,10 @@
   ],
   "handoffs": [
     {
-      "handoff_id": "handoff-t-112",
-      "project_id": "orders",
+      "handoff_id": "H-001",
+      "project_id": "P-001",
       "work_id": "T-112",
-      "workstream_id": "orders-fe",
+      "workstream_id": "WS-001",
       "kind": "responsibility",
       "status": "proposed",
       "pending": true,
@@ -4356,51 +4278,51 @@
       "group": "pending",
       "effective_status": "proposed",
       "version": "1",
-      "from_person_id": "zhou-ning",
-      "to_person_id": "lin-yue",
+      "from_person_id": "M-001",
+      "to_person_id": "M-002",
       "from_display_name": "周宁",
       "to_display_name": "林悦",
       "created_at_unix_ms": 1795081200000,
       "updated_at_unix_ms": 1795081200000,
       "expires_at_unix_ms": 1795176000000,
-      "pending_id": "a3"
+      "pending_id": "A-003"
     }
   ],
   "planning_candidates": [
     {
-      "candidate_id": "orders-recovery-candidate",
-      "project_id": "orders",
+      "candidate_id": "PC-001",
+      "project_id": "P-001",
       "title": "完善异常恢复",
       "state": "drafting",
       "draft_revision": 1,
-      "author_person_id": "chen-yu",
+      "author_person_id": "M-003",
       "author_display_name": "陈宇的 Agent",
       "updated_at_unix_ms": 1795079400000,
       "workstream_ids": [
-        "orders-be",
-        "orders-qa"
+        "WS-002",
+        "WS-003"
       ],
       "items": [
         {
-          "work_id": "orders-recovery-1",
+          "work_id": "PW-001",
           "title": "网络中断后恢复未提交的表单",
           "workstream_id": "orders-be",
           "kind": "实现"
         },
         {
-          "work_id": "orders-recovery-2",
+          "work_id": "PW-002",
           "title": "提交超时后的自动重试",
           "workstream_id": "orders-be",
           "kind": "实现"
         },
         {
-          "work_id": "orders-recovery-3",
+          "work_id": "PW-003",
           "title": "重试几次由谁来定",
           "workstream_id": "orders-be",
           "kind": "待决定"
         },
         {
-          "work_id": "orders-recovery-4",
+          "work_id": "PW-004",
           "title": "异常恢复的验收场景",
           "workstream_id": "orders-qa",
           "kind": "文档"
@@ -4410,16 +4332,16 @@
         "matches_current": true,
         "source_manifest_digest": "83b07441e51d3be030d6364fb45d097257934c5c89d4b34e59a3fc369e8a5234"
       },
-      "pending_id": "b1"
+      "pending_id": "A-004"
     }
   ],
   "activity": [
     {
-      "id": "activity-orders-01",
-      "project_id": "orders",
+      "id": "EV-001",
+      "project_id": "P-001",
       "work_id": "T-103",
       "action": "execution.report",
-      "actor_id": "lin-yue-agent",
+      "actor_id": "M-002-agent",
       "actor_display_name": "Claude 桌面（林悦）",
       "client_id": null,
       "result": "committed",
@@ -4429,11 +4351,11 @@
       "kind": "报告"
     },
     {
-      "id": "activity-orders-02",
-      "project_id": "orders",
+      "id": "EV-002",
+      "project_id": "P-001",
       "work_id": "T-112",
       "action": "task.assign",
-      "actor_id": "zhou-ning-agent",
+      "actor_id": "M-001-agent",
       "actor_display_name": "周宁（通过 Claude 桌面）",
       "client_id": null,
       "result": "committed",
@@ -4443,11 +4365,11 @@
       "kind": "派工"
     },
     {
-      "id": "activity-orders-03",
-      "project_id": "orders",
+      "id": "EV-003",
+      "project_id": "P-001",
       "work_id": null,
       "action": "update.record",
-      "actor_id": "zhou-ning-agent",
+      "actor_id": "M-001-agent",
       "actor_display_name": "周宁（通过 Claude 桌面）",
       "client_id": null,
       "result": "committed",
@@ -4457,11 +4379,11 @@
       "kind": "更新"
     },
     {
-      "id": "activity-orders-04",
-      "project_id": "orders",
+      "id": "EV-004",
+      "project_id": "P-001",
       "work_id": null,
       "action": "planning.propose",
-      "actor_id": "chen-yu-agent",
+      "actor_id": "M-003-agent",
       "actor_display_name": "陈宇的 Agent",
       "client_id": null,
       "result": "committed",
@@ -4471,11 +4393,11 @@
       "kind": "拆解"
     },
     {
-      "id": "activity-orders-05",
-      "project_id": "orders",
+      "id": "EV-005",
+      "project_id": "P-001",
       "work_id": null,
       "action": "decision.request",
-      "actor_id": "zhou-ning-agent",
+      "actor_id": "M-001-agent",
       "actor_display_name": "周宁（通过 Claude 桌面）",
       "client_id": null,
       "result": "committed",
@@ -4485,11 +4407,11 @@
       "kind": "决定"
     },
     {
-      "id": "activity-orders-06",
-      "project_id": "orders",
+      "id": "EV-006",
+      "project_id": "P-001",
       "work_id": "T-105",
       "action": "decision.request",
-      "actor_id": "xu-ning-agent",
+      "actor_id": "M-004-agent",
       "actor_display_name": "许宁",
       "client_id": null,
       "result": "committed",
@@ -4499,11 +4421,11 @@
       "kind": "决定"
     },
     {
-      "id": "activity-orders-07",
-      "project_id": "orders",
+      "id": "EV-007",
+      "project_id": "P-001",
       "work_id": "T-105",
       "action": "review.decide",
-      "actor_id": "xu-ning-agent",
+      "actor_id": "M-004-agent",
       "actor_display_name": "许宁",
       "client_id": null,
       "result": "committed",
@@ -4513,11 +4435,11 @@
       "kind": "复核"
     },
     {
-      "id": "activity-orders-08",
-      "project_id": "orders",
+      "id": "EV-008",
+      "project_id": "P-001",
       "work_id": "T-102",
       "action": "delivery.submit_and_request_review",
-      "actor_id": "chen-yu-agent",
+      "actor_id": "M-003-agent",
       "actor_display_name": "Codex（陈宇）",
       "client_id": null,
       "result": "committed",
@@ -4527,11 +4449,11 @@
       "kind": "交付"
     },
     {
-      "id": "activity-orders-09",
-      "project_id": "orders",
+      "id": "EV-009",
+      "project_id": "P-001",
       "work_id": "T-104",
       "action": "decision.request",
-      "actor_id": "lin-yue-agent",
+      "actor_id": "M-002-agent",
       "actor_display_name": "Codex（林悦）",
       "client_id": null,
       "result": "committed",
@@ -4541,11 +4463,11 @@
       "kind": "决定"
     },
     {
-      "id": "activity-orders-10",
-      "project_id": "orders",
+      "id": "EV-010",
+      "project_id": "P-001",
       "work_id": "T-108",
       "action": "review.decide",
-      "actor_id": "xu-ning-agent",
+      "actor_id": "M-004-agent",
       "actor_display_name": "许宁",
       "client_id": null,
       "result": "committed",
@@ -4555,11 +4477,11 @@
       "kind": "复核"
     },
     {
-      "id": "activity-orders-11",
-      "project_id": "orders",
+      "id": "EV-011",
+      "project_id": "P-001",
       "work_id": "T-103",
       "action": "task.assign",
-      "actor_id": "lin-yue-agent",
+      "actor_id": "M-002-agent",
       "actor_display_name": "林悦",
       "client_id": null,
       "result": "committed",
@@ -4569,11 +4491,11 @@
       "kind": "派工"
     },
     {
-      "id": "activity-orders-12",
-      "project_id": "orders",
+      "id": "EV-012",
+      "project_id": "P-001",
       "work_id": "T-107",
       "action": "review.decide",
-      "actor_id": "xu-ning-agent",
+      "actor_id": "M-004-agent",
       "actor_display_name": "许宁",
       "client_id": null,
       "result": "committed",
@@ -4583,11 +4505,11 @@
       "kind": "复核"
     },
     {
-      "id": "activity-orders-13",
-      "project_id": "orders",
+      "id": "EV-013",
+      "project_id": "P-001",
       "work_id": "T-101",
       "action": "review.decide",
-      "actor_id": "xu-ning-agent",
+      "actor_id": "M-004-agent",
       "actor_display_name": "许宁",
       "client_id": null,
       "result": "committed",
@@ -4597,11 +4519,11 @@
       "kind": "复核"
     },
     {
-      "id": "activity-notify-14",
-      "project_id": "notify",
+      "id": "EV-014",
+      "project_id": "P-002",
       "work_id": "T-206",
       "action": "execution.report",
-      "actor_id": "zhao-heng-agent",
+      "actor_id": "M-006-agent",
       "actor_display_name": "Codex（赵衡）",
       "client_id": null,
       "result": "committed",
@@ -4611,11 +4533,11 @@
       "kind": "报告"
     },
     {
-      "id": "activity-notify-15",
-      "project_id": "notify",
+      "id": "EV-015",
+      "project_id": "P-002",
       "work_id": null,
       "action": "update.record",
-      "actor_id": "wu-tong-agent",
+      "actor_id": "M-005-agent",
       "actor_display_name": "吴桐（通过 Claude 桌面）",
       "client_id": null,
       "result": "committed",
@@ -4625,11 +4547,11 @@
       "kind": "更新"
     },
     {
-      "id": "activity-notify-16",
-      "project_id": "notify",
+      "id": "EV-016",
+      "project_id": "P-002",
       "work_id": "T-207",
       "action": "review.decide",
-      "actor_id": "xu-ning-agent",
+      "actor_id": "M-004-agent",
       "actor_display_name": "许宁",
       "client_id": null,
       "result": "committed",
@@ -4639,11 +4561,11 @@
       "kind": "复核"
     },
     {
-      "id": "activity-notify-17",
-      "project_id": "notify",
+      "id": "EV-017",
+      "project_id": "P-002",
       "work_id": "T-206",
       "action": "decision.request",
-      "actor_id": "wu-tong-agent",
+      "actor_id": "M-005-agent",
       "actor_display_name": "吴桐",
       "client_id": null,
       "result": "committed",
@@ -4653,11 +4575,11 @@
       "kind": "决定"
     },
     {
-      "id": "activity-notify-18",
-      "project_id": "notify",
+      "id": "EV-018",
+      "project_id": "P-002",
       "work_id": "T-205",
       "action": "review.decide",
-      "actor_id": "wu-tong-agent",
+      "actor_id": "M-005-agent",
       "actor_display_name": "吴桐",
       "client_id": null,
       "result": "committed",
@@ -4667,11 +4589,11 @@
       "kind": "复核"
     },
     {
-      "id": "activity-onboard-19",
-      "project_id": "onboard",
+      "id": "EV-019",
+      "project_id": "P-003",
       "work_id": "T-303",
       "action": "decision.request",
-      "actor_id": "zheng-lan-agent",
+      "actor_id": "M-007-agent",
       "actor_display_name": "郑岚（通过 Claude 桌面）",
       "client_id": null,
       "result": "committed",
@@ -4681,11 +4603,11 @@
       "kind": "决定"
     },
     {
-      "id": "activity-onboard-20",
-      "project_id": "onboard",
+      "id": "EV-020",
+      "project_id": "P-003",
       "work_id": "T-303",
       "action": "execution.report",
-      "actor_id": "he-chuan-agent",
+      "actor_id": "M-008-agent",
       "actor_display_name": "何川",
       "client_id": null,
       "result": "committed",
@@ -4695,11 +4617,11 @@
       "kind": "报告"
     },
     {
-      "id": "activity-onboard-21",
-      "project_id": "onboard",
+      "id": "EV-021",
+      "project_id": "P-003",
       "work_id": null,
       "action": "update.record",
-      "actor_id": "zheng-lan-agent",
+      "actor_id": "M-007-agent",
       "actor_display_name": "郑岚（通过 Claude 桌面）",
       "client_id": null,
       "result": "committed",
@@ -4709,11 +4631,11 @@
       "kind": "更新"
     },
     {
-      "id": "activity-onboard-22",
-      "project_id": "onboard",
+      "id": "EV-022",
+      "project_id": "P-003",
       "work_id": "T-302",
       "action": "review.decide",
-      "actor_id": "zheng-lan-agent",
+      "actor_id": "M-007-agent",
       "actor_display_name": "郑岚",
       "client_id": null,
       "result": "committed",
@@ -4723,11 +4645,11 @@
       "kind": "复核"
     },
     {
-      "id": "activity-onboard-23",
-      "project_id": "onboard",
+      "id": "EV-023",
+      "project_id": "P-003",
       "work_id": "T-304",
       "action": "execution.report",
-      "actor_id": "he-chuan-agent",
+      "actor_id": "M-008-agent",
       "actor_display_name": "Codex（何川）",
       "client_id": null,
       "result": "committed",
@@ -4739,15 +4661,15 @@
   ],
   "lessons": [
     {
-      "lesson_id": "l1",
-      "project_id": "orders",
+      "lesson_id": "L-001",
+      "project_id": "P-001",
       "adopted_project_ids": [],
       "title": "读多写少的查询接口先加缓存层",
       "stage": "candidate",
       "stage_label": "候选",
       "state": "active",
       "quote": "你这个架构少了一层 Cache。",
-      "author_person_id": "lin-yue",
+      "author_person_id": "M-002",
       "source_title": "订单查询接口",
       "source_task_id": "T-101",
       "applicable_when": "查询多、写入少，而且对响应时间有要求的接口",
@@ -4757,11 +4679,11 @@
       "recheck_required": false,
       "recheck_reason": null,
       "disposition": "候选。等林悦本人在自己的 Agent 里确认，确认之前不会给别人用。",
-      "pending_id": "a2"
+      "pending_id": "A-002"
     },
     {
-      "lesson_id": "l2",
-      "project_id": "orders",
+      "lesson_id": "L-002",
+      "project_id": "P-001",
       "adopted_project_ids": [
         "notify"
       ],
@@ -4770,7 +4692,7 @@
       "stage_label": "小组规则",
       "state": "active",
       "quote": "你联调的是哪一版接口？先对一下。",
-      "author_person_id": "xu-ning",
+      "author_person_id": "M-004",
       "source_title": "10 月的一次接口交接",
       "source_task_id": null,
       "applicable_when": "上下游交接、联调开始、接口版本有变化时",
@@ -4833,15 +4755,15 @@
       "pending_id": null
     },
     {
-      "lesson_id": "l3",
-      "project_id": "orders",
+      "lesson_id": "L-003",
+      "project_id": "P-001",
       "adopted_project_ids": [],
       "title": "结果不明确时先查询再重试",
       "stage": "project",
       "stage_label": "项目内",
       "state": "active",
       "quote": "别直接重发，先查一下上次到底成没成。",
-      "author_person_id": "chen-yu",
+      "author_person_id": "M-003",
       "source_title": "提交按钮防重复",
       "source_task_id": "T-108",
       "applicable_when": "提交之后没有拿到明确结果",
@@ -4876,15 +4798,15 @@
       "pending_id": null
     },
     {
-      "lesson_id": "l4",
-      "project_id": "orders",
+      "lesson_id": "L-004",
+      "project_id": "P-001",
       "adopted_project_ids": [],
       "title": "错误提示要说下一步怎么办",
       "stage": "project",
       "stage_label": "项目内",
       "state": "revoked",
       "quote": "只说“出错了”没用，要告诉人接下来点哪。",
-      "author_person_id": "lin-yue",
+      "author_person_id": "M-002",
       "source_title": "登录异常处理",
       "source_task_id": "T-105",
       "applicable_when": "任何给用户看的错误提示",
@@ -4914,8 +4836,8 @@
   ],
   "pending": [
     {
-      "pending_id": "a1",
-      "project_id": "orders",
+      "pending_id": "A-001",
+      "project_id": "P-001",
       "work_id": "T-104",
       "goal_id": null,
       "lesson_id": null,
@@ -4925,7 +4847,7 @@
       "source": "你的 Agent「Codex」在问",
       "age_text": "等了 2 天",
       "created_at_unix_ms": null,
-      "recipient_person_id": "lin-yue",
+      "recipient_person_id": "M-002",
       "recipient_role": null,
       "description": "「订单列表为空时，只显示“暂无订单”，还是加一句引导去创建？」这件事不回答，空状态检查就停在这里。",
       "basis": [
@@ -4947,8 +4869,8 @@
       ]
     },
     {
-      "pending_id": "a3",
-      "project_id": "orders",
+      "pending_id": "A-003",
+      "project_id": "P-001",
       "work_id": "T-112",
       "goal_id": null,
       "lesson_id": null,
@@ -4958,7 +4880,7 @@
       "source": "周宁今天通过自己的 Agent 派的",
       "age_text": "今天",
       "created_at_unix_ms": 1795082400000,
-      "recipient_person_id": "lin-yue",
+      "recipient_person_id": "M-002",
       "recipient_role": null,
       "description": "这件任务的完成标准已经写好。你接下之后它才算在你名下；接不了也可以说明原因，它会回到周宁那里。",
       "basis": [
@@ -4980,18 +4902,18 @@
       ]
     },
     {
-      "pending_id": "a2",
-      "project_id": "orders",
+      "pending_id": "A-002",
+      "project_id": "P-001",
       "work_id": "T-101",
       "goal_id": null,
-      "lesson_id": "l1",
+      "lesson_id": "L-001",
       "planning_candidate_id": null,
       "kind": "确认经验",
       "title": "读多写少的查询接口先加缓存层",
       "source": "你的 Agent 在 11 月 13 日的会话里记下的",
       "age_text": "6 天前",
       "created_at_unix_ms": 1794571200000,
-      "recipient_person_id": "lin-yue",
+      "recipient_person_id": "M-002",
       "recipient_role": null,
       "description": "你当时的原话是「你这个架构少了一层 Cache。」你的 Agent 把它记成了一条候选经验。留不留，由你在 Agent 里确认。",
       "basis": [
@@ -5017,8 +4939,8 @@
       ]
     },
     {
-      "pending_id": "b2",
-      "project_id": "orders",
+      "pending_id": "A-005",
+      "project_id": "P-001",
       "work_id": "T-105",
       "goal_id": null,
       "lesson_id": null,
@@ -5028,7 +4950,7 @@
       "source": "许宁复核时提出",
       "age_text": "等了 1 天",
       "created_at_unix_ms": null,
-      "recipient_person_id": "zhou-ning",
+      "recipient_person_id": "M-001",
       "recipient_role": null,
       "description": "复核发现“错误提示说明下一步怎么办”这个分支没有验证过。返工就要补这个分支的测试；接受现状就要把这个风险记下来。",
       "basis": [
@@ -5050,18 +4972,18 @@
       ]
     },
     {
-      "pending_id": "b1",
-      "project_id": "orders",
+      "pending_id": "A-004",
+      "project_id": "P-001",
       "work_id": null,
       "goal_id": null,
       "lesson_id": null,
-      "planning_candidate_id": "orders-recovery-candidate",
+      "planning_candidate_id": "PC-001",
       "kind": "批准拆解",
       "title": "“完善异常恢复”拆成了 4 件事",
       "source": "陈宇的 Agent 提的",
       "age_text": "今天",
       "created_at_unix_ms": 1795082400000,
-      "recipient_person_id": "zhou-ning",
+      "recipient_person_id": "M-001",
       "recipient_role": null,
       "description": "新目标“完善异常恢复”被拆成 4 件任务。其中 1 件是需要人来定的选择题：超时后自动重试几次。",
       "basis": [
@@ -5087,8 +5009,8 @@
       ]
     },
     {
-      "pending_id": "c1",
-      "project_id": "orders",
+      "pending_id": "A-006",
+      "project_id": "P-001",
       "work_id": null,
       "goal_id": null,
       "lesson_id": null,
@@ -5124,10 +5046,10 @@
       ]
     },
     {
-      "pending_id": "e1",
-      "project_id": "onboard",
+      "pending_id": "A-007",
+      "project_id": "P-003",
       "work_id": null,
-      "goal_id": "g3",
+      "goal_id": "GOAL-003",
       "lesson_id": null,
       "planning_candidate_id": null,
       "kind": "决定",
@@ -5164,8 +5086,8 @@
   "waits_between_groups": [
     {
       "wait_id": "w4",
-      "source_group": "applications",
-      "target_group": "platform",
+      "source_group": "G-001",
+      "target_group": "G-002",
       "external_party": null,
       "what": "接口第 3 版通过复核",
       "started_at_unix_ms": 1794916800000,
@@ -5174,13 +5096,99 @@
     },
     {
       "wait_id": "w5",
-      "source_group": "delivery",
+      "source_group": "G-003",
       "target_group": null,
       "external_party": "甲方",
       "what": "给测试环境账号",
       "started_at_unix_ms": 1794312000000,
       "work_id": "T-303",
       "kind": "ext"
+    }
+  ],
+  "project_questions": [
+    {
+      "decision_id": "Q-003",
+      "request_key": "RQ-003",
+      "project_id": "P-001",
+      "work_id": "T-102",
+      "workstream_id": "WS-002",
+      "prototype_task_id": null,
+      "question": "订单协作平台能不能多一位复核人",
+      "impact": "订单协作平台本周的承诺有风险",
+      "state": "open",
+      "current": true,
+      "baseline_matches_current": true,
+      "decision_version": "1",
+      "requester_person_id": "M-001",
+      "allowed_responder_person_ids": [
+        "M-010"
+      ],
+      "allowed_responder_display_names": [
+        "部门负责人"
+      ],
+      "created_at_unix_ms": 1795003200000,
+      "reply": null,
+      "resolution": null
+    },
+    {
+      "decision_id": "Q-004",
+      "request_key": "RQ-004",
+      "project_id": "P-001",
+      "work_id": "T-111",
+      "workstream_id": "WS-001",
+      "prototype_task_id": "T-111",
+      "question": "导出字段以哪份清单为准",
+      "impact": "回答后，相关任务才能按这个事实继续。",
+      "state": "open",
+      "current": true,
+      "baseline_matches_current": true,
+      "decision_version": "1",
+      "requester_person_id": "M-002",
+      "allowed_responder_person_ids": [
+        "M-009"
+      ],
+      "allowed_responder_display_names": [
+        "甲方"
+      ],
+      "created_at_unix_ms": 1794657600000,
+      "reply": null,
+      "resolution": null
+    },
+    {
+      "decision_id": "Q-007",
+      "request_key": "RQ-007",
+      "project_id": "P-003",
+      "work_id": "T-303",
+      "workstream_id": "WS-008",
+      "prototype_task_id": "T-303",
+      "question": "目标先暂停，还是请最高层出面找甲方",
+      "impact": "不回答的话，项目会一直停着，目标一直显示“没有更新”",
+      "state": "open",
+      "current": true,
+      "baseline_matches_current": true,
+      "decision_version": "1",
+      "requester_person_id": "M-007",
+      "allowed_responder_person_ids": [
+        "M-011"
+      ],
+      "allowed_responder_display_names": [
+        "最高层"
+      ],
+      "created_at_unix_ms": 1794312000000,
+      "reply": null,
+      "resolution": null
+    }
+  ],
+  "view_roles": [
+    {
+      "person_id": "M-010",
+      "display_name": "部门负责人",
+      "group_id": "G-006"
+    },
+    {
+      "person_id": "M-011",
+      "display_name": "最高层",
+      "group_id": "G-006"
     }
   ]
 }
