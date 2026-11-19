@@ -26,6 +26,13 @@ authorization are likewise named instead of being guessed.
 
 ## Selection and persistence
 
+`PerspectiveProvider` owns the resolved state, and `usePerspective()` exposes the same
+selection, available heights, limitations, and guarded selection function to the switcher
+and page content. A single available height produces an empty perspective slot in the
+header. Limitations live in the selection state; `PerspectiveLimitationNote` lets a page
+place them under its own title, while a multi-height switcher carries them in its `title`
+description instead of visible header text.
+
 - The default is the narrowest available height with a known positive count of things
   waiting for the member. If none has a known positive count, the default is `me`.
 - A remembered choice is used only while it remains available. Storage reads and writes

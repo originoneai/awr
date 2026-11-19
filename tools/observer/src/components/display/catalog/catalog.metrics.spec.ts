@@ -282,7 +282,7 @@ test('perspective matches the prototype as, seg and compact top seg measurements
   const phone = isPhone(testInfo.project.name);
   // .as { display: flex; align-items: center; gap: 8px }
   const root = await readStyles(page, '.shell-perspective', ['display', 'align-items', 'column-gap', 'flex-wrap']);
-  expect(root).toEqual({ display: 'flex', 'align-items': 'center', 'column-gap': '8px', 'flex-wrap': phone ? 'wrap' : 'nowrap' });
+  expect(root).toEqual({ display: 'flex', 'align-items': 'center', 'column-gap': '8px', 'flex-wrap': 'nowrap' });
   // .as .cap { color: var(--ink-3); font-size: 12px; white-space: nowrap }
   // @media (max-width: 1040px) hides the caption, while the 860px layout remains useCompactViewport's sole source.
   const caption = await readStyles(page, '.shell-perspective-caption', ['display', 'font-size', 'white-space']);

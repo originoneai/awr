@@ -107,6 +107,21 @@ body {
   padding-inline: 24px;
 }
 
+/* Prototype .crumb: every level and its chevron share the same vertical centre. */
+.shell-header .ant-breadcrumb > ol {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.shell-header .ant-breadcrumb > ol > li,
+.shell-header .ant-breadcrumb .ant-breadcrumb-link,
+.shell-header .ant-breadcrumb .ant-breadcrumb-separator {
+  display: inline-flex;
+  align-items: center;
+}
+
 .shell-scope {
   display: flex;
   align-items: center;

@@ -29,11 +29,12 @@ export function usePerspectiveSelection(facts: PerspectiveFacts, requested: stri
   const [remembered, setRemembered] = useState<PerspectiveId | null>(() => readRememberedPerspective());
   const selected = resolvePerspective(facts, requested, remembered);
 
-  const select = useCallback((next: PerspectiveId) => {
+  const select = useCallback((next: PerspectiveId): boolean => {
     // This second check keeps programmatic calls from persisting a height the facts do not allow.
-    if (!derivation.available.includes(next)) return;
+    if (!derivation.available.includes(next)) return false;
     setRemembered(next);
     writeRememberedPerspective(next);
+    return true;
   }, [derivation.available]);
 
   return { ...derivation, selected, select };

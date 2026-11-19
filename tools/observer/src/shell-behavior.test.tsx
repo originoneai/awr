@@ -81,7 +81,7 @@ describe('prototype shell behavior', () => {
     const settings = await screen.findByRole('button', { name: '项目设置' });
     for (const control of [search, settings]) expect(control).toHaveProperty('disabled', true);
     expect(screen.queryByTestId('perspective-switcher')).toBeNull();
-    expect(screen.getByTestId('perspective-current').textContent).toBe('我的工作');
+    expect(document.querySelector('.shell-header .shell-perspective')).toBeNull();
     expect(notifications).toHaveProperty('disabled', false);
     expect(screen.getByTestId('current-member-avatar')).toBeTruthy();
     await user.hover(search);

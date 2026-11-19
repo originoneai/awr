@@ -174,17 +174,25 @@ describe('AppShell navigation', () => {
     expect(screen.queryByText('private-task')).toBeNull();
   });
 
-  it('keeps future search disabled and shows only the narrow perspective without inventing access', () => {
+  it('keeps future search disabled and hides the single available perspective', () => {
     stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
     renderApp('/workbench');
     expect(screen.getByRole('button', { name: /搜索/ })).toHaveProperty('disabled', true);
     expect(screen.queryByTestId('perspective-switcher')).toBeNull();
-    expect(screen.getByTestId('perspective-current').textContent).toBe('我的工作');
     expect(screen.queryByRole('button', { name: '做事的人' })).toBeNull();
-    expect(screen.getByText(/小组与部门登记情况未知/)).toBeTruthy();
     expect(screen.getByRole('button', { name: '待处理' })).toHaveProperty('disabled', false);
     expect(screen.queryByTestId('inbox-count')).toBeNull();
     expect(document.querySelector('.ant-badge-dot')).toBeNull();
+  });
+
+  it('renders no limitation text or perspective chrome in the real header with unknown facts', () => {
+    stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
+    renderApp('/workbench');
+    const header = document.querySelector('.shell-header');
+    expect(header?.querySelector('.shell-perspective')).toBeNull();
+    for (const text of ['视角', '我的工作', '小组职责与项目关系未知', '小组与部门登记情况未知', '尚未登记部门']) {
+      expect(header?.textContent).not.toContain(text);
+    }
   });
 
   it('uses the current member initial when the page read matches the current identity', async () => {

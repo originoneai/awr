@@ -2,43 +2,25 @@ import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } f
 import { useTranslation } from 'react-i18next';
 import { craftTokens } from '../../theme';
 import { useCompactViewport, useMediaQuery } from '../viewport';
-import { usePerspectiveSelection } from './usePerspectiveSelection';
-import type { PerspectiveFacts, PerspectiveId } from './types';
+import { usePerspective } from './PerspectiveProvider';
+import type { PerspectiveId } from './types';
 
 interface PerspectiveSwitcherProps {
-  facts: PerspectiveFacts;
-  /** A URL value is a request only; the rules decide whether it can be honored. */
-  requestedPerspective?: string | null;
-  /** The shell reflects an accepted selection into the URL; no service write is involved. */
-  onChange?: (next: PerspectiveId) => void;
   /** Push right when the prototype hides its search field below 1240px. */
   alignEnd?: boolean;
 }
 
-export function PerspectiveSwitcher({
-  facts,
-  requestedPerspective = null,
-  onChange,
-  alignEnd = false,
-}: PerspectiveSwitcherProps) {
+export function PerspectiveSwitcher({ alignEnd = false }: PerspectiveSwitcherProps) {
   const { t } = useTranslation();
   const compactViewport = useCompactViewport();
   const hideCaption = useMediaQuery(`(max-width: ${craftTokens.perspective.captionMaxWidth}px)`);
-  const { available, limitations, selected, select } = usePerspectiveSelection(facts, requestedPerspective);
+  const { available, limitations, selected, select } = usePerspective();
   const [focused, setFocused] = useState<PerspectiveId>(selected);
   const buttonRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   useEffect(() => setFocused(selected), [selected]);
 
-  // Remove a stale or forged request after the same render has already shown the safe fallback.
-  useEffect(() => {
-    if (requestedPerspective !== null && requestedPerspective !== selected) onChange?.(selected);
-  }, [onChange, requestedPerspective, selected]);
-
-  const choose = (next: PerspectiveId) => {
-    select(next);
-    onChange?.(next);
-  };
+  const choose = (next: PerspectiveId) => select(next);
 
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     const id = available[index];
@@ -64,7 +46,7 @@ export function PerspectiveSwitcher({
     display: 'flex',
     alignItems: 'center',
     flex: compactViewport ? '1 0 100%' : '0 0 auto',
-    flexWrap: compactViewport ? 'wrap' : 'nowrap',
+    flexWrap: 'nowrap',
     gap: geometry.gapToCaption,
     minWidth: 0,
     marginLeft: compactViewport ? 0 : alignEnd ? 'auto' : 0,
@@ -80,11 +62,14 @@ export function PerspectiveSwitcher({
     background: 'var(--craft-color-raised)',
     whiteSpace: 'nowrap',
   };
+  const limitationTitle = limitations.map((limitation) => t(`shell.perspectiveLimitations.${limitation}`)).join(' · ');
+  if (available.length === 1) return null;
 
   return (
     <div
       className="shell-perspective"
-      data-testid={available.length > 1 ? 'perspective-switcher' : undefined}
+      data-testid="perspective-switcher"
+      title={limitationTitle || undefined}
       style={rootStyle}
     >
       <span
@@ -99,79 +84,50 @@ export function PerspectiveSwitcher({
       >
         {t('shell.perspective')}
       </span>
-      {available.length > 1 ? (
-        <div
-          className="shell-perspective-segment"
-          role="group"
-          aria-label={t('shell.perspective')}
-          style={segmentStyle}
-        >
-          {available.map((id, index) => {
-            const active = id === selected;
-            const optionStyle: CSSProperties = {
-              appearance: 'none',
-              flex: '0 0 auto',
-              height: geometry.optionHeight,
-              margin: 0,
-              padding: `0 ${geometry.optionPaddingInline}px`,
-              border: 0,
-              borderRadius: geometry.optionRadius,
-              background: active ? 'var(--craft-color-surface)' : 'transparent',
-              boxShadow: active ? 'var(--craft-perspective-selected-shadow)' : 'none',
-              color: active ? 'var(--craft-color-ink)' : 'var(--craft-color-secondary)',
-              cursor: 'pointer',
-              fontFamily: 'inherit',
-              fontSize: geometry.optionFontSize,
-              fontWeight: active ? geometry.selectedFontWeight : geometry.fontWeight,
-              whiteSpace: 'nowrap',
-              transition: `background-color ${craftTokens.motion.feedbackMs}ms ${craftTokens.motion.easing}, color ${craftTokens.motion.feedbackMs}ms ${craftTokens.motion.easing}`,
-            };
-            return (
-              <button
-                key={id}
-                ref={(node) => { buttonRefs.current[index] = node; }}
-                type="button"
-                className="shell-perspective-option"
-                aria-pressed={active}
-                tabIndex={(focused === id || (!available.includes(focused) && active)) ? 0 : -1}
-                onFocus={() => setFocused(id)}
-                onClick={() => choose(id)}
-                onKeyDown={(event) => onKeyDown(event, index)}
-                style={optionStyle}
-              >
-                {t(`shell.perspectives.${id}.segment`)}
-              </button>
-            );
-          })}
-        </div>
-      ) : (
-        <span
-          data-testid="perspective-current"
-          style={{
+      <div
+        className="shell-perspective-segment"
+        role="group"
+        aria-label={t('shell.perspective')}
+        style={segmentStyle}
+      >
+        {available.map((id, index) => {
+          const active = id === selected;
+          const optionStyle: CSSProperties = {
+            appearance: 'none',
             flex: '0 0 auto',
-            color: 'var(--craft-color-secondary)',
+            height: geometry.optionHeight,
+            margin: 0,
+            padding: `0 ${geometry.optionPaddingInline}px`,
+            border: 0,
+            borderRadius: geometry.optionRadius,
+            background: active ? 'var(--craft-color-surface)' : 'transparent',
+            boxShadow: active ? 'var(--craft-perspective-selected-shadow)' : 'none',
+            color: active ? 'var(--craft-color-ink)' : 'var(--craft-color-secondary)',
+            cursor: 'pointer',
+            fontFamily: 'inherit',
             fontSize: geometry.optionFontSize,
+            fontWeight: active ? geometry.selectedFontWeight : geometry.fontWeight,
             whiteSpace: 'nowrap',
-          }}
-        >
-          {t(`shell.perspectives.${selected}.title`)}
-        </span>
-      )}
-      {limitations.length > 0 ? (
-        <span
-          className="shell-perspective-limitations"
-          style={{
-            flex: compactViewport ? '1 0 100%' : '0 1 auto',
-            minWidth: 0,
-            marginTop: compactViewport ? geometry.limitationGap : 0,
-            color: 'var(--craft-color-muted)',
-            fontSize: geometry.captionFontSize,
-            lineHeight: `${craftTokens.leading.tight}px`,
-          }}
-        >
-          {limitations.map((limitation) => t(`shell.perspectiveLimitations.${limitation}`)).join(' · ')}
-        </span>
-      ) : null}
+            transition: `background-color ${craftTokens.motion.feedbackMs}ms ${craftTokens.motion.easing}, color ${craftTokens.motion.feedbackMs}ms ${craftTokens.motion.easing}`,
+          };
+          return (
+            <button
+              key={id}
+              ref={(node) => { buttonRefs.current[index] = node; }}
+              type="button"
+              className="shell-perspective-option"
+              aria-pressed={active}
+              tabIndex={(focused === id || (!available.includes(focused) && active)) ? 0 : -1}
+              onFocus={() => setFocused(id)}
+              onClick={() => choose(id)}
+              onKeyDown={(event) => onKeyDown(event, index)}
+              style={optionStyle}
+            >
+              {t(`shell.perspectives.${id}.segment`)}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

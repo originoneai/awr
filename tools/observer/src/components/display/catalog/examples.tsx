@@ -12,6 +12,7 @@ import { PageHeader } from '../PageHeader';
 import { RowList } from '../RowList';
 import { Section } from '../Section';
 import { Timeline } from '../Timeline';
+import { PerspectiveProvider } from '../../../lib/perspective/PerspectiveProvider';
 import { PerspectiveSwitcher } from '../../../lib/perspective/PerspectiveSwitcher';
 import type { PerspectiveFacts } from '../../../lib/perspective/types';
 
@@ -298,7 +299,11 @@ export function useCatalogExamples(): CatalogExample[] {
     },
     {
       id: 'perspective',
-      render: () => <PerspectiveSwitcher facts={PERSPECTIVE_FACTS} />,
+      render: () => (
+        <PerspectiveProvider facts={PERSPECTIVE_FACTS}>
+          <PerspectiveSwitcher />
+        </PerspectiveProvider>
+      ),
     },
   ];
 }

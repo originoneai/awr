@@ -32,6 +32,7 @@ import { useCallback, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, matchPath, NavLink, useLocation, useNavigate } from 'react-router';
 import { readsAsName } from '../core/observation/owner';
+import { PerspectiveProvider } from '../lib/perspective/PerspectiveProvider';
 import { PerspectiveSwitcher } from '../lib/perspective/PerspectiveSwitcher';
 import { unknownPerspectiveFacts, type PerspectiveFacts, type PerspectiveId } from '../lib/perspective/types';
 import { projectLabel } from '../lib/project-label';
@@ -334,7 +335,12 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
   }
 
   return (
-    <Layout hasSider={!compactNavigation} style={{ minHeight: '100vh', background: 'var(--craft-color-page)' }}>
+    <PerspectiveProvider
+      facts={perspectiveFacts}
+      requestedPerspective={requestedPerspective}
+      onChange={changePerspective}
+    >
+      <Layout hasSider={!compactNavigation} style={{ minHeight: '100vh', background: 'var(--craft-color-page)' }}>
       {!compactNavigation ? (
         <Sider
           width={craftTokens.siderWidth}
@@ -513,12 +519,7 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
               </Button>
             </Tooltip>
           ) : null}
-          <PerspectiveSwitcher
-            facts={perspectiveFacts}
-            requestedPerspective={requestedPerspective}
-            onChange={changePerspective}
-            alignEnd={compactSearch}
-          />
+          <PerspectiveSwitcher alignEnd={compactSearch} />
           {!compactNavigation ? (
             <>
               <Badge dot={pendingCount !== null && pendingCount > 0} color="var(--craft-color-accent)">
@@ -538,6 +539,7 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
         </Header>
         <Content className="shell-content" style={compactNavigation ? { padding: 16 } : undefined}>{children}</Content>
       </Layout>
-    </Layout>
+      </Layout>
+    </PerspectiveProvider>
   );
 }

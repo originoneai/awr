@@ -30,7 +30,6 @@ const sharedCraftTokens = {
     selectedLineWidth: 1,
     fontWeight: 400,
     selectedFontWeight: 500,
-    limitationGap: 4,
   },
   font: {
     interface: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif',

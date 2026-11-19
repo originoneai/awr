@@ -181,7 +181,6 @@ describe('complete prototype theme tokens', () => {
       selectedLineWidth: 1,
       fontWeight: 400,
       selectedFontWeight: 500,
-      limitationGap: 4,
     });
     expect(craftThemes.dark.perspective).toEqual(craftThemes.light.perspective);
     expect(craftCssVariables('light')['--craft-perspective-radius']).toBe('6px');

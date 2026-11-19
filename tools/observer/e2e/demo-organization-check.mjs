@@ -147,6 +147,27 @@ const variantRoutes = {
   ],
 };
 
+async function firstLoadGeometry(page) {
+  await page.locator('.shell-header .ant-breadcrumb > ol > li').first().waitFor();
+  return page.evaluate(() => {
+    const centers = [...document.querySelectorAll('.shell-header .ant-breadcrumb > ol > li')]
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.height > 0 ? rect.top + rect.height / 2 : null;
+      })
+      .filter((center) => center !== null);
+    const switcherHeights = [...document.querySelectorAll('.shell-perspective-option')]
+      .map((element) => element.getBoundingClientRect().height);
+    const headerText = document.querySelector('.shell-header')?.textContent ?? '';
+    return {
+      centers,
+      centerSpread: centers.length > 0 ? Math.max(...centers) - Math.min(...centers) : Number.POSITIVE_INFINITY,
+      switcherHeights,
+      hasHeaderLimitation: /小组职责与项目关系未知|小组与部门登记情况未知|尚未登记部门|尚未登记小组/.test(headerText),
+    };
+  });
+}
+
 async function visit(baseUrl, variant, route, viewport) {
   const context = await browser.newContext({
     viewport,
@@ -183,6 +204,7 @@ async function visit(baseUrl, variant, route, viewport) {
   const target = `${baseUrl}${actualPath}`;
   try {
     await page.goto(target);
+    const geometry = await firstLoadGeometry(page);
     if (route.action) await route.action(page);
     else await settle(page);
     await page.waitForTimeout(350);
@@ -213,6 +235,7 @@ async function visit(baseUrl, variant, route, viewport) {
       screenshot,
       bodyCharacters: body.length,
       horizontalOverflow: state.scrollWidth > state.width,
+      firstLoadGeometry: geometry,
       pageErrors,
       requestFailures,
       apiErrors,
@@ -221,6 +244,9 @@ async function visit(baseUrl, variant, route, viewport) {
     results.push(record);
     if (!body.trim()) failures.push(`${variant} ${route.path} ${viewport.width}: empty page`);
     if (state.scrollWidth > state.width) failures.push(`${variant} ${route.path} ${viewport.width}: horizontal overflow ${state.scrollWidth}/${state.width}`);
+    if (geometry.centerSpread > 1) failures.push(`${variant} ${route.path} ${viewport.width}: breadcrumb centres differ by ${geometry.centerSpread}px`);
+    if (geometry.switcherHeights.some((height) => Math.abs(height - 28) > 0.01)) failures.push(`${variant} ${route.path} ${viewport.width}: switcher height is not 28px (${geometry.switcherHeights.join(', ')})`);
+    if (geometry.hasHeaderLimitation) failures.push(`${variant} ${route.path} ${viewport.width}: limitation text leaked into the header`);
     if (pageErrors.length) failures.push(`${variant} ${route.path} ${viewport.width}: page errors ${pageErrors.join('; ')}`);
     if (requestFailures.length) failures.push(`${variant} ${route.path} ${viewport.width}: request failures ${requestFailures.join('; ')}`);
     if (unexpectedApiErrors.length) failures.push(`${variant} ${route.path} ${viewport.width}: API errors ${JSON.stringify(unexpectedApiErrors)}`);

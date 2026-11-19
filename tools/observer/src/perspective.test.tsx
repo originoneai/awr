@@ -8,8 +8,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppShell } from './components/AppShell';
 import { CraftThemeProvider } from './components/CraftThemeProvider';
 import i18n from './i18n';
-import { createAppQueryClient, revokeObservationReads } from './lib/queries';
+import { PerspectiveLimitationNote } from './lib/perspective/PerspectiveLimitationNote';
+import { usePerspective } from './lib/perspective/PerspectiveProvider';
 import { PERSPECTIVE_STORAGE_KEY } from './lib/perspective/usePerspectiveSelection';
+import { createAppQueryClient, revokeObservationReads } from './lib/queries';
 import type { PerspectiveFacts } from './lib/perspective/types';
 import { RevocationProvider } from './lib/revocation';
 import { ScopeProvider } from './lib/scope';
@@ -44,6 +46,21 @@ function pressed(name: string) {
   return screen.getByRole('button', { name }).getAttribute('aria-pressed');
 }
 
+function PerspectiveProbe() {
+  const { selected } = usePerspective();
+  return (
+    <div>
+      <h1>工作台</h1>
+      <output data-testid="page-perspective">{i18n.t(`shell.perspectives.${selected}.title`)}</output>
+      <PerspectiveLimitationNote />
+    </div>
+  );
+}
+
+function pagePerspective() {
+  return screen.getByTestId('page-perspective').textContent;
+}
+
 function renderShell(facts: PerspectiveFacts = fullFacts(), initialPath = '/workbench') {
   const fetchMock = stubFetch({ '/api/team/projects': DEMO_PROJECTS });
   const queryClient = createAppQueryClient({ retry: false });
@@ -65,7 +82,7 @@ function renderShell(facts: PerspectiveFacts = fullFacts(), initialPath = '/work
                     path="/workbench"
                     element={(
                       <AppShell perspectiveFacts={currentFacts}>
-                        <h1>工作台</h1>
+                        <PerspectiveProbe />
                       </AppShell>
                     )}
                   />
@@ -115,7 +132,7 @@ describe('perspective shell integration', () => {
     expect(pressed('最高层')).toBe('false');
   });
 
-  it('remembers a selection across a fresh mount', async () => {
+  it('remembers a selection across a fresh mount and shares it with the page', async () => {
     const user = userEvent.setup();
     const first = renderShell();
     await user.click(screen.getByRole('button', { name: '小组负责人' }));
@@ -126,6 +143,7 @@ describe('perspective shell integration', () => {
     renderShell();
     expect(pressed('小组负责人')).toBe('true');
     expect(pressed('做事的人')).toBe('false');
+    expect(pagePerspective()).toBe('小组交付');
   });
 
   it('uses the default and keeps switching when storage reads and writes are blocked', async () => {
@@ -143,22 +161,25 @@ describe('perspective shell integration', () => {
     expect(pressed('部门负责人')).toBe('true');
   });
 
-  it('silently rejects a forged URL, preserves other parameters and leaves the page usable', async () => {
+  it('shares the safe fallback with the page after a forged URL', async () => {
     const shell = renderShell(narrowFacts(), '/workbench?scope=demo&perspective=top');
     expect(pressed('做事的人')).toBe('true');
+    expect(pagePerspective()).toBe('我的工作');
     expect(screen.queryByRole('button', { name: '最高层' })).toBeNull();
     expect(screen.getByRole('heading', { name: '工作台' })).toBeTruthy();
     await waitFor(() => expect(shell.search()).toContain('perspective=me'));
     expect(shell.search()).toContain('scope=demo');
   });
 
-  it('immediately falls back on revocation even with a residual URL and stored height', async () => {
+  it('updates the page and switcher in the same render on revocation', async () => {
     window.localStorage.setItem(PERSPECTIVE_STORAGE_KEY, 'top');
     const shell = renderShell(fullFacts(), '/workbench?perspective=top');
     expect(pressed('最高层')).toBe('true');
     act(() => revokeObservationReads(shell.queryClient));
     expect(screen.queryByTestId('perspective-switcher')).toBeNull();
-    expect(screen.getByTestId('perspective-current').textContent).toBe('我的工作');
+    expect(pagePerspective()).toBe('我的工作');
+    expect(screen.getByTestId('perspective-limitation-note').closest('.shell-content')).not.toBeNull();
+    expect(document.querySelector('.shell-header')?.textContent).not.toContain('未知');
     expect(screen.getByRole('heading', { name: '工作台' })).toBeTruthy();
     await waitFor(() => expect(shell.search()).toContain('perspective=me'));
   });
@@ -173,14 +194,18 @@ describe('perspective shell integration', () => {
     shell.rerenderFacts(unknownDirectory);
     expect(screen.queryByRole('button', { name: '最高层' })).toBeNull();
     expect(pressed('做事的人')).toBe('true');
-    expect(screen.getByText('小组与部门登记情况未知')).toBeTruthy();
+    expect(screen.getByTestId('perspective-limitation-note').textContent).toContain('小组与部门登记情况未知');
+    expect(document.querySelector('.shell-header')?.textContent).not.toContain('小组与部门登记情况未知');
     await waitFor(() => expect(shell.search()).toContain('perspective=me'));
   });
 
-  it('shows the exact missing-department explanation and at most the first two heights', () => {
+  it('describes a missing department without visible header limitation text', () => {
     const facts = { ...fullFacts(), directory: { groupsRegistered: true, departmentsRegistered: false } };
     renderShell(facts);
-    expect(screen.getByText('尚未登记部门')).toBeTruthy();
+    const switcher = screen.getByTestId('perspective-switcher');
+    expect(switcher.getAttribute('title')).toContain('尚未登记部门');
+    expect(switcher.textContent).not.toContain('尚未登记部门');
+    expect(screen.getByTestId('perspective-limitation-note').textContent).toContain('尚未登记部门');
     expect(screen.getByRole('button', { name: '小组负责人' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: '部门负责人' })).toBeNull();
     expect(screen.queryByRole('button', { name: '最高层' })).toBeNull();
@@ -203,11 +228,20 @@ describe('perspective shell integration', () => {
     expect(pressed('部门负责人')).toBe('true');
   });
 
-  it('hides the switcher with one height while leaving the page title in place', () => {
+  it('renders no perspective chrome with one height while the page keeps its resolved title', () => {
     renderShell(personalFacts(), '/workbench?perspective=top');
-    expect(screen.queryByTestId('perspective-switcher')).toBeNull();
-    expect(screen.getByTestId('perspective-current').textContent).toBe('我的工作');
+    const header = document.querySelector('.shell-header');
+    expect(header?.querySelector('.shell-perspective')).toBeNull();
+    expect(header?.textContent).not.toContain('视角');
+    expect(header?.textContent).not.toContain('我的工作');
+    expect(screen.queryByTestId('perspective-limitation-note')).toBeNull();
+    expect(pagePerspective()).toBe('我的工作');
     expect(screen.getByRole('heading', { name: '工作台' })).toBeTruthy();
+  });
+
+  it('throws a clear developer error when usePerspective is called outside its provider', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(() => render(<PerspectiveProbe />)).toThrow('usePerspective must be used within PerspectiveProvider');
   });
 
   it('adds no fact read of its own', async () => {
