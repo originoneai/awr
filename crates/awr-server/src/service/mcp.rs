@@ -1237,6 +1237,8 @@ fn catalog() -> Vec<Tool> {
             "description":"Optional exact ordinary question selector for decisions.list. Use a recorded decision_id, not an event or review ID."},
         "decision_state":{"type":"string","enum":["open","replied","cancelled","all"],
             "description":"decisions.list defaults to open. Replies are ordinary decisions and confer no execution permission or formal acceptance."},
+        "update_id":{"type":"string","minLength":1,"maxLength":128,
+            "description":"Required for update.inspect: the exact update_id returned by update.record or updates.list. Omit for updates.list and all other reads."},
         "category":{"type":"string","minLength":1,"maxLength":128,
             "description":"Optional category filter for audit.history, audit.export or audit.count."},
         "include_denies":{"type":"boolean",
@@ -1251,6 +1253,11 @@ fn catalog() -> Vec<Tool> {
         "expected_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"}
     }});
     query["allOf"] = json!([
+        {"if":{"properties":{"op":{"enum":["updates.list","update.inspect"]}},"required":["op"]},
+            "then":{"not":{"anyOf":[{"required":["work_id"]},{"required":["workstream_id"]},{"required":["session_id"]}]}}},
+        {"if":{"properties":{"op":{"const":"update.inspect"}},"required":["op"]},
+            "then":{"required":["update_id"]},
+            "else":{"not":{"required":["update_id"]}}},
         {"if":{"properties":{"op":{"const":"decisions.list"}},"required":["op"]},
             "then":{"not":{"required":["session_id"]}},
             "else":{"not":{"anyOf":[{"required":["decision_id"]},{"required":["decision_state"]}]}}},
@@ -1639,6 +1646,24 @@ fn catalog() -> Vec<Tool> {
             "request_id":{"type":"string","maxLength":128}
         }
     });
+    let update_record = json!({
+        "type":"object","additionalProperties":false,
+        "required":["protocol_version","request_id","period_kind","period_key","starts_on","ends_on","status","summary"],
+        "properties":{
+            "protocol_version":{"type":"integer","const":1},
+            "request_id":{"type":"string","minLength":1,"maxLength":128,
+                "description":"Stable identifier for exact idempotent retry; reuse it only with the unchanged request."},
+            "period_kind":{"type":"string","enum":["week","month"]},
+            "period_key":{"type":"string","minLength":1,"maxLength":64,
+                "description":"ISO week key such as 2026-W47, or month key such as 2026-11; must match period_kind."},
+            "starts_on":{"type":"string","format":"date","description":"First date of this period, YYYY-MM-DD."},
+            "ends_on":{"type":"string","format":"date","description":"Last date of this period, YYYY-MM-DD; must not precede starts_on."},
+            "status":{"type":"string","enum":["ok","risk","off"],
+                "description":"The supervisor's judgment: normal, at risk, or off track."},
+            "summary":{"type":"string","minLength":1,"maxLength":200,"x-nonblank-utf8":true,
+                "description":"The exact sentence written by the responsible supervisor. Whitespace-only text and control characters are refused; the service does not generate, trim or rewrite it."}
+        }
+    });
     vec![
         input_contracts::tool(),
         Tool::new("awr_team_query",
@@ -1648,6 +1673,10 @@ fn catalog() -> Vec<Tool> {
         Tool::new("awr_team_command",
             "Supervisor assignment: task.assign. Use delivery.routes; keep registered mappings. Reuse missing mappings before delivery effects, including after settled work/review; the selected resource must match; report-only work needs no route. Member intake: task.accept_assignment or task.claim_available (self-claim). These commands use the current work.prepare header and responsibility versions; existing-work assignment needs no planning draft. Durable sessions, claims, confirmed handoffs and caller-managed execution under the shared TMCP action gate. Use work.prepare preconditions and a stable request_id. Readers cannot claim or write. Developers may maintain own session/execution on authorized work but cannot edit/publish plans or grant permissions. Only a fresh execution.start response with execution_authorized=true permits one run under the live lease. Exact replay reuses the original receipt; changed intent or expired/revoked authority is refused. Body fields cannot forge identity. Preparation, inspection and replay grant no execution rights. For a missing or uncertain neutral-delivery response use delivery.neutral.outcome; for a missing or uncertain legacy-command response use command.inspect before an exact retry. A returned outcome=known_rejection is final for that attempt, so follow its bounded action guidance instead. Never repeat effects from a receipt. Refresh after conflicts or lease/contract changes. Cancellation is a request after start. Reports remain caller_asserted. Attestation requires operator-issued system authority at admission and now. For unknown effects, execution.inspect then operator execution.reconcile; confirm current versions and latest receipt. Recheck on permission, receipt or work changes. Settlement is not work completion. Evidence/review/rework/complete reuse WS-018 under explicit review.decide and delivery.finalize permissions on the same MCP plane: evidence.submit, delivery.evidence.submit, review.open, delivery.submit_and_request_review, review.accept, review.return, review.decide, work.rework, work.complete, delivery.finalize, plus delivery.register_pr / delivery.observe_pr for versioned PR bindings. Neutral candidate/inspection/facts/source operations use args.source_snapshot_id and the common header; eligible human/system management is required for connector and source publication. They store observations or source metadata. delivery.integration.prepare requires current delivery.finalize permission plus exact connector, selection, evidence and review IDs; it reserves an intent. delivery.integration.reject_prepared only rejects before dispatch. Neither exposes a worker permit or executes Git; inspect the generated integration_id through delivery.integration.inspect. No implicit approval or finalization. Author, owner, executor, reviewer and final-submitter are attributed separately on completion. GitHub submitted/approved/merged are distinct from AWR acceptance; URL, green CI, admin role or already-merged cannot skip acceptance. Head/contract/artifact mismatch invalidates approvals. Independence is by person; a second agent of the same person is not team-independent. The explicit caller_managed_execution_and_simulated_member_review policy supports review.decide only when capabilities.simulated_member_review is present: unique active member bindings, explicit Agent review grants and live Review delegation, with member/actor/client distinct from the immutable executor, submitter and round opener. One controller may operate distinct simulated members. Inspect full origins through review.inspect; default receipts carry short summaries. Simulated finalization requires current delivery.finalize authority, actual artifact bytes, settled successful execution and the exact immutable review basis. Repository-capable completion policies with a configured delivery chain and selected candidate require its confirmed integration (IntegrationNotConfirmed otherwise). Without a configured chain, artifact review follows its completion policy; repository integration remains unconfirmed. Agents need an explicit live finalize_delivery delegation; Review or development grants are insufficient. Neutral fast-forward integration eligibility reuses that basis; preparation grants no repository rights or effect. Default completion receipts add only a basis summary; human/team-human approval flags stay false. Recheck after authority, source, evidence or review changes. AWR acceptance, repository integration and confirmed source publication remain distinct facts. Explicit caller_managed_execution_and_agent_review contracts allow review.decide with both agent_review membership and live Review delegation, a distinct author actor/client, and false human/team-acceptance flags; completion additionally requires artifact bytes, matching input/output bindings and a successful caller report reconciled by an authorized operator. Its evidence stays caller_asserted. Same-stream inputs require explicit per-edge dependency_acceptance: V2 agent_reviewed_caller_asserted_reconciled or V5 simulated_member_independent. Omitted Agent or simulated inputs remain blocked; original selected receipt, current contract and immutable review must match. Approved disclosure uses delivery.export.publish/revoke under delivery.finalize; capabilities.approved_artifact_exports lists exact arguments. V6 current_contract cross-stream inputs require delivery.exports, exact artifact.content, then consumer delivery.adopt under execution.request_and_report_own with a live session and responsibility/export/disclosure/adoption selectors from fresh work.prepare. Pool members and their pending assignees may adopt before claiming/accepting; reading alone cannot unlock work. All intake, start and finalization gates revalidate the selected adoption. Revocation or relevant version/proof changes require re-prepare and suitable republication/adoption. fixed_delivery adopts a source-pinned historical export replayed under the awr-approved-artifact-export-v2 codec against its recorded provider_source_snapshot_id; it stays valid across provider progress until its pinned artifact is revoked or unavailable; never substitute current_contract for a fixed_delivery edge. Adoption and replays grant no execution rights. PR facts require fact_source+observed_at: Agent verification uses operator_recorded_observation; authorized_human_github_verification requires an actual human observation. No webhook auto-sync claim. Completion receipts are for WS-030 adoption and omit provider-private sessions.",
             command.as_object().unwrap().clone())
+            .with_annotations(ToolAnnotations::new().read_only(false).destructive(false).idempotent(true).open_world(false)),
+        Tool::new("awr_team_update_record",
+            "Record the responsible supervisor's own status and one-sentence judgment for one project week or month (update.record). The Agent submits the exact caller-supplied sentence; the service never generates, trims or rewrites it. Requires the supervisor business duty, existing project write authority and one live project-scoped edit_planning delegation. A new record for the same period creates a retained version. Exact request_id replay returns the original receipt; changed intent is refused. fact_snapshot_ref is null until AWR-PPD-011; this tool grants no execution or approval authority.",
+            update_record.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(false).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_connections_list",
             "List a bounded page of your current client connections. Optional subject requires live project administration. References are non-secret and never authorize requests. Shared access is one revocation unit; connection state does not describe host-process or task execution.",
@@ -1869,6 +1898,7 @@ impl ServerHandler for Endpoint {
             .into());
         }
         let action = match request.name.as_ref() {
+            "awr_team_update_record" => "update.record",
             "awr_team_query" => args
                 .get("op")
                 .and_then(Value::as_str)
@@ -1891,7 +1921,10 @@ impl ServerHandler for Endpoint {
             matches!(request.name.as_ref(), "awr_team_query" | "awr_team_command")
                 .then(|| args.clone());
         let input_contract = (request.name == input_contracts::TOOL_NAME).then(|| args.clone());
-        let write = request.name == "awr_team_command";
+        let write = matches!(
+            request.name.as_ref(),
+            "awr_team_command" | "awr_team_update_record"
+        );
         let segmented = request.name == "awr_team_query" && args["op"] == "artifact.segment";
         let result = tokio::time::timeout_at(access.deadline, super::audited(&self.state, &self.project, &access.bearer, &action, work.as_deref(), async {
             match request.name.as_ref() {
@@ -1920,6 +1953,19 @@ impl ServerHandler for Endpoint {
                             &self.project.project_id,
                             &access.bearer,
                             c,
+                        )
+                        .await
+                }
+                "awr_team_update_record" => {
+                    let req: awr_team_pg::UpdateRecordRequest = serde_json::from_value(args)
+                        .map_err(|_| PgError::invalid_command_fields())?;
+                    self.state
+                        .commands
+                        .record_update(
+                            &self.project.tenant_id,
+                            &self.project.project_id,
+                            &access.bearer,
+                            &req,
                         )
                         .await
                 }
@@ -4674,6 +4720,7 @@ mod tests {
             handoff_state: Some("pending".into()),
             decision_id: Some("question".into()),
             decision_state: Some("open".into()),
+            update_id: Some("update".into()),
             evidence_id: None,
             review_round_id: None,
             source_path: Some("spec.md".into()),

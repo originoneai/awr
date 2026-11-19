@@ -2312,14 +2312,12 @@ async fn sdk_clients_negotiate_tools_and_isolate_workstreams_on_one_service() {
     assert_eq!(info.server_info.as_ref().unwrap().name, "awr-team-mcp");
     assert!(info.capabilities.tools.is_some());
     let tools = a.list_all_tools().await.unwrap();
-    // Query/command, input contracts, connections, directory, member access and
-    // planning are discoverable; calls still recheck effective authority.
-    assert_eq!(tools.len(), 20);
-    assert!(
-        tools
-            .iter()
-            .any(|tool| tool.name == "awr_team_planning_reject")
-    );
+    // Query/command, input contracts, connections, directory, member access,
+    // planning and project updates are discoverable; calls still recheck authority.
+    assert_eq!(tools.len(), 21);
+    for name in ["awr_team_planning_reject", "awr_team_update_record"] {
+        assert!(tools.iter().any(|tool| tool.name == name), "missing {name}");
+    }
     let caps = call(
         &a,
         "awr_team_query",

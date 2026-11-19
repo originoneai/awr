@@ -601,6 +601,8 @@ pub(crate) async fn resolve_agent_read_delegation(
                     | "sources.inspect"
                     | "documents.list"
                     | "decisions.list"
+                    | "updates.list"
+                    | "update.inspect"
                     | "handoff.list"
                     | "dependencies.list"
                     | "events.list"

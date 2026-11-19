@@ -24,7 +24,7 @@ not a server ACL or confidentiality sandbox.
 ## Start an operator-bound service
 
 Build `awr-server` from this source branch. Migrate the intended database to
-schema 34 explicitly as its owner, and apply application-role grants using the
+schema 64 explicitly as its owner, and apply application-role grants using the
 [PostgreSQL setup](team-postgres.md). `serve` checks the schema without migrating
 it. Run the listener using the application connection, not an owner or superuser
 connection.
@@ -131,6 +131,8 @@ asking anyway is refused as `Unsupported`. The lists name operations of this pro
 | `sources.inspect` | Required document integrity in the active snapshot; optional `work_id`, `workstream_id`, `limit`, `cursor`, `max_context_bytes`; no document bodies |
 | `documents.list` | Project document discovery across authorized workstreams and exact delegated tasks; optional `work_id`, `workstream_id`, literal case-insensitive `search`, `limit`, `cursor`, `max_context_bytes`; verified display metadata, availability and transaction `as_of` |
 | `decisions.list` | Authorized ordinary questions and recorded answers, with optional `work_id`, `workstream_id`, exact `decision_id`, `decision_state`, `limit`, `cursor`, `max_context_bytes`. Defaults to open questions and includes transaction `as_of`. |
+| `updates.list` | Current project period updates, newest period first; optional `limit`, `cursor`, `max_context_bytes`; no work/session selector. |
+| `update.inspect` | Required `update_id`; one current or retained update with its author, record time, status, exact sentence and fact-snapshot reference. |
 | `review.rounds` | Read-only ordered review history for a required work/session selection with bounded `limit`, `cursor`, `max_context_bytes` and transaction `as_of` |
 | `handoff.list` | Read-only authorized handoff discovery with optional `work_id`, `workstream_id`, `recipient_person_id`, `handoff_state`, `limit`, `cursor`, `max_context_bytes` |
 | `dependencies.list` | Read-only authorized dependency edges with required, available, adopted and consumed versions; optional `work_id`, `workstream_id`, `limit`, `cursor`, `max_context_bytes` |
@@ -537,6 +539,100 @@ Dedicated queries:
   `work_id`; metadata-only artifacts are refused.
 
 Capabilities advertise `artifact_content` / `source_content` / `planning_mcp`.
+
+## Project period updates (schema 64)
+
+A supervisor records a project week or month through the dedicated MCP tool
+`awr_team_update_record` (`update.record`). This is deliberately not a generic
+`awr_team_command` operation: that envelope requires a task, contract and
+workstream ownership anchor, while a period update belongs to the project. The
+read operations remain ordinary `awr_team_query` / HTTP query operations.
+
+The caller supplies the complete judgment. The service performs deterministic
+validation, attribution, versioning and receipt recovery only; it does not call
+a model, generate a sentence, trim the sentence or rewrite it.
+
+```json
+{
+  "protocol_version": 1,
+  "request_id": "stable-request-for-this-intent",
+  "period_kind": "week",
+  "period_key": "2026-W47",
+  "starts_on": "2026-11-16",
+  "ends_on": "2026-11-22",
+  "status": "risk",
+  "summary": "The responsible supervisor wrote this exact sentence."
+}
+```
+
+`period_kind` is `week` or `month`. Week keys use `YYYY-Www` (01–53), month keys
+use `YYYY-MM`, and dates are real `YYYY-MM-DD` dates with `ends_on >= starts_on`.
+`status` is `ok` (normal), `risk` (at risk) or `off` (off track). After trimming
+only for the emptiness check, `summary` must be nonempty, at most 200 Unicode
+characters and contain no control characters. The stored and returned sentence
+retains the caller's original leading and trailing whitespace. Unknown fields,
+including a caller-supplied fact snapshot, are refused as `InvalidInput`.
+
+Recording requires all of the following, evaluated again for every call:
+
+- the authenticated member's explicit `business_roles` contains `supervisor`;
+- existing membership and workstream write authority satisfies the same
+  `planning.edit_draft` action tier, including write access to every active
+  workstream for a project-scoped Agent;
+- one live project-scoped `edit_planning` delegation covers the Agent and its
+  active responsible-person binding.
+
+A workstream/task delegation cannot become project authority. A maintainer
+without the explicit supervisor duty, an Agent without the covering project
+delegation, a read-only member and a request through another tenant/project
+binding are all `Forbidden`. Validation and authorization happen before the
+update, operation or event insert; every such refusal leaves all three absent.
+
+The first record for a project/kind/key has version `1`. Recording that period
+again inserts the next version and advances a separate current pointer.
+`project_period_updates` rejects update/delete through its history trigger, so
+an earlier sentence, author, timestamp and version remain unchanged. The current
+pointer and supersedes reference use composite foreign keys to prevent crossing
+periods. Both tables have forced project/tenant RLS.
+
+An exact `request_id` and payload replay returns the original receipt with
+`replayed=true` and does not insert another version. Reusing that ID with changed
+content returns `IdempotencyConflict`. The receipt uses protocol
+`awr-team-project-update-v1` and includes the update ID, period, status, exact
+summary, author, record time, version, supersedes ID, current project revision
+and `fact_snapshot_ref`. **`fact_snapshot_ref` is null in PPD-010. AWR-PPD-011
+will calculate and persist the deterministic snapshot; PPD-010 neither computes
+facts nor accepts a snapshot reference from the caller.**
+
+### Read and sample contract
+
+`updates.list` selects the current version of each period in the URL-bound
+project, ordered by `starts_on`, `ends_on`, `period_key` and update ID descending.
+It accepts `limit` (1–100, default 20), a keyset `cursor` and an optional response
+budget. The cursor binds reader identity, live delegation, source catalog and
+grant versions; an authority change returns `CursorExpired` instead of mixing
+scopes. Newer periods cannot displace or duplicate an already returned keyset
+entry. `data.items[]` contains `update_id`, `period_kind`, `period_key`,
+`starts_on`, `ends_on`, `status`, `summary`, `author.person_id`,
+`author.display_name`, `recorded_at_unix_ms`, decimal-string `version`,
+`supersedes_update_id`, `fact_snapshot_ref` and `current=true`.
+
+`update.inspect` requires `update_id` and returns the same record under
+`data.update`; `current` is false for a retained version. Unknown or foreign IDs
+return `Forbidden`. Both reads run in the existing repeatable-read transaction,
+return an `as_of` block and never mutate updates, operations or events. For an
+Agent, they require a live project/workstream read delegation in addition to the
+underlying workstream read grant. A task-only delegation cannot disclose a
+project update. Read-only members may read within this boundary but cannot record.
+
+Synthetic verbatim responses emitted by the actual read store are committed at
+`crates/awr-team-pg/tests/samples/updates-list.json` and
+`crates/awr-team-pg/tests/samples/update-inspect.json`. They are response-shape
+fixtures for the later PPD-012 bridge, not hand-written demo shapes and not
+proof of validation on a deployed service. AWR-PPD-090 performs that deployed
+service verification. The recording and read integration tests are
+`crates/awr-team-pg/tests/pg_project_updates.rs` and
+`crates/awr-server/tests/project_updates_mcp.rs`.
 
 ## Ordinary decisions across sessions
 

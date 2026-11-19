@@ -570,7 +570,7 @@ pub fn command_business_action(op: &str) -> Option<awr_team::Action> {
         | "delivery.export.publish"
         | "delivery.export.revoke" => DeliveryFinalize,
         "planning.propose" => PlanningPropose,
-        "planning.edit_draft" => PlanningEditDraft,
+        "planning.edit_draft" | "update.record" => PlanningEditDraft,
         "planning.approve" | "admission.decide" => PlanningApprove,
         "planning.publish" => PlanningPublish,
         "access.manage_project"
@@ -634,6 +634,8 @@ pub fn query_business_action(op: &str) -> Option<awr_team::Action> {
         "sources.inspect",
         "documents.list",
         "decisions.list",
+        "updates.list",
+        "update.inspect",
         "audit.history",
         "audit.export",
         "audit.count",
