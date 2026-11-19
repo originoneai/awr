@@ -79,7 +79,7 @@ export function buildPendingIndex(input: OverviewInput, base: OverviewStatusWait
     if (wait.kind === 'dependency') continue;
     for (const person of wait.waitingOn) {
       if (validId(person.id) != null) {
-        push(person.id, { kind: 'wait', task: wait.task, wait, handoff: null });
+        push(person.id, { kind: 'wait', task: wait.task, wait, handoff: null, approval: null });
       }
     }
   }
@@ -102,11 +102,33 @@ export function buildPendingIndex(input: OverviewInput, base: OverviewStatusWait
     const taskId = validId(handoff.taskId);
     const task = taskId == null ? null : taskById.get(taskId) ?? null;
     if (task == null) coverageIssues.push(makeIssue('handoffs', `handoff-task-unknown-${index}`, taskId));
-    push(recipient, { kind: 'handoff', task, wait: null, handoff });
+    push(recipient, { kind: 'handoff', task, wait: null, handoff, approval: null });
+  }
+
+  for (const approval of readItems(input.approvals)) {
+    if (approval.kind !== 'plan-approval' && approval.kind !== 'lesson-confirmation') {
+      const value = makeIssue('approvals', 'approval-kind-unknown');
+      countIssues.push(value);
+      coverageIssues.push(value);
+      continue;
+    }
+    const recipient = validId(approval.recipientPersonId);
+    if (recipient == null) {
+      const value = makeIssue('approvals', 'approval-recipient-unknown');
+      countIssues.push(value);
+      coverageIssues.push(value);
+      continue;
+    }
+    push(recipient, { kind: 'approval', task: null, wait: null, handoff: null, approval });
   }
 
   if (input.handoffs.coverage !== 'complete') {
     const value = makeIssue('handoffs', input.handoffs.reason);
+    countIssues.push(value);
+    coverageIssues.push(value);
+  }
+  if (input.approvals.coverage !== 'complete') {
+    const value = makeIssue('approvals', input.approvals.reason);
     countIssues.push(value);
     coverageIssues.push(value);
   }

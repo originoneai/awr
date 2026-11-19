@@ -169,6 +169,31 @@ describe('complete prototype theme tokens', () => {
     }
   });
 
+  it('names every prototype perspective measurement instead of borrowing unrelated antd tokens', () => {
+    expect(craftThemes.light.perspective).toEqual({
+      captionMaxWidth: 1040,
+      gapToCaption: 8,
+      gap: 2,
+      padding: 2,
+      optionHeight: 28,
+      optionPaddingInline: 10,
+      containerRadius: 8,
+      optionRadius: 6,
+      captionFontSize: 12,
+      optionFontSize: 13,
+      selectedLineWidth: 1,
+      fontWeight: 400,
+      selectedFontWeight: 500,
+    });
+    expect(craftThemes.dark.perspective).toEqual(craftThemes.light.perspective);
+    expect(craftCssVariables('light')['--craft-perspective-radius']).toBe('6px');
+    expect(craftCssVariables('light')['--craft-perspective-height']).toBe('28px');
+    expect(craftCssVariables('light')['--craft-perspective-selected-shadow'])
+      .toBe(`0 0 0 1px ${craftThemes.light.color.hairline}, ${craftThemes.light.shadow.small}`);
+    expect(craftCssVariables('dark')['--craft-perspective-selected-shadow'])
+      .toBe(`0 0 0 1px ${craftThemes.dark.color.hairline}`);
+  });
+
   it.each(['light', 'dark'] as const)('uses the antd %s algorithm with token overrides', (mode) => {
     const config = createThemeConfig(mode);
     expect(config.algorithm).toEqual(expect.any(Function));

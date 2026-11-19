@@ -14,6 +14,7 @@ export const OVERVIEW_PARTS = [
   'decisions',
   'reviewRounds',
   'handoffs',
+  'approvals',
   'members',
   'activity',
 ] as const;
@@ -143,6 +144,25 @@ export interface OverviewMember {
   groupId?: string | null;
 }
 
+export const APPROVAL_KINDS = ['plan-approval', 'lesson-confirmation'] as const;
+export type ApprovalKind = (typeof APPROVAL_KINDS)[number];
+
+/**
+ * A pending approval addressed to one member: a plan-breakdown candidate to approve or a
+ * candidate lesson to confirm. Approvals are not task-bound; view scoping uses their project.
+ */
+export interface OverviewApproval {
+  id?: string | null;
+  /** Exactly one of the two approval kinds; anything else is a coverage gap, not a guess. */
+  kind?: ApprovalKind | null;
+  /** Who must handle it; missing is unknown for every person, never the viewer or somebody else. */
+  recipientPersonId?: string | null;
+  projectId?: string | null;
+  /** Human-facing name from the records; null when the read did not provide one. */
+  title?: string | null;
+  sinceUnixMs?: number | null;
+}
+
 export interface OverviewActivity {
   id?: string | null;
   taskId?: string | null;
@@ -193,6 +213,7 @@ export interface OverviewInput {
   decisions: ReadSlice<OverviewDecision>;
   reviewRounds: ReadSlice<OverviewReviewRound>;
   handoffs: ReadSlice<OverviewHandoff>;
+  approvals: ReadSlice<OverviewApproval>;
   members: ReadSlice<OverviewMember>;
   activity: ReadSlice<OverviewActivity>;
   options: OverviewDerivationOptions;
@@ -328,15 +349,17 @@ export interface DerivedChain {
 }
 
 export interface PersonPendingItem {
-  kind: 'wait' | 'handoff';
+  kind: 'wait' | 'handoff' | 'approval';
   task: DerivedTask | null;
   wait: DerivedWait | null;
   handoff: OverviewHandoff | null;
+  /** Present only for kind 'approval'; approvals are not task-bound. */
+  approval: OverviewApproval | null;
 }
 
 export interface PersonSummary {
   person: PersonRef;
-  /** Non-dependency waits addressed to this person plus pending handoffs addressed to them. */
+  /** Non-dependency waits, pending handoffs, and plan/lesson approvals addressed to this person. */
   pending: CountDetails<PersonPendingItem>;
   /** Prototype inProgress: review/stalled/returned/claimed/running, or waiting with an Agent. */
   inProgress: CountDetails<DerivedTask>;
@@ -399,7 +422,7 @@ export interface OverviewSectionCoverage {
 }
 
 export interface OverviewBaseCoverage {
-  /** Coverage of the seven input planes; derived sections report their own additional gaps. */
+  /** Coverage of the eight input planes; derived sections report their own additional gaps. */
   complete: boolean;
   parts: Record<OverviewPart, OverviewPartCoverage>;
   sections: {

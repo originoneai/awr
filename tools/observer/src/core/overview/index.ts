@@ -1,12 +1,14 @@
 export { deriveOverview } from './derive';
 export { OVERVIEW_RULES } from './semantics';
 export {
+  APPROVAL_KINDS,
   OVERVIEW_PARTS,
   TASK_STATUSES,
   WAIT_KINDS,
   VIEW_IDS,
 } from './types';
 export type {
+  ApprovalKind,
   ChainConnector,
   ChainNode,
   ChainRootKind,
@@ -18,6 +20,7 @@ export type {
   DerivedTaskStatus,
   DerivedWait,
   OverviewActivity,
+  OverviewApproval,
   OverviewBaseCoverage,
   OverviewCommitment,
   OverviewCoverage,

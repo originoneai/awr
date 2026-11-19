@@ -23,6 +23,9 @@ import {
 import type { DataTableRow } from '..';
 import type { ChainConnector, ChainNode, DerivedTaskStatus } from '../../../core/overview/types';
 import { TASK_STATUSES } from '../../../core/overview/types';
+import { PerspectiveProvider } from '../../../lib/perspective/PerspectiveProvider';
+import { PerspectiveSwitcher } from '../../../lib/perspective/PerspectiveSwitcher';
+import type { PerspectiveFacts } from '../../../lib/perspective/types';
 import { useCatalogTranslation } from './catalog-i18n';
 import type { CatalogExampleTextKey } from './catalog-messages';
 
@@ -43,9 +46,20 @@ export const CATALOG_COMPONENTS = [
   'chain',
   'todoRail',
   'acceptanceList',
+  'perspective',
 ] as const;
 
 export type CatalogComponent = (typeof CATALOG_COMPONENTS)[number];
+
+const PERSPECTIVE_FACTS = {
+  supervisedGroupCount: 1,
+  memberGroupProjectCount: 1,
+  visibleProjectGroupCount: 3,
+  visibleProjectDepartmentCount: 2,
+  canViewAllProjects: true,
+  directory: { groupsRegistered: true, departmentsRegistered: true },
+  pending: { me: 0, lead: 0, dept: 0, top: 0 },
+} satisfies PerspectiveFacts;
 
 export interface CatalogExample {
   id: CatalogComponent;
@@ -548,5 +562,13 @@ export function useCatalogExamples(): CatalogExample[] {
     { id: 'chain', render: () => <ChainExample /> },
     { id: 'todoRail', render: () => <TodoRailExample /> },
     { id: 'acceptanceList', render: () => <AcceptanceListExample /> },
+    {
+      id: 'perspective',
+      render: () => (
+        <PerspectiveProvider facts={PERSPECTIVE_FACTS}>
+          <PerspectiveSwitcher />
+        </PerspectiveProvider>
+      ),
+    },
   ];
 }

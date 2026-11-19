@@ -15,6 +15,22 @@ const sharedCraftTokens = {
   // Smallest touch target the mobile acceptance allows (drawer rows, header entry).
   touchTarget: 40,
   contentMaxWidth: 1600,
+  // Prototype .as, .seg and .seg button; the caption has its own non-layout breakpoint.
+  perspective: {
+    captionMaxWidth: 1040,
+    gapToCaption: 8,
+    gap: 2,
+    padding: 2,
+    optionHeight: 28,
+    optionPaddingInline: 10,
+    containerRadius: 8,
+    optionRadius: 6,
+    captionFontSize: 12,
+    optionFontSize: 13,
+    selectedLineWidth: 1,
+    fontWeight: 400,
+    selectedFontWeight: 500,
+  },
   font: {
     interface: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif',
     meta: 'ui-monospace, "SFMono-Regular", "Cascadia Mono", "Roboto Mono", monospace',
@@ -276,7 +292,10 @@ export const themeConfig = createThemeConfig('light');
 /** CSS custom properties expose chart and completion roles that antd does not own. */
 export function craftCssVariables(mode: CraftThemeMode): Record<string, string> {
   const tokens = craftThemes[mode];
-  const { color, chart, shadow, radius, motion, font, text, leading, measure, height, gap, width, canvas } = tokens;
+  const {
+    color, chart, shadow, radius, motion, font, text, leading, measure,
+    height, gap, width, canvas, perspective,
+  } = tokens;
   return {
     '--craft-color-page': color.page,
     '--craft-color-side': color.side,
@@ -320,6 +339,14 @@ export function craftCssVariables(mode: CraftThemeMode): Record<string, string> 
     // out of component styles; theme.ts is the one exempt definition point.
     '--craft-canvas-grid-image': `radial-gradient(${color.hairlineStrong} 1px, transparent 1px)`,
     '--craft-size-canvas-grid': `${canvas.grid}px`,
+    '--craft-perspective-radius': `${perspective.optionRadius}px`,
+    '--craft-perspective-height': `${perspective.optionHeight}px`,
+    '--craft-perspective-padding': `${perspective.padding}px`,
+    '--craft-perspective-gap': `${perspective.gap}px`,
+    // "none" cannot be a second box-shadow list item; dark keeps the hairline on its own.
+    '--craft-perspective-selected-shadow': shadow.small === 'none'
+      ? `0 0 0 ${perspective.selectedLineWidth}px ${color.hairline}`
+      : `0 0 0 ${perspective.selectedLineWidth}px ${color.hairline}, ${shadow.small}`,
     '--craft-text-small': `${text.small}px`,
     '--craft-text-title': `${text.title}px`,
     '--craft-text-metric': `${text.metric}px`,

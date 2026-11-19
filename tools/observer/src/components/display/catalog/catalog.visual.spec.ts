@@ -17,6 +17,7 @@ const components = [
   'chain',
   'todoRail',
   'acceptanceList',
+  'perspective',
 ] as const;
 
 test.beforeEach(async ({ page }, testInfo) => {
@@ -98,4 +99,27 @@ test('todo rail collapses everything but the first card', async ({ page }) => {
   await expect(page.getByText('还有 2 件')).toBeVisible();
   await page.locator('.obs-todo-min').first().click();
   await expect(page.getByText('已打开待办：要不要为这条工作线增加一位复核人')).toBeVisible();
+});
+
+test('perspective arrow navigation, Enter or Space selection, and visible focus', async ({ page }) => {
+  await page.goto('/src/components/display/catalog/index.html?component=perspective');
+  const me = page.getByRole('button', { name: '做事的人' });
+  const lead = page.getByRole('button', { name: '小组负责人' });
+  const department = page.getByRole('button', { name: '部门负责人' });
+  await me.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(lead).toBeFocused();
+  await expect(me).toHaveAttribute('aria-pressed', 'true');
+  await expect(lead).toHaveAttribute('aria-pressed', 'false');
+  const outline = await lead.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { style: style.outlineStyle, width: style.outlineWidth };
+  });
+  expect(outline).toEqual({ style: 'solid', width: '2px' });
+  await page.keyboard.press('Enter');
+  await expect(lead).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('ArrowRight');
+  await expect(department).toBeFocused();
+  await page.keyboard.press('Space');
+  await expect(department).toHaveAttribute('aria-pressed', 'true');
 });

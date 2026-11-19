@@ -11,6 +11,7 @@ const DAY = 86_400_000;
 const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
 const clone = (value) => structuredClone(value);
 const asObject = (value) => value && typeof value === 'object' && !Array.isArray(value);
+const statusOf = (task) => task.prototype_status;
 
 class DemoReadError extends Error {
   constructor(code, message, status = 503) {
@@ -25,21 +26,24 @@ function variantData(variant) {
   const data = clone(completeOrganization);
   if (variant === 'empty') {
     for (const key of ['people', 'projects', 'tasks', 'goals', 'documents', 'updates', 'decisions',
-      'handoffs', 'planning_candidates', 'activity', 'lessons', 'pending', 'waits_between_groups']) data[key] = [];
+      'project_questions', 'view_roles', 'handoffs', 'planning_candidates', 'activity', 'lessons',
+      'pending', 'approvals', 'waits_between_groups']) data[key] = [];
     data.organization.departments = [];
     return data;
   }
   if (variant !== 'single') return data;
-  const projectIds = new Set(['orders']);
+  const projectIds = new Set(['P-001']);
   const projects = data.projects.filter((project) => projectIds.has(project.project_id));
   const memberIds = new Set(projects.flatMap((project) => project.member_person_ids));
-  for (const key of ['projects', 'tasks', 'goals', 'documents', 'updates', 'decisions', 'handoffs',
-    'planning_candidates', 'activity', 'lessons', 'pending']) {
-    data[key] = data[key].filter((item) => projectIds.has(item.project_id));
+  // Approvals are canonical-fact shaped (OverviewApproval fields: projectId, recipientPersonId),
+  // unlike the service-shaped collections around them, so project scoping reads either key.
+  for (const key of ['projects', 'tasks', 'goals', 'documents', 'updates', 'decisions', 'project_questions',
+    'handoffs', 'planning_candidates', 'activity', 'lessons', 'pending', 'approvals']) {
+    data[key] = data[key].filter((item) => projectIds.has(item.project_id ?? item.projectId));
   }
   data.people = data.people.filter((person) => memberIds.has(person.person_id));
   data.organization.departments = data.organization.departments.filter((department) =>
-    ['engineering', 'applications'].includes(department.id));
+    ['G-001', 'G-004'].includes(department.id));
   data.waits_between_groups = data.waits_between_groups.filter((wait) => {
     const task = data.tasks.find((item) => item.work_id === wait.work_id);
     return Boolean(task);
@@ -47,38 +51,8 @@ function variantData(variant) {
   return data;
 }
 
-function presentationData(variant) {
-  const data = variantData(variant);
-  const workIds = new Map(data.tasks.map((task) => [task.work_id, task.title]));
-  if (new Set(workIds.values()).size !== workIds.size) throw new Error('Demo work titles must be unique');
-  for (const task of data.tasks) {
-    task.prototype_work_id = task.work_id;
-    task.work_id = workIds.get(task.work_id);
-    task.external_key = task.work_id;
-    for (const dependency of task.dependencies) {
-      dependency.provider_work_id = workIds.get(dependency.provider_work_id) ?? dependency.provider_work_id;
-    }
-  }
-  const remap = (item, field) => {
-    if (item && typeof item[field] === 'string') item[field] = workIds.get(item[field]) ?? item[field];
-  };
-  for (const key of ['decisions', 'handoffs', 'pending', 'activity', 'waits_between_groups']) {
-    for (const item of data[key]) remap(item, 'work_id');
-  }
-  for (const document of data.documents) {
-    document.used_task_ids = document.used_task_ids.map((workId) => workIds.get(workId) ?? workId);
-    remap(document, 'content_work_id');
-  }
-  for (const goal of data.goals) goal.task_ids = goal.task_ids.map((workId) => workIds.get(workId) ?? workId);
-  for (const lesson of data.lessons) {
-    remap(lesson, 'source_task_id');
-    for (const usage of lesson.usage_records) remap(usage, 'task_id');
-  }
-  return data;
-}
-
 function createDemoOrganization({ variant = 'full' } = {}) {
-  const data = presentationData(variant);
+  const data = variantData(variant);
   const revokedConnections = new Set();
   const taskById = new Map(data.tasks.map((task) => [task.work_id, task]));
   const projectById = new Map(data.projects.map((project) => [project.project_id, project]));
@@ -162,16 +136,15 @@ function createDemoOrganization({ variant = 'full' } = {}) {
 
   function guard(projectId, query) {
     if (variant === 'restricted') {
-      if (projectId === 'onboard' || ['documents.list', 'sources.inspect', 'audit.development', 'audit.requests'].includes(query.op)) {
+      if (projectId === 'P-003' || ['documents.list', 'sources.inspect', 'audit.development', 'audit.requests'].includes(query.op)) {
         throw new DemoReadError('Forbidden', 'access denied', 403);
       }
     }
     if (variant === 'partial') {
-      if (projectId === 'orders' && query.op === 'work.list' && query.workstream_id === 'orders-be'
-        || projectId === 'orders' && query.op === 'work.graph' && query.workstream_id === 'orders-be'
-        || projectId === 'orders' && ['planning.candidates', 'audit.development'].includes(query.op)
-        || projectId === 'orders' && query.op === 'work.snapshot'
-          && taskById.get(query.work_id)?.prototype_work_id === 'T-102') {
+      if (projectId === 'P-001' && query.op === 'work.list' && query.workstream_id === 'WS-002'
+        || projectId === 'P-001' && query.op === 'work.graph' && query.workstream_id === 'WS-002'
+        || projectId === 'P-001' && ['planning.candidates', 'audit.development'].includes(query.op)
+        || projectId === 'P-001' && query.op === 'work.snapshot' && query.work_id === 'T-102') {
         throw new DemoReadError('Unavailable', 'read temporarily unavailable', 503);
       }
     }
@@ -204,8 +177,8 @@ function createDemoOrganization({ variant = 'full' } = {}) {
   }
 
   function runtimeState(task) {
-    if (task.prototype_status === 'verified') return 'completed';
-    if (['ready', 'planned'].includes(task.prototype_status)) return 'unclaimed';
+    if (statusOf(task) === 'verified') return 'completed';
+    if (['ready', 'planned'].includes(statusOf(task))) return 'unclaimed';
     return 'claimed';
   }
 
@@ -213,7 +186,7 @@ function createDemoOrganization({ variant = 'full' } = {}) {
     return {
       verified: 'delivered', claimed: 'completed', returned: 'changes_requested', review: 'ready_for_review',
       running: 'in_progress', stalled: 'waiting_for_answer', waiting: 'blocked', ready: 'ready', planned: 'planned',
-    }[task.prototype_status] || 'unknown';
+    }[statusOf(task)] || 'unknown';
   }
 
   function progress(task) {
@@ -259,12 +232,12 @@ function createDemoOrganization({ variant = 'full' } = {}) {
       phase: { value: phase(task), as_of_unix_ms: at, reason: null },
       runtime: { value: runtimeState(task), as_of_unix_ms: data.now_unix_ms, reason: null },
       outcome: {
-        value: task.prototype_status === 'verified' || task.prototype_status === 'claimed'
+        value: statusOf(task) === 'verified' || statusOf(task) === 'claimed'
           ? { summary: task.report?.summary ?? null, completed_work: task.report?.completed ?? [],
             integration_state: task.integrated ? 'confirmed' : 'not_integrated', current_binding: true }
           : null,
-        as_of_unix_ms: task.prototype_status === 'verified' || task.prototype_status === 'claimed' ? at : null,
-        reason: task.prototype_status === 'verified' || task.prototype_status === 'claimed' ? null : 'no_reported_outcome',
+        as_of_unix_ms: statusOf(task) === 'verified' || statusOf(task) === 'claimed' ? at : null,
+        reason: statusOf(task) === 'verified' || statusOf(task) === 'claimed' ? null : 'no_reported_outcome',
       },
       blocker: {
         value: blockers.length ? { text: blockers[0] } : null,
@@ -331,13 +304,13 @@ function createDemoOrganization({ variant = 'full' } = {}) {
     if (task.wait?.kind === 'ext') return 'waiting_external';
     if (task.dependencies.some((dependency) => !dependency.satisfied)) return 'waiting_dependency';
     if (task.agent_active) return 'resume';
-    if (['ready', 'planned'].includes(task.prototype_status)) return 'prepare';
+    if (['ready', 'planned'].includes(statusOf(task))) return 'prepare';
     return 'observe';
   }
 
   function workNext(projectId, query) {
     const mine = data.tasks.filter((item) => item.project_id === projectId
-      && item.owner_person_id === data.viewer.person_id && item.prototype_status !== 'verified');
+      && item.owner_person_id === data.viewer.person_id && statusOf(item) !== 'verified');
     const limited = variant === 'partial' && projectId === 'orders' ? mine.slice(0, 3) : mine;
     const result = page(limited, query);
     return reply(projectId, query, {
@@ -412,9 +385,9 @@ function createDemoOrganization({ variant = 'full' } = {}) {
     const round = latestRound(work);
     const contract = contractHash(work.work_id);
     const digest = round ? artifactDigest(work, round) : null;
-    const completionId = work.prototype_status === 'verified' && round ? `completion-${round.round_id}` : null;
+    const completionId = statusOf(work) === 'verified' && round ? `completion-${round.round_id}` : null;
     const integrationId = work.integrated && round ? `integration-${round.round_id}` : null;
-    const runtime = ['ready', 'planned'].includes(work.prototype_status) ? null : {
+    const runtime = ['ready', 'planned'].includes(statusOf(work)) ? null : {
       state: runtimeState(work), work_version: '1', last_fence: '1', recovery_blocked: false,
       selected_completion_id: completionId,
     };
@@ -919,7 +892,7 @@ function createDemoOrganization({ variant = 'full' } = {}) {
   function completionInspect(projectId, query) {
     const work = task(query.work_id, projectId);
     const round = latestRound(work);
-    if (!round || work.prototype_status !== 'verified') {
+    if (!round || statusOf(work) !== 'verified') {
       return reply(projectId, query, { completion: null, runtime_state: runtimeState(work), selected_completion_id: null });
     }
     const selected = `completion-${round.round_id}`;
@@ -969,14 +942,14 @@ function createDemoOrganization({ variant = 'full' } = {}) {
   function deliveryInspect(projectId, query) {
     const work = task(query.work_id, projectId);
     const round = latestRound(work);
-    const selected = work.prototype_status === 'verified' && round ? `completion-${round.round_id}` : null;
+    const selected = statusOf(work) === 'verified' && round ? `completion-${round.round_id}` : null;
     const dependencies = work.dependencies.map((dependency) => dependencyShape(projectId, work, dependency, false));
     return reply(projectId, query, {
       delivery: {
         work_id: work.work_id,
         awr_acceptance: {
-          complete: work.prototype_status === 'verified',
-          runtime_state: work.prototype_status === 'verified' ? 'completed' : runtimeState(work),
+          complete: statusOf(work) === 'verified',
+          runtime_state: statusOf(work) === 'verified' ? 'completed' : runtimeState(work),
           selected_completion_id: selected,
         },
         cannot_skip_acceptance_via: ['pr_url_alone', 'green_ci', 'admin_role', 'already_merged'],
@@ -997,7 +970,7 @@ function createDemoOrganization({ variant = 'full' } = {}) {
       contract_hash: contractHash(provider.work_id),
       source_snapshot_id: sourceSnapshot(projectId),
     };
-    const availableVersion = provider.prototype_status === 'verified' && providerRound ? {
+    const availableVersion = statusOf(provider) === 'verified' && providerRound ? {
       receipt_id: `completion-${providerRound.round_id}`,
       contract_hash: contractHash(provider.work_id),
       source_snapshot_id: sourceSnapshot(projectId),
@@ -1368,7 +1341,7 @@ function createDemoOrganization({ variant = 'full' } = {}) {
       case 'delivery.inspect': return deliveryInspect(projectId, query);
       case 'delivery.neutral.inspect': {
         const work = task(query.work_id, projectId);
-        return reply(projectId, query, { work_id: work.work_id, acceptance_ready: work.prototype_status === 'verified',
+        return reply(projectId, query, { work_id: work.work_id, acceptance_ready: statusOf(work) === 'verified',
           candidate: null, connectors: [], connectors_truncated: false, facts: [], facts_truncated: false,
           history: [], execution_authorized: false });
       }
@@ -1379,7 +1352,7 @@ function createDemoOrganization({ variant = 'full' } = {}) {
       }
       case 'delivery.submission.describe': {
         const work = task(query.work_id, projectId);
-        return reply(projectId, query, { work_id: work.work_id, acceptance_ready: work.prototype_status === 'verified',
+        return reply(projectId, query, { work_id: work.work_id, acceptance_ready: statusOf(work) === 'verified',
           candidate: null, execution_authorized: false });
       }
       case 'delivery.integration.inspect': {
@@ -1417,7 +1390,7 @@ function createDemoOrganization({ variant = 'full' } = {}) {
           pending_publication_id: null,
           source_fingerprint: `sha256:${sha256(`source:${work.work_id}`)}`,
           confirmed_fingerprint: `sha256:${sha256(`source:${work.work_id}`)}`,
-          acceptance_ready: work.prototype_status === 'verified',
+          acceptance_ready: statusOf(work) === 'verified',
           execution_authorized: false,
         });
       }
@@ -1502,7 +1475,7 @@ function createDemoOrganization({ variant = 'full' } = {}) {
         plan: { organization: null, departments: [], project_department_ids: [], members: [] }, members: [],
       } }, setCookie: [] };
     }
-    if (variant === 'restricted' && projectId === 'orders') {
+    if (variant === 'restricted' && projectId === 'P-001') {
       return { status: 403, json: { code: 'Forbidden', message: 'access denied' }, setCookie: [] };
     }
     const members = data.people.filter((member) => selected.member_person_ids.includes(member.person_id));
