@@ -234,7 +234,13 @@ integration records and target ownership remain intact.
 
 ## Recover planning source writeback
 
-Registered-source planning publication checks the actual projected transition
+A fresh combined publish/activation first generates and validates the candidate's
+complete package in memory. Generated-package limits and the changed-ledger limit are
+checked before either the publication or command reservation commits; an oversized
+request leaves the candidate approved and can be corrected without recovering a
+half-committed publication. Existing reservations retain their original recovery path.
+
+Registered-source planning publication then checks the actual projected transition
 and the same settlement gate **before the first source-byte write**. Client
 impact and stop declarations never prove admission. The server chooses the
 registered source; MCP callers cannot supply a filesystem path.
@@ -277,6 +283,17 @@ After an unknown `awr_team_planning_publish` result:
    atomically. A lost reply after that commit restores the original publication
    and command receipt without republishing a stale candidate, activating again
    or repeating task creation.
+
+A reserved activation without any journal is explicitly `status: reserved` and
+`writeback: absent`, not `SourceDivergence`. Retry only its identical operation and
+payload. If the same pre-journal failure persists, the owner inspection lists the
+publication, candidate, original request and times. Its reviewed
+`close_unlogged.expected_*` values feed `awr-server access
+writeback-close-unlogged`. That owner close leaves source and active snapshots
+untouched, clears the publication's pending flag without recording activation, marks
+the candidate superseded and completes the original request with the closure reason.
+Any journal, authority mismatch or changed reviewed fact refuses the operation with
+zero writes. See [Team operator access management](team-operator-access.md#planning-writeback-recovery).
 
 ### When the original request cannot be resumed
 

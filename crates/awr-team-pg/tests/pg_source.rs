@@ -145,8 +145,7 @@ fn workstreams_len(request: &IngestRequest) -> usize {
 
 fn oversized_publish_request() -> IngestRequest {
     let minimal_acceptance = publish_request_with_acceptance_len(1);
-    let acceptance_len =
-        1 + awr_team_pg::MAX_FILE_BYTES + 1 - workstreams_len(&minimal_acceptance);
+    let acceptance_len = 1 + awr_team_pg::MAX_FILE_BYTES + 1 - workstreams_len(&minimal_acceptance);
     let request = publish_request_with_acceptance_len(acceptance_len);
     assert_eq!(
         workstreams_len(&request),
