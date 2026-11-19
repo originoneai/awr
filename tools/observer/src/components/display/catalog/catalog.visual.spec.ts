@@ -11,6 +11,12 @@ const components = [
   'dataTable',
   'detailPanel',
   'timeline',
+  'kpiStrip',
+  'statusTag',
+  'completionBar',
+  'chain',
+  'todoRail',
+  'acceptanceList',
 ] as const;
 
 test.beforeEach(async ({ page }, testInfo) => {
@@ -51,4 +57,45 @@ test('dataTable keyboard focus and Enter navigation', async ({ page }) => {
   await expect(page.getByText('已打开工作：核对页面交互')).toBeVisible();
   const staticRow = page.getByText('复查交付说明').locator('tr');
   await expect(staticRow.locator('.obs-table-arrow-column svg')).toHaveCount(0);
+});
+
+test('kpi cells open with a visible keyboard focus ring', async ({ page }) => {
+  await page.goto('/src/components/display/catalog/index.html?component=kpiStrip');
+  const cell = page.locator('button.obs-kpi-open').first();
+  await cell.focus();
+  const outline = await cell.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { style: style.outlineStyle, width: style.outlineWidth, color: style.outlineColor };
+  });
+  expect(outline.style).toBe('solid');
+  expect(outline.width).toBe('2px');
+  await page.keyboard.press('Enter');
+  await expect(page.getByText('已打开数字：本周通过核验')).toBeVisible();
+});
+
+test('chain nodes open with the keyboard and keep their red root marker', async ({ page }) => {
+  await page.goto('/src/components/display/catalog/index.html?component=chain');
+  const root = page.locator('button.obs-chain-node-root');
+  await expect(root).toHaveCount(1);
+  await root.focus();
+  const outline = await root.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { style: style.outlineStyle, width: style.outlineWidth };
+  });
+  expect(outline).toEqual({ style: 'solid', width: '2px' });
+  await page.keyboard.press('Enter');
+  await expect(page.getByText('已打开这一环：周宁的复核队列')).toBeVisible();
+  const quietEnd = page.locator('.obs-chain-node[data-node-kind="commitment"]');
+  await expect(quietEnd).toHaveCount(1);
+  await expect(quietEnd.locator('button, a')).toHaveCount(0);
+});
+
+test('todo rail collapses everything but the first card', async ({ page }) => {
+  await page.goto('/src/components/display/catalog/index.html?component=todoRail');
+  const cards = page.locator('.obs-todo-card');
+  await expect(cards).toHaveCount(3);
+  await expect(page.locator('.obs-todo-detail')).toHaveCount(1);
+  await expect(page.getByText('还有 2 件')).toBeVisible();
+  await page.locator('.obs-todo-min').first().click();
+  await expect(page.getByText('已打开待办：要不要为这条工作线增加一位复核人')).toBeVisible();
 });

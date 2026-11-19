@@ -1,6 +1,6 @@
-import { useTranslation } from 'react-i18next';
 import { Link, Navigate, useParams } from 'react-router';
 import { useCompactViewport } from '../../../lib/viewport';
+import { useCatalogTranslation } from './catalog-i18n';
 import { CATALOG_COMPONENTS, useCatalogExamples, type CatalogComponent } from './examples';
 import './catalog.css';
 
@@ -10,7 +10,7 @@ function isCatalogComponent(value: string | undefined): value is CatalogComponen
 
 /** Development-only, isolated examples. No queries, business mutations or production navigation. */
 export function ComponentCatalog() {
-  const { t } = useTranslation();
+  const { t } = useCatalogTranslation();
   const { component } = useParams();
   const compactViewport = useCompactViewport();
   const examples = useCatalogExamples();

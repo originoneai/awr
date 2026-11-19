@@ -1,17 +1,30 @@
 import { FileText } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
-import { useTranslation } from 'react-i18next';
-import type zhCN from '../../../i18n/zh-CN';
-import { DataTable, type DataTableRow } from '../DataTable';
-import { DetailPanel } from '../DetailPanel';
-import { DisplayIcon } from '../DisplayIcon';
-import { EmptyState } from '../EmptyState';
-import { KeyValueTable } from '../KeyValueTable';
-import { Notice } from '../Notice';
-import { PageHeader } from '../PageHeader';
-import { RowList } from '../RowList';
-import { Section } from '../Section';
-import { Timeline } from '../Timeline';
+import {
+  HealthTag,
+  TaskStatusTag,
+  AcceptanceList,
+  Chain,
+  CompletionBar,
+  CompletionLegend,
+  DataTable,
+  DetailPanel,
+  DisplayIcon,
+  EmptyState,
+  KeyValueTable,
+  KpiStrip,
+  Notice,
+  PageHeader,
+  RowList,
+  Section,
+  Timeline,
+  TodoRail,
+} from '..';
+import type { DataTableRow } from '..';
+import type { ChainConnector, ChainNode, DerivedTaskStatus } from '../../../core/overview/types';
+import { TASK_STATUSES } from '../../../core/overview/types';
+import { useCatalogTranslation } from './catalog-i18n';
+import type { CatalogExampleTextKey } from './catalog-messages';
 
 export const CATALOG_COMPONENTS = [
   'section',
@@ -24,6 +37,12 @@ export const CATALOG_COMPONENTS = [
   'dataTable',
   'detailPanel',
   'timeline',
+  'kpiStrip',
+  'statusTag',
+  'completionBar',
+  'chain',
+  'todoRail',
+  'acceptanceList',
 ] as const;
 
 export type CatalogComponent = (typeof CATALOG_COMPONENTS)[number];
@@ -34,7 +53,7 @@ export interface CatalogExample {
 }
 
 function RowListExample() {
-  const { t } = useTranslation();
+  const { t } = useCatalogTranslation();
   const [opened, setOpened] = useState<string | null>(null);
   const titles = [t('display.catalog.examples.rowFirst'), t('display.catalog.examples.rowSecond')];
   return (
@@ -73,7 +92,7 @@ function RowListExample() {
 }
 
 function DataTableExample() {
-  const { t } = useTranslation();
+  const { t } = useCatalogTranslation();
   const [opened, setOpened] = useState<string | null>(null);
   const titles = [
     t('display.catalog.examples.tableFirst'),
@@ -140,11 +159,243 @@ function DataTableExample() {
   );
 }
 
-type ExampleTextKey = keyof typeof zhCN.display.catalog.examples;
+function KpiStripExample() {
+  const { t } = useCatalogTranslation();
+  const [opened, setOpened] = useState<string | null>(null);
+  const text = (key: CatalogExampleTextKey) => t(`display.catalog.examples.${key}`);
+  const labels = [text('kpiOne'), text('kpiTwo'), text('kpiThree'), text('kpiFour')];
+  return (
+    <>
+      <KpiStrip
+        items={[
+          {
+            key: 'verified',
+            label: labels[0],
+            value: '5',
+            unit: text('kpiUnitItems'),
+            change: { text: text('kpiOneChange'), tone: 'good', trend: 'up' },
+            onOpen: () => setOpened(labels[0]),
+          },
+          {
+            key: 'running',
+            label: labels[1],
+            value: '3',
+            unit: text('kpiUnitItems'),
+            change: { text: text('kpiTwoChange'), tone: 'warn' },
+            onOpen: () => setOpened(labels[1]),
+          },
+          {
+            key: 'waiting',
+            label: labels[2],
+            value: '2',
+            unit: text('kpiUnitAgents'),
+            change: { text: text('kpiThreeChange') },
+            onOpen: () => setOpened(labels[2]),
+          },
+          {
+            key: 'mine',
+            label: labels[3],
+            value: '2',
+            unit: text('kpiUnitItems'),
+            change: { text: text('kpiFourChange') },
+            emphasized: true,
+            onOpen: () => setOpened(labels[3]),
+          },
+        ]}
+      />
+      {opened ? <Notice>{t('display.catalog.examples.kpiOpened', { label: opened })}</Notice> : null}
+    </>
+  );
+}
+
+const TASK_STATUS_SAMPLE: readonly DerivedTaskStatus[] = [...TASK_STATUSES, 'unknown'];
+
+function StatusTagExample() {
+  const { t } = useCatalogTranslation();
+  return (
+    <Section title={t('display.catalog.examples.project')}>
+      <div className="obs-catalog-tag-row">
+        <span className="obs-catalog-dim">{t('display.catalog.examples.statusProjectGroup')}</span>
+        {(['ok', 'risk', 'off', 'none', 'info'] as const).map((status) => (
+          <HealthTag key={status} status={status} />
+        ))}
+      </div>
+      <div className="obs-catalog-tag-row">
+        <span className="obs-catalog-dim">{t('display.catalog.examples.statusTaskGroup')}</span>
+        {TASK_STATUS_SAMPLE.map((status) => (
+          <TaskStatusTag key={status} status={status} live={status === 'running'} />
+        ))}
+      </div>
+    </Section>
+  );
+}
+
+function CompletionBarExample() {
+  const { t } = useCatalogTranslation();
+  const text = (key: CatalogExampleTextKey) => t(`display.catalog.examples.${key}`);
+  return (
+    <Section
+      title={text('completionSection')}
+      extra={<CompletionLegend />}
+    >
+      <div className="obs-catalog-completion-row">
+        <span>{text('completionRowOne')}</span>
+        <CompletionBar counts={{ verified: 6, reported: 1, inProgress: 2, notStarted: 1 }} />
+      </div>
+      <div className="obs-catalog-completion-row">
+        <span>{text('completionRowTwo')}</span>
+        <CompletionBar counts={{ verified: 4, reported: 0, inProgress: 1, notStarted: 0 }} />
+      </div>
+    </Section>
+  );
+}
+
+function ChainExample() {
+  const { t } = useCatalogTranslation();
+  const [opened, setOpened] = useState<string | null>(null);
+  const text = (key: CatalogExampleTextKey) => t(`display.catalog.examples.${key}`);
+  const nodes: readonly ChainNode[] = [
+    { id: 'demo:root', kind: 'root', root: true, tone: 'negative', task: null, commitment: null },
+    { id: 'demo:task:interface', kind: 'task', root: false, tone: null, task: null, commitment: null },
+    { id: 'demo:task:integration', kind: 'task', root: false, tone: null, task: null, commitment: null },
+    { id: 'demo:commitment:delivery', kind: 'commitment', root: false, tone: null, task: null, commitment: { kind: 'project' } },
+  ];
+  const connectors: readonly ChainConnector[] = [
+    { fromNodeId: 'demo:root', toNodeId: 'demo:task:interface', kind: 'blocks' },
+    { fromNodeId: 'demo:task:interface', toNodeId: 'demo:task:integration', kind: 'depends' },
+    { fromNodeId: 'demo:task:integration', toNodeId: 'demo:commitment:delivery', kind: 'affects' },
+  ];
+  const present = (node: ChainNode) => {
+    switch (node.id) {
+      case 'demo:root':
+        return {
+          kicker: t('display.chain.rootKicker'),
+          title: text('chainRootTitle'),
+          ownerName: t('display.catalog.examples.tableOwnerTwo'),
+          queue: [
+            { title: text('chainQueueOne'), days: 2 },
+            { title: text('chainQueueTwo'), days: 1 },
+          ],
+          queueNote: { queued: 2, oldestDays: 2 },
+        };
+      case 'demo:task:interface':
+        return {
+          kicker: t('display.chain.taskKicker'),
+          title: text('chainTaskOneTitle'),
+          meta: text('chainTaskOneMeta'),
+          status: 'waiting' as const,
+        };
+      case 'demo:task:integration':
+        return {
+          kicker: t('display.chain.taskKicker'),
+          title: text('chainTaskTwoTitle'),
+          meta: text('chainTaskTwoMeta'),
+          status: 'running' as const,
+        };
+      default:
+        return {
+          kicker: text('chainEndKicker'),
+          title: text('chainEndTitle'),
+          meta: text('chainEndMeta'),
+          health: 'risk' as const,
+          progress: { done: 4, total: 6 },
+        };
+    }
+  };
+  return (
+    <Section title={text('chainSection')}>
+      <Chain
+        nodes={nodes}
+        connectors={connectors}
+        present={present}
+        onOpen={(node) => setOpened(present(node).title)}
+        footer={<span>{text('chainFooter')}</span>}
+      />
+      {opened ? <Notice>{t('display.catalog.examples.chainOpened', { title: opened })}</Notice> : null}
+    </Section>
+  );
+}
+
+function TodoRailExample() {
+  const { t } = useCatalogTranslation();
+  const [opened, setOpened] = useState<string | null>(null);
+  const [openedAll, setOpenedAll] = useState(false);
+  const text = (key: CatalogExampleTextKey) => t(`display.catalog.examples.${key}`);
+  const items = [
+    {
+      key: 'empty-state',
+      kind: text('todoKindAnswer'),
+      title: text('todoFirstTitle'),
+      from: text('todoFirstFrom'),
+      age: text('todoFirstAge'),
+      detail: text('todoFirstDetail'),
+      onOpen: () => setOpened(text('todoFirstTitle')),
+    },
+    {
+      key: 'second-reviewer',
+      kind: text('todoKindDecision'),
+      title: text('todoSecondTitle'),
+      age: text('todoSecondAge'),
+      onOpen: () => setOpened(text('todoSecondTitle')),
+    },
+    {
+      key: 'stage-checks',
+      kind: text('todoKindReview'),
+      title: text('todoThirdTitle'),
+      age: text('todoThirdAge'),
+      onOpen: () => setOpened(text('todoThirdTitle')),
+    },
+    {
+      key: 'delivery-notes',
+      kind: text('todoKindDecision'),
+      title: text('todoFourthTitle'),
+      age: text('todoFourthAge'),
+      onOpen: () => setOpened(text('todoFourthTitle')),
+    },
+    {
+      key: 'demo-archive',
+      kind: text('todoKindAnswer'),
+      title: text('todoFifthTitle'),
+      age: text('todoFifthAge'),
+      onOpen: () => setOpened(text('todoFifthTitle')),
+    },
+  ];
+  return (
+    <>
+      <div className="obs-catalog-frame">
+        <TodoRail
+          title={text('todoTitle')}
+          items={items}
+          onViewAll={() => setOpenedAll(true)}
+        />
+      </div>
+      {opened ? <Notice>{t('display.catalog.examples.todoViewed', { title: opened })}</Notice> : null}
+      {openedAll ? <Notice>{t('display.catalog.examples.todoViewedAll')}</Notice> : null}
+    </>
+  );
+}
+
+function AcceptanceListExample() {
+  const { t } = useCatalogTranslation();
+  const text = (key: CatalogExampleTextKey) => t(`display.catalog.examples.${key}`);
+  return (
+    <Section title={text('acceptanceSection')} count={4} padded>
+      <AcceptanceList
+        items={[
+          { key: 'lookup', title: text('acceptanceOne'), evidence: text('acceptanceOneEvidence'), status: 'supported' },
+          { key: 'keep-input', title: text('acceptanceTwo'), evidence: text('acceptanceTwoEvidence'), status: 'waiting' },
+          { key: 'repeat-submit', title: text('acceptanceThree'), evidence: text('acceptanceThreeEvidence'), status: 'failed' },
+          { key: 'scenarios', title: text('acceptanceFour'), status: 'notStarted' },
+        ]}
+      />
+      <p className="obs-catalog-dim">{text('acceptanceNote')}</p>
+    </Section>
+  );
+}
 
 export function useCatalogExamples(): CatalogExample[] {
-  const { t } = useTranslation();
-  const text = (key: ExampleTextKey) => t(`display.catalog.examples.${key}`);
+  const { t } = useCatalogTranslation();
+  const text = (key: CatalogExampleTextKey) => t(`display.catalog.examples.${key}`);
   return [
     {
       id: 'section',
@@ -283,5 +534,11 @@ export function useCatalogExamples(): CatalogExample[] {
         </Section>
       ),
     },
+    { id: 'kpiStrip', render: () => <KpiStripExample /> },
+    { id: 'statusTag', render: () => <StatusTagExample /> },
+    { id: 'completionBar', render: () => <CompletionBarExample /> },
+    { id: 'chain', render: () => <ChainExample /> },
+    { id: 'todoRail', render: () => <TodoRailExample /> },
+    { id: 'acceptanceList', render: () => <AcceptanceListExample /> },
   ];
 }

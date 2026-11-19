@@ -38,6 +38,26 @@ function readBox(page: Page, selector: string) {
   }, selector);
 }
 
+/** Resolves any CSS color value, including var() tokens and color-mix forms. */
+function resolveColor(page: Page, value: string) {
+  return page.evaluate((cssColor) => {
+    const probe = document.createElement('div');
+    probe.style.color = cssColor;
+    document.body.append(probe);
+    const resolved = getComputedStyle(probe).color;
+    probe.remove();
+    return resolved;
+  }, value);
+}
+
+function colorOf(page: Page, selector: string, pseudo?: string) {
+  return page.evaluate(({ selector, pseudo }) => {
+    const element = document.querySelector(selector);
+    if (!element) throw new Error(`Missing element for ${selector}`);
+    return getComputedStyle(element, pseudo ?? null).color;
+  }, { selector, pseudo });
+}
+
 test.beforeEach(async ({ page }, testInfo) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   const mode = testInfo.project.name === 'desktop-dark' ? 'dark' : 'light';
@@ -275,4 +295,240 @@ test('notice matches the prototype callout', async ({ page }) => {
   expect(styles['margin-bottom']).toBe('24px');
   expect(styles['font-size']).toBe('13px');
   expect(styles['line-height']).toBe('20px');
+});
+
+test('metric strip matches the prototype kpis and kpi', async ({ page }, testInfo) => {
+  await open(page, 'kpiStrip');
+  const phone = isPhone(testInfo.project.name);
+  // .kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top/bottom 1px }
+  const strip = await readStyles(page, '.obs-kpis', ['display', 'border-top-width', 'border-bottom-width']);
+  expect(strip['display']).toBe('grid');
+  expect(strip['border-top-width']).toBe('1px');
+  expect(strip['border-bottom-width']).toBe('1px');
+  const tracks = await page.evaluate(() => getComputedStyle(document.querySelector('.obs-kpis')!).gridTemplateColumns.split(' ').length);
+  expect(tracks).toBe(phone ? 2 : 4);
+  // .kpi { padding: 16px 28px; border-left: 1px solid var(--line) } (12px 20px below 860px)
+  const cell = await readStyles(page, '.obs-kpi:nth-child(2)', ['padding-top', 'padding-left', 'padding-right', 'border-left-width']);
+  expect(`${cell['padding-top']} ${cell['padding-left']} ${cell['padding-right']}`).toBe(phone ? '12px 20px 20px' : '16px 28px 28px');
+  expect(cell['border-left-width']).toBe('1px');
+  const first = await readStyles(page, '.obs-kpi:first-child', ['border-left-width']);
+  expect(first['border-left-width']).toBe('0px');
+  // .kpi .l { font-size: 13px }
+  const label = await readStyles(page, '.obs-kpi-label', ['font-size']);
+  expect(label['font-size']).toBe('13px');
+  // .kpi .v { margin-top: 4px; font-size: 32px; line-height: 40px; font-weight: 500 }
+  // (28px/36px below 860px)
+  const value = await readStyles(page, '.obs-kpi-value', ['margin-top', 'font-size', 'line-height', 'font-weight']);
+  expect(value).toEqual({
+    'margin-top': '4px',
+    'font-size': phone ? '28px' : '32px',
+    'line-height': phone ? '36px' : '40px',
+    'font-weight': '500',
+  });
+  // .kpi .v small { margin-left: 4px; font-size: 14px; font-weight: 400 }
+  const unit = await readStyles(page, '.obs-kpi-value small', ['margin-left', 'font-size', 'font-weight']);
+  expect(unit).toEqual({ 'margin-left': '4px', 'font-size': '14px', 'font-weight': '400' });
+  // .kpi .c { gap: 4px; margin-top: 2px; font-size: 12px; line-height: 16px }
+  const change = await readStyles(page, '.obs-kpi-change', ['column-gap', 'margin-top', 'font-size', 'line-height']);
+  expect(change).toEqual({ 'column-gap': '4px', 'margin-top': '2px', 'font-size': '12px', 'line-height': '16px' });
+  // .kpi .c[data-d="good"] { color: var(--ok) }
+  const goodChange = await colorOf(page, '.obs-kpi-change[data-tone="good"]');
+  expect(goodChange).toBe(await resolveColor(page, 'var(--craft-color-positive)'));
+  // .kpi.me .v { color: var(--accent) }
+  const emphasized = await colorOf(page, '.obs-kpi[data-emphasized="true"] .obs-kpi-value');
+  expect(emphasized).toBe(await resolveColor(page, 'var(--craft-color-accent)'));
+  if (phone) {
+    // .kpi:nth-child(3) { border-left: 0 } .kpi:nth-child(n+3) { border-top: 1px solid var(--line) }
+    const third = await readStyles(page, '.obs-kpi:nth-child(3)', ['border-left-width', 'border-top-width']);
+    expect(third['border-left-width']).toBe('0px');
+    expect(third['border-top-width']).toBe('1px');
+  }
+});
+
+test('status tags match the prototype tag and lamp', async ({ page }) => {
+  await open(page, 'statusTag');
+  // .tag { height: 22px; padding: 0 8px; radius 6; gap: 6px; font-size: 12px; line-height: 16px }
+  const tag = await readStyles(page, '.obs-tag', ['height', 'padding-left', 'padding-right', 'border-top-left-radius', 'column-gap', 'font-size', 'line-height']);
+  expect(tag).toEqual({
+    height: '22px',
+    'padding-left': '8px',
+    'padding-right': '8px',
+    'border-top-left-radius': '6px',
+    'column-gap': '6px',
+    'font-size': '12px',
+    'line-height': '16px',
+  });
+  // .tag[data-h="ok"] { background: var(--ok-soft); color: var(--ok) }
+  const okTag = await readStyles(page, '.obs-tag[data-tone="ok"]', ['background-color', 'color']);
+  expect(okTag['color']).toBe(await resolveColor(page, 'var(--craft-color-positive)'));
+  expect(okTag['background-color']).toBe(await resolveColor(page, 'var(--craft-color-positive-soft)'));
+  const riskTag = await readStyles(page, '.obs-tag[data-tone="risk"]', ['background-color', 'color']);
+  expect(riskTag['color']).toBe(await resolveColor(page, 'var(--craft-color-warning)'));
+  // .lamp { width: 8px; height: 8px; border-radius: 50% }
+  const lamp = await readStyles(page, '.obs-lamp', ['width', 'height', 'border-top-left-radius']);
+  expect(lamp).toEqual({ width: '8px', height: '8px', 'border-top-left-radius': '50%' });
+  // [data-st="done"] { --c: var(--ok) }
+  const doneLamp = await readStyles(page, '.obs-lamp[data-lamp="done"]', ['background-color']);
+  expect(doneLamp['background-color']).toBe(await resolveColor(page, 'var(--craft-color-positive)'));
+  // .lamp.ring { background: transparent; box-shadow: inset 0 0 0 1.5px var(--c) }
+  const ring = await readStyles(page, '.obs-lamp[data-ring="true"]', ['background-color', 'box-shadow']);
+  expect(ring['background-color']).toBe(await resolveColor(page, 'transparent'));
+  expect(ring['box-shadow']).toContain('1.5px');
+  // Hover sentence: title carries the meaning, not the label.
+  const title = await page.evaluate(() => document.querySelector('.obs-tag[data-tone="ok"]')!.getAttribute('title') ?? '');
+  expect(title.length).toBeGreaterThan(6);
+});
+
+test('completion bar and legend match the prototype seg4 and legend', async ({ page }, testInfo) => {
+  await open(page, 'completionBar');
+  // .seg4 { display: flex; gap: 2px; height: 8px }
+  const bar = await readStyles(page, '.obs-seg4', ['display', 'column-gap', 'height']);
+  expect(bar).toEqual({ display: 'flex', 'column-gap': '2px', height: '8px' });
+  // .seg4 i { min-width: 2px; border-radius: 4px; background: var(--k) }
+  const part = await readStyles(page, '.obs-seg4-part', ['min-width', 'border-top-left-radius', 'flex-grow']);
+  expect(`${part['min-width']} ${part['border-top-left-radius']} ${part['flex-grow']}`).toBe('2px 4px 6');
+  const verifiedColor = await readStyles(page, '.obs-seg4-part[data-seg="verified"]', ['background-color']);
+  expect(verifiedColor['background-color']).toBe(await resolveColor(page, 'var(--craft-completion-verified)'));
+  const inProgressColor = await readStyles(page, '.obs-seg4-part[data-seg="inProgress"]', ['background-color']);
+  expect(inProgressColor['background-color']).toBe(await resolveColor(page, 'var(--craft-completion-in-progress)'));
+  // .seg4 + .sm { margin-top: 6px } and .sm { font-size: 12px; line-height: 16px }
+  const summary = await readStyles(page, '.obs-completion-summary', ['margin-top', 'font-size', 'line-height']);
+  expect(summary).toEqual({ 'margin-top': '6px', 'font-size': '12px', 'line-height': '16px' });
+  // .legend { gap: 16px; font-size: 12px } .legend span { gap: 6px } .legend i { 8px; radius 2px }
+  const legend = await readStyles(page, '.obs-legend', ['column-gap', 'font-size']);
+  expect(legend).toEqual({ 'column-gap': '16px', 'font-size': '12px' });
+  const legendItem = await readStyles(page, '.obs-legend > span', ['column-gap']);
+  expect(legendItem['column-gap']).toBe('6px');
+  const swatch = await readStyles(page, '.obs-legend-swatch', ['width', 'height', 'border-top-left-radius']);
+  expect(`${swatch['width']} ${swatch['height']} ${swatch['border-top-left-radius']}`).toBe('8px 8px 2px');
+  if (isPhone(testInfo.project.name)) {
+    // .legend, .hlegend { display: none } below 860px
+    const hidden = await readStyles(page, '.obs-legend', ['display']);
+    expect(hidden['display']).toBe('none');
+  }
+});
+
+test('chain matches the prototype chain, cn, cx and ql', async ({ page }, testInfo) => {
+  await open(page, 'chain');
+  const phone = isPhone(testInfo.project.name);
+  // .chain { display: flex; align-items: center; margin-top: 20px }
+  const chain = await readStyles(page, '.obs-chain', ['display', 'align-items', 'margin-top', 'flex-direction']);
+  expect(chain['display']).toBe('flex');
+  // Below 860px the prototype also stretches the stacked nodes (.chain { align-items: stretch }).
+  expect(chain['align-items']).toBe(phone ? 'stretch' : 'center');
+  expect(chain['margin-top']).toBe('20px');
+  expect(chain['flex-direction']).toBe(phone ? 'column' : 'row');
+  // .cn { min-height: 104px; padding: 12px 14px 14px; border: 1px solid var(--line-2); radius 12 }
+  // (measured on a task node; the first node in the DOM is the root with its own overrides)
+  const node = await readStyles(page, '.obs-chain-node[data-node-kind="task"]', [
+    'min-height', 'padding-top', 'padding-left', 'padding-right', 'border-width', 'border-top-left-radius', 'flex-grow',
+  ]);
+  expect(`${node['min-height']} ${node['padding-top']} ${node['padding-left']} ${node['padding-right']}`).toBe(
+    phone ? '0px 12px 14px 14px' : '104px 12px 14px 14px',
+  );
+  expect(node['border-width']).toBe('1px');
+  expect(node['border-top-left-radius']).toBe('12px');
+  // Below 860px the prototype sets .cn { flex: none }, so growth collapses to zero.
+  expect(node['flex-grow']).toBe(phone ? '0' : '1');
+  // .cn.root { flex-grow: 1.35; border color-mix(bad 60%); background color-mix(bad 7%, surface) }
+  const root = await readStyles(page, '.obs-chain-node-root', ['flex-grow', 'border-top-color', 'background-color']);
+  expect(root['flex-grow']).toBe(phone ? '0' : '1.35');
+  expect(root['border-top-color']).toBe(await resolveColor(page, 'color-mix(in srgb, var(--craft-color-negative) 60%, transparent)'));
+  expect(root['background-color']).toBe(await resolveColor(page, 'color-mix(in srgb, var(--craft-color-negative) 7%, var(--craft-color-surface))'));
+  // .cn .k { min-height: 20px; gap: 8px; font-size: 12px }
+  const kicker = await readStyles(page, '.obs-chain-kicker', ['min-height', 'column-gap', 'font-size']);
+  expect(kicker).toEqual({ 'min-height': '20px', 'column-gap': '8px', 'font-size': '12px' });
+  // .cn .t { font-size: 14px; line-height: 20px; font-weight: 500 }
+  const title = await readStyles(page, '.obs-chain-title', ['font-size', 'line-height', 'font-weight']);
+  expect(title).toEqual({ 'font-size': '14px', 'line-height': '20px', 'font-weight': '500' });
+  // .cn .m { font-size: 12px; line-height: 16px }
+  const meta = await readStyles(page, '.obs-chain-meta', ['font-size', 'line-height']);
+  expect(meta).toEqual({ 'font-size': '12px', 'line-height': '16px' });
+  // .ql span { padding: 6px 10px }
+  const queueRow = await readStyles(page, '.obs-chain-queue-row', ['padding-top', 'padding-left']);
+  expect(`${queueRow['padding-top']} ${queueRow['padding-left']}`).toBe('6px 10px');
+  // .cx { width: 48px; gap: 2px } (.cx below 860px: height 36px, column flow, rotated arrow)
+  const connector = await readStyles(page, '.obs-chain-connector', ['width', 'height', 'column-gap', 'grid-auto-flow', 'padding-left']);
+  if (phone) {
+    expect(`${connector['height']} ${connector['grid-auto-flow']} ${connector['padding-left']}`).toBe('36px column 20px');
+  } else {
+    expect(`${connector['width']} ${connector['column-gap']}`).toBe('48px 2px');
+  }
+  // .cx.hotx { color: var(--bad) }
+  const hot = await colorOf(page, '.obs-chain-connector[data-hot="true"]');
+  expect(hot).toBe(await resolveColor(page, 'var(--craft-color-negative)'));
+  // .cn .foot { margin-top: auto; padding-top: 8px } .cn .foot .bar { height: 4px }
+  const foot = await readStyles(page, '.obs-chain-foot', ['padding-top', 'font-size']);
+  expect(`${foot['padding-top']} ${foot['font-size']}`).toBe('8px 12px');
+  const progress = await readStyles(page, '.obs-chain-progress', ['height', 'border-top-left-radius']);
+  expect(`${progress['height']} ${progress['border-top-left-radius']}`).toBe('4px 2px');
+});
+
+test('todo rail matches the prototype rail and todo cards', async ({ page }, testInfo) => {
+  await open(page, 'todoRail');
+  const phone = isPhone(testInfo.project.name);
+  // .rail { padding: 20px; border-left: 1px solid var(--line) } (16px 20px 20px, top border below 860px)
+  const rail = await readStyles(page, '.obs-todo-rail', ['padding-top', 'padding-left', 'padding-bottom', 'border-left-width', 'border-top-width']);
+  if (phone) {
+    expect(`${rail['padding-top']} ${rail['padding-left']} ${rail['padding-bottom']}`).toBe('16px 20px 20px');
+    expect(`${rail['border-left-width']} ${rail['border-top-width']}`).toBe('0px 1px');
+  } else {
+    expect(`${rail['padding-top']} ${rail['padding-left']} ${rail['padding-bottom']}`).toBe('20px 20px 20px');
+    expect(`${rail['border-left-width']} ${rail['border-top-width']}`).toBe('1px 0px');
+  }
+  // .rail-head { gap: 8px; margin-bottom: 12px } .rail-head .n { 20px pill, radius 10, accent }
+  const head = await readStyles(page, '.obs-todo-head', ['column-gap', 'margin-bottom']);
+  expect(head).toEqual({ 'column-gap': '8px', 'margin-bottom': '12px' });
+  const count = await readStyles(page, '.obs-todo-count', ['height', 'min-width', 'border-top-left-radius', 'background-color', 'color', 'font-size', 'line-height']);
+  expect(`${count['height']} ${count['min-width']} ${count['border-top-left-radius']}`).toBe('20px 20px 10px');
+  expect(count['background-color']).toBe(await resolveColor(page, 'var(--craft-color-accent)'));
+  expect(count['color']).toBe(await resolveColor(page, 'var(--craft-color-on-accent)'));
+  expect(`${count['font-size']} ${count['line-height']}`).toBe('12px 20px');
+  // .todo { padding: 12px; border-radius: 12px; background mix(raised 45%, surface) }
+  const card = await readStyles(page, '.obs-todo-card', ['padding-top', 'padding-left', 'border-top-left-radius', 'background-color']);
+  expect(`${card['padding-top']} ${card['padding-left']} ${card['border-top-left-radius']}`).toBe('12px 12px 12px');
+  expect(card['background-color']).toBe(await resolveColor(page, 'color-mix(in srgb, var(--craft-color-raised) 45%, var(--craft-color-surface))'));
+  // .todo .dd { -webkit-line-clamp: 2 }
+  const detail = await readStyles(page, '.obs-todo-detail', ['-webkit-line-clamp']);
+  expect(detail['-webkit-line-clamp']).toBe('2');
+  // .todo.min { padding: 10px 12px } .todo + .todo { margin-top: 8px }
+  const min = await readStyles(page, '.obs-todo-min', ['padding-top', 'padding-left']);
+  expect(`${min['padding-top']} ${min['padding-left']}`).toBe('10px 12px');
+  const stacked = await readStyles(page, '.obs-todo-min', ['margin-top']);
+  expect(stacked['margin-top']).toBe('8px');
+  // .rail .more { margin-top: 12px }
+  const more = await readStyles(page, '.obs-todo-more', ['margin-top']);
+  expect(more['margin-top']).toBe('12px');
+});
+
+test('acceptance list matches the prototype acc', async ({ page }) => {
+  await open(page, 'acceptanceList');
+  // .acc li { display: flex; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--line) }
+  const item = await readStyles(page, '.obs-acceptance-item:nth-child(2)', ['display', 'column-gap', 'padding-top', 'padding-left', 'border-top-width']);
+  expect(item).toEqual({
+    display: 'flex',
+    'column-gap': '12px',
+    'padding-top': '12px',
+    'padding-left': '20px',
+    'border-top-width': '1px',
+  });
+  const first = await readStyles(page, '.obs-acceptance-item:first-child', ['border-top-width']);
+  expect(first['border-top-width']).toBe('0px');
+  // .acc .ic { 18px icon; margin-top: 2px }
+  const icon = await readStyles(page, '.obs-acceptance-icon', ['margin-top']);
+  expect(icon['margin-top']).toBe('2px');
+  const iconBox = await readBox(page, '.obs-acceptance-icon .obs-display-icon');
+  expect(Math.round(iconBox.width)).toBe(18);
+  expect(Math.round(iconBox.height)).toBe(18);
+  // .acc li[data-s="ok"] .ic { color: var(--ok) }; [data-s="bad"] { color: var(--bad) }
+  const supported = await colorOf(page, '.obs-acceptance-item[data-status="supported"] .obs-acceptance-icon');
+  expect(supported).toBe(await resolveColor(page, 'var(--craft-color-positive)'));
+  const failed = await colorOf(page, '.obs-acceptance-item[data-status="failed"] .obs-acceptance-icon');
+  expect(failed).toBe(await resolveColor(page, 'var(--craft-color-negative)'));
+  // .acc .e { margin-top: 2px; font-size: 12px; line-height: 16px }
+  const evidence = await readStyles(page, '.obs-acceptance-evidence', ['margin-top', 'font-size', 'line-height']);
+  expect(evidence).toEqual({ 'margin-top': '2px', 'font-size': '12px', 'line-height': '16px' });
+  // .acc .s { padding-top: 2px; font-size: 12px; white-space: nowrap }
+  const word = await readStyles(page, '.obs-acceptance-word', ['padding-top', 'font-size', 'white-space']);
+  expect(word).toEqual({ 'padding-top': '2px', 'font-size': '12px', 'white-space': 'nowrap' });
 });

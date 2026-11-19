@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import enUS from '../../i18n/en-US';
 import zhCN from '../../i18n/zh-CN';
 import { CATALOG_COMPONENTS } from './catalog/examples';
+import { catalogMessages } from './catalog/catalog-messages';
 
 const DISPLAY_ROOT = path.resolve(process.cwd(), 'src/components/display');
 const SCREENSHOT_ROOT = path.join(DISPLAY_ROOT, '__screenshots__');
@@ -190,6 +191,52 @@ describe('development catalog coverage', () => {
         const bytes = readFileSync(screenshot);
         expect(bytes.length, `${project}/${component}`).toBeGreaterThan(1000);
         expect(bytes.subarray(1, 4).toString('ascii')).toBe('PNG');
+      }
+    }
+  });
+});
+
+describe('development catalog vocabulary isolation', () => {
+  it('keeps the catalog-only copy out of the production vocabulary', () => {
+    for (const [name, catalog] of [['zh-CN', zhCN], ['en-US', enUS]] as const) {
+      expect(Object.keys(catalog.display), `${name} display keys`).not.toContain('catalog');
+      const serialized = JSON.stringify(catalog);
+      for (const marker of ['组件目录', 'Component catalog', '合成数据', 'Synthetic data', '星桥交付']) {
+        expect(serialized, `${name} must not contain ${marker}`).not.toContain(marker);
+      }
+    }
+  });
+
+  it('keeps the catalog vocabulary out of every production module', () => {
+    const offenders = productionFiles(DISPLAY_ROOT)
+      .filter((file) => !file.startsWith(path.join(DISPLAY_ROOT, 'catalog')))
+      .filter((file) => /['"]display\.catalog\//.test(readFileSync(file, 'utf8')));
+    expect(offenders).toEqual([]);
+  });
+
+  it('has the same catalog keys in Chinese and English, all non-empty', () => {
+    const zh = flattenMessages(catalogMessages['zh-CN']);
+    const en = flattenMessages(catalogMessages['en-US']);
+    expect(Object.keys(zh).sort()).toEqual(Object.keys(en).sort());
+    for (const [key, text] of Object.entries(zh)) expect(text.length, `zh ${key}`).toBeGreaterThan(0);
+    for (const [key, text] of Object.entries(en)) expect(text.length, `en ${key}`).toBeGreaterThan(0);
+  });
+
+  it('names and describes every component the catalog navigation can reach', () => {
+    for (const language of ['zh-CN', 'en-US'] as const) {
+      for (const component of CATALOG_COMPONENTS) {
+        const entry = catalogMessages[language].components[component as keyof typeof catalogMessages[typeof language]['components']];
+        expect(entry, `${language} ${component}`).toBeDefined();
+        expect(entry.name.length, `${language} ${component} name`).toBeGreaterThan(0);
+        expect(entry.description.length, `${language} ${component} description`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('keeps catalog example copy in product language as well', () => {
+    for (const language of ['zh-CN', 'en-US'] as const) {
+      for (const [key, text] of Object.entries(flattenMessages(catalogMessages[language]))) {
+        expect(forbiddenVocabularyText(text), `${language} ${key}: ${text}`).toBe(false);
       }
     }
   });
