@@ -1,0 +1,176 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`handback snapshots > Chinese, Agent resolved from the task execution records > answer 1`] = `
+{
+  "agent": {
+    "basis": "task-execution",
+    "name": "Codex",
+  },
+  "sentence": "回答订单协作平台里“空状态检查”在等我的问题：空状态要不要显示引导文案",
+  "truncated": false,
+  "where": "在你的「Codex」里说这一句",
+}
+`;
+
+exports[`handback snapshots > Chinese, Agent resolved from the task execution records > assignment 1`] = `
+{
+  "agent": {
+    "basis": "task-execution",
+    "name": "Codex",
+  },
+  "sentence": "接下订单协作平台派给我的任务：空状态检查",
+  "truncated": false,
+  "where": "在你的「Codex」里说这一句",
+}
+`;
+
+exports[`handback snapshots > Chinese, Agent resolved from the task execution records > decision 1`] = `
+{
+  "agent": {
+    "basis": "task-execution",
+    "name": "Codex",
+  },
+  "sentence": "回答订单协作平台里“空状态检查”在等我的决定：空状态要不要显示引导文案",
+  "truncated": false,
+  "where": "在你的「Codex」里说这一句",
+}
+`;
+
+exports[`handback snapshots > Chinese, Agent resolved from the task execution records > lesson 1`] = `
+{
+  "agent": {
+    "basis": "task-execution",
+    "name": "Codex",
+  },
+  "sentence": "确认我在订单协作平台的候选经验：读多写少的查询接口先加缓存层",
+  "truncated": false,
+  "where": "在你的「Codex」里说这一句",
+}
+`;
+
+exports[`handback snapshots > Chinese, Agent resolved from the task execution records > plan-approval 1`] = `
+{
+  "agent": {
+    "basis": "task-execution",
+    "name": "Codex",
+  },
+  "sentence": "看一下订单协作平台里“空状态检查”的拆解，我来决定批不批",
+  "truncated": false,
+  "where": "在你的「Codex」里说这一句",
+}
+`;
+
+exports[`handback snapshots > English, Agent resolved from the task execution records > answer 1`] = `
+{
+  "agent": {
+    "basis": "task-execution",
+    "name": "Codex",
+  },
+  "sentence": "Answer the question “空状态要不要显示引导文案” waiting for me on “空状态检查” in 订单协作平台",
+  "truncated": false,
+  "where": "Say this line in your “Codex”",
+}
+`;
+
+exports[`handback snapshots > English, Agent resolved from the task execution records > assignment 1`] = `
+{
+  "agent": {
+    "basis": "task-execution",
+    "name": "Codex",
+  },
+  "sentence": "Take the task “空状态检查” assigned to me in 订单协作平台",
+  "truncated": false,
+  "where": "Say this line in your “Codex”",
+}
+`;
+
+exports[`handback snapshots > English, Agent resolved from the task execution records > decision 1`] = `
+{
+  "agent": {
+    "basis": "task-execution",
+    "name": "Codex",
+  },
+  "sentence": "Answer the decision “空状态要不要显示引导文案” waiting for me on “空状态检查” in 订单协作平台",
+  "truncated": false,
+  "where": "Say this line in your “Codex”",
+}
+`;
+
+exports[`handback snapshots > English, Agent resolved from the task execution records > lesson 1`] = `
+{
+  "agent": {
+    "basis": "task-execution",
+    "name": "Codex",
+  },
+  "sentence": "Confirm my candidate lesson in 订单协作平台: “读多写少的查询接口先加缓存层”",
+  "truncated": false,
+  "where": "Say this line in your “Codex”",
+}
+`;
+
+exports[`handback snapshots > English, Agent resolved from the task execution records > plan-approval 1`] = `
+{
+  "agent": {
+    "basis": "task-execution",
+    "name": "Codex",
+  },
+  "sentence": "Look at the breakdown of “空状态检查” in 订单协作平台 and decide whether to approve it",
+  "truncated": false,
+  "where": "Say this line in your “Codex”",
+}
+`;
+
+exports[`handback snapshots > no Agent can be derived: no connections at all 1`] = `
+{
+  "agent": {
+    "basis": "any-agent",
+    "name": null,
+  },
+  "sentence": "回答订单协作平台里“空状态检查”在等我的问题：空状态要不要显示引导文案",
+  "truncated": false,
+  "where": "在你的任意一个 Agent 里说一句",
+}
+`;
+
+exports[`handback snapshots > no Agent can be derived: several connections, none executing the task 1`] = `
+{
+  "agent": {
+    "basis": "any-agent",
+    "name": null,
+  },
+  "sentence": "回答订单协作平台里“空状态检查”在等我的问题：空状态要不要显示引导文案",
+  "truncated": false,
+  "where": "在你的任意一个 Agent 里说一句",
+}
+`;
+
+exports[`handback snapshots > no Agent can be derived: several connections, none executing the task 2`] = `
+{
+  "agent": {
+    "basis": "any-agent",
+    "name": null,
+  },
+  "sentence": "Answer the question “空状态要不要显示引导文案” waiting for me on “空状态检查” in 订单协作平台",
+  "truncated": false,
+  "where": "Say a line in any one of your Agents",
+}
+`;
+
+exports[`handback snapshots > no Agent can be derived: several connections, none executing the task 3`] = `
+{
+  "basis": "any-agent",
+  "name": null,
+}
+`;
+
+exports[`handback snapshots > truncated: overlong task name and question keep the sentence within 240 characters 1`] = `
+{
+  "agent": {
+    "basis": "task-execution",
+    "name": "Codex",
+  },
+  "sentence": "回答订单协作平台里“空状态检查与引导文案设计空状态检查与引导文案设计空状态检查与引导文案设计空状态检查与引导文案设计空状态检查与引导文案设计空状态检查与引导文案设计空状态检查与引导文案设计空状态检查与引导文案设计空状态检查与引导文案设计空状…”在等我的问题：空状态要不要显示引导文案,加多少字合适空状态要不要显示引导文案,加多少字合适空状态要不要显示引导文案,加多少字合适空状态要不要显示引导文案,加多少字合适空状态要不要显示引导文案,加多少字合适空状态要不要显示引导文案,加多…",
+  "truncated": true,
+  "where": "在你的「Codex」里说这一句",
+}
+`;
