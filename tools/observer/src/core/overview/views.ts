@@ -131,6 +131,7 @@ export function deriveViews(
     key: 'pending-for-me' | 'decisions-for-me',
     personId: string | null | undefined,
     taskIds: ReadonlySet<string> | null,
+    projectIds: ReadonlySet<string> | null,
     scopeIssues: CoverageIssue[],
   ) {
     if (validId(personId) == null) return metric(key, [], [makeIssue('tasks', 'view-person-unknown')]);
@@ -139,6 +140,17 @@ export function deriveViews(
     else issues.push(...pending.countIssues);
     const items = (pending.byPerson.get(personId!) ?? []).filter((item) => {
       if (key === 'decisions-for-me' && (item.kind !== 'wait' || item.wait?.kind !== 'decision')) return false;
+      if (item.kind === 'approval') {
+        // Approvals are not task-bound: the me/lead/department queues scope them by their own
+        // project. A missing project keeps the count unknown instead of dropping or guessing it.
+        if (projectIds == null) return false;
+        const projectId = item.approval == null ? null : validId(item.approval.projectId);
+        if (projectId == null) {
+          issues.push(makeIssue('approvals', 'view-approval-project-unknown'));
+          return false;
+        }
+        return projectIds.has(projectId);
+      }
       if (taskIds == null) return true;
       if (item.task?.id == null) {
         issues.push(makeIssue('tasks', 'view-pending-task-unknown'));
@@ -249,12 +261,13 @@ export function deriveViews(
   // Pending work for the viewer spans the whole project, like the lead view: a reviewer or a
   // decider is waited on for other people's tasks too, not only for tasks they own.
   const meProjectTaskIds = new Set(meProject.tasks.map((task) => task.id).filter((value): value is string => value != null));
+  const meProjectIds = meScope?.projectId == null ? null : new Set([meScope.projectId]);
   const meWaiting = filterWaitsToTasks(base.waits, meTaskIds);
   const me: OverviewViewSummary = { metrics: [
     wide(meVerified),
     wide(metric('agents-running', [...agentByName.values()], agentIssues)),
     wide(metric('waiting-by-me', meWaiting, [...meProject.issues, ...mePersonIssues, ...base.waitCounts.all.unknownItems])),
-    wide(pendingMetric('pending-for-me', mePersonId, meProjectTaskIds, meProject.issues)),
+    wide(pendingMetric('pending-for-me', mePersonId, meProjectTaskIds, meProjectIds, meProject.issues)),
   ] };
 
   // Lead: this week's verified, prototype inProgress, all waits, and the lead's pending queue.
@@ -262,6 +275,7 @@ export function deriveViews(
   const leadProject = projectScope(leadScope?.projectId == null ? null : [leadScope.projectId]);
   const leadTasks = leadProject.tasks;
   const leadTaskIds = new Set(leadTasks.map((task) => task.id).filter((value): value is string => value != null));
+  const leadProjectIds = leadScope?.projectId == null ? null : new Set([leadScope.projectId]);
   const leadWaits = filterWaitsToTasks(base.waits, leadTaskIds);
   const lead: OverviewViewSummary = { metrics: [
     wide(periodMetric(leadTasks, options.currentWeek, options.previousWeek, 'current-week', 'previous-week',
@@ -269,7 +283,7 @@ export function deriveViews(
     wide(metric('in-progress', leadTasks.filter(isPrototypeInProgress),
       [...leadProject.issues, ...base.coverage.sections.status.issues])),
     wide(metric('waits', leadWaits, [...leadProject.issues, ...base.waitCounts.all.unknownItems])),
-    wide(pendingMetric('pending-for-me', leadScope?.personId, leadTaskIds, leadProject.issues)),
+    wide(pendingMetric('pending-for-me', leadScope?.personId, leadTaskIds, leadProjectIds, leadProject.issues)),
   ] };
 
   // Department: projects with tasks, this month's verified, cross-group waits, and pending items.
@@ -277,6 +291,7 @@ export function deriveViews(
   const departmentProject = projectScope(departmentScope?.projectIds);
   const departmentTasks = departmentProject.tasks;
   const departmentTaskIds = new Set(departmentTasks.map((task) => task.id).filter((value): value is string => value != null));
+  const departmentProjectIds = departmentScope?.projectIds == null ? null : new Set(departmentScope.projectIds);
   const departmentWaits = filterWaitsToTasks(base.waits, departmentTaskIds);
   const projects = unitItems(departmentTasks, 'project', departmentScope?.projectIds);
   const crossGroup = crossGroupWaits(departmentWaits);
@@ -286,7 +301,7 @@ export function deriveViews(
       departmentProject.issues)),
     wide(metric('cross-group-waits', crossGroup.items,
       [...departmentProject.issues, ...base.waitCounts.all.unknownItems, ...crossGroup.issues])),
-    wide(pendingMetric('pending-for-me', departmentScope?.personId, departmentTaskIds, departmentProject.issues)),
+    wide(pendingMetric('pending-for-me', departmentScope?.personId, departmentTaskIds, departmentProjectIds, departmentProject.issues)),
   ] };
 
   // Top: goals with tasks, all verified work (claimed comparison), blockers, and decisions for the viewer.
@@ -299,7 +314,7 @@ export function deriveViews(
     wide(metric('goals', goals.items, [...topIssues, ...goals.issues])),
     wide(topVerified),
     wide(metric('blockers', chainResult.chains, chainResult.chainCounts.all.unknownItems)),
-    wide(pendingMetric('decisions-for-me', options.top?.personId, null, [])),
+    wide(pendingMetric('decisions-for-me', options.top?.personId, null, null, [])),
   ] };
 
   const views: Record<ViewId, OverviewViewSummary> = { me, lead, department, top };

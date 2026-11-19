@@ -384,15 +384,26 @@ pub(crate) async fn read_planning_command_receipt(
     let completed = row.get::<_, String>(6) == "completed";
     if row.get::<_, String>(0) == "planning.activate" {
         let outcome =
-            super::writeback::journal::outcome_in_tx(tx, tenant_id, project_id, request_id)
-                .await?
-                .ok_or(PgError::SourceDivergence)?;
-        if !completed || outcome["applied"] != true {
-            return Ok(Some(
-                json!({"protocol":RECEIPT_PROTOCOL,"request_id":request_id,"op":"planning.activate",
-                "already_recorded":false,"result":null,"writeback":outcome,
-                "next_step":"inspect the durable phase and original confirmation before recovery; unconfirmed phases are not applied"}),
-            ));
+            super::writeback::journal::outcome_in_tx(tx, tenant_id, project_id, request_id).await?;
+        if let Some(outcome) = outcome {
+            if !completed || outcome["applied"] != true {
+                return Ok(Some(
+                    json!({"protocol":RECEIPT_PROTOCOL,"request_id":request_id,"op":"planning.activate",
+                    "already_recorded":false,"result":null,"writeback":outcome,
+                    "next_step":"inspect the durable phase and original confirmation before recovery; unconfirmed phases are not applied"}),
+                ));
+            }
+        } else if !completed {
+            return Ok(Some(json!({
+                "protocol":RECEIPT_PROTOCOL,"request_id":request_id,"op":"planning.activate",
+                "request_hash":row.get::<_,String>(1),"status":"reserved",
+                "already_recorded":false,"result":null,"writeback":"absent",
+                "next_step":format!("Retry the identical planning.publish operation and payload with this request_id. If it still fails without a writeback journal, ask the schema owner to run awr-server access writeback-inspect --tenant-id {tenant_id} --project-id {project_id} --request-id {request_id}.")
+            })));
+        } else if super::writeback::unlogged::recorded_decision(&row.get::<_, Value>(4), request_id)
+            .is_none()
+        {
+            return Err(PgError::SourceDivergence);
         }
     }
     if !completed {
@@ -428,14 +439,28 @@ async fn require_activation_confirmation(
     request_id: &str,
     op: &str,
 ) -> PgResult<()> {
-    if op == "planning.activate"
-        && !super::writeback::journal::outcome_in_tx(tx, tenant_id, project_id, request_id)
-            .await?
-            .is_some_and(|outcome| outcome["applied"] == true)
-    {
-        return Err(PgError::SourceDivergence);
+    if op != "planning.activate" {
+        return Ok(());
     }
-    Ok(())
+    if super::writeback::journal::outcome_in_tx(tx, tenant_id, project_id, request_id)
+        .await?
+        .is_some_and(|outcome| outcome["applied"] == true)
+    {
+        return Ok(());
+    }
+    let body = tx
+        .query_opt(
+            "SELECT result_json FROM awr_team.planning_command_receipts
+             WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3 AND status='completed'",
+            &[&tenant_id, &project_id, &request_id],
+        )
+        .await?;
+    if body.is_some_and(|row| {
+        super::writeback::unlogged::recorded_decision(&row.get::<_, Value>(0), request_id).is_some()
+    }) {
+        return Ok(());
+    }
+    Err(PgError::SourceDivergence)
 }
 
 impl SourceStore {
@@ -1154,6 +1179,104 @@ impl SourceStore {
         .await
     }
 
+    /// A fresh activation must prove its deterministic package fits before any
+    /// reservation or publication is committed. Existing reservations retain the
+    /// original recovery path and immutable request binding.
+    async fn preflight_fresh_activation(
+        &self,
+        tenant_id: &str,
+        project_id: &str,
+        bearer: &str,
+        req: &PlanningPublishRequest,
+        request_hash: &str,
+    ) -> PgResult<()> {
+        let mut client = self.connect().await?;
+        crate::check_schema(&client).await?;
+        let tx = client.transaction().await?;
+        let mut auth = authenticate(&tx, tenant_id, project_id, bearer).await?;
+        crate::delegation_auth::authorize_project_action(
+            &tx,
+            &mut auth,
+            project_id,
+            awr_team::Action::PlanningPublish,
+        )
+        .await?;
+        bind_workstream_scope(&tx, tenant_id, project_id).await?;
+        let existing = tx
+            .query_opt(
+                "SELECT request_hash,actor_id,client_id FROM awr_team.planning_command_receipts
+                 WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",
+                &[&tenant_id, &project_id, &req.request_id],
+            )
+            .await?;
+        if let Some(row) = existing {
+            if row.get::<_, String>(0) != request_hash
+                || row.get::<_, String>(1) != auth.actor_id
+                || row.get::<_, String>(2) != auth.client_id
+            {
+                return Err(PgError::IdempotencyConflict);
+            }
+            tx.commit().await?;
+            return Ok(());
+        }
+        let candidate =
+            super::planning::load_candidate(&tx, tenant_id, project_id, &req.candidate_id).await?;
+        super::planning::authorize_candidate_readable_scope(
+            &tx, &auth, tenant_id, project_id, &candidate,
+        )
+        .await?;
+        let digest = candidate
+            .candidate_digest()
+            .map_err(|_| PgError::StaleApproval)?;
+        let pending_publication = tx
+            .query_one(
+                "SELECT EXISTS(SELECT 1 FROM awr_team.planning_publish_receipts
+                 WHERE tenant_id=$1 AND project_id=$2 AND candidate_id=$3
+                   AND candidate_digest=$4 AND source_writeback_pending)",
+                &[
+                    &tenant_id,
+                    &project_id,
+                    &req.candidate_id,
+                    &req.candidate_digest,
+                ],
+            )
+            .await?
+            .get::<_, bool>(0);
+        if digest != req.candidate_digest
+            || !matches!(
+                candidate.state,
+                awr_team::CandidateState::Approved | awr_team::CandidateState::Published
+            )
+            || (candidate.state == awr_team::CandidateState::Published && !pending_publication)
+        {
+            tx.commit().await?;
+            return Ok(());
+        }
+        let source = tx
+            .query_one(
+                "SELECT s.source_ref_json FROM awr_team.projects p
+                 JOIN awr_team.source_snapshots s ON s.tenant_id=p.tenant_id
+                   AND s.project_id=p.id AND s.id=p.active_snapshot_id
+                 WHERE p.tenant_id=$1 AND p.id=$2",
+                &[&tenant_id, &project_id],
+            )
+            .await?;
+        let source_ref: Value = source.get(0);
+        let binding: SoleSourceBinding = serde_json::from_value(
+            source_ref
+                .get("sole_source")
+                .cloned()
+                .filter(|value| !value.is_null())
+                .ok_or_else(|| {
+                    PgError::Protocol("active source lacks sole_source binding".into())
+                })?,
+        )
+        .map_err(|e| PgError::Protocol(format!("invalid registered sole_source: {e}")))?;
+        let changes = candidate.changes.clone();
+        tx.commit().await?;
+        super::writeback::preflight_candidate_package(&binding, project_id, &changes)
+    }
+
     pub async fn planning_publish(
         &self,
         tenant_id: &str,
@@ -1217,6 +1340,10 @@ impl SourceStore {
             "planning.publish"
         };
         let hash = intent_hash(op, &intent)?;
+        if req.activate && req.impact_proven {
+            self.preflight_fresh_activation(tenant_id, project_id, bearer, req, &hash)
+                .await?;
+        }
         let reserved = self
             .reserve_planning_receipt(
                 tenant_id,
@@ -1269,6 +1396,11 @@ impl SourceStore {
                     .ok_or_else(|| PgError::Protocol("publish receipt missing".into()))?
                     .to_string()
             };
+            if abort == Some("after_publication_before_journal") {
+                return Err(PgError::Protocol(
+                    "injected writeback interruption: after_publication_before_journal".into(),
+                ));
+            }
             let activated = self
                 .activate_planning_writeback_registered_inner(
                     tenant_id,

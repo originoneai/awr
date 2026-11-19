@@ -40,6 +40,14 @@ describe('documented fact semantics', () => {
     }
   });
 
+  it('keeps the two approval kinds documented as pending inputs beside waits and handoffs', () => {
+    const rows = documentedRules();
+    expect(rows.get('approvals')).toEqual(['approval-kinds-explicit', 'approval-recipient-explicit',
+      'approval-project-scoped', 'decisions-exclude-approvals']);
+    expect(documentText).toContain('never the viewer and never somebody else');
+    expect(documentText).toContain('The top view\'s decision metric counts decisions only');
+  });
+
   it('makes unknown, coverage and count/detail invariants explicit', () => {
     expect(documentText).toContain('count === items.length');
     expect(documentText).toContain('count: null');

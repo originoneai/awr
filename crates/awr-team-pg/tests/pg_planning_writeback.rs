@@ -3629,3 +3629,535 @@ async fn a_malformed_recorded_hash_is_visible_but_not_advertised_as_a_close_toke
     assert!(is_refused(&error, "recorded intent hash is malformed"));
     assert_eq!(p.pending_journals().await, 1);
 }
+
+fn combined_activation(
+    candidate: &serde_json::Value,
+    request_id: &str,
+) -> awr_team_pg::PlanningPublishRequest {
+    awr_team_pg::PlanningPublishRequest {
+        protocol_version: 1,
+        request_id: request_id.into(),
+        candidate_id: candidate["candidate_id"].as_str().unwrap().into(),
+        candidate_digest: candidate["candidate_digest"].as_str().unwrap().into(),
+        activate: true,
+        publish_receipt_id: None,
+        impact_proven: true,
+        stopped_work_ids: vec![],
+    }
+}
+
+async fn approved_task_candidate(store: &SourceStore, task: TaskDraft) -> serde_json::Value {
+    let candidate = create_workspace_candidate(
+        store,
+        DraftChange {
+            op: DraftOpKind::CreateTask,
+            before: None,
+            after: task,
+        },
+    )
+    .await;
+    store
+        .approve_planning_candidate(
+            TENANT,
+            PROJECT,
+            A,
+            candidate["candidate_id"].as_str().unwrap(),
+            candidate["candidate_digest"].as_str().unwrap(),
+            Some("agent"),
+        )
+        .await
+        .unwrap();
+    candidate
+}
+
+async fn close_preview(
+    admin: &mut tokio_postgres::Client,
+    request_id: &str,
+) -> awr_team_pg::UnloggedCloseRequest {
+    let page = awr_team_pg::OperatorWriteback::inspect(admin, TENANT, PROJECT, Some(request_id))
+        .await
+        .unwrap();
+    assert_eq!(page["items"].as_array().unwrap().len(), 1, "{page}");
+    let item = &page["items"][0];
+    assert_eq!(item["kind"], "publication_without_journal");
+    assert_eq!(item["writeback"], "absent");
+    assert_eq!(item["source_writeback_pending"], true);
+    assert!(item["request_created_at"].is_string());
+    assert!(item["published_at"].is_string());
+    assert_eq!(item["close_unlogged"]["allowed"], true);
+    awr_team_pg::UnloggedCloseRequest {
+        request_id: request_id.into(),
+        expected_candidate_id: item["close_unlogged"]["expected_candidate_id"]
+            .as_str()
+            .unwrap()
+            .into(),
+        expected_candidate_digest: item["close_unlogged"]["expected_candidate_digest"]
+            .as_str()
+            .unwrap()
+            .into(),
+        expected_publish_receipt_id: item["close_unlogged"]["expected_publish_receipt_id"]
+            .as_str()
+            .unwrap()
+            .into(),
+        expected_request_hash: item["close_unlogged"]["expected_request_hash"]
+            .as_str()
+            .unwrap()
+            .into(),
+        reason: "synthetic interrupted activation cannot resume".into(),
+    }
+}
+
+async fn unlogged_facts(
+    admin: &tokio_postgres::Client,
+    request_id: &str,
+    candidate_id: &str,
+    publish_receipt_id: &str,
+) -> serde_json::Value {
+    let row = admin
+        .query_one(
+            "SELECT r.status,r.result_json,r.updated_at::text,
+                    p.source_writeback_pending,p.activation_receipt_id,p.activated_snapshot_id,
+                    p.created_at::text,c.state,c.updated_at::text
+             FROM awr_team.planning_command_receipts r
+             JOIN awr_team.planning_publish_receipts p
+               ON p.tenant_id=r.tenant_id AND p.project_id=r.project_id
+             JOIN awr_team.planning_candidates c
+               ON c.tenant_id=p.tenant_id AND c.project_id=p.project_id
+             WHERE r.tenant_id=$1 AND r.project_id=$2 AND r.request_id=$3
+               AND p.id=$4 AND c.id=$5",
+            &[
+                &TENANT,
+                &PROJECT,
+                &request_id,
+                &publish_receipt_id,
+                &candidate_id,
+            ],
+        )
+        .await
+        .unwrap();
+    serde_json::json!({
+        "request_status":row.get::<_,String>(0),
+        "request_result":row.get::<_,serde_json::Value>(1),
+        "request_updated_at":row.get::<_,String>(2),
+        "pending":row.get::<_,bool>(3),
+        "activation_receipt_id":row.get::<_,Option<String>>(4),
+        "activated_snapshot_id":row.get::<_,Option<String>>(5),
+        "publication_created_at":row.get::<_,String>(6),
+        "candidate_state":row.get::<_,String>(7),
+        "candidate_updated_at":row.get::<_,String>(8)
+    })
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oversized_activation_is_preflighted_without_publication_or_reservation_and_can_be_corrected()
+ {
+    let (_g, admin, _db, store) = store_and_roles().await;
+    let tmp = tempfile_ledger();
+    register_actual_ledger_baseline(&store, &tmp).await;
+    let source_before = std::fs::read(tmp.root.join("ledger.yaml")).unwrap();
+    let active_before = activation_facts(&admin).await;
+    let mut task = draft("SYNTHETIC-LARGE", &[], DraftDefinitionState::Enabled);
+    task.workstream = Some("alpha".into());
+    task.acceptance = vec!["x".repeat(awr_team_pg::GENERATED_SOURCE_PACKAGE_LIMITS.max_file_bytes)];
+    let candidate = approved_task_candidate(&store, task.clone()).await;
+    let candidate_id = candidate["candidate_id"].as_str().unwrap();
+    let preview = store
+        .preview_planning_candidate(TENANT, PROJECT, A, candidate_id)
+        .await
+        .unwrap();
+    let capacity = &preview["package_capacity"];
+    assert_eq!(capacity["status"], "available");
+    assert_eq!(capacity["would_fit"], false);
+    assert!(capacity["largest_file"]["path"].is_string());
+    assert!(
+        capacity["largest_file"]["bytes"].as_u64().unwrap()
+            > capacity["largest_file"]["limit"].as_u64().unwrap()
+    );
+    assert!(capacity["package_bytes"].as_u64().unwrap() > 0);
+    assert_eq!(
+        capacity["package_limit"].as_u64().unwrap(),
+        awr_team_pg::GENERATED_SOURCE_PACKAGE_LIMITS.max_package_bytes as u64
+    );
+    assert!(capacity["file_count"].as_u64().unwrap() > 0);
+    assert_eq!(
+        capacity["file_limit"].as_u64().unwrap(),
+        awr_team_pg::GENERATED_SOURCE_PACKAGE_LIMITS.max_files as u64
+    );
+    let mut request = combined_activation(&candidate, "preflight-oversized");
+    let error = store
+        .planning_publish(TENANT, PROJECT, A, &request)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        PgError::SourcePackageTooLarge {
+            limit_kind: awr_team_pg::SourcePackageLimitKind::FileBytes,
+            limit,
+            ..
+        } if limit == awr_team_pg::GENERATED_SOURCE_PACKAGE_LIMITS.max_file_bytes as u64
+    ));
+    assert_eq!(
+        admin
+            .query_one(
+                "SELECT count(*) FROM awr_team.planning_publish_receipts
+                 WHERE tenant_id=$1 AND project_id=$2 AND candidate_id=$3",
+                &[&TENANT, &PROJECT, &candidate_id],
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        0
+    );
+    assert_eq!(
+        admin
+            .query_one(
+                "SELECT count(*) FROM awr_team.planning_command_receipts
+                 WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",
+                &[&TENANT, &PROJECT, &request.request_id],
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        0
+    );
+    assert_eq!(
+        admin
+            .query_one(
+                "SELECT state FROM awr_team.planning_candidates
+                 WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+                &[&TENANT, &PROJECT, &candidate_id],
+            )
+            .await
+            .unwrap()
+            .get::<_, String>(0),
+        "approved"
+    );
+    assert_eq!(
+        std::fs::read(tmp.root.join("ledger.yaml")).unwrap(),
+        source_before
+    );
+    assert_eq!(activation_facts(&admin).await, active_before);
+
+    task.acceptance = vec!["small enough".into()];
+    let edited = store
+        .edit_planning_candidate(
+            TENANT,
+            PROJECT,
+            A,
+            candidate_id,
+            vec![DraftChange {
+                op: DraftOpKind::CreateTask,
+                before: None,
+                after: task,
+            }],
+        )
+        .await
+        .unwrap();
+    store
+        .approve_planning_candidate(
+            TENANT,
+            PROJECT,
+            A,
+            candidate_id,
+            edited["candidate_digest"].as_str().unwrap(),
+            Some("agent"),
+        )
+        .await
+        .unwrap();
+    request.candidate_digest = edited["candidate_digest"].as_str().unwrap().into();
+    let corrected_preview = store
+        .preview_planning_candidate(TENANT, PROJECT, A, candidate_id)
+        .await
+        .unwrap();
+    assert_eq!(corrected_preview["package_capacity"]["would_fit"], true);
+    let activated = store
+        .planning_publish(TENANT, PROJECT, A, &request)
+        .await
+        .unwrap();
+    assert!(activated["result"]["publish_receipt_id"].is_string());
+    assert!(activated["result"]["activation"]["receipt_id"].is_string());
+    let mut changed = request.clone();
+    changed.stopped_work_ids.push("different-intent".into());
+    assert!(matches!(
+        store.planning_publish(TENANT, PROJECT, A, &changed).await,
+        Err(PgError::IdempotencyConflict)
+    ));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn package_capacity_is_read_only_and_unavailable_does_not_hide_the_diff() {
+    let (_g, _admin, _db, store) = store_and_roles().await;
+    let tmp = tempfile_ledger();
+    register_actual_ledger_baseline(&store, &tmp).await;
+    let mut task = draft("SYNTHETIC-CAPACITY", &[], DraftDefinitionState::Enabled);
+    task.workstream = Some("alpha".into());
+    let candidate = create_workspace_candidate(
+        &store,
+        DraftChange {
+            op: DraftOpKind::CreateTask,
+            before: None,
+            after: task,
+        },
+    )
+    .await;
+    let id = candidate["candidate_id"].as_str().unwrap();
+    let guard = awr_source::LockedSourceFile::open(&tmp.root, "ledger.yaml").unwrap();
+    let available = store
+        .preview_planning_candidate(TENANT, PROJECT, A, id)
+        .await
+        .unwrap();
+    assert_eq!(available["package_capacity"]["status"], "available");
+    assert_eq!(available["package_capacity"]["would_fit"], true);
+    assert_eq!(available["diff"], candidate["diff"]);
+    drop(guard);
+    std::fs::remove_file(tmp.root.join("ledger.yaml")).unwrap();
+    let unavailable = store
+        .preview_planning_candidate(TENANT, PROJECT, A, id)
+        .await
+        .unwrap();
+    assert_eq!(unavailable["package_capacity"]["status"], "unavailable");
+    assert!(unavailable["package_capacity"]["reason"].is_string());
+    assert!(unavailable["package_capacity"]["would_fit"].is_null());
+    assert_eq!(unavailable["diff"], candidate["diff"]);
+}
+
+async fn make_unlogged_publication(
+    request_id: &str,
+) -> (
+    std::sync::MutexGuard<'static, ()>,
+    tokio_postgres::Client,
+    String,
+    SourceStore,
+    TmpLedger,
+    serde_json::Value,
+    awr_team_pg::PlanningPublishRequest,
+    String,
+) {
+    let (guard, admin, db, store) = store_and_roles().await;
+    let tmp = tempfile_ledger();
+    register_actual_ledger_baseline(&store, &tmp).await;
+    let mut task = draft("SYNTHETIC-RECOVERY", &[], DraftDefinitionState::Enabled);
+    task.workstream = Some("alpha".into());
+    let candidate = approved_task_candidate(&store, task).await;
+    let request = combined_activation(&candidate, request_id);
+    let error = store
+        .planning_publish_abort_for_test(
+            TENANT,
+            PROJECT,
+            A,
+            &request,
+            "after_publication_before_journal",
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, PgError::Protocol(ref text) if text.contains("after_publication_before_journal")),
+        "{error:?}"
+    );
+    let publish_receipt_id: String = admin
+        .query_one(
+            "SELECT id FROM awr_team.planning_publish_receipts
+             WHERE tenant_id=$1 AND project_id=$2 AND candidate_id=$3",
+            &[
+                &TENANT,
+                &PROJECT,
+                &candidate["candidate_id"].as_str().unwrap(),
+            ],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    (
+        guard,
+        admin,
+        db,
+        store,
+        tmp,
+        candidate,
+        request,
+        publish_receipt_id,
+    )
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn unlogged_activation_is_readable_inspectable_and_owner_close_is_atomic_and_idempotent() {
+    let (_g, mut admin, db, store, tmp, candidate, request, publication) =
+        make_unlogged_publication("unlogged-close").await;
+    let candidate_id = candidate["candidate_id"].as_str().unwrap();
+    let source_before = std::fs::read(tmp.root.join("ledger.yaml")).unwrap();
+    let active_before = activation_facts(&admin).await;
+    let journals: i64 = admin
+        .query_one(
+            "SELECT count(*) FROM awr_team.planning_writeback_journals
+             WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",
+            &[&TENANT, &PROJECT, &request.request_id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(journals, 0);
+    let outcome = store
+        .get_planning_command_receipt(TENANT, PROJECT, A, &request.request_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(outcome["status"], "reserved");
+    assert_eq!(outcome["writeback"], "absent");
+    assert!(outcome["result"].is_null());
+    assert!(outcome["next_step"].as_str().unwrap().contains("identical"));
+    assert!(
+        outcome["next_step"]
+            .as_str()
+            .unwrap()
+            .contains("writeback-inspect")
+    );
+    let read = awr_team_pg::WorkstreamReadStore::from_config(common::with_app_role(
+        &common::test_config(),
+        &db,
+    ));
+    let query: awr_team_pg::WorkstreamQuery = serde_json::from_value(serde_json::json!({
+        "protocol_version":1,"op":"planning.outcome","request_id":request.request_id
+    }))
+    .unwrap();
+    let queried = read.query(TENANT, PROJECT, A, query).await.unwrap();
+    assert_eq!(queried["data"], outcome);
+    let close = close_preview(&mut admin, &request.request_id).await;
+    assert_eq!(close.expected_publish_receipt_id, publication);
+    let facts = unlogged_facts(&admin, &request.request_id, candidate_id, &publication).await;
+    assert_eq!(facts["request_status"], "reserved");
+    assert_eq!(facts["pending"], true);
+    assert_eq!(facts["candidate_state"], "published");
+
+    let mut app = common::app_client(&db).await;
+    assert!(matches!(
+        awr_team_pg::OperatorWriteback::close_unlogged(&mut app, TENANT, PROJECT, &close).await,
+        Err(PgError::Forbidden)
+    ));
+    assert_eq!(
+        unlogged_facts(&admin, &request.request_id, candidate_id, &publication).await,
+        facts
+    );
+    let mut wrong_request = close.clone();
+    wrong_request.request_id = "different-request".into();
+    assert!(
+        awr_team_pg::OperatorWriteback::close_unlogged(
+            &mut admin,
+            TENANT,
+            PROJECT,
+            &wrong_request,
+        )
+        .await
+        .is_err()
+    );
+    let mut wrong_hash = close.clone();
+    wrong_hash.expected_request_hash = "0".repeat(64);
+    assert!(matches!(
+        awr_team_pg::OperatorWriteback::close_unlogged(&mut admin, TENANT, PROJECT, &wrong_hash,)
+            .await,
+        Err(PgError::PreconditionsChanged)
+    ));
+    assert_eq!(
+        unlogged_facts(&admin, &request.request_id, candidate_id, &publication).await,
+        facts,
+        "every rejected close must have zero writes"
+    );
+
+    let closed =
+        awr_team_pg::OperatorWriteback::close_unlogged(&mut admin, TENANT, PROJECT, &close)
+            .await
+            .unwrap();
+    assert_eq!(closed["replayed"], false);
+    assert_eq!(closed["activated"], false);
+    assert_eq!(closed["source_modified"], false);
+    assert_eq!(closed["active_snapshot_modified"], false);
+    let closed_facts =
+        unlogged_facts(&admin, &request.request_id, candidate_id, &publication).await;
+    assert_eq!(closed_facts["request_status"], "completed");
+    assert_eq!(closed_facts["pending"], false);
+    assert!(closed_facts["activation_receipt_id"].is_null());
+    assert!(closed_facts["activated_snapshot_id"].is_null());
+    assert_eq!(closed_facts["candidate_state"], "superseded");
+    assert_eq!(
+        closed_facts["request_result"]["result"]["operator_closure"]["reason"],
+        close.reason
+    );
+    assert_eq!(
+        std::fs::read(tmp.root.join("ledger.yaml")).unwrap(),
+        source_before
+    );
+    assert_eq!(activation_facts(&admin).await, active_before);
+    let outcome = store
+        .get_planning_command_receipt(TENANT, PROJECT, A, &request.request_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(outcome["already_recorded"], true);
+    assert_eq!(outcome["result"]["result"]["status"], "closed");
+    assert_eq!(
+        outcome["result"]["result"]["operator_closure"]["action"],
+        "close_unlogged"
+    );
+    assert_eq!(
+        outcome["result"]["result"]["operator_closure"]["reason"],
+        close.reason
+    );
+    let replay =
+        awr_team_pg::OperatorWriteback::close_unlogged(&mut admin, TENANT, PROJECT, &close)
+            .await
+            .unwrap();
+    assert_eq!(replay["replayed"], true);
+    assert_eq!(replay["decision"], closed["decision"]);
+    assert_eq!(
+        unlogged_facts(&admin, &request.request_id, candidate_id, &publication).await,
+        closed_facts
+    );
+    let original_replay = store
+        .planning_publish(TENANT, PROJECT, A, &request)
+        .await
+        .unwrap();
+    assert_eq!(original_replay["already_recorded"], true);
+    assert_eq!(original_replay["result"]["status"], "closed");
+    let mut changed = request.clone();
+    changed.stopped_work_ids.push("not-the-original".into());
+    assert!(matches!(
+        store.planning_publish(TENANT, PROJECT, A, &changed).await,
+        Err(PgError::IdempotencyConflict)
+    ));
+    assert_eq!(
+        std::fs::read(tmp.root.join("ledger.yaml")).unwrap(),
+        source_before
+    );
+    assert_eq!(activation_facts(&admin).await, active_before);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn unlogged_close_is_refused_with_zero_writes_when_a_journal_exists() {
+    let (_g, mut admin, _db, store, _tmp, candidate, request, publication) =
+        make_unlogged_publication("unlogged-but-journaled").await;
+    let close = close_preview(&mut admin, &request.request_id).await;
+    store
+        .planning_publish_abort_for_test(TENANT, PROJECT, A, &request, "after_intent")
+        .await
+        .unwrap_err();
+    let candidate_id = candidate["candidate_id"].as_str().unwrap();
+    let facts = unlogged_facts(&admin, &request.request_id, candidate_id, &publication).await;
+    let error = awr_team_pg::OperatorWriteback::close_unlogged(&mut admin, TENANT, PROJECT, &close)
+        .await
+        .unwrap_err();
+    assert!(is_refused(&error, "journal exists"), "{error:?}");
+    assert_eq!(
+        unlogged_facts(&admin, &request.request_id, candidate_id, &publication).await,
+        facts
+    );
+    let outcome = store
+        .get_planning_command_receipt(TENANT, PROJECT, A, &request.request_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(outcome["writeback"]["phase"], "validated");
+    assert_ne!(outcome["writeback"], "absent");
+}

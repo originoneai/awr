@@ -5,6 +5,7 @@ import type { OverviewReviewRound, OverviewTask } from '../index';
 import {
   DAY,
   NOW,
+  approval,
   baseTask,
   complete,
   decision,
@@ -42,6 +43,10 @@ function syntheticGoldenInput() {
       dependency('planned', 'waiting'),
     ]),
     decisions: complete([decision('returned')]),
+    approvals: complete([
+      approval('plan-approval', 'person-a', { title: 'Approve the synthetic breakdown', sinceUnixMs: NOW - DAY }),
+      approval('lesson-confirmation', 'person-c', { title: 'Confirm the synthetic lesson', sinceUnixMs: NOW - 2 * DAY }),
+    ]),
     reviewRounds: complete([
       reviewRound('verified', 'approved'),
       reviewRound('returned', 'rejected'),
@@ -113,8 +118,12 @@ describe('status and waiting goldens', () => {
     ]);
     expect(result.peopleCounts.all.count).toBe(3);
     expect(Object.fromEntries(result.people.map((summary) => [summary.person.id, summary.pending.count]))).toEqual({
-      'person-a': 1, 'person-b': 1, 'person-c': 0,
+      'person-a': 2, 'person-b': 1, 'person-c': 1,
     });
+    expect(result.people.find((summary) => summary.person.id === 'person-a')!.pending.items
+      .map((item) => item.kind)).toEqual(['wait', 'approval']);
+    expect(result.people.find((summary) => summary.person.id === 'person-c')!.pending.items
+      .map((item) => item.approval?.kind)).toEqual(['lesson-confirmation']);
   });
 
   it('derives the same review golden from verbatim public run09 reply extracts, not a demo-only shape', () => {

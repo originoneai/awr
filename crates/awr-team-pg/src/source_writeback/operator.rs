@@ -291,12 +291,13 @@ impl OperatorWriteback {
             .iter()
             .map(|row| view(row, tenant, project))
             .collect::<PgResult<Vec<_>>>()?;
+        let unlogged = super::unlogged::list(&tx, tenant, project, request).await?;
         tx.commit().await?;
-        let truncated = views.len() as i64 > LIMIT;
-        // The source is read after the database transaction, one file lock at a time.
-        let items: Vec<Value> = views
+        let truncated = views.len() + unlogged.len() > LIMIT as usize;
+        // Journal source state is read after the database transaction, one file lock at a time.
+        // No-journal publications are database facts only and never acquire a source lock.
+        let mut items: Vec<Value> = views
             .iter()
-            .take(LIMIT as usize)
             .map(|v| {
                 let observed = PENDING
                     .contains(&v.phase.as_str())
@@ -304,12 +305,20 @@ impl OperatorWriteback {
                 item(v, observed.as_ref())
             })
             .collect();
+        items.extend(unlogged);
+        items.sort_by(|a, b| {
+            a["created_at"]
+                .as_str()
+                .cmp(&b["created_at"].as_str())
+                .then_with(|| a["request_id"].as_str().cmp(&b["request_id"].as_str()))
+        });
+        items.truncate(LIMIT as usize);
         Ok(json!({
             "protocol": PROTOCOL, "protocol_version": 1, "read_only": true, "mutation": false,
             "authorization": "schema_owner_postgresql_role", "operator_role": operator,
             "tenant_id": tenant, "project_id": project, "source_modified": false,
             "items": items, "truncated": truncated,
-            "next_step": "Resume the original request through the planning tools when it can still complete. Otherwise close it with writeback-abandon, passing the expected_* values of the item exactly as shown."
+            "next_step": "Resume an original request when it can still complete. For an item with a journal, use writeback-abandon with its expected_* values. For publication_without_journal, use writeback-close-unlogged with its expected_* values."
         }))
     }
 
