@@ -119,6 +119,7 @@ async function modelFixture(t, respond = () => undefined, options = {}) {
     if (req.url === '/v1/web/session') query = { op: 'session' };
     else if (req.url === '/v1/web/projects/portal/directory/read') query = { op: 'directory.read' };
     else query = JSON.parse(Buffer.concat(chunks).toString() || '{}');
+    query.cookie = req.headers.cookie || null;
     state.calls.push(query);
     if (query.op === 'session' && state.sessionRevoked) {
       res.writeHead(401, { 'content-type': 'application/json' });
@@ -136,9 +137,9 @@ async function modelFixture(t, respond = () => undefined, options = {}) {
     teamUrl: `http://127.0.0.1:${upstream.address().port}`, port: 0,
     readTimeoutMs: 100, overviewDeadlineMs: 1000, ...options,
   });
-  const call = () => bridge.routes['GET /api/team/overview-model'](
+  const call = (cookie = COOKIE) => bridge.routes['GET /api/team/overview-model'](
     new URL('http://localhost/api/team/overview-model?project=portal'), null,
-    { headers: { cookie: COOKIE } },
+    { headers: { cookie } },
     { getHeader: () => undefined, setHeader: () => {} },
   );
   return { bridge, call, state };
@@ -328,6 +329,97 @@ test('overview-model fails every caller sharing a composition revoked in flight'
   assert.equal(bridge.cacheSize(), 0);
 });
 
+test('overview-model never shares a composition between different cookie sessions', async (t) => {
+  const sessionA = 'awr_web_session=session-a';
+  const sessionB = 'awr_web_session=session-b';
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const { call, state } = await modelFixture(t, async (query, upstreamState) => {
+    if (query.op !== 'work.list') return undefined;
+    await gate;
+    const own = query.cookie === sessionA;
+    const item = bigWorkItem(own ? 'work-a' : 'work-b', STREAM, false);
+    item.title = own ? 'Session A task' : 'Session B task';
+    return { body: { ...envelope(upstreamState, query), data: {
+      items: [item], total: 1, next_cursor: null, truncated: false, execution_authorized: false, as_of: asOf(upstreamState),
+    } } };
+  }, { readTimeoutMs: 1000, overviewDeadlineMs: 5000 });
+  const first = call(sessionA);
+  const second = call(sessionB);
+  await delay(20);
+  release();
+  const [left, right] = await Promise.all([first, second]);
+  assert.equal(left.ok, true, JSON.stringify(left));
+  assert.equal(right.ok, true, JSON.stringify(right));
+  assert.equal(left.input.tasks.items[0].id, 'work-a');
+  assert.equal(right.input.tasks.items[0].id, 'work-b');
+  assert.equal(left.input.tasks.items[0].title, 'Session A task');
+  assert.equal(right.input.tasks.items[0].title, 'Session B task');
+  assert.equal(nonSession(state).filter((query) => query.cookie === sessionA).length, 8);
+  assert.equal(nonSession(state).filter((query) => query.cookie === sessionB).length, 8);
+});
+
+test('overview-model fails closed instead of joining an older-generation flight', async (t) => {
+  let release;
+  let started;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const waiting = new Promise((resolve) => { started = resolve; });
+  const { call, state } = await modelFixture(t, async (query) => {
+    if (query.op === 'work.list') { started(); await gate; }
+    return undefined;
+  }, { readTimeoutMs: 1000, overviewDeadlineMs: 5000 });
+  const oldFlight = call();
+  await waiting;
+  state.sessionRevoked = true;
+  const revoked = await call();
+  assert.equal(revoked.error.code, 'SessionExpired');
+  state.sessionRevoked = false;
+  let settled = false;
+  const incoming = call().then((result) => { settled = true; return result; });
+  await delay(30);
+  const settledBeforeRelease = settled;
+  release();
+  const [incomingResult, oldResult] = await Promise.all([incoming, oldFlight]);
+  assert.equal(settledBeforeRelease, true, 'the new poll must fail before the old flight settles');
+  assert.equal(incomingResult.ok, false);
+  assert.equal(incomingResult.error.code, 'Unauthenticated');
+  assert.equal(oldResult.ok, false);
+  assert.equal(state.calls.filter((query) => query.op === 'work.list').length, 1);
+  const recovered = await call();
+  assert.equal(recovered.ok, true, JSON.stringify(recovered));
+});
+
+test('overview-model cleans a rejected flight so the next call recomputes successfully', async (t) => {
+  const { call, state } = await modelFixture(t, () => undefined, { readTimeoutMs: 1000, overviewDeadlineMs: 5000 });
+  const originalClone = globalThis.structuredClone;
+  let shouldThrow = true;
+  globalThis.structuredClone = (value) => {
+    if (shouldThrow) {
+      shouldThrow = false;
+      throw new Error('synthetic composition rejection');
+    }
+    return originalClone(value);
+  };
+  t.after(() => { globalThis.structuredClone = originalClone; });
+  await assert.rejects(call(), /synthetic composition rejection/);
+  globalThis.structuredClone = originalClone;
+  const recovered = await call();
+  assert.equal(recovered.ok, true, JSON.stringify(recovered));
+  assert.equal(nonSession(state).length, 16, 'both the rejected and recovered calls must compose');
+});
+
+test('overview-model skips review reads only for no_runtime, not other null runtime reasons', async (t) => {
+  const project = bigProject(1, 2, 0);
+  project.items['stream-0'][0].summary.runtime = { value: null, as_of_unix_ms: null, reason: 'no_runtime' };
+  project.items['stream-0'][1].summary.runtime = { value: null, as_of_unix_ms: null, reason: 'not_recorded' };
+  const { call, state } = await modelFixture(t, respondFor(project));
+  const result = await call();
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(reviewIds(state), ['w-0-001']);
+  assert.deepEqual(result.coverage.reviewRounds.known_empty.map((entry) => entry.work_id), ['w-0-000']);
+  assert.equal(result.input.reviewRounds.coverage, 'complete');
+});
+
 test('overview-model spends the 50-work two-stream cap in deterministic list order within a priority', async (t) => {
   const project = bigProject(2, 25, 0);
   project.items['stream-1'][24].summary.phase = field('delivered');
@@ -441,7 +533,7 @@ test('an in-flight composition cannot repopulate restricted cache after revocati
 test('the demo composition feeds the real deriveOverview input surface directly', async (t) => {
   const bridge = createTeamBridge({ port: 0 });
   const result = await bridge.routes['GET /api/team/overview-model'](
-    new URL('http://localhost/api/team/overview-model?project=orders'), null,
+    new URL('http://localhost/api/team/overview-model?project=P-001'), null,
     { headers: { cookie: COOKIE } }, { getHeader: () => undefined, setHeader: () => {} },
   );
   assert.equal(result.ok, true, JSON.stringify(result));
