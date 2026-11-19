@@ -213,7 +213,7 @@ test('PPO-010 derives every prototype task status and keeps counts tied to detai
 
   const metrics = Object.fromEntries(Object.entries(result.views).map(([view, summary]) =>
     [view, summary.metrics.map((metric) => ({ count: metric.count, details: metric.items.length }))]));
-  assert.deepEqual(metrics.me, [{ count: 2, details: 2 }, { count: 0, details: 0 }, { count: 5, details: 5 }, { count: 2, details: 2 }]);
+  assert.deepEqual(metrics.me, [{ count: 2, details: 2 }, { count: 1, details: 1 }, { count: 5, details: 5 }, { count: 2, details: 2 }]);
   assert.deepEqual(metrics.lead, [{ count: 2, details: 2 }, { count: 7, details: 7 }, { count: 10, details: 10 }, { count: 1, details: 1 }]);
   assert.equal(metrics.department[0].count, 3);
   assert.equal(metrics.department[1].count, 10);
@@ -225,9 +225,10 @@ test('PPO-010 derives every prototype task status and keeps counts tied to detai
   assert.equal(result.views.department.metrics[1].previousPeriod.count, 2);
   assert.equal(result.views.top.metrics[1].claimed.count, 2);
 
-  // Prototype comparison: its primary-wait projection differs from PPO-010's
-  // per-edge/per-decision projection. It also counts an active Agent on a waiting
-  // task as running, while PPO-010 reserves that metric for running task status.
+  // Prototype comparison: its primary-wait projection still differs from PPO-010's
+  // per-edge/per-decision projection. The running-Agent metric now agrees: a waiting
+  // task whose Agent is explicitly active counts for its Agent (T-103), while the
+  // stalled T-104 and the inactive waiting T-111 do not.
   // External executive roles have no member group, so the department cross-group
   // total stays unknown rather than guessed.
   assert.deepEqual({
@@ -236,7 +237,7 @@ test('PPO-010 derives every prototype task status and keeps counts tied to detai
     department: { prototype: [3, 10, 2, 1], derived: metrics.department.map((metric) => metric.count) },
     top: { prototype: [3, 12, 2, 1], derived: metrics.top.map((metric) => metric.count) },
   }, {
-    me: { prototype: [2, 1, 3, 3], derived: [2, 0, 5, 2] },
+    me: { prototype: [2, 1, 3, 3], derived: [2, 1, 5, 2] },
     lead: { prototype: [2, 7, 7, 2], derived: [2, 7, 10, 1] },
     department: { prototype: [3, 10, 2, 1], derived: [3, 10, null, 1] },
     top: { prototype: [3, 12, 2, 1], derived: [3, 12, 8, 1] },

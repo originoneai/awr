@@ -1,12 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { deriveOverview, VIEW_IDS } from '../index';
-import type { CountDetails, DerivedTask, OverviewTask, OverviewViewOptions } from '../index';
+import type {
+  CountDetails,
+  DerivedTask,
+  OverviewTask,
+  OverviewViewOptions,
+  ViewAgentSummary,
+} from '../index';
 import {
   DAY,
   NOW,
   baseTask,
   complete,
   decision,
+  dependency,
   makeInput,
   reviewRound,
   startedTask,
@@ -253,6 +260,41 @@ describe('four prototype views', () => {
     expect(pending.items.map((item) => (item as { task: { id: string } }).task.id)).toEqual(['inside']);
   });
 
+  it('keeps the top decisions metric free of review and outside waits sent to the viewer', () => {
+    const views: OverviewViewOptions = {
+      top: { personId: 'person-b', goalIds: ['goal-one'] },
+    };
+    const result = deriveOverview(makeInput({
+      tasks: complete([
+        scopedTask('decided-task', 'project-one', 'group-one', 'goal-one', {
+          ownerPersonId: 'person-a', started: true, agentActive: true,
+        }),
+        scopedTask('reviewed-task', 'project-one', 'group-one', 'goal-one', {
+          ownerPersonId: 'person-c', started: true, agentActive: false, submittedResultAtUnixMs: NOW - DAY,
+        }),
+        scopedTask('outside-wait-task', 'project-one', 'group-one', 'goal-one', {
+          ownerPersonId: 'person-b', externalWait: { party: 'Outside Example', sinceUnixMs: NOW - 2 * DAY },
+        }),
+      ]),
+      decisions: complete([decision('decided-task', { allowedResponderIds: ['person-b'] })]),
+      reviewRounds: complete([
+        reviewRound('reviewed-task', 'open', { reviewerPersonId: 'person-b', authorPersonId: 'person-c' }),
+      ]),
+      options: { nowUnixMs: NOW, stalledAfterDays: 3, views },
+    }));
+    // All three wait kinds really exist, and the review wait really reaches the viewer's own
+    // pending queue, so the top metric has something it must filter out.
+    expect(result.waitCounts.byKind.decision.count).toBe(1);
+    expect(result.waitCounts.byKind.review.count).toBe(1);
+    expect(result.waitCounts.byKind.external.count).toBe(1);
+    expect(result.people.find((summary) => summary.person.id === 'person-b')?.pending.count).toBe(2);
+    // Only the decision wait counts for the top viewer; review and outside waits never do.
+    const decisions = result.views.top.metrics[3];
+    expect(decisions.key).toBe('decisions-for-me');
+    expectKnown(decisions, 1);
+    expect(decisions.items.map((item) => (item as { task: { id: string } }).task.id)).toEqual(['decided-task']);
+  });
+
   it('pins every view number and period comparison to its own detail array', () => {
     const result = deriveOverview(viewsInput());
     for (const view of Object.values(result.views)) {
@@ -262,5 +304,130 @@ describe('four prototype views', () => {
         if (item.claimed?.count != null) expect(item.claimed.count).toBe(item.claimed.items.length);
       }
     }
+  });
+});
+
+describe('me-view running Agents', () => {
+  function agentsInput(tasks: OverviewTask[], extra: Parameters<typeof makeInput>[0] = {}) {
+    const views: OverviewViewOptions = {
+      me: { personId: 'person-a', projectId: 'project-one' },
+      currentWeek: { startUnixMs: NOW - 7 * DAY, endUnixMs: NOW },
+      previousWeek: { startUnixMs: NOW - 14 * DAY, endUnixMs: NOW - 7 * DAY - 1 },
+      currentMonth: { startUnixMs: NOW - 30 * DAY, endUnixMs: NOW },
+      previousMonth: { startUnixMs: NOW - 60 * DAY, endUnixMs: NOW - 30 * DAY - 1 },
+    };
+    return makeInput({ tasks: complete(tasks), options: { nowUnixMs: NOW, stalledAfterDays: 3, views }, ...extra });
+  }
+
+  /** An unsatisfied provider dependency keeps the consumer "waiting" while its Agent stays active. */
+  function waitingOnDependency(id: string, overrides: Partial<OverviewTask> = {}) {
+    return {
+      task: startedTask(id, { projectId: 'project-one', groupId: 'group-one', goalIds: ['goal-one'], ...overrides }),
+      edge: dependency(id, 'provider-one', { satisfied: false }),
+    };
+  }
+
+  const providerTask = baseTask('provider-one', {
+    ownerPersonId: 'person-b', projectId: 'project-two', groupId: 'group-two', goalIds: ['goal-two'],
+  });
+
+  function statusOf(result: ReturnType<typeof deriveOverview>, id: string) {
+    return result.tasks.find((task) => task.id === id)!.status;
+  }
+
+  it('counts an Agent on a waiting task whose Agent is explicitly active', () => {
+    const waiting = waitingOnDependency('waiting-active', { agentActive: true, agentName: 'Desk Agent' });
+    const result = deriveOverview(agentsInput([providerTask, waiting.task], {
+      dependencies: complete([waiting.edge]),
+    }));
+    // The fixture must really be "waiting" (like the prototype's task held up by an upstream
+    // review while its Agent keeps doing the wait-independent part), or the test would pass
+    // for the wrong reason.
+    expect(statusOf(result, 'waiting-active')).toBe('waiting');
+    const agents = result.views.me.metrics[1];
+    expectKnown(agents, 1);
+    expect(agents.items.map((item) => (item as ViewAgentSummary).agentName)).toEqual(['Desk Agent']);
+    expect((agents.items[0] as ViewAgentSummary).tasks.map((task) => task.id)).toEqual(['waiting-active']);
+  });
+
+  it('does not count a waiting task whose Agent is inactive, null or not provided, keeping the count a known zero', () => {
+    const inactive = waitingOnDependency('waiting-inactive', { agentActive: false, agentName: 'Idle Agent' });
+    const nullActive = waitingOnDependency('waiting-null', { agentActive: null, agentName: 'Null Agent' });
+    const unstated = waitingOnDependency('waiting-unstated', { agentActive: undefined, agentName: 'Unstated Agent' });
+    const result = deriveOverview(agentsInput([providerTask, inactive.task, nullActive.task, unstated.task], {
+      dependencies: complete([inactive.edge, nullActive.edge, unstated.edge]),
+    }));
+    for (const id of ['waiting-inactive', 'waiting-null', 'waiting-unstated']) {
+      expect(statusOf(result, id)).toBe('waiting');
+    }
+    const agents = result.views.me.metrics[1];
+    // A waiting task without an active Agent is not an unknown; it must not pollute the count.
+    expectKnown(agents, 0);
+    expect(agents.unknownItems).toEqual([]);
+  });
+
+  it('does not count Agents on stalled, review, returned or claimed tasks', () => {
+    const tasks = [
+      scopedTask('stalled-one', 'project-one', 'group-one', 'goal-one', {
+        started: true, agentActive: true, agentName: 'Stalled Agent',
+        report: { completed: false, reportedAtUnixMs: NOW - 4 * DAY },
+      }),
+      scopedTask('review-one', 'project-one', 'group-one', 'goal-one', {
+        started: true, agentActive: false, agentName: 'Review Agent', submittedResultAtUnixMs: NOW - DAY,
+      }),
+      scopedTask('returned-one', 'project-one', 'group-one', 'goal-one', {
+        started: true, agentActive: false, agentName: 'Returned Agent', submittedResultAtUnixMs: NOW - DAY,
+      }),
+      scopedTask('claimed-one', 'project-one', 'group-one', 'goal-one', {
+        started: true, agentActive: false, agentName: 'Claimed Agent',
+        report: { completed: true, reportedAtUnixMs: NOW - DAY }, submittedResultAtUnixMs: null,
+      }),
+    ];
+    const result = deriveOverview(agentsInput(tasks, {
+      reviewRounds: complete([
+        reviewRound('review-one', 'open', { reviewerPersonId: 'person-b' }),
+        reviewRound('returned-one', 'rejected', { reviewerPersonId: 'person-b' }),
+      ]),
+    }));
+    expect(result.tasks.map((task) => [task.id, task.status])).toEqual([
+      ['stalled-one', 'stalled'],
+      ['review-one', 'review'],
+      ['returned-one', 'returned'],
+      ['claimed-one', 'claimed'],
+    ]);
+    const agents = result.views.me.metrics[1];
+    expectKnown(agents, 0);
+    expect(agents.unknownItems).toEqual([]);
+  });
+
+  it('keeps a running task without an Agent name a coverage gap instead of an entry', () => {
+    const result = deriveOverview(agentsInput([
+      providerTask,
+      startedTask('running-nameless', {
+        projectId: 'project-one', groupId: 'group-one', goalIds: ['goal-one'], agentName: null,
+      }),
+    ]));
+    expect(statusOf(result, 'running-nameless')).toBe('running');
+    const agents = result.views.me.metrics[1];
+    expect(agents.count).toBeNull();
+    expect(agents.items).toEqual([]);
+    expect(agents.unknownItems.some((issue) => issue.reason === 'view-agent-name-unknown')).toBe(true);
+  });
+
+  it('deduplicates two tasks sharing one Agent name across running and waiting', () => {
+    const waiting = waitingOnDependency('waiting-shared', { agentActive: true, agentName: 'Shared Agent' });
+    const result = deriveOverview(agentsInput([
+      providerTask,
+      startedTask('running-shared', {
+        projectId: 'project-one', groupId: 'group-one', goalIds: ['goal-one'], agentName: 'Shared Agent',
+      }),
+      waiting.task,
+    ], { dependencies: complete([waiting.edge]) }));
+    expect(statusOf(result, 'waiting-shared')).toBe('waiting');
+    expect(statusOf(result, 'running-shared')).toBe('running');
+    const agents = result.views.me.metrics[1];
+    expectKnown(agents, 1);
+    expect((agents.items[0] as ViewAgentSummary).tasks.map((task) => task.id).sort())
+      .toEqual(['running-shared', 'waiting-shared']);
   });
 });

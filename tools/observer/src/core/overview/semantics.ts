@@ -25,6 +25,11 @@ export const OVERVIEW_RULES = {
   approvals: ['approval-kinds-explicit', 'approval-recipient-explicit', 'approval-project-scoped', 'decisions-exclude-approvals'],
   people: ['explicit-person-identity', 'pending-nondependency-and-handoff', 'prototype-in-progress', 'owned-waits', 'owed-provider-results'],
   identity: ['explicit-equal-only', 'missing-is-neither-self-nor-other'],
-  views: ['four-metrics-in-prototype-order', 'caller-scopes-and-periods', 'unknown-scope-is-not-empty'],
+  views: [
+    'four-metrics-in-prototype-order',
+    'caller-scopes-and-periods',
+    'agents-running-or-waiting-active',
+    'unknown-scope-is-not-empty',
+  ],
   vcount: ['verified-only', 'verified-at-in-inclusive-window', 'caller-passes-non-overlapping-periods'],
 } as const;

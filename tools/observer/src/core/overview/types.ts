@@ -249,6 +249,8 @@ export interface DerivedTask {
   title: string | null;
   owner: PersonRef | null;
   agentName: string | null;
+  /** The recorded Agent-activity fact; null when the read did not provide it. */
+  agentActive: boolean | null;
   projectId: string | null;
   groupId: string | null;
   /** Null is unknown; an empty array explicitly says no goal is bound. */
