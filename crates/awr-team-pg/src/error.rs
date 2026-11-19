@@ -390,6 +390,7 @@ impl PgError {
             "claim_id",
             "execution_id",
             "handoff_id",
+            "update_id",
             "evidence_id",
             "review_round_id",
             "artifact_id",

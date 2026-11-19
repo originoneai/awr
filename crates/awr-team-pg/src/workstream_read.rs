@@ -29,6 +29,7 @@ mod planning;
 mod retained;
 mod reviews;
 mod sources;
+mod updates;
 
 pub(crate) const QUERIES: &[&str] = &[
     "capabilities",
@@ -72,6 +73,8 @@ pub(crate) const QUERIES: &[&str] = &[
     "sources.inspect",
     "documents.list",
     "decisions.list",
+    "updates.list",
+    "update.inspect",
     "audit.history",
     "audit.export",
     "audit.count",
@@ -103,6 +106,8 @@ pub struct WorkstreamQuery {
     pub decision_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decision_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_id: Option<String>,
     pub evidence_id: Option<String>,
     pub review_round_id: Option<String>,
     /// Controlled source path relative to the active snapshot (TMCP-023).
@@ -136,6 +141,7 @@ impl WorkstreamQuery {
         "sources.inspect",
         "documents.list",
         "decisions.list",
+        "updates.list",
         "work.prepare",
         "work.snapshot",
         "work.observe",
@@ -195,6 +201,7 @@ impl WorkstreamQuery {
             ("claim_id", &self.claim_id),
             ("execution_id", &self.execution_id),
             ("handoff_id", &self.handoff_id),
+            ("update_id", &self.update_id),
             ("recipient_person_id", &self.recipient_person_id),
             ("evidence_id", &self.evidence_id),
             ("review_round_id", &self.review_round_id),
@@ -259,6 +266,7 @@ impl WorkstreamQuery {
                 | "sources.inspect"
                 | "documents.list"
                 | "decisions.list"
+                | "updates.list"
                 | "review.rounds"
                 | "handoff.list"
                 | "dependencies.list"
@@ -391,6 +399,12 @@ impl WorkstreamQuery {
                 false,
             ),
             (
+                "update_id",
+                self.update_id.is_some(),
+                self.op == "update.inspect",
+                false,
+            ),
+            (
                 "evidence_id",
                 self.evidence_id.is_some(),
                 self.op == "evidence.inspect",
@@ -461,7 +475,7 @@ impl WorkstreamQuery {
         }
         let project_wide = matches!(
             self.op.as_str(),
-            "capabilities" | "workstreams.list" | "work.inbox"
+            "capabilities" | "workstreams.list" | "work.inbox" | "updates.list" | "update.inspect"
         );
         let work_list = matches!(
             self.op.as_str(),
@@ -1020,6 +1034,30 @@ mod input_guidance_tests {
             assert!(!query.validate().unwrap_err().is_work_next_selectors());
         }
     }
+
+    #[test]
+    fn project_update_queries_require_exact_selectors_and_bounded_pagination() {
+        for input in [
+            json!({"protocol_version":1,"op":"updates.list"}),
+            json!({"protocol_version":1,"op":"updates.list","limit":1,"cursor":"opaque"}),
+            json!({"protocol_version":1,"op":"update.inspect","update_id":"update"}),
+        ] {
+            let query: WorkstreamQuery = serde_json::from_value(input.clone()).unwrap();
+            assert!(query.validate().is_ok(), "{input}");
+        }
+        for input in [
+            json!({"protocol_version":1,"op":"update.inspect"}),
+            json!({"protocol_version":1,"op":"updates.list","update_id":"update"}),
+            json!({"protocol_version":1,"op":"updates.list","work_id":"work"}),
+            json!({"protocol_version":1,"op":"updates.list","session_id":"session"}),
+            json!({"protocol_version":1,"op":"update.inspect","update_id":"update","workstream_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}),
+            json!({"protocol_version":1,"op":"updates.list","limit":0}),
+            json!({"protocol_version":1,"op":"update.inspect","update_id":"bad\nid"}),
+        ] {
+            let query: WorkstreamQuery = serde_json::from_value(input.clone()).unwrap();
+            assert!(query.validate().is_err(), "{input}");
+        }
+    }
 }
 
 impl WorkstreamReadStore {
@@ -1321,6 +1359,9 @@ pub(crate) async fn read(
     if q.op == "decisions.list" {
         return decisions::read(tx, tenant, project, auth, q).await;
     }
+    if matches!(q.op.as_str(), "updates.list" | "update.inspect") {
+        return updates::read(tx, tenant, project, auth, q).await;
+    }
     if q.op == "dependencies.list" {
         return dependencies::read(tx, tenant, project, auth, q).await;
     }
@@ -1497,6 +1538,12 @@ pub(crate) async fn read(
             "request_authority":"current_owned_live_claim","response_authority":"selected_current_member_and_owned_session",
             "context_field":"ordinary_decisions","one_open_question_per_work":true,
             "execution_permission_granted":false,"formal_acceptance_granted":false});
+        caps["project_period_updates"] = json!({"version":1,"queries":["updates.list","update.inspect"],
+            "record_tool":"awr_team_update_record","command":"update.record",
+            "record_authority":"supervisor_duty_and_project_scoped_edit_planning_delegation",
+            "read_authority":"current_project_or_workstream_read_delegation_no_task_promotion",
+            "sentence_provenance":"caller_supplied","fact_snapshots":"null_until_ppd_011",
+            "history":"immutable_versions_with_separate_current_pointer"});
         caps["business_role_presets"] = json!({
             "roles":awr_team::BusinessRole::all(), "explicit_combined_duties":true,
             "semantics":"membership_grants_intersect_declared_ceiling_then_one_live_delegation",

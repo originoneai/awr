@@ -141,7 +141,7 @@ pub use tx::{CommandOutcome, CommandRequest, TeamStore, retry_rolled_back};
 pub use workstream_auth::{
     command_business_action, map_membership_role, query_business_action, workstream_credential_hash,
 };
-pub use workstream_command::{WorkstreamCommand, WorkstreamCommandStore};
+pub use workstream_command::{UpdateRecordRequest, WorkstreamCommand, WorkstreamCommandStore};
 pub use workstream_read::{WorkstreamQuery, WorkstreamReadStore};
 
 pub const SCHEMA: &str = "awr_team";
@@ -159,6 +159,6 @@ mod tests {
     #[test]
     fn schema_contract_is_stable() {
         assert_eq!(SCHEMA, "awr_team");
-        assert_eq!(EXPECTED_SCHEMA_VERSION, 63);
+        assert_eq!(EXPECTED_SCHEMA_VERSION, 64);
     }
 }

@@ -188,6 +188,14 @@ recovery paths recheck the current action and scope. Provisioning accepts a
 project grant only with matching access to all active workstreams and refuses
 Agent manage, executor-attestation and reconciliation grants.
 
+Project period recording (`update.record`) uses this same `planning.edit_draft`
+action tier and additionally requires an explicit `supervisor` business duty.
+Its MCP tool is project-scoped, not a task-bound `awr_team_command`; one live
+project `edit_planning` delegation is mandatory for an Agent. The sentence is
+caller-supplied. `updates.list` and `update.inspect` use `work.read`; Agents need
+a current project/workstream read delegation and never promote a task-only
+delegation to project-update visibility.
+
 `work.assign` is an authorization contract; the assignment command and complete
 delivery flow must be advertised separately when those entry points ship.
 

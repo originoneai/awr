@@ -4,6 +4,168 @@ use awr_team_pg::{EXPECTED_SCHEMA_VERSION, check_schema, migrate};
 use serde_json::{Value, json};
 
 #[tokio::test]
+async fn schema64_project_updates_are_atomic_versioned_and_isolated() {
+    let (_guard, admin, db) = common::historical_team_schema(63).await;
+    let ddl = include_str!("../migrations/20261115000064_project_period_updates.sql");
+    assert!(
+        admin
+            .batch_execute(&ddl.replace(
+                "UPDATE awr_team.schema_state",
+                "SELECT 1/0; UPDATE awr_team.schema_state"
+            ))
+            .await
+            .is_err()
+    );
+    admin.batch_execute("ROLLBACK").await.unwrap();
+    let rolled_back = admin
+        .query_one(
+            "SELECT (SELECT version FROM awr_team.schema_state),
+                to_regclass('awr_team.project_period_updates')::text,
+                to_regclass('awr_team.project_period_update_current')::text",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(rolled_back.get::<_, i32>(0), 63);
+    assert_eq!(rolled_back.get::<_, Option<String>>(1), None);
+    assert_eq!(rolled_back.get::<_, Option<String>>(2), None);
+
+    migrate(&admin).await.unwrap();
+    migrate(&admin).await.unwrap();
+    check_schema(&admin).await.unwrap();
+    admin.batch_execute("INSERT INTO awr_team.tenants(id,name,status)
+          VALUES('update-tenant','Synthetic updates','active');
+        INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status)
+          VALUES('update-tenant','update-project','updates','team','epoch','active');
+        INSERT INTO awr_team.project_period_updates(tenant_id,project_id,id,period_kind,period_key,
+          starts_on,ends_on,status,summary,author_person_id,author_display_name,
+          recorded_by_actor_id,recorded_by_client_id,request_id,version)
+          VALUES('update-tenant','update-project','week-v1','week','2026-W47','2026-11-16',
+            '2026-11-22','risk','First caller sentence','lead','Jordan Lee','agent','client','request-v1',1);
+        INSERT INTO awr_team.project_period_update_current(tenant_id,project_id,period_kind,period_key,update_id)
+          VALUES('update-tenant','update-project','week','2026-W47','week-v1');").await.unwrap();
+    let before: Value = admin
+        .query_one(
+            "SELECT to_jsonb(u) FROM awr_team.project_period_updates u WHERE id='week-v1'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    for statement in [
+        "UPDATE awr_team.project_period_updates SET summary='rewrite' WHERE id='week-v1'",
+        "DELETE FROM awr_team.project_period_updates WHERE id='week-v1'",
+        "INSERT INTO awr_team.project_period_update_current(tenant_id,project_id,period_kind,period_key,update_id)
+          VALUES('update-tenant','update-project','week','2026-W47','week-v1')",
+        "INSERT INTO awr_team.project_period_updates(tenant_id,project_id,id,period_kind,period_key,
+          starts_on,ends_on,status,summary,author_person_id,author_display_name,
+          recorded_by_actor_id,recorded_by_client_id,request_id,version)
+          VALUES('update-tenant','update-project','bad-controls','week','2026-W47','2026-11-16',
+            '2026-11-22','risk',E'bad\\nline','lead','Jordan','agent','client','bad-controls',2)",
+        "INSERT INTO awr_team.project_period_updates(tenant_id,project_id,id,period_kind,period_key,
+          starts_on,ends_on,status,summary,author_person_id,author_display_name,
+          recorded_by_actor_id,recorded_by_client_id,request_id,version)
+          VALUES('update-tenant','update-project','too-long','week','2026-W47','2026-11-16',
+            '2026-11-22','risk',repeat('x',201),'lead','Jordan','agent','client','too-long',2)",
+    ] {
+        assert!(
+            admin.batch_execute(statement).await.is_err(),
+            "database invariant accepted invalid write: {statement}"
+        );
+        admin.batch_execute("ROLLBACK").await.unwrap();
+    }
+    admin.batch_execute("INSERT INTO awr_team.project_period_updates(tenant_id,project_id,id,period_kind,period_key,
+          starts_on,ends_on,status,summary,author_person_id,author_display_name,
+          recorded_by_actor_id,recorded_by_client_id,request_id,version,supersedes_update_id)
+          VALUES('update-tenant','update-project','week-v2','week','2026-W47','2026-11-16',
+            '2026-11-22','off','Second caller sentence','lead','Jordan Lee','agent','client','request-v2',2,'week-v1');
+        UPDATE awr_team.project_period_update_current SET update_id='week-v2'
+          WHERE tenant_id='update-tenant' AND project_id='update-project'
+            AND period_kind='week' AND period_key='2026-W47';").await.unwrap();
+    let after: Value = admin
+        .query_one(
+            "SELECT to_jsonb(u) FROM awr_team.project_period_updates u WHERE id='week-v1'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(after, before);
+    let counts = admin
+        .query_one(
+            "SELECT (SELECT count(*) FROM awr_team.project_period_updates),
+                (SELECT count(*) FROM awr_team.project_period_update_current),
+                (SELECT relrowsecurity FROM pg_class WHERE oid='awr_team.project_period_updates'::regclass),
+                (SELECT relforcerowsecurity FROM pg_class WHERE oid='awr_team.project_period_update_current'::regclass)",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(counts.get::<_, i64>(0), 2);
+    assert_eq!(counts.get::<_, i64>(1), 1);
+    assert!(counts.get::<_, bool>(2) && counts.get::<_, bool>(3));
+
+    // The current pointer cannot name another period's historical row.
+    admin.batch_execute("INSERT INTO awr_team.project_period_updates(tenant_id,project_id,id,period_kind,period_key,
+          starts_on,ends_on,status,summary,author_person_id,author_display_name,
+          recorded_by_actor_id,recorded_by_client_id,request_id,version)
+          VALUES('update-tenant','update-project','month-v1','month','2026-11','2026-11-01',
+            '2026-11-30','ok','Monthly sentence','lead','Jordan Lee','agent','client','month-v1',1)").await.unwrap();
+    assert!(
+        admin.execute("INSERT INTO awr_team.project_period_update_current(tenant_id,project_id,period_kind,period_key,update_id)
+          VALUES('update-tenant','update-project','month','2026-10','month-v1')", &[]).await.is_err()
+    );
+
+    awr_team_pg::Bootstrap::grant_app(&admin, "awr_app")
+        .await
+        .unwrap();
+    let app = common::app_client(&db).await;
+    app.batch_execute(
+        "SELECT set_config('awr.tenant_id','other-tenant',false),
+        set_config('awr.project_id','update-project',false)",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        app.query_one("SELECT count(*) FROM awr_team.project_period_updates", &[])
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        0
+    );
+    app.batch_execute(
+        "SELECT set_config('awr.tenant_id','update-tenant',false),
+        set_config('awr.project_id','update-project',false)",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        app.query_one("SELECT count(*) FROM awr_team.project_period_updates", &[])
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        3
+    );
+
+    // The established old-binary gate refuses a schema newer than it understands.
+    admin
+        .execute(
+            "UPDATE awr_team.schema_state SET version=$1 WHERE component='awr_team'",
+            &[&(EXPECTED_SCHEMA_VERSION + 1)],
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        check_schema(&admin).await,
+        Err(awr_team_pg::PgError::SchemaIncompatible(_))
+    ));
+    assert!(matches!(
+        migrate(&admin).await,
+        Err(awr_team_pg::PgError::SchemaIncompatible(_))
+    ));
+}
+
+#[tokio::test]
 async fn schema63_planning_rejection_upgrade_is_atomic_and_preserves_earlier_candidates() {
     let (_guard, admin, _) = common::historical_team_schema(62).await;
     admin.batch_execute("INSERT INTO awr_team.tenants(id,name,status) VALUES('planning-tenant','Planning','active');
