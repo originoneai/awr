@@ -2,9 +2,9 @@
   "coordinator_epoch": "epoch-a",
   "data": {
     "as_of": {
-      "at_unix_ms": 1795097087283,
+      "at_unix_ms": 1795111195779,
       "project_revision": "6",
-      "source_snapshot_id": "01M7T1ZK75GD9WPK3SSHZA6BGJ"
+      "source_snapshot_id": "01M7TFE4Z9ZP6M4YY06XZ1CYBD"
     },
     "execution_authorized": false,
     "items": [
@@ -15,19 +15,19 @@
         },
         "current": true,
         "ends_on": "2026-11-22",
-        "fact_snapshot_ref": null,
+        "fact_snapshot_ref": "01M7TFE522G6C7571EV75PXNAA",
         "period_key": "2026-W47",
         "period_kind": "week",
-        "recorded_at_unix_ms": 1795097087273,
+        "recorded_at_unix_ms": 1795111195741,
         "starts_on": "2026-11-16",
         "status": "off",
         "summary": "A revised judgment, recorded as a new version.",
-        "supersedes_update_id": "01M7T1ZK8QG1R83MF2MB9468HF",
-        "update_id": "01M7T1ZK99M9BZ0Z3ZVZVH8E5N",
+        "supersedes_update_id": "01M7TFE50PHVP8Y7M3SZ51S8GY",
+        "update_id": "01M7TFE5227ZPSSNQFG7A1K939",
         "version": "2"
       }
     ],
-    "next_cursor": "{\"binding\":\"1ca9bf4a6b10ea3f6bf5c4e0dba5e4efdc33f2f952a5ea0e7cd2f0f005d18ae0\",\"starts_on\":\"2026-11-16\",\"ends_on\":\"2026-11-22\",\"period_key\":\"2026-W47\",\"update_id\":\"01M7T1ZK99M9BZ0Z3ZVZVH8E5N\"}",
+    "next_cursor": "{\"binding\":\"94a509a2d116bdfe4445d313609d06159b142795be1890a94e01570598a590d5\",\"starts_on\":\"2026-11-16\",\"ends_on\":\"2026-11-22\",\"period_key\":\"2026-W47\",\"update_id\":\"01M7TFE5227ZPSSNQFG7A1K939\"}",
     "project_id": "reader-project",
     "truncated": true
   },
@@ -36,5 +36,5 @@
   "protocol_version": 1,
   "scope_id": "main",
   "selection_basis": "project",
-  "source_snapshot_id": "01M7T1ZK75GD9WPK3SSHZA6BGJ"
+  "source_snapshot_id": "01M7TFE4Z9ZP6M4YY06XZ1CYBD"
 }

@@ -171,6 +171,33 @@ async fn list(
     Ok(result)
 }
 
+async fn visible_work_ids(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    auth: &ReaderAuthority,
+) -> PgResult<std::collections::BTreeSet<String>> {
+    let (streams, tasks, task_streams) = super::navigation::visible_work_scope(auth);
+    let rows = tx
+        .query(
+            "SELECT o.work_id FROM awr_team.workstream_snapshot_ownership o
+             WHERE o.tenant_id=$1 AND o.project_id=$2 AND o.snapshot_id=$3 AND o.scope_id='main'
+               AND (o.workstream_id=ANY($4) OR EXISTS(
+                   SELECT 1 FROM unnest($5::text[],$6::text[]) allowed(work_id,workstream_id)
+                   WHERE allowed.work_id=o.work_id AND allowed.workstream_id=o.workstream_id))",
+            &[
+                &tenant,
+                &project,
+                &auth.snapshot,
+                &streams,
+                &tasks,
+                &task_streams,
+            ],
+        )
+        .await?;
+    Ok(rows.into_iter().map(|row| row.get(0)).collect())
+}
+
 async fn inspect(
     tx: &Transaction<'_>,
     tenant: &str,
@@ -182,7 +209,8 @@ async fn inspect(
     let sql = format!(
         "{RECORD_SELECT},EXISTS(
             SELECT 1 FROM awr_team.project_period_update_current c
-            WHERE c.tenant_id=u.tenant_id AND c.project_id=u.project_id AND c.update_id=u.id)
+            WHERE c.tenant_id=u.tenant_id AND c.project_id=u.project_id AND c.update_id=u.id),
+            u.fact_snapshot_json
         FROM awr_team.project_period_updates u
         WHERE u.tenant_id=$1 AND u.project_id=$2 AND u.id=$3"
     );
@@ -191,9 +219,21 @@ async fn inspect(
         .await?
         .ok_or(PgError::Forbidden)?;
     let current: bool = row.get(13);
+    let stored = row.get::<_, Option<Value>>(14);
+    let (facts, coverage) = if let Some(stored) = stored {
+        let visible = visible_work_ids(tx, tenant, project, auth).await?;
+        let (facts, hidden) = crate::workstream_command::project_fact_snapshot(&stored, &visible)?;
+        (
+            facts,
+            json!({"complete":hidden==0,"hidden_work_count":hidden}),
+        )
+    } else {
+        (Value::Null, Value::Null)
+    };
     Ok(envelope(
         auth,
         json!({"project_id":project,"update":record(&row,current),
+            "fact_snapshot":facts,"fact_snapshot_coverage":coverage,
             "as_of":as_of(tx,auth).await?,"execution_authorized":false}),
     ))
 }
