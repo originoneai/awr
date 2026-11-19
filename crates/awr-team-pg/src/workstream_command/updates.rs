@@ -710,6 +710,123 @@ mod tests {
         assert!(!facts.to_string().contains("person"));
     }
 
+    fn backticked(text: &str) -> Vec<String> {
+        let mut tokens = Vec::new();
+        let mut rest = text;
+        while let Some(start) = rest.find('`') {
+            let after = &rest[start + 1..];
+            let Some(end) = after.find('`') else { break };
+            tokens.push(after[..end].to_owned());
+            rest = &after[end + 1..];
+        }
+        tokens
+    }
+
+    fn cell(line: &str, index: usize) -> String {
+        line.split('|')
+            .nth(index)
+            .unwrap_or_default()
+            .trim()
+            .to_owned()
+    }
+
+    #[test]
+    fn counting_table_is_machine_checked_row_by_row_against_the_implementation() {
+        let doc = include_str!("../../../../docs/dev/reference/project-update-facts.md");
+        let fields: Vec<String> = doc
+            .split('\n')
+            .filter_map(|line| line.strip_prefix("| `"))
+            .map(|rest| rest.split('`').next().unwrap_or_default().to_owned())
+            .collect();
+        let snapshot = build_facts([]);
+        let keys: std::collections::BTreeSet<&str> = snapshot
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            fields
+                .iter()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>(),
+            keys.iter()
+                .map(|key| key.to_string())
+                .collect::<std::collections::BTreeSet<_>>(),
+            "table rows and snapshot fields must match one to one"
+        );
+        assert_eq!(fields.len(), keys.len());
+
+        let kinds: Vec<&str> = [
+            WaitKind::Decision,
+            WaitKind::Dependency,
+            WaitKind::Review,
+            WaitKind::External,
+        ]
+        .map(WaitKind::as_str)
+        .to_vec();
+        let waits_opened = doc
+            .split('\n')
+            .find(|line| line.starts_with("| `waits_opened`"))
+            .expect("documented waits_opened row");
+        let waits_cell = backticked(&cell(waits_opened, 2));
+        let documented: std::collections::BTreeSet<&str> = waits_cell
+            .iter()
+            .map(String::as_str)
+            .filter(|token| kinds.contains(token))
+            .collect();
+        assert_eq!(
+            documented,
+            kinds
+                .iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>()
+        );
+        assert!(
+            waits_cell
+                .iter()
+                .all(|token| kinds.contains(&token.as_str()) || token == "work_ids")
+        );
+
+        for (word, expected_fields) in [
+            ("核验过", vec!["verified"]),
+            ("标了完成", vec!["claimed_unverified"]),
+            ("等待", vec!["waits_opened", "waits_cleared"]),
+            ("压着", vec!["none"]),
+        ] {
+            let rows: Vec<&str> = doc
+                .split('\n')
+                .filter(|line| line.starts_with(&format!("| {word}")))
+                .collect();
+            assert_eq!(rows.len(), 1, "one shared-word row for {word}");
+            let fields = backticked(&cell(rows[0], 2));
+            assert_eq!(fields, expected_fields, "service fields for {word}");
+            assert!(
+                fields
+                    .iter()
+                    .all(|field| field == "none" || keys.contains(field.as_str())),
+                "shared-word rows must name real snapshot fields"
+            );
+        }
+
+        let shared = include_str!("../../../../docs/dev/reference/overview-fact-semantics.md");
+        for word in ["核验过", "标了完成", "等待", "压着"] {
+            assert!(
+                doc.contains(word) && shared.contains(word),
+                "shared word {word}"
+            );
+        }
+        for kind in [
+            "decisionWait",
+            "dependencyWait",
+            "reviewWait",
+            "externalWait",
+        ] {
+            assert!(shared.contains(kind), "Observer wait kind {kind}");
+        }
+        assert!(doc.contains("overview-fact-semantics.md"));
+    }
+
     #[test]
     fn fact_snapshot_projection_recounts_only_visible_work() {
         let stored = build_facts([

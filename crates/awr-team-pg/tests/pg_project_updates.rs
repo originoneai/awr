@@ -590,6 +590,79 @@ async fn fact_snapshots_default_to_utc_and_refuse_unknown_stored_zones() {
 }
 
 #[tokio::test]
+async fn legacy_rows_without_a_snapshot_read_as_unknown_not_zero() {
+    let (_guard, admin, db, store) = setup().await;
+    supervisor(&admin, &db).await;
+    admin
+        .batch_execute(&format!(
+            "INSERT INTO awr_team.project_period_updates(tenant_id,project_id,id,period_kind,
+               period_key,starts_on,ends_on,status,summary,author_person_id,author_display_name,
+               recorded_by_actor_id,recorded_by_client_id,request_id,version)
+             VALUES('{TENANT}','{PROJECT}','legacy-no-facts','week','2026-W47','2026-11-16',
+               '2026-11-22','ok','A schema-64 sentence without facts.','lead','Synthetic lead',
+               'agent','cli-a','legacy',1);
+             INSERT INTO awr_team.project_period_update_current(tenant_id,project_id,period_kind,
+               period_key,update_id)
+             VALUES('{TENANT}','{PROJECT}','week','2026-W47','legacy-no-facts')"
+        ))
+        .await
+        .unwrap();
+
+    let listed = read(&store, A, query("updates.list")).await.unwrap();
+    assert_eq!(
+        listed["data"]["items"].as_array().unwrap().len(),
+        1,
+        "the schema-64 row is still the current version"
+    );
+    assert_eq!(listed["data"]["items"][0]["fact_snapshot_ref"], Value::Null);
+    let mut inspect_query = query("update.inspect");
+    inspect_query.update_id = Some("legacy-no-facts".into());
+    let inspected = read(&store, A, inspect_query.clone()).await.unwrap();
+    assert_eq!(
+        inspected["data"]["update"]["fact_snapshot_ref"],
+        Value::Null
+    );
+    assert!(
+        inspected["data"]["fact_snapshot"].is_null(),
+        "a row without a snapshot is unknown, not zero counts: {}",
+        inspected["data"]["fact_snapshot"]
+    );
+    assert!(inspected["data"]["fact_snapshot_coverage"].is_null());
+
+    let successor = record(
+        &store,
+        TENANT,
+        A,
+        &request("legacy-week", "2026-W47", "A newer judged version."),
+    )
+    .await
+    .unwrap();
+    assert_eq!(successor["receipt"]["version"], "2");
+    assert!(successor["receipt"]["fact_snapshot_ref"].is_string());
+    assert_eq!(update_rows(&admin).await, 2);
+    let listed = read(&store, A, query("updates.list")).await.unwrap();
+    assert_eq!(listed["data"]["items"].as_array().unwrap().len(), 1);
+    assert!(listed["data"]["items"][0]["fact_snapshot_ref"].is_string());
+    let legacy = admin
+        .query_one(
+            "SELECT fact_snapshot_ref,fact_snapshot_json,fact_window_start_unix_ms,
+                fact_window_end_unix_ms,fact_time_zone
+             FROM awr_team.project_period_updates WHERE id='legacy-no-facts'",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(legacy.get::<_, Option<String>>(0), None);
+    assert_eq!(legacy.get::<_, Option<Value>>(1), None);
+    assert_eq!(legacy.get::<_, Option<i64>>(2), None);
+    assert_eq!(legacy.get::<_, Option<i64>>(3), None);
+    assert_eq!(legacy.get::<_, Option<String>>(4), None);
+    let reinspected = read(&store, A, inspect_query).await.unwrap();
+    assert!(reinspected["data"]["fact_snapshot"].is_null());
+    assert!(reinspected["data"]["update"]["current"].is_boolean());
+}
+
+#[tokio::test]
 async fn record_versions_replay_and_read_verbatim_pages() {
     let (_guard, admin, _db, store) = setup().await;
     supervisor(&admin, &_db).await;
@@ -782,7 +855,10 @@ async fn record_versions_replay_and_read_verbatim_pages() {
             assert!(sample_record["update_id"].is_string());
             assert!(sample_record["recorded_at_unix_ms"].is_i64());
             if path.contains("update-inspect") {
-                assert_eq!(sample["data"]["fact_snapshot"], value["data"]["fact_snapshot"]);
+                assert_eq!(
+                    sample["data"]["fact_snapshot"],
+                    value["data"]["fact_snapshot"]
+                );
                 assert_eq!(
                     sample["data"]["fact_snapshot_coverage"],
                     value["data"]["fact_snapshot_coverage"]
