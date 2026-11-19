@@ -33,7 +33,10 @@ pub use contract::{
     CrossWorkstreamDependencyPolicy, CrossWorkstreamReviewAssurance, DependencyAcceptanceMode,
     ExecutionSettlementMode, ExecutionSettlementPolicy, WorkContract, WorkDefinitionState,
 };
-pub use directory::{DirectoryMember, DirectoryUnit, ProjectDirectoryPlan, directory_id};
+pub use directory::{
+    DirectoryDepartment, DirectoryMember, DirectoryUnit, MAX_DEPARTMENT_DEPTH,
+    ProjectDirectoryPlan, directory_id,
+};
 pub use error::{TeamError, TeamResult};
 pub use findings::{JudgedFinding, ReviewFinding, ReviewScope, judge_finding};
 pub use governance::{
