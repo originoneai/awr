@@ -282,16 +282,25 @@ fn legacy_wait_kind(kind: Option<&str>) -> PgResult<WaitKind> {
     }
 }
 
-/// A completion is verified only by independent acceptance: the current payload
-/// states `team_independent_acceptance`, or the older receipt names one of the
-/// two agent/simulated-member independent review policies. Everything else —
-/// including a payload with no basis at all — is recorded, never verified.
+/// A completion is verified only by independent acceptance, read in this order:
+/// the payload's `independence_kind` (an agent review counts — the service
+/// refuses a review by the author or the executor, so it is by construction a
+/// different actor accepting on the current evidence); else the stated
+/// `team_independent_acceptance`; else the older receipt's `policy` naming one
+/// of the two agent/simulated-member independent review policies. A payload
+/// with no basis at all is recorded, never verified.
 fn independently_accepted(row: &tokio_postgres::Row) -> bool {
-    match row.get::<_, Option<bool>>(4) {
-        Some(independent) => independent,
-        None => matches!(row.get::<_, Option<String>>(5).as_deref(), Some(policy)
-            if policy == crate::review::AGENT_REVIEW_POLICY
-                || policy == crate::review::simulated_member::POLICY),
+    match row.get::<_, Option<String>>(6).as_deref() {
+        Some(kind) => matches!(
+            kind,
+            "team_independent" | "agent_review" | "simulated_member_independent"
+        ),
+        None => match row.get::<_, Option<bool>>(4) {
+            Some(independent) => independent,
+            None => matches!(row.get::<_, Option<String>>(5).as_deref(), Some(policy)
+                if policy == crate::review::AGENT_REVIEW_POLICY
+                    || policy == crate::review::simulated_member::POLICY),
+        },
     }
 }
 
@@ -332,7 +341,8 @@ async fn compute_facts(
     let rows = tx
         .query(
             "SELECT event_type,work_id,payload_json->>'decision',payload_json->>'kind',
-                (payload_json->>'team_independent_acceptance')::boolean,payload_json->>'policy'
+                (payload_json->>'team_independent_acceptance')::boolean,payload_json->>'policy',
+                payload_json->>'independence_kind'
              FROM awr_team.events
              WHERE tenant_id=$1 AND project_id=$2 AND work_id IS NOT NULL
                AND created_at>=to_timestamp($3::bigint::double precision/1000)

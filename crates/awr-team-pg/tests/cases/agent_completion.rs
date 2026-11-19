@@ -176,6 +176,133 @@ fn completion_args(evidence: &Value) -> Value {
     json!({"session_id":"session-runner","expected_session_version":"1","evidence_id":evidence["evidence_id"],"context_complete":true})
 }
 
+/// Pin the producer-to-reader contract for 核验过: after a real agent-review
+/// completion, the stored `work.completed` payload states its independence kind
+/// and the period-update fact snapshot counts the work as verified. A producer
+/// renaming the key fails here instead of the counts drifting silently.
+async fn period_update_counts_agent_review_completion_as_verified(
+    admin: &Client,
+    db: &str,
+    store: &WorkstreamReadStore,
+    work_id: &str,
+) -> Value {
+    let completed: Value = admin
+        .query_one(
+            "SELECT payload_json FROM awr_team.events
+             WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3
+               AND event_type='work.completed'
+             ORDER BY created_at DESC LIMIT 1",
+            &[&TENANT, &PROJECT, &work_id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(completed["independence_kind"], json!("agent_review"));
+    assert_eq!(completed["team_independent_acceptance"], json!(false));
+    assert!(completed.get("policy").is_none());
+
+    admin
+        .batch_execute(
+            "UPDATE awr_team.project_memberships SET role='maintainer',
+                business_roles='[\"supervisor\"]'::jsonb
+             WHERE tenant_id='reader-tenant' AND project_id='reader-project' AND actor_id='agent';
+             INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status)
+             VALUES('reader-tenant','reader-project','lead','Jordan Lee','active')
+             ON CONFLICT DO NOTHING;
+             INSERT INTO awr_team.person_agent_bindings(tenant_id,project_id,id,person_id,agent_id,status)
+             VALUES('reader-tenant','reader-project','lead-binding','lead','agent','active')
+             ON CONFLICT DO NOTHING;
+             INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,workstream_id,
+               authority_version,can_read,can_write,active)
+             VALUES('reader-tenant','reader-project','agent','cli-a','00000000000000000000000002',
+               1,true,true,true)
+             ON CONFLICT DO NOTHING;
+             UPDATE awr_team.workstream_grants SET can_read=true,can_write=true
+               WHERE tenant_id='reader-tenant' AND project_id='reader-project'
+                 AND actor_id='agent' AND client_id='cli-a';",
+        )
+        .await
+        .unwrap();
+    let person = PersonId::new("lead").unwrap();
+    AuthorizationStore::from_config(common::with_app_role(&common::test_config(), db))
+        .issue(
+            TENANT,
+            PROJECT,
+            &IssueAuthorizationRequest {
+                request_key: "issue-update-supervisor".into(),
+                authorization: AgentAuthorization {
+                    id: "update-supervisor".into(),
+                    authorizer_person_id: person.clone(),
+                    responsible_person_id: person,
+                    subject_kind: ExecutionSubjectKind::Agent,
+                    subject_id: "agent".into(),
+                    client_id: "cli-a".into(),
+                    session_id: None,
+                    model_id: None,
+                    scope: AuthorizationScope::Project {
+                        project_id: PROJECT.into(),
+                    },
+                    actions: BTreeSet::from([
+                        AuthorizedAction::Inspect,
+                        AuthorizedAction::EditPlanning,
+                    ]),
+                    expires_at_ms: None,
+                    status: AuthorizationStatus::Active,
+                    revoked_at_ms: None,
+                    revoked_by: None,
+                    verifiable_capabilities: vec![],
+                    self_reported_skill_hints: vec![],
+                    parent_authorization_id: None,
+                    maintainer_person_id: None,
+                    created_at_ms: 1000,
+                    binding_id: Some("lead-binding".into()),
+                },
+            },
+        )
+        .await
+        .unwrap();
+    let window = admin
+        .query_one(
+            "SELECT to_char(created_at AT TIME ZONE 'UTC','YYYY-MM'),
+                to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-01'),
+                to_char((date_trunc('month',created_at AT TIME ZONE 'UTC')
+                    + interval '1 month - 1 day')::date,'YYYY-MM-DD')
+             FROM awr_team.events
+             WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3
+               AND event_type='work.completed'
+             ORDER BY created_at DESC LIMIT 1",
+            &[&TENANT, &PROJECT, &work_id],
+        )
+        .await
+        .unwrap();
+    let request: awr_team_pg::UpdateRecordRequest = serde_json::from_value(json!({
+        "protocol_version":1,"request_id":"agent-review-verified",
+        "period_kind":"month","period_key":window.get::<_, String>(0),
+        "starts_on":window.get::<_, String>(1),"ends_on":window.get::<_, String>(2),
+        "status":"ok","summary":"The supervisor's own sentence."})).unwrap();
+    let update = store
+        .commands()
+        .record_update(TENANT, PROJECT, A, &request)
+        .await
+        .unwrap();
+    let update_id = update["receipt"]["update_id"].as_str().unwrap().to_owned();
+    let snapshot: Value = admin
+        .query_one(
+            "SELECT fact_snapshot_json FROM awr_team.project_period_updates WHERE id=$1",
+            &[&update_id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        snapshot["verified"],
+        json!({"count":1,"work_ids":[work_id]}),
+        "the real agent-review completion must count as verified"
+    );
+    assert_eq!(snapshot["completed_without_independent_review"]["count"], 0);
+    snapshot
+}
+
 #[tokio::test]
 async fn reconciled_caller_and_exact_agent_review_complete_without_upgrading_trust() {
     let (_g, admin, db, store) = setup().await;
@@ -223,6 +350,7 @@ async fn reconciled_caller_and_exact_agent_review_complete_without_upgrading_tru
     q.work_id = Some("a".into());
     let inspected = store.query(TENANT, PROJECT, RUNNER, q).await.unwrap();
     assert!(inspected.to_string().contains("caller_asserted_reconciled"));
+    period_update_counts_agent_review_completion_as_verified(&admin, &db, &store, "a").await;
 }
 
 #[tokio::test]

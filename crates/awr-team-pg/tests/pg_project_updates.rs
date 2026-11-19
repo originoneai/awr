@@ -596,36 +596,56 @@ async fn fact_snapshots_default_to_utc_and_refuse_unknown_stored_zones() {
 async fn verified_requires_independent_acceptance_evidence() {
     let (_guard, admin, db, store) = setup().await;
     supervisor(&admin, &db).await;
+    // Payloads copied verbatim from the two producers that write work.completed:
+    // the current shape from workstream_command/reviews.rs (independence_kind
+    // plus the derived team_independent_acceptance, no policy key) and the
+    // older receipt shape from review.rs (policy only). One row per basis a
+    // producer can actually write; combinations like an acceptance flag beside
+    // an ordinary policy are not written by anyone and stay untested.
+    let current_shape = |kind: &str| {
+        json!({"receipt_id":"receipt-x","evidence_id":"evidence-x","execution_id":"execution-x",
+            "independence_kind":kind,
+            "team_independent_acceptance":kind == "team_independent",
+            "approval_basis":"basis-x","execution_basis":"execution-basis-x",
+            "human_approval":false,"approved_by_person_id":"person-x"})
+    };
     for (index, (id, work, payload)) in [
-        ("tia-true", "a", json!({"team_independent_acceptance":true})),
+        ("independence-team", "a", current_shape("team_independent")),
+        ("independence-agent", "b", current_shape("agent_review")),
         (
-            "tia-false",
-            "b",
-            json!({"team_independent_acceptance":false}),
+            "independence-simulated",
+            "c",
+            current_shape("simulated_member_independent"),
+        ),
+        (
+            "independence-self",
+            "d",
+            current_shape("personal_self_review"),
+        ),
+        (
+            "independence-ordinary",
+            "e",
+            current_shape("ordinary_confirm"),
         ),
         (
             "old-agent-policy",
-            "c",
-            json!({"policy":"caller_managed_execution_and_agent_review"}),
+            "f",
+            json!({"receipt_id":"receipt-y","evidence_id":"evidence-y",
+                "policy":"caller_managed_execution_and_agent_review"}),
         ),
         (
             "old-simulated-policy",
-            "d",
-            json!({"policy":"caller_managed_execution_and_simulated_member_review"}),
-        ),
-        ("old-ordinary", "e", json!({"policy":"ordinary_confirm"})),
-        ("no-basis", "f", json!({})),
-        (
-            "tia-true-with-policy-ordinary",
             "g",
-            json!({"team_independent_acceptance":true,"policy":"ordinary_confirm"}),
+            json!({"receipt_id":"receipt-y","evidence_id":"evidence-y",
+                "policy":"caller_managed_execution_and_simulated_member_review"}),
         ),
         (
-            "tia-false-with-agent-policy",
+            "old-ordinary-policy",
             "h",
-            json!({"team_independent_acceptance":false,
-                "policy":"caller_managed_execution_and_agent_review"}),
+            json!({"receipt_id":"receipt-y","evidence_id":"evidence-y",
+                "policy":"ordinary_confirm"}),
         ),
+        ("no-basis", "i", json!({})),
     ]
     .into_iter()
     .enumerate()
@@ -654,13 +674,14 @@ async fn verified_requires_independent_acceptance_evidence() {
     let snapshot = stored_snapshot(&admin, id).await;
     assert_eq!(
         snapshot["verified"],
-        json!({"count":4,"work_ids":["a","c","d","g"]}),
-        "only current-payload true acceptances and old agent/simulated review policies verify"
+        json!({"count":5,"work_ids":["a","b","c","f","g"]}),
+        "team_independent, agent_review and simulated_member_independent independence kinds, \
+         plus the two old independent review policies, verify"
     );
     assert_eq!(
         snapshot["completed_without_independent_review"],
-        json!({"count":4,"work_ids":["b","e","f","h"]}),
-        "false acceptance, ordinary confirm, missing basis and false-despite-policy stay unverified"
+        json!({"count":4,"work_ids":["d","e","h","i"]}),
+        "personal_self_review, ordinary_confirm in either shape and an empty basis stay unverified"
     );
     let mut inspect_query = query("update.inspect");
     inspect_query.update_id = Some(id.to_owned());
@@ -676,12 +697,12 @@ async fn verified_requires_independent_acceptance_evidence() {
     );
     assert_eq!(
         inspected["data"]["fact_snapshot_coverage"],
-        json!({"complete":false,"hidden_work_count":6})
+        json!({"complete":false,"hidden_work_count":7})
     );
     assert!(
         !inspected["data"]["fact_snapshot"]
             .to_string()
-            .contains("\"d\"")
+            .contains("\"b\"")
     );
     let keys: Vec<&str> = inspected["data"]["fact_snapshot"]
         .as_object()
