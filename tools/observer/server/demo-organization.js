@@ -27,7 +27,7 @@ function variantData(variant) {
   if (variant === 'empty') {
     for (const key of ['people', 'projects', 'tasks', 'goals', 'documents', 'updates', 'decisions',
       'project_questions', 'view_roles', 'handoffs', 'planning_candidates', 'activity', 'lessons',
-      'pending', 'waits_between_groups']) data[key] = [];
+      'pending', 'approvals', 'waits_between_groups']) data[key] = [];
     data.organization.departments = [];
     return data;
   }
@@ -35,9 +35,11 @@ function variantData(variant) {
   const projectIds = new Set(['P-001']);
   const projects = data.projects.filter((project) => projectIds.has(project.project_id));
   const memberIds = new Set(projects.flatMap((project) => project.member_person_ids));
+  // Approvals are canonical-fact shaped (OverviewApproval fields: projectId, recipientPersonId),
+  // unlike the service-shaped collections around them, so project scoping reads either key.
   for (const key of ['projects', 'tasks', 'goals', 'documents', 'updates', 'decisions', 'project_questions',
-    'handoffs', 'planning_candidates', 'activity', 'lessons', 'pending']) {
-    data[key] = data[key].filter((item) => projectIds.has(item.project_id));
+    'handoffs', 'planning_candidates', 'activity', 'lessons', 'pending', 'approvals']) {
+    data[key] = data[key].filter((item) => projectIds.has(item.project_id ?? item.projectId));
   }
   data.people = data.people.filter((person) => memberIds.has(person.person_id));
   data.organization.departments = data.organization.departments.filter((department) =>

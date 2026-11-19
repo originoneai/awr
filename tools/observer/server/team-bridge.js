@@ -8,7 +8,7 @@
 const { mapObservation, createGithubObserver } = require('./team-progress');
 const { projectDirectory } = require('./directory');
 const { createDemoOrganization, DEMO_FUTURE_READ_OPS } = require('./demo-organization');
-const { OBSERVATION_STALE_AFTER_MS, READ_TIMEOUT_MS, OVERVIEW_DEADLINE_MS, resolveCurrency } = require('./observation-contract');
+const { OBSERVATION_STALE_AFTER_MS, READ_TIMEOUT_MS, OVERVIEW_DEADLINE_MS, compareAuthoritative, resolveCurrency } = require('./observation-contract');
 
 const fs = require('fs');
 const path = require('path');
@@ -864,6 +864,220 @@ function compositionFailedFreshness(errorCode, readAtMs) {
   };
 }
 
+/**
+ * A single visible tab can poll every five seconds. One composition may use at
+ * most 47 non-session reads; with twelve revocation checks that leaves a hard
+ * ceiling of 59 upstream calls per minute, including pagination and failures.
+ */
+const OVERVIEW_MODEL_READ_BUDGET = 47;
+const OVERVIEW_MODEL_READ_CONCURRENCY = 8;
+const OVERVIEW_MODEL_STALLED_AFTER_DAYS = 3;
+
+function hasField(value, field) {
+  return value != null && typeof value === 'object' && !Array.isArray(value)
+    && Object.hasOwn(value, field) && value[field] !== undefined;
+}
+
+function copyOverviewField(target, targetField, source, sourceField = targetField) {
+  if (hasField(source, sourceField)) target[targetField] = source[sourceField];
+}
+
+/** Map only facts carried by work.list; unknown is not a measured absence. */
+function overviewTaskFromList(item, project, workstreamId) {
+  const task = {};
+  copyOverviewField(task, 'id', item, 'work_id');
+  copyOverviewField(task, 'title', item);
+  task.projectId = project;
+  const summary = item?.summary?.version === 1 ? item.summary : null;
+  if (!summary) return task;
+
+  const owner = asObject(summary.owner);
+  if (hasField(owner, 'value')) {
+    if (owner.value != null && typeof owner.value === 'object') {
+      copyOverviewField(task, 'ownerPersonId', owner.value, 'person_id');
+    } else if (owner.value === null && owner.reason === 'unassigned') {
+      task.ownerPersonId = null;
+    }
+  }
+  const report = asObject(summary.report);
+  const phase = asObject(summary.phase);
+  if (hasField(report, 'value')) {
+    if (report.value === null) {
+      task.report = null;
+    } else if (report.value != null && typeof report.value === 'object') {
+      task.report = {};
+      if (hasField(phase, 'value') && typeof phase.value === 'string') {
+        task.report.completed = phase.value === 'delivered';
+      }
+      copyOverviewField(task.report, 'reportedAtUnixMs', report, 'as_of_unix_ms');
+      const origin = asObject(report.value.origin);
+      copyOverviewField(task, 'agentName', origin, 'actor_name');
+    }
+  }
+  const runtime = asObject(summary.runtime);
+  if (hasField(runtime, 'value')) {
+    if (typeof runtime.value === 'string') task.started = !['planned', 'draft'].includes(runtime.value);
+    else if (runtime.value === null && runtime.reason === 'no_runtime') task.started = false;
+  }
+  const outcome = asObject(summary.outcome);
+  if (hasField(outcome, 'value') && outcome.value != null && typeof outcome.value === 'object'
+    && hasField(outcome.value, 'integration')) {
+    const integration = outcome.value.integration;
+    if (integration === null) task.integrated = null;
+    else if (integration != null && typeof integration === 'object' && integration.current_binding === true
+      && typeof integration.state === 'string') task.integrated = integration.state === 'confirmed';
+  }
+  return task;
+}
+
+function overviewDependencyFromList(item) {
+  const dependency = {};
+  copyOverviewField(dependency, 'consumerTaskId', item, 'work_id');
+  copyOverviewField(dependency, 'providerTaskId', item, 'provider_work_id');
+  if (typeof item?.validity === 'string') dependency.satisfied = item.validity === 'valid';
+  return dependency;
+}
+
+function overviewDecisionFromList(item) {
+  const decision = {};
+  copyOverviewField(decision, 'id', item, 'decision_id');
+  copyOverviewField(decision, 'taskId', item, 'work_id');
+  copyOverviewField(decision, 'state', item);
+  copyOverviewField(decision, 'current', item, 'baseline_matches_current');
+  copyOverviewField(decision, 'question', item);
+  copyOverviewField(decision, 'impact', item);
+  copyOverviewField(decision, 'allowedResponderIds', item, 'allowed_responder_person_ids');
+  copyOverviewField(decision, 'createdAtUnixMs', item, 'created_at_unix_ms');
+  return decision;
+}
+
+function overviewReviewFromList(item, taskId) {
+  const round = { taskId };
+  copyOverviewField(round, 'id', item, 'round_id');
+  copyOverviewField(round, 'roundIndex', item, 'round_index');
+  // Restricted placeholders retain their position, not invented null facts.
+  if (item?.readable !== true) return round;
+  copyOverviewField(round, 'state', item);
+  copyOverviewField(round, 'current', item, 'contract_matches_current');
+  if (item.reviewer_role === 'independent_reviewer') round.independent = true;
+  else if (item.reviewer_role === 'author_reviewer') round.independent = false;
+  else if (item.reviewer_role === null) round.independent = null;
+  copyOverviewField(round, 'reviewerPersonId', item, 'reviewer_person_id');
+  copyOverviewField(round, 'reviewerActorId', item, 'reviewer_actor_id');
+  // review.rounds has no author or opening-time field in the verbatim samples.
+  copyOverviewField(round, 'openedAtUnixMs', item, 'opened_at_unix_ms');
+  return round;
+}
+
+function overviewReviewKnownEmpty(item) {
+  const runtime = item?.summary?.runtime;
+  return runtime?.value === null && runtime.reason === 'no_runtime';
+}
+
+function overviewReviewReadPriority(item) {
+  const summary = item?.summary;
+  const phase = summary?.phase?.value;
+  if (phase === 'delivered') return 0;
+  const integration = summary?.outcome?.value?.integration;
+  if (integration != null || phase === 'ready_for_review') return 1;
+  if (summary?.report?.value != null) return 2;
+  // A claimed but quiet work is the least informative tail. Only the explicit
+  // no_runtime reason skips a read; other missing runtime facts stay queued.
+  return 3;
+}
+
+function overviewHandoffFromList(item) {
+  const handoff = {};
+  copyOverviewField(handoff, 'id', item, 'handoff_id');
+  copyOverviewField(handoff, 'taskId', item, 'work_id');
+  copyOverviewField(handoff, 'kind', item);
+  copyOverviewField(handoff, 'status', item);
+  copyOverviewField(handoff, 'pending', item);
+  copyOverviewField(handoff, 'fromPersonId', item, 'from_person_id');
+  copyOverviewField(handoff, 'toPersonId', item, 'to_person_id');
+  copyOverviewField(handoff, 'updatedAtUnixMs', item, 'updated_at_unix_ms');
+  return handoff;
+}
+
+function overviewMemberFromDirectory(item) {
+  const member = {};
+  copyOverviewField(member, 'personId', item?.member_ref, 'person_id');
+  copyOverviewField(member, 'displayName', item, 'display_name');
+  // Today's service has departments as its smallest organizational unit; AWR-PPD-052
+  // adds smaller groups later. Multiple department memberships stay unknown.
+  if (Array.isArray(item?.department_ids) && item.department_ids.length === 1) {
+    member.groupId = item.department_ids[0];
+  }
+  return member;
+}
+
+function overviewActivityFromAudit(item) {
+  const activity = {};
+  copyOverviewField(activity, 'id', item);
+  copyOverviewField(activity, 'taskId', item, 'work_id');
+  copyOverviewField(activity, 'action', item);
+  copyOverviewField(activity, 'actorId', item, 'actor_id');
+  copyOverviewField(activity, 'atUnixMs', item, 'created_at_unix_ms');
+  return activity;
+}
+
+/** Build the canonical ReadSlice and its precise, machine-readable gap list together. */
+function overviewReadSlice(items, reads, additionalGaps = []) {
+  const gaps = reads.filter((read) => read.error || read.truncated || read.restricted || read.incomplete)
+    .map((read) => ({
+      op: read.op,
+      ...(read.work_id ? { work_id: read.work_id } : {}),
+      ...(read.workstream_id ? { workstream_id: read.workstream_id } : {}),
+      ...(read.error ? { reason: 'read-failed', error_code: read.error.code } : read.restricted
+        ? { reason: 'permission-restricted' } : read.truncated
+          ? { reason: 'truncated', next_cursor: read.next_cursor ?? null } : { reason: 'incomplete' }),
+    })).concat(additionalGaps);
+  const reason = gaps.some((gap) => gap.reason === 'permission-restricted') ? 'permission-restricted'
+    : gaps.some((gap) => gap.reason === 'read-failed') ? 'read-failed'
+      : gaps.some((gap) => gap.reason === 'truncated') ? 'truncated'
+        : gaps.length ? 'incomplete' : null;
+  const slice = reason === null ? { coverage: 'complete', items }
+    : items.length ? { coverage: 'partial', items, reason }
+      : { coverage: 'unread', reason };
+  const knownEmpty = reads.filter((read) => read.known_empty_reason).map((read) => ({
+    op: read.op, work_id: read.work_id, workstream_id: read.workstream_id, reason: read.known_empty_reason,
+  }));
+  return { slice, detail: { status: slice.coverage, ...(reason ? { reason } : {}), missing: gaps,
+    ...(knownEmpty.length ? { known_empty: knownEmpty } : {}) } };
+}
+
+function overviewModelWithCurrency(value, readAtMs) {
+  const authoritative = value?.freshness?.authoritative;
+  if (!['measured', 'stale'].includes(authoritative?.status)) return value;
+  return {
+    ...value,
+    freshness: {
+      ...value.freshness,
+      authoritative: {
+        ...authoritative,
+        ...resolveCurrency({
+          atUnixMs: Number.isFinite(authoritative.at_unix_ms) ? authoritative.at_unix_ms : null,
+          readAtMs,
+          staleAfterMs: OBSERVATION_STALE_AFTER_MS,
+        }),
+      },
+    },
+  };
+}
+
+async function mapOverviewReads(items, concurrency, read) {
+  const results = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      results[index] = await read(items[index], index);
+    }
+  }));
+  return results;
+}
+
 /** Auth/permission failures clear restricted content; they never retain it. */
 const READ_AUTH_FAILURES = new Set(['Unauthenticated', 'SessionExpired', 'Forbidden']);
 
@@ -1058,7 +1272,14 @@ function createTeamBridge(opts) {
 
   const OVERVIEW_CACHE_TTL_MS = 60000;
   const overviewCache = new Map();
+  const overviewModelFlights = new Map();
   const overviewSessionExpiries = new WeakMap();
+  const overviewCacheGenerations = new Map();
+
+  function overviewCacheGeneration(req) {
+    const sessionId = parseTeamCookie(req);
+    return sessionId ? overviewCacheGenerations.get(sessionId) ?? 0 : null;
+  }
 
   function overviewEntryExpired(entry) {
     return now() - entry.readAt >= OVERVIEW_CACHE_TTL_MS || now() < entry.readAt
@@ -1078,9 +1299,9 @@ function createTeamBridge(opts) {
     return { value: structuredClone(entry.value), readAt: entry.readAt };
   }
 
-  function storeOverviewValue(req, kind, project, value) {
+  function storeOverviewValue(req, kind, project, value, expectedGeneration = null) {
     const sessionId = parseTeamCookie(req);
-    if (!sessionId) return;
+    if (!sessionId || expectedGeneration !== null && overviewCacheGeneration(req) !== expectedGeneration) return false;
     const expiresAtMs = overviewSessionExpiries.get(req) ?? null;
     // Sweep on every write so sessions that never return cannot accumulate.
     for (const [key, entry] of overviewCache.entries()) {
@@ -1089,19 +1310,37 @@ function createTeamBridge(opts) {
     overviewCache.set(`${sessionId}:${kind}:${project}`, {
       value: structuredClone(value), readAt: now(), expiresAtMs,
     });
+    return true;
+  }
+
+  function cacheOverviewModel(req, project, value, expectedGeneration) {
+    const sessionId = parseTeamCookie(req);
+    if (!sessionId) return { comparison: 'not-cached', value };
+    const key = `${sessionId}:overview-model:${project}`;
+    const held = overviewCache.get(key);
+    if (held && !overviewEntryExpired(held)) {
+      const comparison = compareAuthoritative(
+        held.value?.freshness?.authoritative, value?.freshness?.authoritative);
+      if (comparison === 'keep') return { comparison, value: structuredClone(held.value) };
+      if (comparison === 'incomparable') return { comparison, value: null };
+    }
+    return storeOverviewValue(req, 'overview-model', project, value, expectedGeneration)
+      ? { comparison: 'stored', value }
+      : { comparison: 'revoked', value: null };
   }
 
   function clearOverviewCache(req) {
     const sessionId = parseTeamCookie(req);
     if (!sessionId) return;
+    overviewCacheGenerations.set(sessionId, (overviewCacheGenerations.get(sessionId) ?? 0) + 1);
     for (const key of overviewCache.keys()) {
       if (key.startsWith(`${sessionId}:`)) overviewCache.delete(key);
     }
   }
 
-  async function readOverviewSession(req) {
+  async function readOverviewSession(req, signal) {
     // Session checks are small but revocation-sensitive: always revalidate.
-    const session = await proxyTeam('/v1/web/session', req, null, 'GET');
+    const session = await proxyTeam('/v1/web/session', req, null, 'GET', signal);
     if (!session || session.status >= 400) {
       clearOverviewCache(req);
       return session;
@@ -1195,13 +1434,21 @@ function createTeamBridge(opts) {
    * pages: the caller declares the part failed with the error code, what was
    * read, its as-of and the cursor that resumes the failed page.
    */
-  async function queryAllPagesUncached(project, query, req, res, { pageTimeoutMs = 4000, deadlineAt = null } = {}) {
+  async function queryAllPagesUncached(project, query, req, res, {
+    pageTimeoutMs = 4000, deadlineAt = null, readBudget = null, validatePage = null,
+  } = {}) {
     const items = [];
     const seen = new Set();
     let cursor;
     let total = null;
     let asOf;
+    let observedAt = null;
+    let observedMissing = false;
+    let readScope = null;
+    let scopeMixed = false;
     let mixed = false;
+    const observationTime = () => observedMissing ? null : observedAt;
+    const resultScope = () => scopeMixed ? 'mixed' : readScope;
     const failed = (code, message) => ({
       error: { code, message },
       items,
@@ -1209,19 +1456,27 @@ function createTeamBridge(opts) {
       truncated: false,
       next_cursor: cursor || null,
       as_of: mixed ? null : asOf || null,
+      observed_at_unix_ms: observationTime(),
+      scope: resultScope(),
+    });
+    const truncated = () => ({
+      items, total, truncated: true, next_cursor: cursor || null, as_of: mixed ? null : asOf || null,
+      observed_at_unix_ms: observationTime(), scope: resultScope(),
     });
     for (let page = 0; page < 100; page += 1) {
+      if (readBudget && readBudget.remaining <= 0) return truncated();
+      if (readBudget) readBudget.remaining -= 1;
       const remaining = deadlineAt == null ? pageTimeoutMs : Math.min(pageTimeoutMs, deadlineAt - now());
       if (remaining <= 0) {
         return failed('ReadTimeout', 'Scoped list read exceeded the composition deadline; retry this read');
       }
       const signal = AbortSignal.timeout(remaining);
+      const pageQuery = { protocol_version: 1, ...query, limit: 100, ...(cursor ? { cursor } : {}) };
       let upstream;
       try {
         upstream = await proxyTeam(
           `/v1/web/projects/${encodeURIComponent(project)}/query`, req,
-          { protocol_version: 1, ...query, limit: 100, ...(cursor ? { cursor } : {}) },
-          'POST', signal
+          pageQuery, 'POST', signal
         );
       } catch (error) {
         return signal.aborted
@@ -1238,6 +1493,10 @@ function createTeamBridge(opts) {
       if (!data || !Array.isArray(data.items)) {
         return failed('BadGateway', 'invalid Team query page');
       }
+      if (validatePage) {
+        const validationError = validatePage(pageQuery, upstream.json);
+        if (validationError) return failed(validationError.code, validationError.message);
+      }
       const triple = ['project_revision', 'source_snapshot_id', 'coordinator_epoch']
         .every((k) => upstream.json && typeof upstream.json[k] === 'string' && upstream.json[k])
         ? {
@@ -1246,13 +1505,26 @@ function createTeamBridge(opts) {
           coordinator_epoch: upstream.json.coordinator_epoch,
         }
         : null;
+      const measuredAt = Number.isFinite(data.as_of?.at_unix_ms) ? data.as_of.at_unix_ms
+        : Number.isFinite(data.queried_at_unix_ms) ? data.queried_at_unix_ms : null;
+      if (measuredAt === null) observedMissing = true;
+      else observedAt = observedAt === null ? measuredAt : Math.min(observedAt, measuredAt);
+      if (page === 0) readScope = typeof data.scope === 'string' ? data.scope : null;
+      else if (readScope !== (typeof data.scope === 'string' ? data.scope : null)) scopeMixed = true;
       if (page === 0) asOf = triple;
       else if (JSON.stringify(triple) !== JSON.stringify(asOf)) mixed = true;
       if (Number.isInteger(data.total) && data.total >= 0) total = data.total;
       items.push(...data.items);
       const next = data.next_cursor;
       if (next == null) {
-        return { items, total, truncated: false, next_cursor: null, as_of: mixed ? null : asOf };
+        if (validatePage && total !== null && items.length > total) {
+          return failed('BadGateway', 'Team query page exceeds its declared total');
+        }
+        return {
+          items, total, truncated: Boolean(validatePage && total !== null && items.length < total),
+          next_cursor: null, as_of: mixed ? null : asOf || null, observed_at_unix_ms: observationTime(),
+          scope: resultScope(),
+        };
       }
       if (typeof next !== 'string' || !next || seen.has(next)) {
         return failed('BadGateway', 'invalid Team query cursor');
@@ -1260,7 +1532,7 @@ function createTeamBridge(opts) {
       seen.add(next);
       cursor = next;
     }
-    return { items, total, truncated: true, next_cursor: cursor, as_of: mixed ? null : asOf };
+    return truncated();
   }
 
   async function queryAllPages(project, query, req, res, options = {}) {
@@ -1291,7 +1563,249 @@ function createTeamBridge(opts) {
     }
   }
 
+  function validateOverviewModelPage(query, result) {
+    if (!validReadResponse(result, query.op)) {
+      return { code: 'BadGateway', message: 'Invalid Team overview read response' };
+    }
+    return readAttributionError(query, result, { strictWorkstream: false });
+  }
+
+  /** Compose canonical read facts only; status, waiting and impact stay in the core derivation. */
+  async function composeOverviewModel(project, req, res, session) {
+    const deadlineAt = now() + overviewDeadlineMs;
+    const readBudget = { remaining: OVERVIEW_MODEL_READ_BUDGET };
+    const options = {
+      pageTimeoutMs: readTimeoutMs, deadlineAt, readBudget, validatePage: validateOverviewModelPage,
+    };
+    const readList = async (query, scope = {}) => {
+      const result = await queryAllPagesUncached(project, query, req, res, options);
+      return { ...result, op: query.op, ...scope, readAt: now() };
+    };
+    const readDirectory = async () => {
+      if (readBudget.remaining <= 0) {
+        return { op: 'directory.read', items: [], truncated: true, next_cursor: null, as_of: null, readAt: now() };
+      }
+      readBudget.remaining -= 1;
+      const remaining = Math.min(readTimeoutMs, deadlineAt - now());
+      if (remaining <= 0) {
+        return { op: 'directory.read', items: [], error: { code: 'ReadTimeout', message: 'Member directory read exceeded the composition deadline' },
+          truncated: false, next_cursor: null, as_of: null, readAt: now() };
+      }
+      const signal = AbortSignal.timeout(remaining);
+      let upstream;
+      try {
+        upstream = await proxyTeam(`/v1/web/projects/${encodeURIComponent(project)}/directory/read`, req,
+          { protocol_version: 1 }, 'POST', signal);
+      } catch {
+        return { op: 'directory.read', items: [], error: { code: signal.aborted ? 'ReadTimeout' : 'BadGateway',
+          message: signal.aborted ? 'Member directory read timed out' : 'Member directory service is unreachable' },
+          truncated: false, next_cursor: null, as_of: null, readAt: now() };
+      }
+      applyProxiedCookies(res, upstream?.setCookie);
+      if (!upstream || upstream.status >= 400) {
+        return { op: 'directory.read', items: [], error: liveError(upstream).error,
+          truncated: false, next_cursor: null, as_of: null, readAt: now() };
+      }
+      const data = upstream.json?.data;
+      if (data?.project_id !== project || !projectDirectory(data)) {
+        return { op: 'directory.read', items: [], error: { code: 'BadGateway', message: 'Invalid member directory response' },
+          truncated: false, next_cursor: null, as_of: null, readAt: now() };
+      }
+      return { op: 'directory.read', items: data.members, truncated: false, next_cursor: null, as_of: null, readAt: now() };
+    };
+
+    const streams = await readList({ op: 'workstreams.list' });
+    if (streams.error && READ_AUTH_FAILURES.has(streams.error.code)) return { authError: streams.error };
+    const workReads = [];
+    const listedTasks = [];
+    for (const stream of streams.items) {
+      const page = await readList({ op: 'work.list', workstream_id: stream.id }, { workstream_id: stream.id });
+      if (page.error && READ_AUTH_FAILURES.has(page.error.code)) return { authError: page.error };
+      workReads.push(page);
+      listedTasks.push(...page.items.map((item) => ({ item, workstreamId: stream.id })));
+    }
+
+    const [decisions, dependencies, handoffs, activity, members] = await Promise.all([
+      readList({ op: 'decisions.list', decision_state: 'all', max_context_bytes: 262144 }),
+      readList({ op: 'dependencies.list', max_context_bytes: 262144 }),
+      readList({ op: 'handoff.list', handoff_state: 'all', max_context_bytes: 262144 }),
+      readList({ op: 'audit.development' }),
+      readDirectory(),
+    ]);
+    const activityRead = {
+      ...activity,
+      restricted: activity.scope === 'self',
+      incomplete: activity.scope !== 'project' && activity.scope !== 'self',
+    };
+    const globalReads = [decisions, dependencies, handoffs, activityRead, members];
+    const globalAuth = globalReads.find((read) => read.error && READ_AUTH_FAILURES.has(read.error.code));
+    if (globalAuth) return { authError: globalAuth.error };
+
+    const reviewQueue = listedTasks.map((entry, index) => ({ ...entry, index }))
+      .sort((left, right) => overviewReviewReadPriority(left.item) - overviewReviewReadPriority(right.item)
+        || left.index - right.index);
+    const reviewReads = await mapOverviewReads(reviewQueue, OVERVIEW_MODEL_READ_CONCURRENCY, async ({ item, workstreamId }) => {
+      if (!isBoundedId(item?.work_id)) {
+        return { op: 'review.rounds', workstream_id: workstreamId, items: [], incomplete: true,
+          truncated: false, next_cursor: null, as_of: null, readAt: now() };
+      }
+      if (overviewReviewKnownEmpty(item)) {
+        return { op: 'review.rounds', work_id: item.work_id, workstream_id: workstreamId,
+          items: [], total: 0, truncated: false, next_cursor: null, as_of: null, observed_at_unix_ms: null,
+          known_empty_reason: 'no_runtime', readAt: now() };
+      }
+      const result = await readList({ op: 'review.rounds', work_id: item.work_id, workstream_id: workstreamId,
+        max_context_bytes: 262144 }, { work_id: item.work_id, workstream_id: workstreamId });
+      return { ...result, restricted: result.items.some((round) => round?.readable === false) };
+    });
+    const reviewAuth = reviewReads.find((read) => read.error && READ_AUTH_FAILURES.has(read.error.code));
+    if (reviewAuth) return { authError: reviewAuth.error };
+
+    const taskPart = overviewReadSlice(
+      listedTasks.map(({ item, workstreamId }) => overviewTaskFromList(item, project, workstreamId)),
+      [streams, ...workReads]);
+    const reviewGaps = taskPart.slice.coverage === 'complete' ? [] : [{ op: 'review.rounds', reason: 'incomplete' }];
+    const parts = {
+      tasks: taskPart,
+      dependencies: overviewReadSlice(dependencies.items.map(overviewDependencyFromList), [dependencies]),
+      decisions: overviewReadSlice(decisions.items.map(overviewDecisionFromList), [decisions]),
+      reviewRounds: overviewReadSlice(reviewReads.flatMap((read) => read.items.map((round) =>
+        overviewReviewFromList(round, read.work_id))), reviewReads, reviewGaps),
+      handoffs: overviewReadSlice(handoffs.items.map(overviewHandoffFromList), [handoffs]),
+      members: overviewReadSlice(members.items.map(overviewMemberFromDirectory), [members]),
+      activity: overviewReadSlice(activityRead.items.map(overviewActivityFromAudit), [activityRead]),
+      approvals: {
+        slice: { coverage: 'unread', reason: 'not-read' },
+        detail: { status: 'unread', reason: 'not-read', missing: [],
+          note: 'No existing upstream read lists plan approvals or candidate lessons' },
+      },
+    };
+    const allReads = [streams, ...workReads, ...globalReads, ...reviewReads];
+    const firstFailure = allReads.find((read) => read.error)?.error;
+    // The intentionally source-less approvals plane must not poison the other
+    // planes' shared authoritative measurement or their out-of-order comparison.
+    const complete = Object.entries(parts).filter(([part]) => part !== 'approvals')
+      .every(([, part]) => part.slice.coverage === 'complete');
+    const measuredReads = allReads.filter((read) => !read.known_empty_reason
+      && !['workstreams.list', 'directory.read'].includes(read.op));
+    const triples = measuredReads.map((read) => read.as_of);
+    const common = complete && triples.length > 0 && triples.every((triple) => triple)
+      && new Set(triples.map((triple) => JSON.stringify(triple))).size === 1 ? triples[0] : null;
+    const readAt = Math.min(session.readAt ?? now(), ...allReads.map((read) => read.readAt ?? now()));
+    const measuredTimes = measuredReads.map((read) => read.observed_at_unix_ms);
+    const commonAt = common && measuredTimes.every((time) => Number.isFinite(time)) ? Math.min(...measuredTimes) : null;
+    const authoritative = firstFailure ? { status: 'failed', error_code: firstFailure.code }
+      : common ? {
+        ...resolveCurrency({ atUnixMs: commonAt, readAtMs: readAt, staleAfterMs: OBSERVATION_STALE_AFTER_MS }),
+        ...common, ...(commonAt !== null ? { at_unix_ms: commonAt } : {}),
+      } : { status: 'not_measured', ...(complete && triples.some((triple) => triple) ? { comparison: 'incomparable' } : {}) };
+    return {
+      value: {
+        ok: true,
+        project,
+        read_at_unix_ms: readAt,
+        input: {
+          tasks: parts.tasks.slice,
+          dependencies: parts.dependencies.slice,
+          decisions: parts.decisions.slice,
+          reviewRounds: parts.reviewRounds.slice,
+          handoffs: parts.handoffs.slice,
+          members: parts.members.slice,
+          activity: parts.activity.slice,
+          approvals: parts.approvals.slice,
+          options: { nowUnixMs: readAt, stalledAfterDays: OVERVIEW_MODEL_STALLED_AFTER_DAYS },
+        },
+        coverage: Object.fromEntries(Object.entries(parts).map(([part, value]) => [part, value.detail])),
+        freshness: {
+          report_received: { status: 'not_measured' },
+          authoritative,
+          page_read: { status: 'measured', at_unix_ms: readAt },
+        },
+      },
+    };
+  }
+
+  function overviewModelReadFailure(code, message) {
+    return { ok: false, error: { code, message }, freshness: compositionFailedFreshness(code, now()) };
+  }
+
+  async function executeOverviewModelComposition(project, req, res, session) {
+    const generation = overviewCacheGeneration(req);
+    const composed = await composeOverviewModel(project, req, res, session);
+    if (composed.authError) {
+      clearOverviewCache(req);
+      return overviewModelReadFailure(composed.authError.code, composed.authError.message);
+    }
+    const cachedResult = cacheOverviewModel(req, project, composed.value, generation);
+    if (generation !== null && overviewCacheGeneration(req) !== generation || cachedResult.comparison === 'revoked') {
+      return overviewModelReadFailure('Unauthenticated', 'Observation access changed during the read');
+    }
+    if (cachedResult.comparison === 'incomparable') {
+      return {
+        ...composed.value,
+        ordering: 'incomparable',
+        freshness: { ...composed.value.freshness, authoritative: { status: 'not_measured', comparison: 'incomparable' } },
+      };
+    }
+    return overviewModelWithCurrency(cachedResult.value, now());
+  }
+
+  /** One in-flight composition per cookie session and project, pinned to its cache generation. */
+  async function sharedOverviewModelComposition(project, req, res, session) {
+    const sessionId = parseTeamCookie(req);
+    if (!sessionId) return executeOverviewModelComposition(project, req, res, session);
+    const key = `${sessionId}:overview-model:${project}`;
+    const generation = overviewCacheGeneration(req);
+    const existing = overviewModelFlights.get(key);
+    if (existing) {
+      return existing.generation === generation ? existing.promise
+        : overviewModelReadFailure('Unauthenticated', 'Observation access changed during the read');
+    }
+    const entry = { generation, promise: null };
+    entry.promise = executeOverviewModelComposition(project, req, res, session);
+    overviewModelFlights.set(key, entry);
+    const cleanup = () => {
+      if (overviewModelFlights.get(key) === entry) overviewModelFlights.delete(key);
+    };
+    entry.promise.then(cleanup, cleanup);
+    return entry.promise;
+  }
+
   const routes = {
+    'GET /api/team/overview-model': async (url, _body, req, res) => {
+      if (!TEAM.live && !TEAM.demoOrganization) {
+        return { ok: false, error: { code: 'Unsupported', message: 'Live Team observation required' },
+          freshness: unmeasuredFreshness(now()) };
+      }
+      const project = url.searchParams.get('project');
+      if (!project || project.length > 128 || [...url.searchParams.keys()].some((key) => key !== 'project')
+        || url.searchParams.getAll('project').length !== 1) {
+        return { ok: false, error: { code: 'InvalidInput', message: 'One bounded project required' },
+          freshness: unmeasuredFreshness(now()) };
+      }
+      const signal = AbortSignal.timeout(readTimeoutMs);
+      let session;
+      try {
+        session = await readOverviewSession(req, signal);
+      } catch {
+        const code = signal.aborted ? 'ReadTimeout' : 'BadGateway';
+        return { ok: false, error: { code, message: 'Session validation failed' },
+          freshness: compositionFailedFreshness(code, now()) };
+      }
+      if (!session) {
+        return { ok: false, error: { code: 'BadGateway', message: 'live proxy unavailable' },
+          freshness: compositionFailedFreshness('BadGateway', now()) };
+      }
+      applyProxiedCookies(res, session.setCookie);
+      if (session.status >= 400) {
+        const failure = liveError(session);
+        return { ...failure, freshness: compositionFailedFreshness(failure.error.code, now()) };
+      }
+      const cached = cachedOverviewValue(req, 'overview-model', project);
+      if (cached) return overviewModelWithCurrency(cached.value, now());
+      return sharedOverviewModelComposition(project, req, res, session);
+    },
+
     'GET /api/team/projects': async (url, _body, req, res) => {
       if (TEAM.live) {
         const session = await readOverviewSession(req);

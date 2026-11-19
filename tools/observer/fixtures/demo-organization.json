@@ -5081,6 +5081,24 @@
       ]
     }
   ],
+  "approvals": [
+    {
+      "id": "A-002",
+      "kind": "lesson-confirmation",
+      "recipientPersonId": "M-002",
+      "projectId": "P-001",
+      "title": "读多写少的查询接口先加缓存层",
+      "sinceUnixMs": 1794571200000
+    },
+    {
+      "id": "A-004",
+      "kind": "plan-approval",
+      "recipientPersonId": "M-001",
+      "projectId": "P-001",
+      "title": "“完善异常恢复”拆成了 4 件事",
+      "sinceUnixMs": 1795082400000
+    }
+  ],
   "waits_between_groups": [
     {
       "wait_id": "w4",

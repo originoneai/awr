@@ -93,10 +93,18 @@ function canonicalInput(data) {
       toPersonId: handoff.to_person_id,
       updatedAtUnixMs: handoff.updated_at_unix_ms,
     }))),
-    // The fixture's pending approvals are not mapped into canonical facts yet; the demo-data
-    // line owns that mapping. An empty complete read states these canonical facts establish
-    // no approvals, which keeps the pending counts below honest for this oracle.
-    approvals: complete([]),
+    // The fixture's approvals are the canonical pending-approval facts the prototype's inbox
+    // holds for 林悦 (the candidate lesson A-002) and 周宁 (the plan breakdown A-004). Each
+    // maps one-to-one onto OverviewApproval; assertFixtureReferences pins every one to its
+    // pending record, its lesson or planning candidate, and its recipient and project.
+    approvals: complete(data.approvals.map((approval) => ({
+      id: approval.id,
+      kind: approval.kind,
+      recipientPersonId: approval.recipientPersonId,
+      projectId: approval.projectId,
+      title: approval.title,
+      sinceUnixMs: approval.sinceUnixMs,
+    }))),
     members: complete([...data.people, ...data.view_roles].map((member) => ({
       personId: member.person_id,
       displayName: member.display_name,
@@ -146,6 +154,49 @@ function assertFixtureReferences(data) {
       assert.notEqual(latest.author_person_id, latest.reviewer_person_id);
     }
   }
+  const lessonById = new Map(data.lessons.map((lesson) => [lesson.lesson_id, lesson]));
+  const pendingById = new Map(data.pending.map((item) => [item.pending_id, item]));
+  const approvalIds = new Set();
+  for (const approval of data.approvals) {
+    assert.match(approval.id, /^A-\d{3}$/, 'an approval id follows the opaque pending-key style');
+    assert.ok(!approvalIds.has(approval.id), `${approval.id} is used by one approval only`);
+    approvalIds.add(approval.id);
+    assert.ok(['plan-approval', 'lesson-confirmation'].includes(approval.kind),
+      `${approval.id} has a known approval kind`);
+    assert.ok(personIds.has(approval.recipientPersonId), `${approval.id} has a known recipient`);
+    assert.ok(projectIds.has(approval.projectId), `${approval.id} has a known project`);
+    const pending = pendingById.get(approval.id);
+    assert.ok(pending, `${approval.id} traces to a pending item with the same key`);
+    const pendingKind = { 'plan-approval': '批准拆解', 'lesson-confirmation': '确认经验' }[approval.kind];
+    assert.equal(pending.kind, pendingKind, `${approval.id} matches its pending item's kind`);
+    assert.equal(pending.recipient_person_id, approval.recipientPersonId,
+      `${approval.id} matches its pending item's recipient`);
+    assert.equal(pending.project_id, approval.projectId, `${approval.id} matches its pending item's project`);
+    assert.equal(pending.created_at_unix_ms, approval.sinceUnixMs,
+      `${approval.id} keeps its pending item's creation time`);
+    if (approval.kind === 'lesson-confirmation') {
+      const lesson = lessonById.get(pending.lesson_id);
+      assert.ok(lesson, `${approval.id} traces to an existing lesson candidate`);
+      assert.equal(lesson.pending_id, approval.id,
+        `${approval.id} is the lesson candidate's own pending confirmation`);
+      assert.equal(lesson.stage, 'candidate', `${approval.id} confirms a candidate lesson`);
+      assert.equal(lesson.state, 'active', `${approval.id} confirms an active lesson`);
+      assert.equal(lesson.author_person_id, approval.recipientPersonId,
+        `${approval.id} is confirmed by the lesson's author`);
+      assert.equal(lesson.title, approval.title,
+        `${approval.id} carries the lesson's product-language title`);
+    } else {
+      assert.ok(pending.planning_candidate_id && data.planning_candidates.some((candidate) =>
+        candidate.candidate_id === pending.planning_candidate_id),
+      `${approval.id} traces to an existing planning candidate`);
+    }
+  }
+  for (const item of data.pending) {
+    if (item.kind === '确认经验' || item.kind === '批准拆解') {
+      assert.ok(approvalIds.has(item.pending_id),
+        `${item.pending_id} (kind ${item.kind}) is mapped into the approvals plane`);
+    }
+  }
 }
 
 let vite;
@@ -169,7 +220,8 @@ test('the public fixture has the exact organization cardinalities and no live-ru
     goals: fixture.goals.length,
     lessons: fixture.lessons.length,
     pending: fixture.pending.length,
-  }, { projects: 3, people: 8, tasks: 29, documents: 9, updates: 8, goals: 3, lessons: 4, pending: 7 });
+    approvals: fixture.approvals.length,
+  }, { projects: 3, people: 8, tasks: 29, documents: 9, updates: 8, goals: 3, lessons: 4, pending: 7, approvals: 2 });
   assert.equal(fixture.public_synthetic, true);
   assertFixtureReferences(fixture);
   const text = JSON.stringify(fixture);
@@ -217,6 +269,10 @@ test('opaque keys are separate from every display title', () => {
     assert.match(role.person_id, /^M-\d{3}$/);
     assert.match(role.group_id, /^G-\d{3}$/);
   }
+  for (const approval of fixture.approvals) {
+    assert.match(approval.id, /^A-\d{3}$/);
+    assert.notEqual(approval.id, approval.title);
+  }
 });
 
 test('PPO-010 derives the prototype statuses and the revised prototype metric goldens', () => {
@@ -261,8 +317,8 @@ test('PPO-010 derives the prototype statuses and the revised prototype metric go
 
   const metrics = Object.fromEntries(Object.entries(result.views).map(([view, summary]) =>
     [view, summary.metrics.map((metric) => ({ count: metric.count, details: metric.items.length }))]));
-  assert.deepEqual(metrics.me, [{ count: 2, details: 2 }, { count: 1, details: 1 }, { count: 3, details: 3 }, { count: 2, details: 2 }]);
-  assert.deepEqual(metrics.lead, [{ count: 2, details: 2 }, { count: 7, details: 7 }, { count: 7, details: 7 }, { count: 1, details: 1 }]);
+  assert.deepEqual(metrics.me, [{ count: 2, details: 2 }, { count: 1, details: 1 }, { count: 3, details: 3 }, { count: 3, details: 3 }]);
+  assert.deepEqual(metrics.lead, [{ count: 2, details: 2 }, { count: 7, details: 7 }, { count: 7, details: 7 }, { count: 2, details: 2 }]);
   assert.deepEqual(metrics.department, [{ count: 3, details: 3 }, { count: 10, details: 10 }, { count: 5, details: 5 }, { count: 0, details: 0 }]);
   assert.deepEqual(metrics.top, [{ count: 3, details: 3 }, { count: 12, details: 12 }, { count: 5, details: 5 }, { count: 0, details: 0 }]);
   assert.equal(result.views.lead.metrics[0].previousPeriod.count, 2);
@@ -272,21 +328,40 @@ test('PPO-010 derives the prototype statuses and the revised prototype metric go
   assert.equal(fixture.view_roles.length, 2);
   assert.equal(result.peopleCounts.all.count, 10);
 
-  // Prototype comparison: its primary-wait projection still differs from PPO-010's
-  // per-edge/per-decision projection (the third and fourth numbers). The running-Agent
-  // metric now agrees: a waiting task whose Agent is explicitly active counts for its
-  // Agent (T-103), while the stalled T-104 and the inactive waiting T-111 do not.
+  // Prototype comparison: the me and lead rows now match the prototype exactly — the
+  // running-Agent metric counts a waiting task whose Agent is explicitly active (T-103,
+  // not the stalled T-104 or the inactive waiting T-111), and the approvals plane fills
+  // the pending queues. Department and top still differ on the prototype's primary-wait
+  // projection (the third number) and its project-level questions, which have no input
+  // plane yet (the fourth number).
   assert.deepEqual({
     me: { prototype: [2, 1, 3, 3], derived: metrics.me.map((metric) => metric.count) },
     lead: { prototype: [2, 7, 7, 2], derived: metrics.lead.map((metric) => metric.count) },
     department: { prototype: [3, 10, 2, 1], derived: metrics.department.map((metric) => metric.count) },
     top: { prototype: [3, 12, 2, 1], derived: metrics.top.map((metric) => metric.count) },
   }, {
-    me: { prototype: [2, 1, 3, 3], derived: [2, 1, 3, 2] },
-    lead: { prototype: [2, 7, 7, 2], derived: [2, 7, 7, 1] },
+    me: { prototype: [2, 1, 3, 3], derived: [2, 1, 3, 3] },
+    lead: { prototype: [2, 7, 7, 2], derived: [2, 7, 7, 2] },
     department: { prototype: [3, 10, 2, 1], derived: [3, 10, 5, 0] },
     top: { prototype: [3, 12, 2, 1], derived: [3, 12, 5, 0] },
   });
+  // The prototype's inbox composes 林悦's three pending items from three different planes —
+  // the decision her Codex asks about (Q-001), 周宁's assignment (H-001) and the candidate
+  // lesson awaiting her own confirmation (A-002) — and 周宁's two from the decision on
+  // T-105 (Q-002) plus the plan breakdown awaiting his approval (A-004). The department
+  // and top viewers receive no approval and no task-scoped decision, so their pending
+  // queues stay 0 against the prototype's project-level questions (no input plane yet).
+  const pendingComposition = (view) => result.views[view].metrics[3].items.map((item) =>
+    item.kind === 'approval' ? `approval:${item.approval.kind}`
+      : item.kind === 'wait' ? `wait:${item.wait.kind}` : item.kind);
+  assert.deepEqual(pendingComposition('me'), ['wait:decision', 'handoff', 'approval:lesson-confirmation']);
+  assert.deepEqual(pendingComposition('lead'), ['wait:decision', 'approval:plan-approval']);
+  assert.deepEqual(result.views.me.metrics[3].items.filter((item) => item.kind === 'approval')
+    .map((item) => item.approval.id), ['A-002']);
+  assert.deepEqual(result.views.lead.metrics[3].items.filter((item) => item.kind === 'approval')
+    .map((item) => item.approval.id), ['A-004']);
+  assert.deepEqual([...new Set(fixture.approvals.map((approval) => approval.kind))].sort(),
+    ['lesson-confirmation', 'plan-approval']);
 });
 
 test('a planted dependency contradiction fails both the structural and PPO-010 oracles', () => {
@@ -316,6 +391,33 @@ test('a planted agent flag that contradicts a prototype_status fails the status 
     Object.fromEntries(result.tasks.map((item) => [item.id, item.status])),
     Object.fromEntries(mutant.tasks.map((item) => [item.work_id, item.prototype_status]))),
   /Expected values to be strictly deep-equal/);
+});
+
+test('emptying the fixture approvals fails the structural and the pending-metric oracles', () => {
+  // Clearing the approvals plane is the pre-#694 state: every pending approval disappears from
+  // the me and lead queues and their counts fall back below the prototype's 3 and 2.
+  const mutant = clone(fixture);
+  mutant.approvals = [];
+  assert.throws(() => assertFixtureReferences(mutant), /is mapped into the approvals plane/);
+  const result = deriveOverview(canonicalInput(mutant));
+  assert.equal(result.views.me.metrics[3].count, 2);
+  assert.equal(result.views.lead.metrics[3].count, 1);
+  assert.throws(() => assert.deepEqual(
+    [result.views.me.metrics[3].count, result.views.lead.metrics[3].count], [3, 2]),
+  /Expected values to be strictly deep-equal/);
+});
+
+test('an approval addressed to a person outside the organization fails the structural oracle', () => {
+  // The derivation accepts any non-empty recipient id (a ghost recipient is a person summary
+  // nobody asked about, not a coverage gap), so only the fixture check against the
+  // organization's membership can catch a dangling recipient_person_id.
+  const mutant = clone(fixture);
+  mutant.approvals[0].recipientPersonId = 'M-999';
+  assert.throws(() => assertFixtureReferences(mutant), /has a known recipient/);
+  const result = deriveOverview(canonicalInput(mutant));
+  assert.equal(result.coverage.complete, true);
+  assert.equal(result.views.me.metrics[3].count, 2,
+    'the derivation alone does not drop the ghost approval from the me queue');
 });
 
 function bridgeForTest(options = {}) {
@@ -471,6 +573,7 @@ test('empty, single, restricted and partial variants expose honest state envelop
   assert.equal(singleOverview.works.length, 14);
   assert.equal(single.bridge.TEAM.demoOrganization.data.people.length, 4);
   assert.equal(single.bridge.TEAM.demoOrganization.data.pending.length, 6);
+  assert.equal(single.bridge.TEAM.demoOrganization.data.approvals.length, 2);
 
   const restricted = bridgeForTest({ demoVariant: 'restricted' });
   assert.equal((await restricted.call('GET /api/team/overview', '/api/team/overview?project=P-003')).error.code, 'Forbidden');

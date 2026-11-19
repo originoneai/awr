@@ -276,3 +276,64 @@ test('notice matches the prototype callout', async ({ page }) => {
   expect(styles['font-size']).toBe('13px');
   expect(styles['line-height']).toBe('20px');
 });
+
+test('perspective matches the prototype as, seg and compact top seg measurements', async ({ page }, testInfo) => {
+  await open(page, 'perspective');
+  const phone = isPhone(testInfo.project.name);
+  // .as { display: flex; align-items: center; gap: 8px }
+  const root = await readStyles(page, '.shell-perspective', ['display', 'align-items', 'column-gap', 'flex-wrap']);
+  expect(root).toEqual({ display: 'flex', 'align-items': 'center', 'column-gap': '8px', 'flex-wrap': 'nowrap' });
+  // .as .cap { color: var(--ink-3); font-size: 12px; white-space: nowrap }
+  // @media (max-width: 1040px) hides the caption, while the 860px layout remains useCompactViewport's sole source.
+  const caption = await readStyles(page, '.shell-perspective-caption', ['display', 'font-size', 'white-space']);
+  expect(caption.display).toBe(phone ? 'none' : 'block');
+  expect(caption['font-size']).toBe('12px');
+  expect(caption['white-space']).toBe('nowrap');
+  // .seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px }
+  // As in the prototype, being a flex item blockifies its computed display to flex.
+  const segment = await readStyles(page, '.shell-perspective-segment', [
+    'display', 'column-gap', 'padding-top', 'padding-left', 'border-top-left-radius', 'overflow-x',
+  ]);
+  expect(segment).toEqual({
+    display: 'flex',
+    'column-gap': '2px',
+    'padding-top': '2px',
+    'padding-left': '2px',
+    'border-top-left-radius': '8px',
+    // @media (max-width: 860px) .top .seg { flex: 1; overflow-x: auto }
+    'overflow-x': phone ? 'auto' : 'visible',
+  });
+  // .seg button — prototype values: 28px height, 10px inline padding, 6px radius, 13px font, nowrap.
+  const option = await readStyles(page, '.shell-perspective-option', [
+    'height', 'padding-left', 'padding-right', 'border-top-left-radius', 'font-size', 'white-space',
+  ]);
+  expect(option).toEqual({
+    height: '28px',
+    'padding-left': '10px',
+    'padding-right': '10px',
+    'border-top-left-radius': '6px',
+    'font-size': '13px',
+    'white-space': 'nowrap',
+  });
+  // .seg button[aria-pressed="true"] uses a surface, a 1px line, var(--shadow-s) and weight 500.
+  const selected = await readStyles(page, '.shell-perspective-option[aria-pressed="true"]', ['box-shadow', 'font-weight']);
+  expect(selected['box-shadow']).not.toBe('none');
+  expect(selected['box-shadow']).toContain('1px');
+  expect(selected['font-weight']).toBe('500');
+  const optionTops = await page.locator('.shell-perspective-option').evaluateAll((buttons) => (
+    buttons.map((button) => button.getBoundingClientRect().top)
+  ));
+  expect(new Set(optionTops).size, 'options must stay on one line').toBe(1);
+
+  if (phone) {
+    // Force overflow below the required 390px check as well, proving the segment itself scrolls.
+    await page.setViewportSize({ width: 320, height: 844 });
+    const scrolled = await page.locator('.shell-perspective-segment').evaluate((element) => {
+      element.scrollLeft = 80;
+      return { left: element.scrollLeft, scrollWidth: element.scrollWidth, clientWidth: element.clientWidth };
+    });
+    expect(scrolled.scrollWidth).toBeGreaterThan(scrolled.clientWidth);
+    expect(scrolled.left).toBeGreaterThan(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  }
+});
