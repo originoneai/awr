@@ -56,7 +56,10 @@ pub use indexer::{
     preview_index_project, scan_project, source_adapter, source_configuration,
 };
 pub use ledger_mapping::LedgerMapping;
-pub use limits::{MARKDOWN_READ_CAP, YAML_READ_CAP, source_read_cap};
+pub use limits::{
+    MARKDOWN_READ_CAP, SERVER_LEDGER_READ_CAP, YAML_READ_CAP, ledger_size_limit_exceeded,
+    source_read_cap,
+};
 pub use locator::{Locator, SourceSnapshot, fingerprint, read_capped, read_source_capped};
 pub use policy::{
     ClaimPolicy, DEFAULT_CLAIM_TTL_ENV, DefaultTtl, MAX_CLAIM_TTL_MS, MIN_CLAIM_TTL_MS,

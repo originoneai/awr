@@ -1533,7 +1533,7 @@ async fn cooperative_source_writer_blocks_planning_until_the_same_guard_is_relea
     let (_cid, _digest, receipt_id) = publish_candidate_with_workstream(&store, "alpha").await;
     let tmp = tempfile_ledger();
     let guard = awr_source::LockedSourceFile::open(&tmp.root, "ledger.yaml").unwrap();
-    let before = guard.read().unwrap();
+    let before = guard.read(awr_source::SERVER_LEDGER_READ_CAP).unwrap();
     let req = WritebackActivateRequest {
         request_id: "req-shared-source-lock".into(),
         publish_receipt_id: receipt_id,
@@ -1548,7 +1548,10 @@ async fn cooperative_source_writer_blocks_planning_until_the_same_guard_is_relea
             .await,
         Err(PgError::WritebackRefused(_))
     ));
-    assert_eq!(guard.read().unwrap(), before);
+    assert_eq!(
+        guard.read(awr_source::SERVER_LEDGER_READ_CAP).unwrap(),
+        before
+    );
     assert_eq!(
         admin
             .query_one(
@@ -1596,9 +1599,18 @@ async fn planning_preserves_existing_delivery_reference_notes_in_the_sole_source
         completion_reference: None,
     };
     let guard = LockedSourceFile::open(&tmp.root, "ledger.yaml").unwrap();
-    let patch = prepare_delivery_source_note(&guard.read().unwrap(), &note).unwrap();
+    let patch = prepare_delivery_source_note(
+        &guard.read(awr_source::SERVER_LEDGER_READ_CAP).unwrap(),
+        &note,
+        awr_source::SERVER_LEDGER_READ_CAP,
+    )
+    .unwrap();
     guard
-        .replace(&patch.before_fingerprint, &patch.after_bytes)
+        .replace(
+            &patch.before_fingerprint,
+            &patch.after_bytes,
+            awr_source::SERVER_LEDGER_READ_CAP,
+        )
         .unwrap();
     drop(guard);
     store
@@ -1618,7 +1630,8 @@ async fn planning_preserves_existing_delivery_reference_notes_in_the_sole_source
         .await
         .unwrap();
     let after = std::fs::read(tmp.root.join("ledger.yaml")).unwrap();
-    let check = prepare_delivery_source_note(&after, &note).unwrap();
+    let check =
+        prepare_delivery_source_note(&after, &note, awr_source::SERVER_LEDGER_READ_CAP).unwrap();
     assert!(
         check.changed_external_keys.is_empty(),
         "the exact typed note is still present"

@@ -2,7 +2,7 @@
 //!
 //! This layer neither verifies domain receipts nor changes runtime state. The
 //! authenticated publisher must resolve every reference before preparing a note.
-use crate::{LedgerWritebackPatch, YAML_READ_CAP, fingerprint, open_dir_exact};
+use crate::{LedgerWritebackPatch, fingerprint, open_dir_exact};
 use awr_core::{Error, Id, Result};
 use cap_fs_ext::{FollowSymlinks, MetadataExt, OpenOptionsFollowExt};
 use cap_std::fs::{Dir, OpenOptions};
@@ -134,10 +134,11 @@ impl DeliverySourceNote {
 pub fn prepare_delivery_source_note(
     bytes: &[u8],
     note: &DeliverySourceNote,
+    limit: u64,
 ) -> Result<LedgerWritebackPatch> {
     note.validate()?;
-    if bytes.len() as u64 > YAML_READ_CAP {
-        return Err(invalid());
+    if bytes.len() as u64 > limit {
+        return Err(crate::limits::ledger_too_large(bytes.len() as u64, limit));
     }
     let text = std::str::from_utf8(bytes).map_err(|_| invalid())?;
     let document = serde_yaml_ng::from_slice::<serde_yaml_ng::Value>(bytes)
@@ -196,8 +197,11 @@ pub fn prepare_delivery_source_note(
     fields.insert("delivery_sync".into(), value);
     after_bytes =
         crate::yaml_edit::edit_fields(text, &format!("/work_items/{index}"), &fields)?.into_bytes();
-    if after_bytes.len() as u64 > YAML_READ_CAP {
-        return Err(invalid());
+    if after_bytes.len() as u64 > limit {
+        return Err(crate::limits::ledger_too_large(
+            after_bytes.len() as u64,
+            limit,
+        ));
     }
     Ok(LedgerWritebackPatch {
         before_fingerprint: fingerprint(bytes),
@@ -311,7 +315,12 @@ impl LockedSourceFile {
 
     /// Nonlocking, read-only observation against a persisted writer identity.
     /// Missing or replaced locks are refused without creating or repairing them.
-    pub fn observe(root: &Path, relative: &str, expected: &SourceFileIdentity) -> Result<Vec<u8>> {
+    pub fn observe(
+        root: &Path,
+        relative: &str,
+        expected: &SourceFileIdentity,
+        limit: u64,
+    ) -> Result<Vec<u8>> {
         validate_source_relative(relative)?;
         let path = root.join(relative);
         let parent_path = path.parent().ok_or_else(invalid)?.to_path_buf();
@@ -336,7 +345,7 @@ impl LockedSourceFile {
             _lock: lock,
             identity: expected.clone(),
         }
-        .read()
+        .read(limit)
     }
 
     pub fn identity(&self) -> &SourceFileIdentity {
@@ -373,7 +382,7 @@ impl LockedSourceFile {
         Ok(())
     }
 
-    pub fn read(&self) -> Result<Vec<u8>> {
+    pub fn read(&self, limit: u64) -> Result<Vec<u8>> {
         self.check_identity()?;
         let mut options = OpenOptions::new();
         options.read(true).follow(FollowSymlinks::No);
@@ -382,10 +391,14 @@ impl LockedSourceFile {
         if !metadata.is_file() || metadata.nlink() != 1 {
             return Err(conflict());
         }
+        if metadata.len() > limit {
+            return Err(crate::limits::ledger_too_large(metadata.len(), limit));
+        }
+        let read_limit = limit.checked_add(1).ok_or_else(invalid)?;
         let mut bytes = Vec::new();
-        file.take(YAML_READ_CAP + 1).read_to_end(&mut bytes)?;
-        if bytes.len() as u64 > YAML_READ_CAP {
-            return Err(invalid());
+        file.take(read_limit).read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > limit {
+            return Err(crate::limits::ledger_too_large(bytes.len() as u64, limit));
         }
         self.check_identity()?;
         Ok(bytes)
@@ -393,9 +406,9 @@ impl LockedSourceFile {
 
     /// Creates the file when, and only when, it does not exist: the bytes are written and synced under a
     /// temporary name and linked into place, so a file that appeared in between is never replaced.
-    pub fn create_new(&self, after: &[u8]) -> Result<()> {
-        if after.len() as u64 > YAML_READ_CAP {
-            return Err(invalid());
+    pub fn create_new(&self, after: &[u8], limit: u64) -> Result<()> {
+        if after.len() as u64 > limit {
+            return Err(crate::limits::ledger_too_large(after.len() as u64, limit));
         }
         self.check_identity()?;
         let temporary = format!("{}.tmp-{}", self.lock_name, Id::new());
@@ -429,11 +442,11 @@ impl LockedSourceFile {
 
     /// Exact-byte CAS, file sync and confined atomic replacement. Unix also
     /// syncs the parent; Windows retains its file-sync/rename durability limit.
-    pub fn replace(&self, expected_fingerprint: &str, after: &[u8]) -> Result<()> {
-        if after.len() as u64 > YAML_READ_CAP {
-            return Err(invalid());
+    pub fn replace(&self, expected_fingerprint: &str, after: &[u8], limit: u64) -> Result<()> {
+        if after.len() as u64 > limit {
+            return Err(crate::limits::ledger_too_large(after.len() as u64, limit));
         }
-        if fingerprint(&self.read()?) != expected_fingerprint {
+        if fingerprint(&self.read(limit)?) != expected_fingerprint {
             return Err(Error::SourceConflict(
                 "source fingerprint changed before replacement".into(),
             ));
@@ -464,7 +477,7 @@ impl LockedSourceFile {
             file.set_permissions(permissions)?;
             file.sync_all()?;
             drop(file);
-            if fingerprint(&self.read()?) != expected_fingerprint {
+            if fingerprint(&self.read(limit)?) != expected_fingerprint {
                 return Err(Error::SourceConflict(
                     "source fingerprint changed before replacement".into(),
                 ));

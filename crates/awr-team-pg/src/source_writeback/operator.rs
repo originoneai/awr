@@ -176,7 +176,7 @@ fn observe(intent: Option<&Intent>) -> Observed {
         }
         Err(_) => return none(SourceState::Unreadable),
     };
-    let Ok(bytes) = guard.read() else {
+    let Ok(bytes) = guard.read(awr_source::SERVER_LEDGER_READ_CAP) else {
         return Observed {
             guard: Some(guard),
             state: SourceState::Unreadable,

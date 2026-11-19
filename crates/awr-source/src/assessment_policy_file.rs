@@ -129,7 +129,7 @@ pub fn apply_assessment_policy(
     let root = std::fs::canonicalize(root).map_err(Error::Io)?;
     let candidate_file = read_candidate(candidate)?;
     let lock = open_lock(&root)?;
-    let current = match lock.read() {
+    let current = match lock.read(crate::YAML_READ_CAP) {
         Ok(bytes) => Some(bytes),
         Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(error),
@@ -139,9 +139,9 @@ pub fn apply_assessment_policy(
             if fingerprint(&bytes) == candidate_file.fingerprint {
                 return Ok(());
             }
-            lock.replace(expected, candidate)
+            lock.replace(expected, candidate, crate::YAML_READ_CAP)
         }
-        (None, None) => lock.create_new(candidate),
+        (None, None) => lock.create_new(candidate, crate::YAML_READ_CAP),
         _ => Err(Error::SourceConflict(format!(
             "{ASSESSMENT_POLICY_FILE} changed since it was read"
         ))),
