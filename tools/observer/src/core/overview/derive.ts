@@ -382,6 +382,7 @@ export function deriveOverview(input: OverviewInput): OverviewDerivation {
       title: text(task.title),
       owner: person(task.ownerPersonId),
       agentName: text(task.agentName),
+      agentActive: bool(task.agentActive),
       projectId: id(task.projectId),
       groupId: id(task.groupId),
       goalIds: Array.isArray(task.goalIds) ? [...task.goalIds] : null,
