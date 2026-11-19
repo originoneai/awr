@@ -26,15 +26,15 @@ describe('i18n', () => {
     expect(screen.queryByRole('menuitem', { name: /工作台/ })).toBeNull();
   });
 
-  it('switches via the top-bar language switcher', async () => {
+  it('opens the new lessons destination with translated shell labels', async () => {
     stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/read': DEMO_WORK_NEXT });
     const user = userEvent.setup();
-    renderApp('/workbench');
-    await user.click(screen.getByTestId('language-switcher'));
-    await user.click(await screen.findByText('English'));
-    await waitFor(() =>
-      expect(screen.getByRole('menuitem', { name: /Workbench/ })).toBeTruthy(),
-    );
+    const { router } = renderApp('/workbench');
+    await i18n.changeLanguage('en-US');
+    await user.click(await screen.findByRole('link', { name: 'Lessons' }));
+    await screen.findByTestId('page-lessons');
+    expect(router.state.location.pathname).toBe('/lessons');
+    expect(screen.getByText('Lessons', { selector: '[aria-current="page"]' })).toBeTruthy();
     expect(i18n.language).toBe('en-US');
   });
 });

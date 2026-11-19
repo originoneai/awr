@@ -10,15 +10,16 @@ afterEach(async () => {
 
 describe('pages whose feature is not open yet', () => {
   it.each([
-    ['/knowledge', '知识与技能'],
-    ['/settings', '管理设置'],
-    ['/advanced', '高级工具'],
-  ])('%s says once that it is not open, and does not read as an empty read', async (path, title) => {
+    ['/knowledge', '经验', '/lessons'],
+    ['/settings', '管理设置', '/settings'],
+    ['/advanced', '管理设置', '/settings'],
+  ])('%s says once that it is not open, and does not read as an empty read', async (path, title, destination) => {
     stubFetch({ '/api/team/projects': DEMO_PROJECTS });
-    renderApp(path);
+    const { router } = renderApp(path);
     const notOpen = await screen.findByTestId('state-not-open');
     const page = notOpen.parentElement as HTMLElement;
     expect(defaultVisibleText(page)).toBe(`${title}\n这里暂时没有内容\n该功能尚未开放`);
+    expect(router.state.location.pathname).toBe(destination);
     expect(screen.queryByTestId('state-empty')).toBeNull();
     expect(screen.queryByText(/未观察到相关记录|尚未完成读取/)).toBeNull();
   });

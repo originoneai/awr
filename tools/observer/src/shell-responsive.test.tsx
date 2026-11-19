@@ -1,4 +1,4 @@
-import { act, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import i18n from './i18n';
@@ -6,159 +6,118 @@ import { DEMO_OVERVIEW, DEMO_PROJECTS, mockViewport, renderApp, stubFetch } from
 
 let narrowViewport: ReturnType<typeof mockViewport> | null = null;
 
-function setupNarrow(path = '/workbench') {
+function setupNarrow(path = '/workbench', width = 375) {
   stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
-  narrowViewport = mockViewport(375);
+  narrowViewport = mockViewport(width);
   return renderApp(path);
 }
 
 afterEach(async () => {
   await i18n.changeLanguage('zh-CN');
-  // Restore here rather than in each test: a failing assertion must not leak the narrow
-  // matchMedia into later test files.
   narrowViewport?.restore();
   narrowViewport = null;
 });
 
-describe('responsive navigation below lg', () => {
-  it('offers the header entry instead of the sider and the zero-width trigger', async () => {
+describe('responsive navigation at 860px', () => {
+  it('uses a native select and top theme instead of the sider or a drawer', async () => {
     setupNarrow();
-    const entry = await screen.findByRole('button', { name: '打开导航' });
-    expect(entry.tagName).toBe('BUTTON');
+    const entry = await screen.findByRole<HTMLSelectElement>('combobox', { name: '页面' });
+    expect(entry.tagName).toBe('SELECT');
     expect(document.querySelector('.ant-layout-sider')).toBeNull();
     expect(document.querySelector('.ant-layout-sider-zero-width-trigger')).toBeNull();
+    expect(document.querySelector('.ant-drawer')).toBeNull();
+    const theme = screen.getByTestId('mobile-theme-toggle');
+    expect(theme.style.width).toBe('40px');
+    expect(theme.style.height).toBe('40px');
+    expect(screen.getByTestId('avatar-menu-trigger')).toBeTruthy();
   });
 
-  it('opens the drawer with every navigation item and closes it after choosing a destination', async () => {
+  it('navigates directly on selection and preserves the current project', async () => {
     const user = userEvent.setup();
-    const { router } = setupNarrow();
-    await user.click(await screen.findByRole('button', { name: '打开导航' }));
-
-    const dialog = await screen.findByRole('dialog');
-    for (const label of [
-      '工作台',
-      '项目',
-      '待处理',
-      '知识与技能',
-      '成员与 Agent',
-      '活动与审计',
-      '管理设置',
-      '账户与连接',
-      '高级工具',
-    ]) {
-      expect(dialog.textContent).toContain(label);
-    }
-    expect(await screen.findByRole('button', { name: '关闭导航' })).toBeTruthy();
-
-    await user.click(screen.getByRole('link', { name: '账户与连接' }));
-    await waitFor(() => {
-      expect(document.querySelector('.ant-drawer-open')).toBeNull();
-      expect(screen.queryByRole('dialog')).toBeNull();
-    });
-    expect(router.state.location.pathname).toBe('/account');
+    const { router } = setupNarrow('/workbench?scope=demo');
+    const entry = await screen.findByRole<HTMLSelectElement>('combobox', { name: '页面' });
+    await user.selectOptions(entry, '/lessons');
+    await screen.findByTestId('page-lessons');
+    expect(router.state.location.pathname).toBe('/lessons');
+    expect(router.state.location.search).toBe('?scope=demo');
+    expect(entry.value).toBe('/lessons');
+    expect(document.querySelector('.ant-drawer')).toBeNull();
+    expect(screen.getByTestId('mobile-theme-toggle')).toBeTruthy();
   });
 
-  it('returns focus to the entry button when the drawer closes via Escape', async () => {
-    const user = userEvent.setup();
-    setupNarrow();
-    const entry = await screen.findByRole('button', { name: '打开导航' });
-    await user.click(entry);
-    await screen.findByRole('dialog');
-
-    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
-    await waitFor(() => {
-      expect(document.querySelector('.ant-drawer-open')).toBeNull();
-    });
-    await waitFor(() => {
-      expect(document.activeElement).toBe(entry);
-    });
+  it('offers every destination in the native select and marks the current page', async () => {
+    setupNarrow('/lessons');
+    const entry = await screen.findByRole<HTMLSelectElement>('combobox', { name: '页面' });
+    expect(entry.value).toBe('/lessons');
+    expect(Array.from(entry.options).map((option) => option.textContent)).toEqual([
+      '工作台', '项目', '待处理', '经验', '成员与 Agent', '活动与审计', '管理设置',
+    ]);
   });
 
-  it('keeps the desktop shell at lg and above', async () => {
+  it('keeps the desktop shell at 861px', async () => {
     stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
+    narrowViewport = mockViewport(861);
     renderApp('/workbench');
-    await screen.findByAltText('AWR');
-    expect(screen.queryByRole('button', { name: '打开导航' })).toBeNull();
+    await screen.findByTestId('awr-brand');
+    expect(screen.queryByRole('combobox', { name: '页面' })).toBeNull();
     expect(document.querySelector('.ant-layout-sider')).not.toBeNull();
   });
 
-  it('shows the drawer entry at 991px, one pixel below the lg breakpoint', async () => {
-    narrowViewport = mockViewport(991);
-    stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
-    renderApp('/workbench');
-    expect(await screen.findByRole('button', { name: '打开导航' })).toBeTruthy();
+  it('uses the native page selector at exactly 860px', async () => {
+    setupNarrow('/workbench', 860);
+    expect(await screen.findByRole('combobox', { name: '页面' })).toBeTruthy();
     expect(document.querySelector('.ant-layout-sider')).toBeNull();
   });
 
-  it('keeps the sider at 992px, the first lg width', async () => {
-    narrowViewport = mockViewport(992);
-    stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
-    renderApp('/workbench');
-    await screen.findByAltText('AWR');
-    expect(screen.queryByRole('button', { name: '打开导航' })).toBeNull();
-    expect(document.querySelector('.ant-layout-sider')).not.toBeNull();
-  });
+  it('switches between the native selector and sider on resize without creating a drawer', async () => {
+    setupNarrow('/workbench', 860);
+    await screen.findByRole('combobox', { name: '页面' });
+    const viewport = narrowViewport;
+    expect(viewport).not.toBeNull();
 
-  it('marks the current page in the drawer menu', async () => {
-    const user = userEvent.setup();
-    setupNarrow('/account');
-    await user.click(await screen.findByRole('button', { name: '打开导航' }));
-    const dialog = await screen.findByRole('dialog');
-    const selected = dialog.querySelectorAll('.ant-menu-item-selected');
-    expect(selected).toHaveLength(1);
-    expect(selected[0]?.textContent).toContain('账户与连接');
-  });
-
-  it('closes the drawer when the mask is tapped', async () => {
-    const user = userEvent.setup();
-    setupNarrow();
-    await user.click(await screen.findByRole('button', { name: '打开导航' }));
-    await screen.findByRole('dialog');
-    const mask = document.querySelector('.ant-drawer-mask');
-    expect(mask).not.toBeNull();
-    await user.click(mask as HTMLElement);
-    await waitFor(() => {
-      expect(document.querySelector('.ant-drawer-open')).toBeNull();
-    });
-    await waitFor(() => {
-      expect(document.activeElement?.getAttribute('data-testid')).toBe('nav-toggle');
-    });
-  });
-
-  it('closes an open drawer when the viewport grows past lg and does not reopen it when shrinking', async () => {
-    const user = userEvent.setup();
-    narrowViewport = mockViewport(375);
-    stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
-    renderApp('/workbench');
-    await user.click(await screen.findByRole('button', { name: '打开导航' }));
-    await screen.findByRole('dialog');
-    const { setWidth } = narrowViewport;
-
-    await act(async () => {
-      setWidth(1341);
-    });
+    await act(async () => viewport?.setWidth(861));
     await waitFor(() => {
       expect(document.querySelector('.ant-layout-sider')).not.toBeNull();
-      expect(screen.queryByRole('button', { name: '打开导航' })).toBeNull();
-      expect(document.querySelector('.ant-drawer-open')).toBeNull();
+      expect(screen.queryByRole('combobox', { name: '页面' })).toBeNull();
     });
-
-    await act(async () => {
-      setWidth(375);
-    });
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: '打开导航' })).toBeTruthy();
-    });
-    expect(document.querySelector('.ant-drawer-open')).toBeNull();
+    await act(async () => viewport?.setWidth(860));
+    await screen.findByRole('combobox', { name: '页面' });
+    expect(document.querySelector('.ant-drawer')).toBeNull();
   });
 
-  it('labels the mobile entry in the selected language', async () => {
+  it('opens real account and Agent connection destinations from the mobile avatar menu', async () => {
+    const user = userEvent.setup();
+    const { router } = setupNarrow('/workbench?scope=demo');
+    await user.click(await screen.findByTestId('avatar-menu-trigger'));
+    const account = await screen.findByRole('link', { name: '账户与连接' });
+    expect(account.getAttribute('href')).toBe('/account?scope=demo');
+    expect(screen.getAllByRole('link', { name: '连接我的 Agent' })
+      .some((link) => link.getAttribute('href') === '/agent-connect?scope=demo')).toBe(true);
+    await user.click(account);
+    await waitFor(() => expect(router.state.location.pathname).toBe('/account'));
+    expect(router.state.location.search).toBe('?scope=demo');
+  });
+
+  it('changes language from the mobile avatar menu', async () => {
     const user = userEvent.setup();
     setupNarrow();
-    await user.click(screen.getByTestId('language-switcher'));
+    await user.click(await screen.findByTestId('avatar-menu-trigger'));
     await user.click(await screen.findByText('English'));
-    expect(await screen.findByRole('button', { name: 'Open navigation' })).toBeTruthy();
-    await user.click(screen.getByRole('button', { name: 'Open navigation' }));
-    expect(await screen.findByRole('button', { name: 'Close navigation' })).toBeTruthy();
+    await waitFor(() => expect(i18n.language).toBe('en-US'));
+    const entry = await screen.findByRole<HTMLSelectElement>('combobox', { name: 'Page' });
+    expect(Array.from(entry.options).map((option) => option.textContent)).toContain('Lessons');
+  });
+
+  it('wraps the top bar and removes fixed-width shell content on narrow screens', async () => {
+    setupNarrow();
+    await screen.findByRole('combobox', { name: '页面' });
+    const header = document.querySelector<HTMLElement>('.shell-header');
+    const content = document.querySelector<HTMLElement>('.shell-content');
+    const mobile = screen.getByTestId('mobile-navigation');
+    expect(header?.style.flexWrap).toBe('wrap');
+    expect(header?.style.height).toBe('auto');
+    expect(content?.style.padding).toBe('16px');
+    expect(mobile.style.minWidth).toBe('0px');
+    expect(getComputedStyle(document.documentElement).overflowX).not.toBe('scroll');
   });
 });

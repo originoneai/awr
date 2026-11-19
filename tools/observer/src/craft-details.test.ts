@@ -11,7 +11,7 @@ describe('craft details', () => {
     expect(themeConfig.token?.boxShadowTertiary).toContain('rgba(17, 24, 39, 0.05)');
   });
 
-  it('uses a selected surface plus hairline and a visible keyboard focus ring', () => {
+  it('uses accent-soft shell selection without a border and a visible keyboard focus ring', () => {
     const token = { colorFillSecondary: 'raised', colorBorderSecondary: 'hairline', borderRadius: 8 };
     expect(craftSelectionStyle(token, true)).toEqual({
       cursor: 'pointer',
@@ -21,7 +21,18 @@ describe('craft details', () => {
     });
     expect(craftSelectionStyle(token, false)).toEqual({ cursor: 'pointer' });
     const shell = readFileSync('src/global.css', 'utf8');
-    expect(shell).toContain('box-shadow: inset 0 0 0 1px var(--ant-color-border-secondary)');
+    expect(shell).toContain('background: var(--craft-color-accent-soft)');
+    expect(shell).toContain('color: var(--craft-color-accent)');
+    expect(shell).toContain('font-weight: 500');
+    expect(shell).toContain('box-shadow: none');
+    expect(themeConfig.components?.Menu?.itemSelectedBg).toBe(craftTokens.color.accentSoft);
+    expect(themeConfig.components?.Menu?.itemSelectedColor).toBe(craftTokens.color.accent);
+    expect(themeConfig.components?.Menu?.itemHeight).toBe(36);
+    expect(themeConfig.components?.Menu?.itemBorderRadius).toBe(8);
+    expect(themeConfig.components?.Menu?.itemPaddingInline).toBe(12);
+    expect(themeConfig.components?.Menu?.iconMarginInlineEnd).toBe(10);
+    expect(themeConfig.components?.Menu?.itemMarginInline).toBe(0);
+    expect(themeConfig.components?.Menu?.itemMarginBlock).toBe(0);
     expect(shell).toContain(':focus-visible');
     expect(shell).toContain('outline: 2px solid var(--ant-color-primary)');
     expect(readFileSync('src/pages/ProjectShell.tsx', 'utf8')).not.toContain('color="blue"');
