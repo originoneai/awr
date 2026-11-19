@@ -30,7 +30,10 @@ const INBOX_READ_OPS = new Set(['work.prepare', 'work.observe', 'work.recovery',
  */
 // Full ops audit is deferred (W13). Route setup belongs to the Agent workflow,
 // not this observation surface. The drift guard pins this explicit boundary.
-const READ_DEFERRED_OPS = new Set(['audit.history', 'audit.export', 'audit.count', 'delivery.routes']);
+// Service queries the adapter does not route yet. `updates.list` and `update.inspect` (project period
+// updates, #681) get their bridge routes with AWR-PPD-012; until then the drift guard needs them named here.
+const READ_DEFERRED_OPS = new Set(['audit.history', 'audit.export', 'audit.count', 'delivery.routes',
+  'updates.list', 'update.inspect']);
 const READ_PROJECT_WIDE = new Set(['capabilities', 'workstreams.list', 'work.inbox']);
 const READ_WORK_LIST = new Set(['work.list', 'work.graph', 'work.search', 'planning.outcome', 'planning.candidates']);
 const READ_AUDIT = new Set(['audit.requests', 'audit.development']);
