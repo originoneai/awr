@@ -1,6 +1,8 @@
 # Project organization directory
 
-The directory associates a registered project and its existing responsibility members with an organization and departments. Each project owns a versioned directory. Explicit references support grouping across projects, and each member reference carries both its project and person identity.
+The directory associates a registered project and its existing responsibility members with an organization and a hierarchy of departments. Each project owns a versioned directory. Explicit references support grouping across projects, and each member reference carries both its project and person identity.
+
+Departments form a tree. A department names its parent department through an optional `parent_id`; a department without one sits at the top level. Directories recorded before the field existed read back with every department at the top level, which is the same tree. A leaf department (a department no other department names as parent) is what the product calls a group, and a project attaches under a group by listing that leaf in `project_department_ids`.
 
 ## Authority
 
@@ -25,16 +27,21 @@ Every entry uses protocol version `1`. Authentication selects the tenant, projec
 {
   "organization": { "id": "example", "name": "Example company" },
   "departments": [
-    { "id": "engineering", "name": "Engineering" }
+    { "id": "engineering", "name": "Engineering" },
+    { "id": "platform", "name": "Platform", "parent_id": "engineering" },
+    { "id": "runtime", "name": "Runtime", "parent_id": "platform" },
+    { "id": "scheduling", "name": "Scheduling", "parent_id": "runtime" }
   ],
-  "project_department_ids": ["engineering"],
+  "project_department_ids": ["scheduling"],
   "members": [
-    { "person_id": "existing-project-member", "department_ids": ["engineering"] }
+    { "person_id": "existing-project-member", "department_ids": ["scheduling"] }
   ]
 }
 ```
 
 Plans contain at most 128 departments and 256 members within a 64 KiB bound. Member references must resolve to active persons in the bound project. References within a plan are unique and resolve to declared departments. Array order is normalized for hashing.
+
+Each department may carry one `parent_id`, absent or null for the top level. The service validates that every parent resolves to a declared department, that no parent chain cycles (including self-parenting), that the deepest chain holds at most four departments counting the department itself (a flat directory has depth 1), and that departments sharing one parent — including the top level — carry distinct names once trimmed. Names may repeat across different parents. A stored plan omits `parent_id` for top-level departments, so a flat plan serializes exactly as before the field existed and keeps its digest; an applied hierarchy changes the digest like any other relationship change.
 
 ## Conditional changes and recovery
 
@@ -50,9 +57,9 @@ A clearing plan uses `organization: null` and empty department, project-departme
 
 ## Persistence and observation
 
-Schema 62 adds the current directory and append-only change receipts. An apply records its plan, version, authenticated authorization provenance, project revision and operations audit in one transaction. Reconnecting through a new service/store instance reads the same current directory and original receipt.
+Schema 62 adds the current directory and append-only change receipts; the hierarchy needs no further migration because the whole plan, parent references included, lives in `plan_json`. An apply records its plan, version, authenticated authorization provenance, project revision and operations audit in one transaction. The audit summary of an apply reports `department_count`, `member_count`, `department_depth` (deepest chain, top level counting as 1) and `leaf_department_count` (the groups) next to the digest and directory version. Reconnecting through a new service/store instance reads the same current directory and original receipt.
 
-Observation clients use project-qualified references to drill back to project facts. Product views present organization, department and member names with relationship availability. Version tokens, authorization bindings and diagnostic fields belong in the protected service records.
+Observation clients use project-qualified references to drill back to project facts. Product views present organization, department and member names with relationship availability, and read the hierarchy from the parent references in the plan: a leaf department is a group, and a project or member listing a leaf sits under that group. Version tokens, authorization bindings and diagnostic fields belong in the protected service records.
 
 The Observer **Members & Agents** page reads `/v1/web/projects/{project}/directory/read` through its existing HttpOnly browser session and the `/api/team/directory` bridge. The service repeats the same directory authorization on every read. The bridge validates complete project-qualified relationships, then returns organization, department and member display names, availability and the maintenance time. Operational provenance and internal references stay on the service.
 
@@ -60,7 +67,7 @@ Members are shown as recorded in that project's directory. A directory may cover
 
 ## Focused verification
 
-The domain tests cover shape, bounds, reference validation and order-independent hashing. PostgreSQL tests cover conditional writes, concurrent attempts, exact replay, recovery, revoked authority and project-qualified identities. Native MCP and HTTP tests exercise Agent delegation and the shared service entry points.
+The domain tests cover shape, bounds, reference validation, order-independent hashing and the hierarchy rules (cycles, the depth bound, sibling name uniqueness, and pre-hierarchy plans reading as all top level). PostgreSQL tests cover conditional writes, concurrent attempts, exact replay, recovery, revoked authority, project-qualified identities, the audit-summary hierarchy fields and rejected hierarchy faults leaving no row behind. Native MCP and HTTP tests exercise Agent delegation and the shared service entry points.
 
 ```bash
 cargo test -p awr-team --lib directory --locked
@@ -69,3 +76,5 @@ cargo test -p awr-server --features pg-tests --test directory_mcp --locked -- --
 ```
 
 The PostgreSQL fixtures use their configured loopback test server and create isolated process-owned databases.
+
+The `directory_mcp` test also writes the verbatim `directory.read` replies of the real service entries (agent bearer, browser session, unconfigured, flat and hierarchical states) into the directory named by `AWR_DIRECTORY_SAMPLE_DIR` for evidence capture. Byte-identical copies are committed at `crates/awr-server/tests/samples/` and re-parsed on every run against the live replies, so the recorded shapes cannot drift from what the service produces. Verification against a deployed service remains with AWR-PPD-090.

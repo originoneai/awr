@@ -145,11 +145,16 @@ pub(super) fn schema(op: Operation) -> Value {
         json!({"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9_-]+$"});
     let unit = json!({"type":"object","additionalProperties":false,"required":["id","name"],
         "properties":{"id":identity,"name":{"type":"string","minLength":1,"maxLength":512}}});
+    // Departments optionally name their parent department; absent or null means
+    // the top level, so pre-hierarchy plans remain valid unchanged.
+    let department = json!({"type":"object","additionalProperties":false,"required":["id","name"],
+        "properties":{"id":identity,"name":{"type":"string","minLength":1,"maxLength":512},
+            "parent_id":{"anyOf":[identity.clone(),{"type":"null"}]}}});
     let references = json!({"type":"array","maxItems":128,"uniqueItems":true,"items":identity});
     let plan = json!({"type":"object","additionalProperties":false,
         "required":["organization","departments","project_department_ids","members"],
         "properties":{"organization":{"anyOf":[unit,{"type":"null"}]},
-            "departments":{"type":"array","maxItems":128,"items":unit},
+            "departments":{"type":"array","maxItems":128,"items":department},
             "project_department_ids":references,
             "members":{"type":"array","maxItems":256,"items":{"type":"object","additionalProperties":false,
                 "required":["person_id","department_ids"],"properties":{"person_id":{"type":"string","minLength":1,"maxLength":128},"department_ids":references}}}}});
