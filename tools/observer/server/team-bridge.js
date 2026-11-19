@@ -7,6 +7,7 @@
 
 const { mapObservation, createGithubObserver } = require('./team-progress');
 const { projectDirectory } = require('./directory');
+const { createDemoOrganization, DEMO_FUTURE_READ_OPS } = require('./demo-organization');
 const { OBSERVATION_STALE_AFTER_MS, READ_TIMEOUT_MS, OVERVIEW_DEADLINE_MS, resolveCurrency } = require('./observation-contract');
 
 const fs = require('fs');
@@ -67,9 +68,16 @@ const READ_OPS = new Set([
   ...READ_WORK_SELECTION, ...READ_CONTEXT_BUDGET, ...READ_PAGED,
   ...Object.keys(READ_REQUIRED_SELECTOR),
 ]);
+const DEMO_REQUIRED_SELECTOR = {
+  'update.inspect': 'update_id',
+  'goal.inspect': 'goal_id',
+  'lesson.inspect': 'lesson_id',
+};
+const DEMO_LIST_OPS = new Set(['updates.list', 'goals.list', 'lessons.list']);
 const READ_ID_KEYS = new Set(['work_id', 'session_id', 'request_id', 'claim_id', 'execution_id',
   'handoff_id', 'evidence_id', 'review_round_id', 'artifact_id', 'export_id', 'workstream_id',
-  'change_id', 'member_actor_id', 'category', 'recipient_person_id', 'decision_id']);
+  'change_id', 'member_actor_id', 'category', 'recipient_person_id', 'decision_id',
+  'update_id', 'goal_id', 'lesson_id']);
 const READ_RESPONSE_LIMIT = { default: 1048576, 'artifact.content': 8388608, 'artifact.segment': 65536 };
 
 /**
@@ -117,6 +125,9 @@ const READ_ECHOES = {
   'delivery.neutral.outcome': [{ path: ['work_id'], selector: 'work_id' }],
   'delivery.source.status': [{ path: ['work_id'], selector: 'work_id' }],
   'delivery.integration.inspect': [{ path: ['integration_id'], selector: 'request_id' }],
+  'update.inspect': [{ path: ['update', 'update_id'], selector: 'update_id' }],
+  'goal.inspect': [{ path: ['goal', 'goal_id'], selector: 'goal_id' }],
+  'lesson.inspect': [{ path: ['lesson', 'lesson_id'], selector: 'lesson_id' }],
 };
 
 function invalidRead(message) {
@@ -133,19 +144,22 @@ function isControlledSourcePath(value) {
     && !value.includes('..') && !value.includes('\\') && !value.includes(':') && !/[\x00-\x1f\x7f]/.test(value);
 }
 
-function validateReadQuery(query) {
+function validateReadQuery(query, additionalOps = null) {
   if (!query || Array.isArray(query) || typeof query !== 'object') {
     return invalidRead('One bounded read query required');
   }
   if (query.protocol_version !== 1) return invalidRead('Unsupported read protocol version');
   const op = query.op;
-  if (typeof op !== 'string' || !READ_OPS.has(op)) {
+  const demoFuture = additionalOps?.has(op) === true;
+  if (typeof op !== 'string' || !READ_OPS.has(op) && !demoFuture) {
     return { error: { code: 'Unsupported', message: 'Read operation is not exposed by this adapter' } };
   }
   // Key allow-list: identity and authority fields can never ride a read body.
   const allowed = new Set(['protocol_version', 'op']);
   const allowIds = (...keys) => keys.forEach((key) => allowed.add(key));
-  if (READ_PROJECT_WIDE.has(op)) {
+  if (demoFuture) {
+    // Future read shapes stay selector-minimal until their service contracts land.
+  } else if (READ_PROJECT_WIDE.has(op)) {
     // Navigation reads are selector-free.
   } else if (READ_WORK_LIST.has(op)) {
     allowIds('workstream_id');
@@ -167,11 +181,11 @@ function validateReadQuery(query) {
   } else {
     allowIds('work_id', 'workstream_id', 'session_id');
   }
-  if (READ_PAGED.has(op) || READ_AUDIT.has(op) || op === 'artifact.segment') allowed.add('cursor');
-  if (READ_PAGED.has(op) || READ_AUDIT.has(op)) allowed.add('limit');
+  if (READ_PAGED.has(op) || READ_AUDIT.has(op) || DEMO_LIST_OPS.has(op) || op === 'artifact.segment') allowed.add('cursor');
+  if (READ_PAGED.has(op) || READ_AUDIT.has(op) || DEMO_LIST_OPS.has(op)) allowed.add('limit');
   if (op === 'work.search' || op === 'task.assignees' || op === 'documents.list') allowed.add('search');
-  if (READ_CONTEXT_BUDGET.has(op)) allowed.add('max_context_bytes');
-  const required = READ_REQUIRED_SELECTOR[op];
+  if (READ_CONTEXT_BUDGET.has(op) || demoFuture) allowed.add('max_context_bytes');
+  const required = READ_REQUIRED_SELECTOR[op] || (demoFuture ? DEMO_REQUIRED_SELECTOR[op] : undefined);
   if (required) allowed.add(required);
   if (op === 'artifact.content' || op === 'artifact.segment') allowIds('artifact_id', 'export_id');
   if (['source.content', 'artifact.content', 'artifact.segment'].includes(op)) allowed.add('expected_sha256');
@@ -940,12 +954,18 @@ function createTeamBridge(opts) {
     publicUrl = url.href.replace(/\/$/, '');
   }
 
-  // Fixtures are demo-only: never when --team-url is set.
+  // Fixtures are demo-only: never when --team-url is set. An explicitly supplied
+  // legacy fixture directory keeps the original WS-044 fixture path; the default
+  // demo serves the public synthetic organization through the live read path.
   const demoMode = !live && opts.demo !== false;
+  const demoOrganization = demoMode && !opts.teamFixtureDir
+    ? createDemoOrganization({ variant: opts.demoVariant || process.env.AWR_OBSERVER_DEMO_VARIANT || 'full' })
+    : null;
   const TEAM = {
     url: opts.teamUrl || null,
     live,
     demoMode,
+    demoOrganization,
     port: opts.port,
     fixtureDir:
       opts.teamFixtureDir ||
@@ -984,7 +1004,27 @@ function createTeamBridge(opts) {
   }
 
   async function proxyTeam(reqPath, req, body, methodOverride, signal) {
-    if (!TEAM.url) return null;
+    if (!TEAM.url) {
+      if (!TEAM.demoOrganization) return null;
+      if (reqPath === '/v1/web/session') {
+        return { status: 200, json: TEAM.demoOrganization.session(), setCookie: [] };
+      }
+      const match = /^\/v1\/web\/projects\/([^/]+)\/(query|directory\/read|connections\/list|connections\/revoke)$/.exec(reqPath);
+      if (!match) return { status: 404, json: { code: 'NotFound', message: 'not found' }, setCookie: [] };
+      let project;
+      try {
+        project = decodeURIComponent(match[1]);
+        if (match[2] === 'query') return TEAM.demoOrganization.upstream(project, body);
+        if (match[2] === 'directory/read') return TEAM.demoOrganization.directory(project);
+        if (match[2] === 'connections/list') return TEAM.demoOrganization.connections(project, body || {});
+        return TEAM.demoOrganization.revokeConnection(project, body || {});
+      } catch (error) {
+        if (Number.isInteger(error?.status) && typeof error?.code === 'string') {
+          return { status: error.status, json: { code: error.code, message: error.message }, setCookie: [] };
+        }
+        return { status: 400, json: { code: 'InvalidInput', message: 'invalid demo read' }, setCookie: [] };
+      }
+    }
     const method = methodOverride || req.method || 'GET';
     const headers = {
       'content-type': 'application/json',
@@ -1268,6 +1308,19 @@ function createTeamBridge(opts) {
       if (!TEAM.demoMode) {
         return { ok: false, error: { code: 'DemoDisabled', message: 'fixtures require demo mode' } };
       }
+      if (TEAM.demoOrganization) {
+        const session = teamAuth(req) || TEAM.demoOrganization.session();
+        return {
+          ok: true,
+          projects: TEAM.demoOrganization.projects().map((project) => ({
+            key: project.key,
+            title: project.title,
+            role: TEAM.demoOrganization.data.viewer.role,
+          })),
+          session,
+          view: 'team',
+        };
+      }
       const view = url.searchParams.get('view') === 'personal' ? 'personal-view.json' : 'team-view.json';
       const data = readFixture(view);
       const session =
@@ -1276,7 +1329,7 @@ function createTeamBridge(opts) {
     },
 
     'GET /api/team/overview': async (url, _body, req, res) => {
-      if (TEAM.live) {
+      if (TEAM.live || TEAM.demoOrganization) {
         const project = url.searchParams.get('project');
         if (!project) {
           return { ok: false, error: { code: 'InvalidInput', message: 'project required' },
@@ -1403,9 +1456,18 @@ function createTeamBridge(opts) {
           project,
           works,
           workstreams: streams.items.map(({ id, external_key, title }) => ({ id, external_key, title })),
-          members: [],
-          handoffs: [],
-          reviews: [],
+          members: TEAM.demoOrganization ? TEAM.demoOrganization.data.people
+            .filter((member) => TEAM.demoOrganization.data.projects.find((item) => item.key === project)
+              ?.member_person_ids.includes(member.person_id))
+            .map((member) => ({ person_id: member.person_id, display_name: member.display_name,
+              role: member.role, agents: member.agents.map((agent) => agent.client_name) })) : [],
+          handoffs: TEAM.demoOrganization ? TEAM.demoOrganization.data.handoffs
+            .filter((handoff) => handoff.project_id === project) : [],
+          reviews: TEAM.demoOrganization ? TEAM.demoOrganization.data.tasks
+            .filter((work) => work.project_id === project && work.delivery)
+            .flatMap((work) => work.delivery.rounds.map((round) => ({
+              round_id: round.round_id, work_key: work.work_id, status: round.state,
+            }))) : [],
           coverage: {
             scope: scopeCoverage,
             streams: parts,
@@ -1422,9 +1484,9 @@ function createTeamBridge(opts) {
               : { status: 'not_measured' },
             page_read: { status: 'measured', at_unix_ms: pageReadAt },
           },
-          schema: 'awr-team-web-loop-live/v1',
+          schema: TEAM.demoOrganization ? 'awr-observer-demo-organization/v1' : 'awr-team-web-loop-live/v1',
           interaction_mode: 'mcp',
-          mcp_url: publicUrl + '/v1/projects/' + encodeURIComponent(project) + '/mcp',
+          ...(TEAM.live ? { mcp_url: publicUrl + '/v1/projects/' + encodeURIComponent(project) + '/mcp' } : {}),
           view_modes: ['team'],
           session: {
             session_id: session.json && session.json.session_id,
@@ -1475,7 +1537,7 @@ function createTeamBridge(opts) {
       if (!project || project.length > 128 || [...url.searchParams.keys()].some((key) => key !== 'project')) {
         return { ok: false, error: { code: 'InvalidInput', message: 'One bounded project required' } };
       }
-      if (!TEAM.live) {
+      if (!TEAM.live && !TEAM.demoOrganization) {
         if (!TEAM.demoMode) return { ok: false, error: { code: 'DemoDisabled', message: 'fixtures require demo mode' } };
         const data = readFixture('team-view.json');
         if (!data.projects.some((item) => item.key === project)) {
@@ -1536,7 +1598,7 @@ function createTeamBridge(opts) {
     },
 
     'GET /api/team/inbox': async (url, _body, req, res) => {
-      if (!TEAM.live) return { ok: false, error: { code: 'Unsupported', message: 'Live Team coordination required' } };
+      if (!TEAM.live && !TEAM.demoOrganization) return { ok: false, error: { code: 'Unsupported', message: 'Live Team coordination required' } };
       const project = url.searchParams.get('project'), cursor = url.searchParams.get('cursor');
       if (!project || project.length > 128 || (cursor != null && (!cursor || cursor.length > 4096))
         || [...url.searchParams.keys()].some(k => !['project', 'cursor'].includes(k)))
@@ -1552,7 +1614,7 @@ function createTeamBridge(opts) {
     },
 
     'POST /api/team/inbox-detail': async (_url, body, req, res) => {
-      if (!TEAM.live) return { ok: false, error: { code: 'Unsupported', message: 'Live Team coordination required' } };
+      if (!TEAM.live && !TEAM.demoOrganization) return { ok: false, error: { code: 'Unsupported', message: 'Live Team coordination required' } };
       const input = asObject(body);
       if (!input || typeof input.project !== 'string' || !input.project || input.project.length > 128
         || !inboxSelector(input.query) || Object.keys(input).some(k => !['project', 'query'].includes(k)))
@@ -1666,13 +1728,13 @@ function createTeamBridge(opts) {
     },
 
     'POST /api/team/read': async (_url, body, req, res) => {
-      if (!TEAM.live) return { ok: false, error: { code: 'Unsupported', message: 'Live Team coordination required' } };
+      if (!TEAM.live && !TEAM.demoOrganization) return { ok: false, error: { code: 'Unsupported', message: 'Live Team coordination required' } };
       const input = asObject(body);
       if (!input || typeof input.project !== 'string' || !input.project || input.project.length > 128
         || Object.keys(input).some(k => !['project', 'query'].includes(k)))
         return { ok: false, error: { code: 'InvalidInput', message: 'Project and one bounded read query required' },
           freshness: unmeasuredFreshness(Date.now()) };
-      const checked = validateReadQuery(input.query);
+      const checked = validateReadQuery(input.query, TEAM.demoOrganization ? DEMO_FUTURE_READ_OPS : null);
       if (checked.error) return { ok: false, error: checked.error, freshness: unmeasuredFreshness(Date.now()) };
       // The upstream reauthorizes this read against the caller's own cookie
       // session; the adapter adds no identity and grants no authority itself.
@@ -1705,7 +1767,7 @@ function createTeamBridge(opts) {
   };
 
   async function workDetail(url, req, res) {
-    if (!TEAM.live) return { ok: false, error: { code: 'Unsupported', message: 'Live Team detail required' } };
+    if (!TEAM.live && !TEAM.demoOrganization) return { ok: false, error: { code: 'Unsupported', message: 'Live Team detail required' } };
     const project = url.searchParams.get('project');
     const work = url.searchParams.get('work');
     const stream = url.searchParams.get('workstream');
@@ -1817,7 +1879,7 @@ function createTeamBridge(opts) {
         || Object.keys(input).some((key) => key !== 'project')) {
         return { ok: false, error: { code: 'InvalidInput' } };
       }
-      if (!TEAM.live) return { ok: false, error: { code: 'Unsupported' } };
+      if (!TEAM.live && !TEAM.demoOrganization) return { ok: false, error: { code: 'Unsupported' } };
       const upstream = await proxyTeam(`/v1/web/projects/${encodeURIComponent(input.project)}/directory/read`, req,
         { protocol_version: 1 }, 'POST');
       if (upstream && [404, 405].includes(upstream.status)) return { ok: false, error: { code: 'Unsupported' } };
@@ -1844,7 +1906,7 @@ function createTeamBridge(opts) {
     },
 
     'GET /api/team/activity': async (url, _body, req, res) => {
-      if (!TEAM.live) return { ok: false, error: { code: 'Unsupported', message: 'Live Team audit required' } };
+      if (!TEAM.live && !TEAM.demoOrganization) return { ok: false, error: { code: 'Unsupported', message: 'Live Team audit required' } };
       const project = url.searchParams.get('project');
       const kind = url.searchParams.get('kind');
       if (!project || !['requests', 'development'].includes(kind)) {
@@ -1867,7 +1929,7 @@ function createTeamBridge(opts) {
         || Object.keys(parsed).some((key) => !['project', 'cursor', 'limit'].includes(key))) {
         return { ok: false, error: { code: 'InvalidInput' } };
       }
-      if (!TEAM.live) return { ok: false, error: { code: 'Unsupported' } };
+      if (!TEAM.live && !TEAM.demoOrganization) return { ok: false, error: { code: 'Unsupported' } };
       const { project, ...page } = parsed;
       const upstream = await proxyTeam(`/v1/web/projects/${encodeURIComponent(project)}/connections/list`, req,
         { protocol_version: 1, ...page }, 'POST');
@@ -1898,7 +1960,7 @@ function createTeamBridge(opts) {
         || Object.keys(parsed).some((key) => !['project', 'connection_id'].includes(key))) {
         return { ok: false, error: { code: 'InvalidInput' } };
       }
-      if (!TEAM.live) return { ok: false, error: { code: 'Unsupported' } };
+      if (!TEAM.live && !TEAM.demoOrganization) return { ok: false, error: { code: 'Unsupported' } };
       clearOverviewCache(req);
       const upstream = await proxyTeam(`/v1/web/projects/${encodeURIComponent(parsed.project)}/connections/revoke`, req,
         { protocol_version: 1, connection_id: parsed.connection_id }, 'POST');
@@ -2060,6 +2122,9 @@ function createTeamBridge(opts) {
 
       if (!TEAM.demoMode) {
         return { ok: false, error: { code: 'DemoDisabled', message: 'fixtures require demo mode' } };
+      }
+      if (TEAM.demoOrganization) {
+        return { ok: false, error: { code: 'Unsupported', message: 'The observation demo is read-only' } };
       }
 
       const allowed = new Set(Object.keys(ACTION_OP));
