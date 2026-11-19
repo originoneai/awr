@@ -1,4 +1,5 @@
 import type { PROJECT_DOCUMENT_STATUSES } from '../core/observation/types';
+import type { OverviewInput, OverviewPart, ReadCoverageReason } from '../core/overview/types';
 import type { PlaneState } from './contract';
 
 /** One freshness plane as the bridge reports it (see observation-contract). */
@@ -83,6 +84,32 @@ export interface TeamOverviewResponse {
   };
   mcp_url?: string;
   interaction_mode?: string;
+}
+
+export interface OverviewModelCoverageGap {
+  op: string;
+  reason: ReadCoverageReason;
+  work_id?: string;
+  workstream_id?: string;
+  error_code?: string;
+  next_cursor?: string | null;
+}
+
+export interface OverviewModelCoveragePart {
+  status: 'complete' | 'partial' | 'unread';
+  reason?: ReadCoverageReason;
+  missing: OverviewModelCoverageGap[];
+}
+
+/** One session-scoped composition, directly consumable by deriveOverview. */
+export interface TeamOverviewModelResponse {
+  ok: true;
+  project: string;
+  read_at_unix_ms: number;
+  input: OverviewInput;
+  coverage: Record<OverviewPart, OverviewModelCoveragePart>;
+  freshness: TeamFreshness;
+  ordering?: 'incomparable';
 }
 
 export type TeamIdentity = NonNullable<TeamOverviewResponse['identity']>;
