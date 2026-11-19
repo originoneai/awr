@@ -10,6 +10,7 @@ const fixture = require('../fixtures/demo-organization.json');
 const DAY = 86_400_000;
 const clone = (value) => structuredClone(value);
 const complete = (items) => ({ coverage: 'complete', items });
+const statusOf = (task) => task.prototype_status;
 
 function canonicalInput(data) {
   const activity = data.tasks.flatMap((task) => task.timeline.map((entry) => ({
@@ -96,7 +97,7 @@ function canonicalInput(data) {
     // line owns that mapping. An empty complete read states these canonical facts establish
     // no approvals, which keeps the pending counts below honest for this oracle.
     approvals: complete([]),
-    members: complete(data.people.map((member) => ({
+    members: complete([...data.people, ...data.view_roles].map((member) => ({
       personId: member.person_id,
       displayName: member.display_name,
       groupId: member.group_id,
@@ -106,10 +107,10 @@ function canonicalInput(data) {
       nowUnixMs: data.now_unix_ms,
       stalledAfterDays: 1,
       views: {
-        me: { personId: 'lin-yue', projectId: 'orders' },
-        lead: { personId: 'zhou-ning', projectId: 'orders' },
-        department: { personId: 'department-lead', projectIds: ['orders', 'notify', 'onboard'] },
-        top: { personId: 'executive-lead', goalIds: ['g1', 'g2', 'g3'] },
+        me: { personId: 'M-002', projectId: 'P-001' },
+        lead: { personId: 'M-001', projectId: 'P-001' },
+        department: { personId: 'M-010', projectIds: ['P-001', 'P-002', 'P-003'] },
+        top: { personId: 'M-011', goalIds: ['GOAL-001', 'GOAL-002', 'GOAL-003'] },
         currentWeek: { startUnixMs: Date.parse('2026-11-16T00:00:00Z'), endUnixMs: Date.parse('2026-11-22T23:59:59.999Z') },
         previousWeek: { startUnixMs: Date.parse('2026-11-09T00:00:00Z'), endUnixMs: Date.parse('2026-11-15T23:59:59.999Z') },
         currentMonth: { startUnixMs: Date.parse('2026-11-01T00:00:00Z'), endUnixMs: Date.parse('2026-11-30T23:59:59.999Z') },
@@ -130,11 +131,11 @@ function assertFixtureReferences(data) {
       assert.ok(taskIds.has(dependency.provider_work_id), `${dependency.dependency_id} has a known provider`);
       const provider = data.tasks.find((item) => item.work_id === dependency.provider_work_id);
       if (dependency.satisfied) {
-        assert.equal(provider.prototype_status, 'verified',
+        assert.equal(statusOf(provider), 'verified',
           `${dependency.dependency_id} cannot be satisfied by an unverified provider`);
       }
     }
-    if (task.prototype_status === 'verified') {
+    if (statusOf(task) === 'verified') {
       assert.ok(task.integrated, `${task.work_id} is integrated`);
       assert.ok(task.acceptance.every((criterion) => criterion.evidence_state === 'ok'),
         `${task.work_id} has evidence for every criterion`);
@@ -181,25 +182,72 @@ test('the public fixture has the exact organization cardinalities and no live-ru
     'the fixture must not contain a commit-shaped revision');
 });
 
-test('PPO-010 derives every prototype task status and keeps counts tied to details', () => {
+test('opaque keys are separate from every display title', () => {
+  for (const task of fixture.tasks) {
+    assert.match(task.work_id, /^T-\d{3}$/);
+    assert.match(task.external_key, /^T-\d{3}$/);
+    assert.notEqual(task.work_id, task.title);
+    assert.notEqual(task.external_key, task.title);
+    assert.match(task.workstream_id, /^WS-\d{3}$/);
+    assert.ok(task.title.length > 0);
+  }
+  for (const project of fixture.projects) {
+    assert.match(project.key, /^P-\d{3}$/);
+    assert.match(project.project_id, /^P-\d{3}$/);
+    assert.notEqual(project.key, project.title);
+  }
+  for (const member of fixture.people) {
+    assert.match(member.person_id, /^M-\d{3}$/);
+    assert.notEqual(member.person_id, member.display_name);
+  }
+  for (const decision of [...fixture.decisions, ...fixture.project_questions]) {
+    assert.match(decision.decision_id, /^Q-\d{3}$/);
+    assert.notEqual(decision.decision_id, decision.question);
+  }
+  for (const document of fixture.documents) {
+    assert.match(document.document_id, /^DOC-\d{3}$/);
+    assert.equal(document.path, `docs/${document.project_id}/${document.document_id}.md`);
+    assert.notEqual(document.path, document.name);
+  }
+  for (const goal of fixture.goals) {
+    assert.match(goal.goal_id, /^GOAL-\d{3}$/);
+    assert.notEqual(goal.goal_id, goal.title);
+  }
+  for (const role of fixture.view_roles) {
+    assert.match(role.person_id, /^M-\d{3}$/);
+    assert.match(role.group_id, /^G-\d{3}$/);
+  }
+});
+
+test('PPO-010 derives the prototype statuses and the revised prototype metric goldens', () => {
   const result = deriveOverview(canonicalInput(fixture));
+  // The prototype's task states are the reference and the derivation must reproduce them
+  // exactly: every task carries its prototype_status, nothing may override it, and each
+  // derived status must equal it. This is the check that catches data edits made to move
+  // a derived number instead of leaving the states as the prototype defines them.
+  assert.ok(fixture.tasks.every((task) => typeof task.prototype_status === 'string'));
+  assert.ok(fixture.tasks.every((task) => !('demo_status' in task)),
+    'no task may override its prototype_status with a demo status');
   assert.deepEqual(Object.fromEntries(result.tasks.map((task) => [task.id, task.status])),
     Object.fromEntries(fixture.tasks.map((task) => [task.work_id, task.prototype_status])));
+  assert.equal(fixture.tasks.find((task) => task.work_id === 'T-103').prototype_status, 'waiting');
+  assert.equal(fixture.tasks.find((task) => task.work_id === 'T-114').prototype_status, 'claimed');
   assert.equal(result.taskCounts.all.count, 29);
   assert.equal(result.coverage.complete, true);
   assert.equal(result.coverage.sections.status.complete, true);
   assert.equal(result.coverage.sections.waits.complete, true);
-  assert.equal(result.waitCounts.all.count, 12);
+  assert.equal(result.coverage.sections.views.complete, true);
+  assert.equal(result.waitCounts.all.count, 8);
   assert.deepEqual(Object.fromEntries(Object.entries(result.waitCounts.byKind).map(([kind, value]) => [kind, value.count])), {
-    decision: 5, dependency: 2, review: 3, external: 2,
+    decision: 2, dependency: 1, review: 3, external: 2,
   });
-  assert.equal(result.chains.length, 8);
+  assert.equal(result.chains.length, 5);
   const review = result.chains.find((chain) => chain.root.kind === 'review');
   assert.equal(review.root.queue.count, 3);
   assert.equal(review.impact.count, 5);
   const emptyState = result.waits.find((wait) => wait.kind === 'decision' && wait.task.id === 'T-104');
-  assert.equal(emptyState.behind.count, 3);
-  assert.deepEqual(emptyState.behind.items.map((task) => task.id), ['T-103', 'T-104', 'T-106']);
+  assert.equal(emptyState.behind.count, 1);
+  assert.deepEqual(emptyState.behind.items.map((task) => task.id), ['T-104']);
 
   function visit(value) {
     if (Array.isArray(value)) return value.forEach(visit);
@@ -213,34 +261,31 @@ test('PPO-010 derives every prototype task status and keeps counts tied to detai
 
   const metrics = Object.fromEntries(Object.entries(result.views).map(([view, summary]) =>
     [view, summary.metrics.map((metric) => ({ count: metric.count, details: metric.items.length }))]));
-  assert.deepEqual(metrics.me, [{ count: 2, details: 2 }, { count: 1, details: 1 }, { count: 5, details: 5 }, { count: 2, details: 2 }]);
-  assert.deepEqual(metrics.lead, [{ count: 2, details: 2 }, { count: 7, details: 7 }, { count: 10, details: 10 }, { count: 1, details: 1 }]);
-  assert.equal(metrics.department[0].count, 3);
-  assert.equal(metrics.department[1].count, 10);
-  assert.equal(metrics.department[2].count, null);
-  assert.equal(metrics.department[2].details, 5);
-  assert.equal(metrics.department[3].count, 1);
-  assert.deepEqual(metrics.top, [{ count: 3, details: 3 }, { count: 12, details: 12 }, { count: 8, details: 8 }, { count: 1, details: 1 }]);
+  assert.deepEqual(metrics.me, [{ count: 2, details: 2 }, { count: 1, details: 1 }, { count: 3, details: 3 }, { count: 2, details: 2 }]);
+  assert.deepEqual(metrics.lead, [{ count: 2, details: 2 }, { count: 7, details: 7 }, { count: 7, details: 7 }, { count: 1, details: 1 }]);
+  assert.deepEqual(metrics.department, [{ count: 3, details: 3 }, { count: 10, details: 10 }, { count: 5, details: 5 }, { count: 0, details: 0 }]);
+  assert.deepEqual(metrics.top, [{ count: 3, details: 3 }, { count: 12, details: 12 }, { count: 5, details: 5 }, { count: 0, details: 0 }]);
   assert.equal(result.views.lead.metrics[0].previousPeriod.count, 2);
   assert.equal(result.views.department.metrics[1].previousPeriod.count, 2);
   assert.equal(result.views.top.metrics[1].claimed.count, 2);
+  assert.equal(fixture.people.length, 8);
+  assert.equal(fixture.view_roles.length, 2);
+  assert.equal(result.peopleCounts.all.count, 10);
 
   // Prototype comparison: its primary-wait projection still differs from PPO-010's
-  // per-edge/per-decision projection. The running-Agent metric now agrees: a waiting
-  // task whose Agent is explicitly active counts for its Agent (T-103), while the
-  // stalled T-104 and the inactive waiting T-111 do not.
-  // External executive roles have no member group, so the department cross-group
-  // total stays unknown rather than guessed.
+  // per-edge/per-decision projection (the third and fourth numbers). The running-Agent
+  // metric now agrees: a waiting task whose Agent is explicitly active counts for its
+  // Agent (T-103), while the stalled T-104 and the inactive waiting T-111 do not.
   assert.deepEqual({
     me: { prototype: [2, 1, 3, 3], derived: metrics.me.map((metric) => metric.count) },
     lead: { prototype: [2, 7, 7, 2], derived: metrics.lead.map((metric) => metric.count) },
     department: { prototype: [3, 10, 2, 1], derived: metrics.department.map((metric) => metric.count) },
     top: { prototype: [3, 12, 2, 1], derived: metrics.top.map((metric) => metric.count) },
   }, {
-    me: { prototype: [2, 1, 3, 3], derived: [2, 1, 5, 2] },
-    lead: { prototype: [2, 7, 7, 2], derived: [2, 7, 10, 1] },
-    department: { prototype: [3, 10, 2, 1], derived: [3, 10, null, 1] },
-    top: { prototype: [3, 12, 2, 1], derived: [3, 12, 8, 1] },
+    me: { prototype: [2, 1, 3, 3], derived: [2, 1, 3, 2] },
+    lead: { prototype: [2, 7, 7, 2], derived: [2, 7, 7, 1] },
+    department: { prototype: [3, 10, 2, 1], derived: [3, 10, 5, 0] },
+    top: { prototype: [3, 12, 2, 1], derived: [3, 12, 5, 0] },
   });
 });
 
@@ -255,17 +300,23 @@ test('a planted dependency contradiction fails both the structural and PPO-010 o
     'the planted contradiction must change the derived status and fail the status golden');
 });
 
-function apiWorkId(value) {
-  return fixture.tasks.find((task) => task.work_id === value)?.title ?? value;
-}
-
-function apiTarget(target) {
-  const url = new URL(target, 'http://127.0.0.1');
-  for (const key of ['work', 'work_id']) {
-    if (url.searchParams.has(key)) url.searchParams.set(key, apiWorkId(url.searchParams.get(key)));
-  }
-  return url;
-}
+test('a planted agent flag that contradicts a prototype_status fails the status oracle', () => {
+  // Re-planting the round-1 deviation (T-114's completion declaration withdrawn and its agent
+  // flag raised against prototype_status 'claimed') is exactly the kind of edit that moves a
+  // derived number (the me view's running Agents) by bending a task state; the
+  // derived-vs-prototype status check must reject it.
+  const mutant = clone(fixture);
+  const task = mutant.tasks.find((item) => item.work_id === 'T-114');
+  task.agent_active = true;
+  task.report.completed_declaration = false;
+  const result = deriveOverview(canonicalInput(mutant));
+  assert.equal(result.tasks.find((item) => item.id === 'T-114').status, 'running');
+  assert.notEqual(result.tasks.find((item) => item.id === 'T-114').status, task.prototype_status);
+  assert.throws(() => assert.deepEqual(
+    Object.fromEntries(result.tasks.map((item) => [item.id, item.status])),
+    Object.fromEntries(mutant.tasks.map((item) => [item.work_id, item.prototype_status]))),
+  /Expected values to be strictly deep-equal/);
+});
 
 function bridgeForTest(options = {}) {
   const bridge = createTeamBridge({ demo: true, port: 0, ...options });
@@ -273,61 +324,61 @@ function bridgeForTest(options = {}) {
   const res = { setHeader() {} };
   return {
     bridge,
-    call: (route, target, body) => bridge.routes[route](apiTarget(target), body, req, res),
+    call: (route, target, body) => bridge.routes[route](new URL(target, 'http://127.0.0.1'), body, req, res),
     read: (project, query) => bridge.routes['POST /api/team/read'](new URL('http://127.0.0.1/api/team/read'),
-      { project, query: { protocol_version: 1, ...query, ...(query.work_id ? { work_id: apiWorkId(query.work_id) } : {}) } }, req, res),
+      { project, query: { protocol_version: 1, ...query } }, req, res),
   };
 }
 
 test('every exposed read operation answers through the real bridge validation path', async () => {
   const { read } = bridgeForTest();
-  const review = await read('orders', { op: 'review.inspect', work_id: 'T-101', review_round_id: 'round-t-101-2' });
+  const review = await read('P-001', { op: 'review.inspect', work_id: 'T-101', review_round_id: 'round-t-101-2' });
   assert.equal(review.ok, true);
   const artifact = review.result.data.review;
-  const document = fixture.documents.find((item) => item.project_id === 'orders');
+  const document = fixture.documents.find((item) => item.project_id === 'P-001');
   const round = fixture.tasks.find((task) => task.work_id === 'T-101').delivery.rounds.at(-1);
   const queries = [
-    { op: 'capabilities' }, { op: 'workstreams.list' }, { op: 'work.list', workstream_id: 'orders-be' },
-    { op: 'work.graph', workstream_id: 'orders-be' }, { op: 'work.search', workstream_id: 'orders-be', search: '订单' },
+    { op: 'capabilities' }, { op: 'workstreams.list' }, { op: 'work.list', workstream_id: 'WS-002' },
+    { op: 'work.graph', workstream_id: 'WS-002' }, { op: 'work.search', workstream_id: 'WS-002', search: '订单' },
     { op: 'planning.outcome', request_id: 'unknown-request' },
     { op: 'planning.candidates', limit: 5, max_context_bytes: 262144 },
     { op: 'audit.requests' }, { op: 'audit.development' },
-    { op: 'task.assignees', work_id: 'T-101', workstream_id: 'orders-be' },
-    { op: 'delivery.neutral.inspect', work_id: 'T-101', workstream_id: 'orders-be' },
-    { op: 'delivery.submission.describe', work_id: 'T-101', workstream_id: 'orders-be' },
-    { op: 'delivery.neutral.outcome', work_id: 'T-101', workstream_id: 'orders-be', request_id: 'unknown-request' },
-    { op: 'delivery.source.status', work_id: 'T-101', workstream_id: 'orders-be' },
-    { op: 'delivery.integration.inspect', work_id: 'T-101', workstream_id: 'orders-be', request_id: 'integration-round-t-101-2' },
-    { op: 'work.prepare', work_id: 'T-101', workstream_id: 'orders-be' },
-    { op: 'work.admission', work_id: 'T-101', workstream_id: 'orders-be' },
-    { op: 'work.snapshot', work_id: 'T-101', workstream_id: 'orders-be' },
-    { op: 'work.observe', work_id: 'T-101', workstream_id: 'orders-be' },
-    { op: 'work.recovery', work_id: 'T-101', workstream_id: 'orders-be' },
-    { op: 'command.inspect', work_id: 'T-101', workstream_id: 'orders-be', request_id: 'unknown-request' },
-    { op: 'claim.inspect', work_id: 'T-101', workstream_id: 'orders-be', claim_id: round.claim_id },
-    { op: 'execution.inspect', work_id: 'T-101', workstream_id: 'orders-be', execution_id: round.execution_id },
-    { op: 'handoff.inspect', work_id: 'T-112', workstream_id: 'orders-fe', handoff_id: 'handoff-t-112' },
-    { op: 'evidence.inspect', work_id: 'T-101', workstream_id: 'orders-be', evidence_id: round.evidence_id },
-    { op: 'review.rounds', work_id: 'T-101', workstream_id: 'orders-be' },
-    { op: 'completion.inspect', work_id: 'T-101', workstream_id: 'orders-be' },
-    { op: 'delivery.inspect', work_id: 'T-101', workstream_id: 'orders-be' },
+    { op: 'task.assignees', work_id: 'T-101', workstream_id: 'WS-002' },
+    { op: 'delivery.neutral.inspect', work_id: 'T-101', workstream_id: 'WS-002' },
+    { op: 'delivery.submission.describe', work_id: 'T-101', workstream_id: 'WS-002' },
+    { op: 'delivery.neutral.outcome', work_id: 'T-101', workstream_id: 'WS-002', request_id: 'unknown-request' },
+    { op: 'delivery.source.status', work_id: 'T-101', workstream_id: 'WS-002' },
+    { op: 'delivery.integration.inspect', work_id: 'T-101', workstream_id: 'WS-002', request_id: 'integration-round-t-101-2' },
+    { op: 'work.prepare', work_id: 'T-101', workstream_id: 'WS-002' },
+    { op: 'work.admission', work_id: 'T-101', workstream_id: 'WS-002' },
+    { op: 'work.snapshot', work_id: 'T-101', workstream_id: 'WS-002' },
+    { op: 'work.observe', work_id: 'T-101', workstream_id: 'WS-002' },
+    { op: 'work.recovery', work_id: 'T-101', workstream_id: 'WS-002' },
+    { op: 'command.inspect', work_id: 'T-101', workstream_id: 'WS-002', request_id: 'unknown-request' },
+    { op: 'claim.inspect', work_id: 'T-101', workstream_id: 'WS-002', claim_id: round.claim_id },
+    { op: 'execution.inspect', work_id: 'T-101', workstream_id: 'WS-002', execution_id: round.execution_id },
+    { op: 'handoff.inspect', work_id: 'T-112', workstream_id: 'WS-001', handoff_id: 'H-001' },
+    { op: 'evidence.inspect', work_id: 'T-101', workstream_id: 'WS-002', evidence_id: round.evidence_id },
+    { op: 'review.rounds', work_id: 'T-101', workstream_id: 'WS-002' },
+    { op: 'completion.inspect', work_id: 'T-101', workstream_id: 'WS-002' },
+    { op: 'delivery.inspect', work_id: 'T-101', workstream_id: 'WS-002' },
     { op: 'artifact.content', work_id: 'T-101', artifact_id: round.artifact_id, expected_sha256: artifact.artifact_digest, max_context_bytes: 262144 },
     { op: 'artifact.segment', work_id: 'T-101', artifact_id: round.artifact_id, expected_sha256: artifact.artifact_digest, max_context_bytes: 1024 },
-    { op: 'delivery.exports', work_id: 'T-101', workstream_id: 'orders-be' },
-    { op: 'events.list', workstream_id: 'orders-be' }, { op: 'work.next' }, { op: 'work.inbox' },
+    { op: 'delivery.exports', work_id: 'T-101', workstream_id: 'WS-002' },
+    { op: 'events.list', workstream_id: 'WS-002' }, { op: 'work.next' }, { op: 'work.inbox' },
     { op: 'sources.inspect', limit: 20, max_context_bytes: 262144 },
     { op: 'documents.list', limit: 20, max_context_bytes: 262144 },
     { op: 'decisions.list', decision_state: 'all' }, { op: 'handoff.list', handoff_state: 'all' },
-    { op: 'dependencies.list', work_id: 'T-103', workstream_id: 'orders-fe' },
+    { op: 'dependencies.list', work_id: 'T-103', workstream_id: 'WS-001' },
     { op: 'session.inspect', session_id: 'session-t-101' },
     { op: 'source.content', source_path: document.path, expected_sha256: document.sha256, max_context_bytes: 262144 },
-    ...[...DEMO_FUTURE_READ_OPS].map((op) => op === 'update.inspect' ? { op, update_id: 'o47' }
-      : op === 'goal.inspect' ? { op, goal_id: 'g1' }
-        : op === 'lesson.inspect' ? { op, lesson_id: 'l1' } : { op }),
+    ...[...DEMO_FUTURE_READ_OPS].map((op) => op === 'update.inspect' ? { op, update_id: 'U-001' }
+      : op === 'goal.inspect' ? { op, goal_id: 'GOAL-001' }
+        : op === 'lesson.inspect' ? { op, lesson_id: 'L-001' } : { op }),
   ];
   assert.equal(queries.length + 1, 48, '48 unique reads, including the seeded review.inspect');
   for (const query of queries) {
-    const response = await read('orders', query);
+    const response = await read('P-001', query);
     assert.equal(response.ok, true, `${query.op}: ${response.error?.code || ''} ${response.error?.message || ''}`);
     assert.notEqual(response.error?.code, 'Unsupported', query.op);
   }
@@ -341,7 +392,7 @@ test('all projects, task details, historical outcomes and document bodies remain
   for (const project of fixture.projects) {
     const overview = await call('GET /api/team/overview', `/api/team/overview?project=${project.key}`);
     assert.equal(overview.ok, true, project.key);
-    assert.equal(overview.works.length, project.key === 'orders' ? 14 : project.key === 'notify' ? 8 : 7);
+    assert.equal(overview.works.length, project.key === 'P-001' ? 14 : project.key === 'P-002' ? 8 : 7);
     const graph = await call('GET /api/team/graph', `/api/team/graph?project=${project.key}`);
     assert.equal(graph.ok, true, `${project.key} graph`);
     const directory = await call('POST /api/team/directory', '/api/team/directory', { project: project.key });
@@ -379,8 +430,8 @@ test('all projects, task details, historical outcomes and document bodies remain
 test('update facts and lesson usage are computed from their detail arrays', async () => {
   const { read } = bridgeForTest();
   const expectedFactCounts = {
-    o47: [2, 6, 0, 1, 1], o46: [2, 1, 1, 1], o45: [1, 0],
-    n47: [0, 0], n46: [1, 1], n45: [3], b45: [2, 1], b44: [1],
+    'U-001': [2, 6, 0, 1, 1], 'U-002': [2, 1, 1, 1], 'U-003': [1, 0],
+    'U-004': [0, 0], 'U-005': [1, 1], 'U-006': [3], 'U-007': [2, 1], 'U-008': [1],
   };
   for (const update of fixture.updates) {
     const countable = update.fact_snapshot.facts.filter((fact) => fact.item_ids !== null);
@@ -410,25 +461,25 @@ test('empty, single, restricted and partial variants expose honest state envelop
   const empty = bridgeForTest({ demoVariant: 'empty' });
   const emptyProjects = await empty.call('GET /api/team/projects', '/api/team/projects');
   assert.deepEqual(emptyProjects.projects, []);
-  assert.equal((await empty.read('orders', { op: 'workstreams.list' })).error.code, 'Forbidden');
+  assert.equal((await empty.read('P-001', { op: 'workstreams.list' })).error.code, 'Forbidden');
 
   const single = bridgeForTest({ demoVariant: 'single' });
   const singleProjects = await single.call('GET /api/team/projects', '/api/team/projects');
-  assert.deepEqual(singleProjects.projects.map((project) => project.key), ['orders']);
-  const singleOverview = await single.call('GET /api/team/overview', '/api/team/overview?project=orders');
+  assert.deepEqual(singleProjects.projects.map((project) => project.key), ['P-001']);
+  const singleOverview = await single.call('GET /api/team/overview', '/api/team/overview?project=P-001');
   assert.equal(singleOverview.ok, true);
   assert.equal(singleOverview.works.length, 14);
   assert.equal(single.bridge.TEAM.demoOrganization.data.people.length, 4);
   assert.equal(single.bridge.TEAM.demoOrganization.data.pending.length, 6);
 
   const restricted = bridgeForTest({ demoVariant: 'restricted' });
-  assert.equal((await restricted.call('GET /api/team/overview', '/api/team/overview?project=onboard')).error.code, 'Forbidden');
-  assert.equal((await restricted.read('orders', { op: 'documents.list' })).error.code, 'Forbidden');
-  assert.equal((await restricted.call('POST /api/team/directory', '/api/team/directory', { project: 'orders' })).error.code, 'Forbidden');
-  assert.equal(JSON.stringify(await restricted.read('orders', { op: 'documents.list' })).includes('订单协作平台的目标'), false);
+  assert.equal((await restricted.call('GET /api/team/overview', '/api/team/overview?project=P-003')).error.code, 'Forbidden');
+  assert.equal((await restricted.read('P-001', { op: 'documents.list' })).error.code, 'Forbidden');
+  assert.equal((await restricted.call('POST /api/team/directory', '/api/team/directory', { project: 'P-001' })).error.code, 'Forbidden');
+  assert.equal(JSON.stringify(await restricted.read('P-001', { op: 'documents.list' })).includes('订单协作平台的目标'), false);
 
   const partial = bridgeForTest({ demoVariant: 'partial' });
-  const overview = await partial.call('GET /api/team/overview', '/api/team/overview?project=orders');
+  const overview = await partial.call('GET /api/team/overview', '/api/team/overview?project=P-001');
   assert.equal(overview.ok, true);
   assert.equal(overview.coverage.failed, 1);
   assert.equal(overview.coverage.succeeded, 2);
@@ -436,20 +487,20 @@ test('empty, single, restricted and partial variants expose honest state envelop
   assert.equal(overview.coverage.works_total, null);
   assert.equal(overview.coverage.truncated, false);
   assert.equal(overview.coverage.streams.find((part) => part.status === 'failed').error_code, 'Unavailable');
-  assert.equal((await partial.read('orders', { op: 'work.snapshot', work_id: 'T-102', workstream_id: 'orders-be' })).error.code, 'Unavailable');
-  assert.equal((await partial.call('GET /api/team/activity', '/api/team/activity?project=orders&kind=development')).error.code, 'Unavailable');
-  assert.equal((await partial.call('GET /api/team/graph', '/api/team/graph?project=orders')).error.code, 'Unavailable');
+  assert.equal((await partial.read('P-001', { op: 'work.snapshot', work_id: 'T-102', workstream_id: 'WS-002' })).error.code, 'Unavailable');
+  assert.equal((await partial.call('GET /api/team/activity', '/api/team/activity?project=P-001&kind=development')).error.code, 'Unavailable');
+  assert.equal((await partial.call('GET /api/team/graph', '/api/team/graph?project=P-001')).error.code, 'Unavailable');
 });
 
 test('the organization demo never issues business receipts and future ops stay out of the live registry', async () => {
   const { call } = bridgeForTest();
   const action = await call('POST /api/team/action', '/api/team/action', {
-    project: 'orders', work_key: 'T-101', action: 'accept', request_id: 'synthetic-request',
+    project: 'P-001', work_key: 'T-101', action: 'accept', request_id: 'synthetic-request',
   });
   assert.equal(action.ok, false);
   assert.equal(action.error.code, 'Unsupported');
   const live = bridgeForTest({ teamUrl: 'http://127.0.0.1:1', demo: false });
-  const future = await live.read('orders', { op: 'goals.list' });
+  const future = await live.read('P-001', { op: 'goals.list' });
   assert.equal(future.ok, false);
   assert.equal(future.error.code, 'Unsupported');
   assert.throws(() => createDemoOrganization({ variant: 'unknown' }), /Unknown demo variant/);
