@@ -73,6 +73,10 @@ describe('shared compact viewport breakpoint', () => {
       'src/components/display/DataTable.tsx',
       'src/components/display/PageHeader.tsx',
       'src/components/display/DetailPanel.tsx',
+      'src/components/display/KpiStrip.tsx',
+      'src/components/display/CompletionBar.tsx',
+      'src/components/display/Chain.tsx',
+      'src/components/display/TodoRail.tsx',
       'src/components/display/catalog/ComponentCatalog.tsx',
     ]) {
       const source = read(relative);

@@ -9,10 +9,18 @@ const observerRoot = path.resolve(here, '../../../..');
 interface OutputFile {
   type: string;
   fileName: string;
+  code?: string;
+  source?: string;
 }
 
 interface BuildOutput {
   output: OutputFile[];
+}
+
+function buildText(files: OutputFile[]): string {
+  return files
+    .map((file) => (file.type === 'chunk' ? file.code ?? '' : typeof file.source === 'string' ? file.source : ''))
+    .join('\n');
 }
 
 it('builds the development catalog and every statically imported example in CI', async () => {
@@ -29,4 +37,7 @@ it('builds the development catalog and every statically imported example in CI',
   expect(files.some((file) => file.type === 'asset' && file.fileName.endsWith('.html'))).toBe(true);
   expect(files.some((file) => file.type === 'chunk' && file.fileName.endsWith('.js'))).toBe(true);
   expect(files.some((file) => file.type === 'asset' && file.fileName.endsWith('.css'))).toBe(true);
+  // The catalog build must actually carry the catalog-only copy; this also proves the
+  // marker strings used by catalog-isolation.test are detectable in bundle text.
+  expect(buildText(files)).toContain('组件目录');
 }, 60_000);
