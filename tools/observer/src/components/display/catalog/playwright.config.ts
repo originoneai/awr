@@ -4,7 +4,7 @@ const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
 
 export default defineConfig({
   testDir: '.',
-  testMatch: 'catalog.visual.spec.ts',
+  testMatch: /catalog\.(visual|metrics)\.spec\.ts/,
   fullyParallel: false,
   workers: 1,
   reporter: 'list',

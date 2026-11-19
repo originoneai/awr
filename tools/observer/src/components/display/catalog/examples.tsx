@@ -16,6 +16,7 @@ import { Timeline } from '../Timeline';
 export const CATALOG_COMPONENTS = [
   'section',
   'pageHeader',
+  'pageHeaderCompact',
   'notice',
   'empty',
   'keyValue',
@@ -96,6 +97,18 @@ function DataTableExample() {
       cells: [titles[2], t('display.catalog.examples.tableOwnerThree'), t('display.catalog.examples.tableUpdatedThree')],
     },
   ];
+  // The read-only companion table has no openable row, so it renders no arrow column and its
+  // last data column carries the outer cell inset (measured by catalog.metrics.spec.ts).
+  const referenceRows: DataTableRow[] = [
+    {
+      key: 'conclusion',
+      cells: [t('display.catalog.examples.tableStaticFirst'), t('display.catalog.examples.tableOwnerOne'), t('display.catalog.examples.tableUpdatedOne')],
+    },
+    {
+      key: 'archive',
+      cells: [t('display.catalog.examples.tableStaticSecond'), t('display.catalog.examples.tableOwnerTwo'), t('display.catalog.examples.tableUpdatedTwo')],
+    },
+  ];
   return (
     <>
       <Section
@@ -110,6 +123,16 @@ function DataTableExample() {
             { key: 'updated', title: t('display.catalog.examples.tableUpdated'), hideOnSmall: true },
           ]}
           rows={rows}
+        />
+      </Section>
+      <Section title={t('display.catalog.examples.tableStaticSection')}>
+        <DataTable
+          columns={[
+            { key: 'work', title: t('display.catalog.examples.tableTask'), width: '52%' },
+            { key: 'owner', title: t('display.catalog.examples.tableOwner') },
+            { key: 'updated', title: t('display.catalog.examples.tableUpdated'), hideOnSmall: true },
+          ]}
+          rows={referenceRows}
         />
       </Section>
       {opened ? <Notice>{t('display.catalog.examples.tableOpened', { title: opened })}</Notice> : null}
@@ -152,6 +175,15 @@ export function useCatalogExamples(): CatalogExample[] {
           )}
           actions={<a className="obs-catalog-link" href="?component=dataTable">{text('headerAction')}</a>}
           onBack={() => window.history.back()}
+        />
+      ),
+    },
+    {
+      id: 'pageHeaderCompact',
+      render: () => (
+        <PageHeader
+          title={text('listTitle')}
+          subtitle={text('listSubtitle')}
         />
       ),
     },

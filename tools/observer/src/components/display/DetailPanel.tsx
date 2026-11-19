@@ -1,7 +1,8 @@
-import { Grid, Tabs } from 'antd';
+import { Tabs } from 'antd';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useCompactViewport } from '../../lib/viewport';
 import './display.css';
 
 export interface DetailPanelTab {
@@ -23,7 +24,7 @@ export interface DetailPanelProps {
 /** The panel owns tab composition; each tab owns only its content and optional footer. */
 export function DetailPanel({ tabs, activeKey, defaultActiveKey, onChange, extra }: DetailPanelProps) {
   const { t } = useTranslation();
-  const compactViewport = !(Grid.useBreakpoint().md ?? true);
+  const compactViewport = useCompactViewport();
   const [internalKey, setInternalKey] = useState(defaultActiveKey ?? tabs[0]?.key);
   const selectedKey = activeKey ?? internalKey;
   const activeTab = tabs.find((tab) => tab.key === selectedKey) ?? tabs[0];

@@ -1,6 +1,6 @@
-import { Grid } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { Link, Navigate, useParams } from 'react-router';
+import { useCompactViewport } from '../../../lib/viewport';
 import { CATALOG_COMPONENTS, useCatalogExamples, type CatalogComponent } from './examples';
 import './catalog.css';
 
@@ -12,7 +12,7 @@ function isCatalogComponent(value: string | undefined): value is CatalogComponen
 export function ComponentCatalog() {
   const { t } = useTranslation();
   const { component } = useParams();
-  const compactViewport = !(Grid.useBreakpoint().md ?? true);
+  const compactViewport = useCompactViewport();
   const examples = useCatalogExamples();
   if (!isCatalogComponent(component)) return <Navigate to={`/dev/components/${CATALOG_COMPONENTS[0]}`} replace />;
   const example = examples.find((candidate) => candidate.id === component)!;

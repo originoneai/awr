@@ -122,6 +122,33 @@ describe('design-token and product-language source guards', () => {
     expect(focusRule?.[0]).toContain('outline: var(--ant-control-outline-width) solid var(--craft-color-accent)');
   });
 
+  it('sources every named craft typography and measure token and drops the replaced compositions', () => {
+    const styles = readFileSync(path.join(DISPLAY_ROOT, 'display.css'), 'utf8');
+    const namedTokens = [
+      '--craft-text-small',
+      '--craft-text-title',
+      '--craft-leading-tight',
+      '--craft-leading-body',
+      '--craft-leading-title',
+      '--craft-leading-hero',
+      '--craft-measure-summary',
+    ];
+    const unused = namedTokens.filter((token) => !styles.includes(`var(${token})`));
+    expect(unused, 'tokens missing from display.css').toEqual([]);
+    // These antd values were wrong for line-height/header height (review items 2 and 3) and may not return.
+    expect(styles).not.toContain('--ant-control-height-xs');
+    expect(styles).not.toContain('--ant-control-height-lg');
+    expect(styles).not.toContain('--ant-font-size-heading-4');
+    // The static-row control must stay border-box so width: 100% cannot overflow its row (review item 4).
+    const controlRule = styles.match(/\.obs-row-control\s*\{[^}]+\}/);
+    expect(controlRule?.[0]).toContain('box-sizing: border-box');
+    // The first/last cell inset must outrank the antd cell base padding (review item 1).
+    expect(styles).toContain('.obs-data-table :is(.ant-table-thead > tr > th, .ant-table-tbody > tr > td):first-child');
+    expect(styles).toContain('.obs-data-table :is(.ant-table-thead > tr > th, .ant-table-tbody > tr > td):last-child');
+    const headerRule = styles.match(/\.obs-data-table \.ant-table-thead > tr > th\s*\{[^}]+\}/);
+    expect(headerRule?.[0]).toContain('height: calc(var(--ant-padding-md) * 2)');
+  });
+
   it('keeps the components read-only and hides no engineering details in a disclosure', () => {
     const source = productionFiles(DISPLAY_ROOT)
       .filter((file) => file.endsWith('.tsx'))

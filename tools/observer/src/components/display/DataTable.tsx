@@ -1,7 +1,8 @@
-import { Grid, Table, theme } from 'antd';
+import { Table, theme } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { ChevronRight } from 'lucide-react';
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
+import { useCompactViewport } from '../../lib/viewport';
 import { DisplayIcon } from './DisplayIcon';
 import { EmptyState } from './EmptyState';
 import './display.css';
@@ -36,7 +37,7 @@ function isNestedInteraction(target: EventTarget, row: EventTarget) {
 /** Read-only table with one reserved trailing navigation column only when a row can open. */
 export function DataTable({ columns, rows, empty }: DataTableProps) {
   const { token } = theme.useToken();
-  const compactViewport = !(Grid.useBreakpoint().md ?? true);
+  const compactViewport = useCompactViewport();
   const visibleColumns = compactViewport ? columns.filter((column) => !column.hideOnSmall) : [...columns];
   const hasOpenableRows = rows.some((row) => Boolean(row.onOpen));
   const tableColumns: ColumnsType<DataTableRow> = visibleColumns.map((column) => ({

@@ -1,7 +1,8 @@
-import { Grid, Typography } from 'antd';
+import { Typography } from 'antd';
 import { ArrowLeft } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useCompactViewport } from '../../lib/viewport';
 import { DisplayIcon } from './DisplayIcon';
 import './display.css';
 
@@ -28,7 +29,7 @@ export function PageHeader({
   variant = 'compact',
 }: PageHeaderProps) {
   const { t } = useTranslation();
-  const compactViewport = !(Grid.useBreakpoint().md ?? true);
+  const compactViewport = useCompactViewport();
   const header = (
     <header className="obs-page-header" data-variant={variant} data-compact={compactViewport || undefined}>
       <div className="obs-page-header-main">

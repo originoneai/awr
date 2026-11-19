@@ -20,7 +20,7 @@ export function Notice({ children, title, extra, tone = 'info' }: NoticeProps) {
       type={tone === 'warning' ? 'warning' : 'info'}
       showIcon
       icon={<DisplayIcon icon={tone === 'warning' ? TriangleAlert : Info} />}
-      message={(
+      title={(
         <div className="obs-notice-content">
           <div className="obs-notice-body">
             {title === undefined ? null : <strong className="obs-notice-title">{title}</strong>}

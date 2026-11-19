@@ -29,7 +29,7 @@ import {
   Users,
   type LucideIcon,
 } from 'lucide-react';
-import { useEffect, useState, type ReactNode } from 'react';
+import { type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, matchPath, NavLink, useLocation, useNavigate } from 'react-router';
 import { readsAsName } from '../core/observation/owner';
@@ -41,9 +41,9 @@ import type { TeamOverviewResponse } from '../lib/types';
 import { craftTokens } from '../theme';
 import { useCraftTheme } from './CraftThemeProvider';
 import { ThemeToggle } from './ThemeToggle';
+import { useCompactViewport, useMediaQuery } from '../lib/viewport';
 
 const { Header, Sider, Content } = Layout;
-const COMPACT_NAVIGATION_QUERY = '(max-width: 860px)';
 const COMPACT_SEARCH_QUERY = '(max-width: 1240px)';
 
 const PRIMARY_NAVIGATION = [
@@ -67,29 +67,6 @@ type NavigationPath = (typeof NAVIGATION)[number]['path'];
 interface Crumb {
   label: string;
   to?: string;
-}
-
-function useMediaQuery(query: string) {
-  const [matches, setMatches] = useState(() => (
-    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-      ? window.matchMedia(query).matches
-      : false
-  ));
-
-  useEffect(() => {
-    if (typeof window.matchMedia !== 'function') return;
-    const media = window.matchMedia(query);
-    const update = () => setMatches(media.matches);
-    update();
-    if (typeof media.addEventListener === 'function') {
-      media.addEventListener('change', update);
-      return () => media.removeEventListener('change', update);
-    }
-    media.addListener(update);
-    return () => media.removeListener(update);
-  }, [query]);
-
-  return matches;
 }
 
 function selectedNavigation(pathname: string): NavigationPath {
@@ -211,7 +188,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   // Shell indicators subscribe to reads the open page already owns; they never add another source.
   const overview = useQuery({ ...overviewQueryOptions(projectKey, revoked), enabled: false });
   const pending = useQuery({ ...ordinaryDecisionsQueryOptions(projectKey ?? '', 'open', null, revoked), enabled: false });
-  const compactNavigation = useMediaQuery(COMPACT_NAVIGATION_QUERY);
+  const compactNavigation = useCompactViewport();
   const compactSearch = useMediaQuery(COMPACT_SEARCH_QUERY);
   const selectedKey = selectedNavigation(location.pathname);
 

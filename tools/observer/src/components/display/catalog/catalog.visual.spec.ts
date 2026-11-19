@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test';
 const components = [
   'section',
   'pageHeader',
+  'pageHeaderCompact',
   'notice',
   'empty',
   'keyValue',
