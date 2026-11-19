@@ -246,12 +246,15 @@ export function deriveViews(
     agentByName.set(task.agentName, agent);
   }
   const meTaskIds = new Set(meTasks.map((task) => task.id).filter((value): value is string => value != null));
+  // Pending work for the viewer spans the whole project, like the lead view: a reviewer or a
+  // decider is waited on for other people's tasks too, not only for tasks they own.
+  const meProjectTaskIds = new Set(meProject.tasks.map((task) => task.id).filter((value): value is string => value != null));
   const meWaiting = filterWaitsToTasks(base.waits, meTaskIds);
   const me: OverviewViewSummary = { metrics: [
     wide(meVerified),
     wide(metric('agents-running', [...agentByName.values()], agentIssues)),
     wide(metric('waiting-by-me', meWaiting, [...meProject.issues, ...mePersonIssues, ...base.waitCounts.all.unknownItems])),
-    wide(pendingMetric('pending-for-me', mePersonId, meTaskIds, meProject.issues)),
+    wide(pendingMetric('pending-for-me', mePersonId, meProjectTaskIds, meProject.issues)),
   ] };
 
   // Lead: this week's verified, prototype inProgress, all waits, and the lead's pending queue.

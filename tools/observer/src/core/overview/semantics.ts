@@ -25,5 +25,5 @@ export const OVERVIEW_RULES = {
   people: ['explicit-person-identity', 'pending-nondependency-and-handoff', 'prototype-in-progress', 'owned-waits', 'owed-provider-results'],
   identity: ['explicit-equal-only', 'missing-is-neither-self-nor-other'],
   views: ['four-metrics-in-prototype-order', 'caller-scopes-and-periods', 'unknown-scope-is-not-empty'],
-  vcount: ['verified-only', 'verified-at-in-inclusive-window'],
+  vcount: ['verified-only', 'verified-at-in-inclusive-window', 'caller-passes-non-overlapping-periods'],
 } as const;

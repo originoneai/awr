@@ -38,7 +38,7 @@ serve as developer documentation identifiers; product labels come from the UI vo
 | `people` | 按人汇总 / Per-person summary | Each explicit person has four lists: non-dependency waits and pending handoffs addressed to them; prototype in-progress work; waits on their owned tasks; and dependency waits for results they own. | `explicit-person-identity` `pending-nondependency-and-handoff` `prototype-in-progress` `owned-waits` `owed-provider-results` |
 | `identity` | 同一个人 / Same person | Two present person ids must match exactly. A missing id belongs to neither the viewer nor an “other person” bucket, and unknown reviewer identities remain in separate queues. | `explicit-equal-only` `missing-is-neither-self-nor-other` |
 | `views` | 四个视角 / Four views | Me, lead, department, and top each expose four metrics in prototype order. Viewer ids, project scopes, and periods are caller inputs. Missing scope data produces unknown metrics and coverage rather than an empty organization. | `four-metrics-in-prototype-order` `caller-scopes-and-periods` `unknown-scope-is-not-empty` |
-| `vcount` | 周期核验数 / Period verified count | Period counts include verified tasks whose explicit verification time lies inside the caller's inclusive start/end bounds. Report or approval time is a separate fact. Previous periods use the identical rule. | `verified-only` `verified-at-in-inclusive-window` |
+| `vcount` | 周期核验数 / Period verified count | Period counts include verified tasks whose explicit verification time lies inside the caller's inclusive start/end bounds: a task verified exactly at the start and exactly at the end is counted. Both bounds being inclusive, the caller must pass non-overlapping periods, keeping adjacent periods one millisecond apart. Report or approval time is a separate fact. Previous periods use the identical rule. | `verified-only` `verified-at-in-inclusive-window` `caller-passes-non-overlapping-periods` |
 
 ## Status precedence
 
@@ -67,7 +67,7 @@ block, dependency, and commitment effects. All traversal is iterative and stable
 
 The four view orders are:
 
-- **Me**: current-week verified, running Agents, waits on my tasks, pending items for me.
+- **Me**: current-week verified, running Agents, waits on my tasks, pending items for me. The me-view pending queue is scoped to my project's tasks, like the lead view: a reviewer or decider is waited on for other people's tasks too, not only for tasks they own.
 - **Lead**: current-week verified, prototype in-progress work, waits, pending items for the lead.
 - **Department**: projects, current-month verified, cross-group waits, pending items for the viewer.
 - **Top**: goals, all verified work with a claimed comparison, blocker chains, decisions for the viewer.

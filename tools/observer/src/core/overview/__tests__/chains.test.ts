@@ -109,4 +109,81 @@ describe('blocker chains', () => {
     expect(result.chains[0].commitments.items.map((commitment) => commitment.id)).toEqual(['known-promise']);
     expect(result.coverage.sections.chains.complete).toBe(false);
   });
+
+  it('orders equal-impact chains by the oldest wait first and then stable input order', () => {
+    const result = deriveOverview(makeInput({
+      tasks: complete([
+        baseTask('first', { commitments: [] }),
+        baseTask('second', { commitments: [] }),
+        baseTask('third', { commitments: [] }),
+      ]),
+      decisions: complete([
+        decision('first', { createdAtUnixMs: NOW - 2 * DAY }),
+        decision('second', { createdAtUnixMs: NOW - 6 * DAY }),
+        decision('third', { createdAtUnixMs: NOW - 6 * DAY }),
+      ]),
+    }));
+    expect(result.chains.map((chain) => chain.impact.count)).toEqual([1, 1, 1]);
+    expect(result.chains.map((chain) => chain.root.queue.items[0].task.id)).toEqual(['second', 'third', 'first']);
+  });
+
+  it('applies the oldest-wait tie-break at chain level even when the grouped waits arrive later', () => {
+    // The decision wait sorts first in the wait list (it holds up four tasks versus three),
+    // so the decision chain is built first; the grouped review chain is older in chain-level
+    // days because its oldest member arrived later in the wait list. Equal impact must still
+    // order the older chain first.
+    const result = deriveOverview(makeInput({
+      tasks: complete([
+        baseTask('reviewed-newer', { commitments: [], started: true, agentActive: false, submittedResultAtUnixMs: NOW - 2 * DAY }),
+        baseTask('reviewed-older', { commitments: [], started: true, agentActive: false, submittedResultAtUnixMs: NOW - 9 * DAY }),
+        baseTask('decided', { commitments: [] }),
+        baseTask('consumer-a', { commitments: [] }),
+        baseTask('consumer-b', { commitments: [] }),
+        baseTask('downstream-a', { commitments: [] }),
+        baseTask('downstream-b', { commitments: [] }),
+        baseTask('downstream-c', { commitments: [] }),
+      ]),
+      dependencies: complete([
+        dependency('consumer-a', 'reviewed-newer', { satisfied: true }),
+        dependency('consumer-b', 'reviewed-newer', { satisfied: true }),
+        dependency('consumer-b', 'reviewed-older', { satisfied: true }),
+        dependency('downstream-a', 'decided', { satisfied: true }),
+        dependency('downstream-b', 'decided', { satisfied: true }),
+        dependency('downstream-c', 'decided', { satisfied: true }),
+      ]),
+      decisions: complete([decision('decided', { createdAtUnixMs: NOW - 5 * DAY })]),
+      reviewRounds: complete([
+        reviewRound('reviewed-newer', 'open', { reviewerPersonId: 'person-b', openedAtUnixMs: NOW - 2 * DAY }),
+        reviewRound('reviewed-older', 'open', { reviewerPersonId: 'person-b', openedAtUnixMs: NOW - 9 * DAY }),
+      ]),
+    }));
+    expect(result.chains.map((chain) => chain.impact.count)).toEqual([4, 4]);
+    expect(result.chains.map((chain) => [chain.root.kind, chain.root.oldestDays])).toEqual([
+      ['review', 9],
+      ['decision', 5],
+    ]);
+  });
+
+  it('marks exactly one root node per chain with the red blocker tone', () => {
+    const result = deriveOverview(makeInput({
+      tasks: complete([
+        baseTask('a', {
+          commitments: [], externalWait: { party: 'Outside Example', sinceUnixMs: NOW - 2 * DAY },
+        }),
+        baseTask('b', { commitments: [] }),
+      ]),
+      decisions: complete([decision('b')]),
+      dependencies: complete([dependency('b', 'a')]),
+    }));
+    expect(result.chains).toHaveLength(2);
+    for (const chain of result.chains) {
+      const rootNodes = chain.nodes.filter((node) => node.kind === 'root');
+      expect(rootNodes).toHaveLength(1);
+      expect(rootNodes[0].root).toBe(true);
+      expect(rootNodes[0].tone).toBe('negative');
+      for (const node of chain.nodes) {
+        if (node !== rootNodes[0]) expect(node.root).toBe(false);
+      }
+    }
+  });
 });

@@ -55,10 +55,12 @@ function viewsInput() {
     lead: { personId: 'person-c', projectId: 'project-one' },
     department: { personId: 'person-c', projectIds: ['project-one', 'project-two', 'project-empty'] },
     top: { personId: 'person-c', goalIds: ['goal-one', 'goal-two', 'goal-empty'] },
+    // Adjacent periods never share a boundary value: both ends are inclusive, so the caller
+    // must keep the previous period one millisecond short of the current one.
     currentWeek: { startUnixMs: NOW - 7 * DAY, endUnixMs: NOW },
-    previousWeek: { startUnixMs: NOW - 14 * DAY, endUnixMs: NOW - 7 * DAY },
+    previousWeek: { startUnixMs: NOW - 14 * DAY, endUnixMs: NOW - 7 * DAY - 1 },
     currentMonth: { startUnixMs: NOW - 30 * DAY, endUnixMs: NOW },
-    previousMonth: { startUnixMs: NOW - 60 * DAY, endUnixMs: NOW - 30 * DAY },
+    previousMonth: { startUnixMs: NOW - 60 * DAY, endUnixMs: NOW - 30 * DAY - 1 },
   };
   return makeInput({
     tasks: complete(tasks),
@@ -150,6 +152,105 @@ describe('four prototype views', () => {
       for (const item of view.metrics) expect(item.count).toBeNull();
     }
     expect(noOptions.coverage.sections.views.complete).toBe(false);
+  });
+
+  it('counts a review waiting on somebody else\'s task as pending for the viewer in the me view', () => {
+    const views: OverviewViewOptions = {
+      me: { personId: 'person-b', projectId: 'project-one' },
+      lead: { personId: 'person-b', projectId: 'project-one' },
+      currentWeek: { startUnixMs: NOW - 7 * DAY, endUnixMs: NOW },
+      previousWeek: { startUnixMs: NOW - 14 * DAY, endUnixMs: NOW - 7 * DAY - 1 },
+      currentMonth: { startUnixMs: NOW - 30 * DAY, endUnixMs: NOW },
+      previousMonth: { startUnixMs: NOW - 60 * DAY, endUnixMs: NOW - 30 * DAY - 1 },
+    };
+    const result = deriveOverview(makeInput({
+      tasks: complete([
+        scopedTask('own-task', 'project-one', 'group-one', 'goal-one', { ownerPersonId: 'person-b' }),
+        scopedTask('reviewed-task', 'project-one', 'group-one', 'goal-one', {
+          ownerPersonId: 'person-c', started: true, agentActive: false, submittedResultAtUnixMs: NOW - DAY,
+        }),
+        scopedTask('other-project-task', 'project-two', 'group-two', 'goal-two', {
+          ownerPersonId: 'person-c', started: true, agentActive: false, submittedResultAtUnixMs: NOW - DAY,
+        }),
+      ]),
+      reviewRounds: complete([
+        reviewRound('reviewed-task', 'open', { reviewerPersonId: 'person-b', authorPersonId: 'person-c' }),
+        reviewRound('other-project-task', 'open', { reviewerPersonId: 'person-b', authorPersonId: 'person-c' }),
+      ]),
+      options: { nowUnixMs: NOW, stalledAfterDays: 3, views },
+    }));
+    // The person-level summary is project-agnostic; both review queues wait for person-b.
+    expect(result.people.find((summary) => summary.person.id === 'person-b')?.pending.count).toBe(2);
+    // The lead view already scopes the viewer's project, not the viewer's own tasks.
+    expect(result.views.lead.metrics[3].count).toBe(1);
+    // The me view must agree: the pending queue is not limited to tasks the viewer owns.
+    expect(result.views.me.metrics[3].count).toBe(1);
+    expect(result.views.me.metrics[3].items.map((item) => (item as { task: { id: string } }).task.id))
+      .toEqual(['reviewed-task']);
+  });
+
+  it('counts tasks verified exactly at the inclusive period bounds and not one millisecond outside', () => {
+    const weekStart = NOW - 7 * DAY;
+    const weekEnd = NOW - DAY;
+    const views: OverviewViewOptions = {
+      me: { personId: 'person-a', projectId: 'project-one' },
+      lead: { personId: 'person-c', projectId: 'project-one' },
+      currentWeek: { startUnixMs: weekStart, endUnixMs: weekEnd },
+      previousWeek: { startUnixMs: NOW - 14 * DAY, endUnixMs: weekStart - 1 },
+      currentMonth: { startUnixMs: NOW - 30 * DAY, endUnixMs: NOW },
+      previousMonth: { startUnixMs: NOW - 60 * DAY, endUnixMs: NOW - 30 * DAY - 1 },
+    };
+    const result = deriveOverview(makeInput({
+      tasks: complete([
+        verifiedTask('at-start', 'project-one', 'group-one', 'goal-one', weekStart),
+        verifiedTask('at-end', 'project-one', 'group-one', 'goal-one', weekEnd),
+        verifiedTask('just-before', 'project-one', 'group-one', 'goal-one', weekStart - 1),
+        verifiedTask('just-after', 'project-one', 'group-one', 'goal-one', weekEnd + 1),
+      ]),
+      reviewRounds: complete(['at-start', 'at-end', 'just-before', 'just-after'].map((id) => reviewRound(id, 'approved'))),
+      options: { nowUnixMs: NOW, stalledAfterDays: 3, views },
+    }));
+    const current = result.views.me.metrics[0];
+    expect(current.count).toBe(2);
+    expect(current.items.map((task) => (task as DerivedTask).id).sort()).toEqual(['at-end', 'at-start']);
+    // One millisecond before the inclusive start belongs to the previous period, not this one.
+    expect(current.previousPeriod!.count).toBe(1);
+    expect(current.previousPeriod!.items.map((task) => (task as DerivedTask).id)).toEqual(['just-before']);
+    // One millisecond after the inclusive end belongs to neither period.
+    expect(result.views.me.metrics[0].items.concat(current.previousPeriod!.items)
+      .some((task) => (task as DerivedTask).id === 'just-after')).toBe(false);
+  });
+
+  it('keeps the department pending queue inside the department project scope', () => {
+    const views: OverviewViewOptions = {
+      me: { personId: 'person-c', projectId: 'project-one' },
+      lead: { personId: 'person-c', projectId: 'project-one' },
+      department: { personId: 'person-c', projectIds: ['project-one'] },
+      currentWeek: { startUnixMs: NOW - 7 * DAY, endUnixMs: NOW },
+      previousWeek: { startUnixMs: NOW - 14 * DAY, endUnixMs: NOW - 7 * DAY - 1 },
+      currentMonth: { startUnixMs: NOW - 30 * DAY, endUnixMs: NOW },
+      previousMonth: { startUnixMs: NOW - 60 * DAY, endUnixMs: NOW - 30 * DAY - 1 },
+    };
+    const result = deriveOverview(makeInput({
+      tasks: complete([
+        scopedTask('inside', 'project-one', 'group-one', 'goal-one', {
+          ownerPersonId: 'person-a', started: true, agentActive: false, submittedResultAtUnixMs: NOW - DAY,
+        }),
+        scopedTask('outside', 'project-two', 'group-two', 'goal-two', {
+          ownerPersonId: 'person-a', started: true, agentActive: false, submittedResultAtUnixMs: NOW - DAY,
+        }),
+      ]),
+      reviewRounds: complete([
+        reviewRound('inside', 'open', { reviewerPersonId: 'person-c', authorPersonId: 'person-a' }),
+        reviewRound('outside', 'open', { reviewerPersonId: 'person-c', authorPersonId: 'person-a' }),
+      ]),
+      options: { nowUnixMs: NOW, stalledAfterDays: 3, views },
+    }));
+    // Both queues wait for person-c at the person level; the department counts only its projects.
+    expect(result.people.find((summary) => summary.person.id === 'person-c')?.pending.count).toBe(2);
+    const pending = result.views.department.metrics[3];
+    expect(pending.count).toBe(1);
+    expect(pending.items.map((item) => (item as { task: { id: string } }).task.id)).toEqual(['inside']);
   });
 
   it('pins every view number and period comparison to its own detail array', () => {
