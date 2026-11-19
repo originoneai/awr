@@ -1,11 +1,13 @@
 import { QueryCache, QueryClient, type UseQueryOptions } from '@tanstack/react-query';
 import pLimit from 'p-limit';
 import { apiGet, apiPost, ApiError, isAuthError } from './api';
+import { compareAuthoritative } from './contract';
 import type {
   ReviewData,
   TeamActivityResponse,
   TeamIdentity,
   TeamOverviewResponse,
+  TeamOverviewModelResponse,
   TeamProjectsResponse,
   TeamReadResponse,
   WorkInboxData,
@@ -44,6 +46,7 @@ export const readQueryDefaults = {
 export const queryKeys = {
   projects: ['team', 'projects'] as const,
   overview: (project: string | null) => ['team', 'overview', project] as const,
+  overviewModel: (project: string | null) => ['team', 'overview-model', project] as const,
   capabilities: (project: string | null) => ['team', 'capabilities', project] as const,
   activity: (project: string | null, workId?: string) =>
     ['team', 'activity', 'development', project, workId ?? null] as const,
@@ -89,6 +92,41 @@ export function overviewQueryOptions(project: string | null, revoked = false) {
     ...readQueryDefaults,
     refetchInterval: SHELL_POLL_INTERVAL_MS,
   } satisfies UseQueryOptions<TeamOverviewResponse>;
+}
+
+/**
+ * The bridge checks the session on every poll and caches only within that session.
+ * This client-side guard applies the same authoritative ordering contract when
+ * two browser requests settle out of order; an older reply returns the held newer model.
+ */
+export function overviewModelQueryOptions(project: string | null, revoked = false) {
+  return {
+    queryKey: queryKeys.overviewModel(project),
+    queryFn: async ({ signal, client }: { signal: AbortSignal; client: QueryClient }) => {
+      const state = revocationState(client);
+      if (revoked || state.revoked) throw new DOMException('Observation access revoked', 'AbortError');
+      const key = project ?? '';
+      const ordering = state.overviewModels.get(key) ?? {};
+      state.overviewModels.set(key, ordering);
+      signal.throwIfAborted();
+      const incoming = await apiGet<TeamOverviewModelResponse>(
+        `/api/team/overview-model?project=${encodeURIComponent(key)}`,
+      );
+      signal.throwIfAborted();
+      if (state.revoked) throw new DOMException('Observation access revoked', 'AbortError');
+      const held = ordering.held;
+      if (held) {
+        const verdict = compareAuthoritative(held.freshness.authoritative, incoming.freshness.authoritative);
+        if (verdict === 'keep') return held;
+        if (verdict === 'incomparable') return { ...held, ordering: 'incomparable' as const };
+      }
+      ordering.held = incoming;
+      return incoming;
+    },
+    enabled: Boolean(project) && !revoked,
+    ...readQueryDefaults,
+    refetchInterval: POLL_INTERVAL_MS,
+  } satisfies UseQueryOptions<TeamOverviewModelResponse>;
 }
 
 /** Capabilities is the flat discovery response; object reads carry a data envelope. */
@@ -367,9 +405,14 @@ export function workSnapshotQueryOptions(
   } satisfies UseQueryOptions<TeamReadResponse<WorkSnapshotData>>;
 }
 
+interface OverviewModelOrdering {
+  held?: TeamOverviewModelResponse;
+}
+
 interface RevocationState {
   revoked: boolean;
   listeners: Set<() => void>;
+  overviewModels: Map<string, OverviewModelOrdering>;
 }
 
 const revocationStates = new WeakMap<QueryClient, RevocationState>();
@@ -377,7 +420,7 @@ const revocationStates = new WeakMap<QueryClient, RevocationState>();
 function revocationState(queryClient: QueryClient) {
   let state = revocationStates.get(queryClient);
   if (!state) {
-    state = { revoked: false, listeners: new Set() };
+    state = { revoked: false, listeners: new Set(), overviewModels: new Map() };
     revocationStates.set(queryClient, state);
   }
   return state;
@@ -399,6 +442,7 @@ export function subscribeToObservationRevocation(queryClient: QueryClient, liste
 
 export function revokeObservationReads(queryClient: QueryClient) {
   const state = revocationState(queryClient);
+  state.overviewModels.clear();
   if (!state.revoked) {
     state.revoked = true;
     notifyRevocation(queryClient);
