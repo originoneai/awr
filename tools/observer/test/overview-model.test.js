@@ -386,11 +386,16 @@ test('overview-model caps a 100-work three-stream composition at 47 non-session 
 test('overview-model makes only session reads during twelve polls inside the cache window', async (t) => {
   const clock = AT;
   const { call, state } = await modelFixture(t, () => undefined, { now: () => clock });
+  const warmed = await call();
+  assert.equal(warmed.ok, true, JSON.stringify(warmed));
+  const afterWarm = state.calls.length;
   for (let poll = 0; poll < 12; poll += 1) {
     const result = await call();
     assert.equal(result.ok, true, JSON.stringify(result));
   }
-  assert.equal(state.calls.filter((query) => query.op === 'session').length, 12);
+  const pollingCalls = state.calls.slice(afterWarm);
+  assert.equal(pollingCalls.length, 12);
+  assert.ok(pollingCalls.every((query) => query.op === 'session'));
   assert.equal(nonSession(state).length, 8);
 });
 
