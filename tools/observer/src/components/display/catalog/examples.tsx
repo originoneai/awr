@@ -12,6 +12,8 @@ import { PageHeader } from '../PageHeader';
 import { RowList } from '../RowList';
 import { Section } from '../Section';
 import { Timeline } from '../Timeline';
+import { PerspectiveSwitcher } from '../../../lib/perspective/PerspectiveSwitcher';
+import type { PerspectiveFacts } from '../../../lib/perspective/types';
 
 export const CATALOG_COMPONENTS = [
   'section',
@@ -24,9 +26,20 @@ export const CATALOG_COMPONENTS = [
   'dataTable',
   'detailPanel',
   'timeline',
+  'perspective',
 ] as const;
 
 export type CatalogComponent = (typeof CATALOG_COMPONENTS)[number];
+
+const PERSPECTIVE_FACTS = {
+  supervisedGroupCount: 1,
+  memberGroupProjectCount: 1,
+  visibleProjectGroupCount: 3,
+  visibleProjectDepartmentCount: 2,
+  canViewAllProjects: true,
+  directory: { groupsRegistered: true, departmentsRegistered: true },
+  pending: { me: 0, lead: 0, dept: 0, top: 0 },
+} satisfies PerspectiveFacts;
 
 export interface CatalogExample {
   id: CatalogComponent;
@@ -282,6 +295,10 @@ export function useCatalogExamples(): CatalogExample[] {
           />
         </Section>
       ),
+    },
+    {
+      id: 'perspective',
+      render: () => <PerspectiveSwitcher facts={PERSPECTIVE_FACTS} />,
     },
   ];
 }

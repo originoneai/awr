@@ -73,16 +73,15 @@ describe('prototype shell behavior', () => {
     expect(screen.getByTestId('scope-switcher').textContent).toContain('全部授权范围');
   });
 
-  it('marks future search and perspective slots disabled while keeping the bell available', async () => {
+  it('keeps future controls disabled while the enabled perspective falls back safely', async () => {
     const user = userEvent.setup();
     setup('/projects/demo');
     const search = screen.getByRole('button', { name: /搜索/ });
-    const perspective = screen.getByTestId('perspective-switcher');
     const notifications = screen.getByRole('button', { name: '待处理' });
     const settings = await screen.findByRole('button', { name: '项目设置' });
-    for (const control of [search, perspective, settings]) {
-      expect(control).toHaveProperty('disabled', true);
-    }
+    for (const control of [search, settings]) expect(control).toHaveProperty('disabled', true);
+    expect(screen.queryByTestId('perspective-switcher')).toBeNull();
+    expect(screen.getByTestId('perspective-current').textContent).toBe('我的工作');
     expect(notifications).toHaveProperty('disabled', false);
     expect(screen.getByTestId('current-member-avatar')).toBeTruthy();
     await user.hover(search);

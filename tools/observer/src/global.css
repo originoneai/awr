@@ -89,6 +89,16 @@ body {
   border-radius: 4px;
 }
 
+.shell-perspective-option:hover {
+  color: var(--craft-color-ink);
+}
+
+.shell-perspective-option:focus-visible {
+  outline: 2px solid var(--craft-color-accent);
+  outline-offset: 2px;
+  border-radius: var(--craft-perspective-radius);
+}
+
 .shell-header {
   display: flex;
   align-items: center;

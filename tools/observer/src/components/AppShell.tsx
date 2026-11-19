@@ -19,7 +19,6 @@ import {
   ChevronDown,
   ChevronRight,
   Folder,
-  Layers,
   LayoutDashboard,
   Moon,
   Search,
@@ -29,10 +28,12 @@ import {
   Users,
   type LucideIcon,
 } from 'lucide-react';
-import { type ReactNode } from 'react';
+import { useCallback, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, matchPath, NavLink, useLocation, useNavigate } from 'react-router';
 import { readsAsName } from '../core/observation/owner';
+import { PerspectiveSwitcher } from '../lib/perspective/PerspectiveSwitcher';
+import { unknownPerspectiveFacts, type PerspectiveFacts, type PerspectiveId } from '../lib/perspective/types';
 import { projectLabel } from '../lib/project-label';
 import { ordinaryDecisionsQueryOptions, overviewQueryOptions, projectsQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
@@ -176,7 +177,11 @@ function ShellNavigation({ selectedKey, pendingLabel }: { selectedKey: Navigatio
   );
 }
 
-export function AppShell({ children }: { children: ReactNode }) {
+export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts }: {
+  children: ReactNode;
+  /** Already-read facts supplied by the composition layer; this task adds no member-directory read. */
+  perspectiveFacts?: PerspectiveFacts;
+}) {
   const { t, i18n } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
@@ -231,6 +236,15 @@ export function AppShell({ children }: { children: ReactNode }) {
   const memberName = currentMemberName(overview.data) ?? t('shell.you');
   const MobileThemeIcon = mode === 'dark' ? Sun : Moon;
   const mobileThemeLabel = t(mode === 'dark' ? 'shell.switchToLight' : 'shell.switchToDark');
+  const perspectiveFacts = revoked
+    ? unknownPerspectiveFacts()
+    : suppliedPerspectiveFacts ?? unknownPerspectiveFacts(pendingCount);
+  const requestedPerspective = new URLSearchParams(location.search).get('perspective');
+  const changePerspective = useCallback((next: PerspectiveId) => {
+    const params = new URLSearchParams(location.search);
+    params.set('perspective', next);
+    navigate({ pathname: location.pathname, search: params.toString() }, { replace: true });
+  }, [location.pathname, location.search, navigate]);
 
   const brand = (mobile = false) => (
     <div
@@ -499,18 +513,12 @@ export function AppShell({ children }: { children: ReactNode }) {
               </Button>
             </Tooltip>
           ) : null}
-          <Tooltip title={t('shell.later')}>
-            <Button
-              disabled
-              data-testid="perspective-switcher"
-              icon={<Layers size={16} strokeWidth={1.5} aria-hidden />}
-              style={compactNavigation
-                ? { width: '100%', marginLeft: 0, justifyContent: 'flex-start', height: 40 }
-                : { flex: '0 0 auto', marginLeft: compactSearch ? 'auto' : 0, height: 32 }}
-            >
-              {t('shell.perspective')}
-            </Button>
-          </Tooltip>
+          <PerspectiveSwitcher
+            facts={perspectiveFacts}
+            requestedPerspective={requestedPerspective}
+            onChange={changePerspective}
+            alignEnd={compactSearch}
+          />
           {!compactNavigation ? (
             <>
               <Badge dot={pendingCount !== null && pendingCount > 0} color="var(--craft-color-accent)">

@@ -174,11 +174,14 @@ describe('AppShell navigation', () => {
     expect(screen.queryByText('private-task')).toBeNull();
   });
 
-  it('provides the search and perspective slots without pretending they are implemented', () => {
+  it('keeps future search disabled and shows only the narrow perspective without inventing access', () => {
     stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
     renderApp('/workbench');
     expect(screen.getByRole('button', { name: /搜索/ })).toHaveProperty('disabled', true);
-    expect(screen.getByTestId('perspective-switcher')).toHaveProperty('disabled', true);
+    expect(screen.queryByTestId('perspective-switcher')).toBeNull();
+    expect(screen.getByTestId('perspective-current').textContent).toBe('我的工作');
+    expect(screen.queryByRole('button', { name: '做事的人' })).toBeNull();
+    expect(screen.getByText(/小组与部门登记情况未知/)).toBeTruthy();
     expect(screen.getByRole('button', { name: '待处理' })).toHaveProperty('disabled', false);
     expect(screen.queryByTestId('inbox-count')).toBeNull();
     expect(document.querySelector('.ant-badge-dot')).toBeNull();
