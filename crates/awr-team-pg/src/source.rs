@@ -1,5 +1,5 @@
 use crate::error::{PgError, PgResult};
-use crate::path::validate_package;
+use crate::path::{GENERATED, SourcePackageLimits, UPLOAD, validate_package_with_limits};
 use crate::tx::{bind_scope, bind_workstream_scope, new_id};
 use awr_team::{SourceActivationPlan, WorkContract, WorkId};
 use serde::{Deserialize, Serialize};
@@ -141,11 +141,25 @@ impl SourceStore {
     /// `source_binding.json`, preserve immutable digests for full source +
     /// contract + graph, and return the sole source binding.
     pub fn validate_publish_package(files: &[SourceFile]) -> PgResult<SoleSourceBinding> {
-        validate_package(
+        Self::validate_publish_package_with_limits(files, UPLOAD)
+    }
+
+    pub(crate) fn validate_generated_publish_package(
+        files: &[SourceFile],
+    ) -> PgResult<SoleSourceBinding> {
+        Self::validate_publish_package_with_limits(files, GENERATED)
+    }
+
+    fn validate_publish_package_with_limits(
+        files: &[SourceFile],
+        limits: SourcePackageLimits,
+    ) -> PgResult<SoleSourceBinding> {
+        validate_package_with_limits(
             &files
                 .iter()
                 .map(|f| (f.path.clone(), f.bytes.clone()))
                 .collect::<Vec<_>>(),
+            limits,
         )?;
         let binding_file = files
             .iter()
@@ -219,13 +233,32 @@ impl SourceStore {
                     .map_err(|e| PgError::Protocol(e.to_string()))?,
             });
         }
-        let candidate = self.ingest(request).await?;
+        // Validation and ingest must retain the upload budget together.
+        let candidate = self.ingest_with_limits(request, UPLOAD).await?;
         Ok((candidate, binding))
     }
 
     pub async fn ingest(&self, request: IngestRequest) -> PgResult<CandidateRecord> {
+        self.ingest_with_limits(request, UPLOAD).await
+    }
+
+    /// Exercise the generated-package budget through real ingest in isolated PG tests.
+    #[cfg(feature = "pg-tests")]
+    #[doc(hidden)]
+    pub async fn ingest_generated_for_test(
+        &self,
+        request: IngestRequest,
+    ) -> PgResult<CandidateRecord> {
+        self.ingest_with_limits(request, GENERATED).await
+    }
+
+    async fn ingest_with_limits(
+        &self,
+        request: IngestRequest,
+        limits: SourcePackageLimits,
+    ) -> PgResult<CandidateRecord> {
         // Preserve offline validation and its diagnostics before acquiring PG.
-        let prepared = Self::prepare_ingest(&request)?;
+        let prepared = Self::prepare_ingest(&request, limits)?;
         let mut client = self.connect().await?;
         let tx = client.transaction().await?;
         let candidate = Self::ingest_prepared_in_tx(&tx, request, prepared).await?;
@@ -237,11 +270,14 @@ impl SourceStore {
         tx: &tokio_postgres::Transaction<'_>,
         request: IngestRequest,
     ) -> PgResult<CandidateRecord> {
-        let prepared = Self::prepare_ingest(&request)?;
+        let prepared = Self::prepare_ingest(&request, GENERATED)?;
         Self::ingest_prepared_in_tx(tx, request, prepared).await
     }
 
-    fn prepare_ingest(request: &IngestRequest) -> PgResult<PreparedIngest> {
+    fn prepare_ingest(
+        request: &IngestRequest,
+        limits: SourcePackageLimits,
+    ) -> PgResult<PreparedIngest> {
         if request.parser_version.trim().is_empty() {
             return Err(PgError::Protocol("parser_version required".into()));
         }
@@ -250,7 +286,7 @@ impl SourceStore {
             .iter()
             .map(|f| (f.path.clone(), f.bytes.clone()))
             .collect();
-        validate_package(&files)?;
+        validate_package_with_limits(&files, limits)?;
         let projection = SourceProjection::parse(&files, &request.project_id)?;
         let preview_hash = projection.hash.clone();
         let manifest = build_manifest(&request.parser_version, &files)?;
@@ -702,7 +738,7 @@ impl SourceStore {
         validate_reviewer(tx, tenant_id, project_id, &approval_reviewer).await?;
 
         let files = files_from_ref(&source_ref)?;
-        validate_package(&files)?;
+        validate_package_with_limits(&files, GENERATED)?;
         let manifest = build_manifest(&parser_version, &files)?;
         if source_ref.get("manifest") != Some(&manifest)
             || sha256_hex(
@@ -1095,6 +1131,42 @@ mod publish_prep_tests {
         ])
         .unwrap();
         assert_eq!(binding.locator, "/var/awr/team/demo");
+    }
+
+    #[test]
+    fn publish_package_size_refusal_is_typed_and_generated_packages_use_their_own_budget() {
+        let b = binding();
+        let files = || {
+            let (ledger, provenance) = provenance_and_ledger(&b);
+            vec![
+                SourceFile {
+                    path: WORKSTREAMS_FILE.into(),
+                    bytes: vec![b' '; crate::MAX_FILE_BYTES + 1],
+                },
+                SourceFile {
+                    path: SOURCE_BINDING_FILE.into(),
+                    bytes: serde_json::to_vec(&b).unwrap(),
+                },
+                ledger,
+                provenance,
+            ]
+        };
+        let error = SourceStore::validate_publish_package(&files()).unwrap_err();
+        assert!(matches!(
+            error,
+            PgError::SourcePackageTooLarge {
+                limit_kind: crate::SourcePackageLimitKind::FileBytes,
+                file: Some(ref file),
+                actual,
+                limit,
+                files: 4,
+                ..
+            } if file == WORKSTREAMS_FILE
+                && actual == (crate::MAX_FILE_BYTES + 1) as u64
+                && limit == crate::MAX_FILE_BYTES as u64
+        ));
+        let bound = SourceStore::validate_generated_publish_package(&files()).unwrap();
+        assert_eq!(bound, b);
     }
 
     #[test]

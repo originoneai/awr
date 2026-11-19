@@ -2372,6 +2372,192 @@ async fn storage_failure_http_mcp_and_original_request_recovery() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+fn grow_registered_ledger(root: &std::path::Path, total_tasks: usize, detail_bytes: usize) {
+    let path = root.join("ledger.yaml");
+    let mut ledger: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let works = ledger["work_items"].as_array_mut().unwrap();
+    for index in works.len()..total_tasks {
+        works.push(json!({
+            "id":format!("SYNTHETIC-{index:04}"),
+            "title":format!("Synthetic package limit task {index:04}"),
+            "status":"planned",
+            "workstream":"alpha",
+            "goals":["alpha"],
+            "acceptance":[format!("Synthetic acceptance {index:04}: {}", "x".repeat(detail_bytes))],
+            "paths":[format!("src/synthetic/{index:04}")],
+            "depends_on":[]
+        }));
+    }
+    let bytes = serde_json::to_vec(&ledger).unwrap();
+    std::fs::write(&path, &bytes).unwrap();
+    let location = awr_source::SoleSourceLocation::server_directory(root, "ledger.yaml").unwrap();
+    let package = awr_source::prepare_publish_from_ledger_bytes(
+        &location,
+        root,
+        &bytes,
+        PROJECT,
+        &awr_source::PublishPrepOptions::default(),
+    )
+    .unwrap();
+    let workstreams = package
+        .files
+        .iter()
+        .find(|file| file.path == "workstreams.json")
+        .unwrap();
+    eprintln!(
+        "synthetic activation package: tasks={total_tasks}, ledger={}, workstreams={}",
+        bytes.len(),
+        workstreams.bytes.len()
+    );
+    assert!(
+        workstreams.bytes.len() > awr_team_pg::MAX_FILE_BYTES,
+        "the reproduction must exceed the old upload-only per-file limit: actual={}",
+        workstreams.bytes.len()
+    );
+}
+
+// The registered server-directory fixture uses POSIX-only sole-source paths.
+#[cfg(unix)]
+#[tokio::test]
+async fn generated_package_above_upload_file_limit_activates_through_http_and_mcp() {
+    let (_g, admin, db, read) = setup().await;
+    enable_writes(&admin).await;
+    let source =
+        awr_team_pg::SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let bound = registered_planning_source(&source).await;
+    grow_registered_ledger(&bound.root, 605, 1_200);
+    let server = start(read).await;
+    let client = connect(&server, A).await;
+    let selection = reviewed_mcp_draft(&client, "SIZE-ACTIVATION").await;
+    let body = json!({"protocol_version":1,"request_id":"generated-package-size-activation",
+        "candidate_id":selection["candidate_id"],"candidate_digest":selection["candidate_digest"],
+        "activate":true,"impact_proven":true});
+    let mcp = client
+        .call_tool(
+            CallToolRequestParams::new("awr_team_planning_publish".to_owned())
+                .with_arguments(body.as_object().unwrap().clone()),
+        )
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    let response = http()
+        .post(format!("{}/one/planning/publish", server.url))
+        .bearer_auth(A)
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    let http_status = response.status();
+    let http = response.json::<Value>().await.unwrap();
+    assert_eq!(
+        http_status,
+        reqwest::StatusCode::OK,
+        "mcp={mcp}, http={http}"
+    );
+    assert!(
+        mcp["result"]["activation"]["activated_snapshot_id"].is_string(),
+        "mcp={mcp}, http={http}"
+    );
+    assert_eq!(http["already_recorded"], true);
+    assert_eq!(http["result"], mcp["result"]);
+    let prepared = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"work.prepare","work_id":"SIZE-ACTIVATION"}),
+        false,
+    )
+    .await;
+    assert_eq!(prepared["data"]["work_id"], "SIZE-ACTIVATION");
+    client.cancel().await.unwrap();
+}
+
+// This measurement uses the same POSIX-only registered source fixture.
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "expensive synthetic package capacity measurement; run explicitly"]
+async fn generated_package_activation_measurements() {
+    Box::pin(measure_generated_package_activations()).await;
+}
+
+async fn measure_generated_package_activations() {
+    for (label, target, tasks) in [
+        ("1 MiB", 1024 * 1024, 605),
+        ("4 MiB", 4 * 1024 * 1024, 2_400),
+        ("16 MiB", 16 * 1024 * 1024, 9_544),
+    ] {
+        let (_g, admin, db, read) = setup().await;
+        enable_writes(&admin).await;
+        let source = awr_team_pg::SourceStore::from_config(common::with_app_role(
+            &common::test_config(),
+            &db,
+        ));
+        let bound = registered_planning_source(&source).await;
+        grow_registered_ledger(&bound.root, tasks, 1_200);
+        let server = start(read).await;
+        let client = connect(&server, A).await;
+        let selection = reviewed_mcp_draft(&client, &format!("MEASURE-{tasks}")).await;
+        let request: awr_team_pg::PlanningPublishRequest = serde_json::from_value(json!({
+            "protocol_version":1,"request_id":format!("measure-generated-{tasks}"),
+            "candidate_id":selection["candidate_id"],"candidate_digest":selection["candidate_digest"],
+            "activate":true,"impact_proven":true
+        }))
+        .unwrap();
+        let started = std::time::Instant::now();
+        let result = source
+            .planning_publish(TENANT, PROJECT, A, &request)
+            .await
+            .unwrap();
+        let elapsed_ms = started.elapsed().as_millis();
+        let snapshot = result["result"]["activation"]["activated_snapshot_id"]
+            .as_str()
+            .unwrap();
+        let row = admin
+            .query_one(
+                "SELECT pg_column_size(s), octet_length(s.source_ref_json::text),
+                        pg_column_size(s.source_ref_json)
+                 FROM awr_team.source_snapshots s
+                 WHERE s.tenant_id=$1 AND s.project_id=$2 AND s.id=$3",
+                &[&TENANT, &PROJECT, &snapshot],
+            )
+            .await
+            .unwrap();
+        let ledger = std::fs::read(bound.root.join("ledger.yaml")).unwrap();
+        let location =
+            awr_source::SoleSourceLocation::server_directory(&bound.root, "ledger.yaml").unwrap();
+        let package = awr_source::prepare_publish_from_ledger_bytes(
+            &location,
+            &bound.root,
+            &ledger,
+            PROJECT,
+            &awr_source::PublishPrepOptions::default(),
+        )
+        .unwrap();
+        let workstreams = package
+            .files
+            .iter()
+            .find(|file| file.path == "workstreams.json")
+            .unwrap()
+            .bytes
+            .len();
+        let package_bytes: usize = package.files.iter().map(|file| file.bytes.len()).sum();
+        if target == 16 * 1024 * 1024 {
+            assert!(workstreams <= target, "{label}: {workstreams}");
+        } else {
+            assert!(workstreams > target, "{label}: {workstreams}");
+        }
+        eprintln!(
+            "PACKAGE_MEASUREMENT label={label} tasks={} ledger_bytes={} workstreams_bytes={workstreams} package_bytes={package_bytes} activation_ms={elapsed_ms} snapshot_row_pg_column_size_bytes={} snapshot_source_ref_json_bytes={} snapshot_source_ref_pg_column_size_bytes={}",
+            tasks + 1,
+            ledger.len(),
+            row.get::<_, i32>(0),
+            row.get::<_, i32>(1),
+            row.get::<_, i32>(2),
+        );
+        client.cancel().await.unwrap();
+    }
+}
+
 struct RegisteredPlanningSource {
     root: std::path::PathBuf,
 }

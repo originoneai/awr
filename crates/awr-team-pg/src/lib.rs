@@ -62,7 +62,7 @@ pub use delivery_sync::{
     ReuseDeliveryRouteTemplate, SelectDeliveryCandidate,
 };
 pub use directory::{DirectoryApplyRequest, DirectoryStore};
-pub use error::{BindingStage, PgError, PgResult};
+pub use error::{BindingStage, PgError, PgResult, SourcePackageLimitKind};
 pub use execution::{
     ExecutionRecord, ExecutionStore, OutboxDelivery, admit_live_fence, exactly_once_supported,
     unknown_effect_retains_resources,
@@ -101,7 +101,9 @@ pub use ops_audit::{
     OpsHistoryFilter, digest_of, record_deny, record_in_tx, redact_summary,
 };
 pub use path::{
-    MAX_FILE_BYTES, MAX_PACKAGE_BYTES, MAX_SOURCE_FILES, validate_package, validate_source_path,
+    GENERATED as GENERATED_SOURCE_PACKAGE_LIMITS, MAX_FILE_BYTES, MAX_PACKAGE_BYTES,
+    MAX_SOURCE_FILES, SourcePackageLimits, UPLOAD as UPLOAD_SOURCE_PACKAGE_LIMITS,
+    validate_package, validate_package_with_limits, validate_source_path,
 };
 pub use pool::{PgClient, PgPool};
 pub use read::{

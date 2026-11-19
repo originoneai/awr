@@ -859,7 +859,7 @@
           "key_assertion": "投影提交前失败保留旧源",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "d3878694eeb6c5eb4d364e0c826aed09310f9968affb8778cf1244f7d0a25a4e"
+          "test_file_sha256": "336d7f01004cae7bbb46d13880ffc83035332297f8546f18c5efcda2f04876af"
         }
       ],
       "real_postgresql": true,
@@ -1271,7 +1271,7 @@
           "key_assertion": "路径安全纯规则；完整包攻击矩阵待补",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "d3878694eeb6c5eb4d364e0c826aed09310f9968affb8778cf1244f7d0a25a4e"
+          "test_file_sha256": "336d7f01004cae7bbb46d13880ffc83035332297f8546f18c5efcda2f04876af"
         }
       ],
       "real_postgresql": false,
@@ -1618,7 +1618,7 @@
           "key_assertion": "单候选事务失败不半生效；批量发布待补",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "d3878694eeb6c5eb4d364e0c826aed09310f9968affb8778cf1244f7d0a25a4e"
+          "test_file_sha256": "336d7f01004cae7bbb46d13880ffc83035332297f8546f18c5efcda2f04876af"
         }
       ],
       "real_postgresql": true,
@@ -2136,7 +2136,7 @@
           "key_assertion": "解析器升级不改变已激活合同",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "d3878694eeb6c5eb4d364e0c826aed09310f9968affb8778cf1244f7d0a25a4e"
+          "test_file_sha256": "336d7f01004cae7bbb46d13880ffc83035332297f8546f18c5efcda2f04876af"
         }
       ],
       "real_postgresql": true,

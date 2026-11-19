@@ -91,6 +91,103 @@ fn plan(candidate: &awr_team_pg::CandidateRecord, epoch: &str) -> SourceActivati
     }
 }
 
+fn oversized_publish_request() -> IngestRequest {
+    // This POSIX locator is only a validated string. No filesystem access occurs:
+    // the ledger has no referenced documents, so the test remains Windows-safe.
+    let root = "/var/awr/team/synthetic";
+    let location = awr_source::SoleSourceLocation::server_directory(root, "ledger.yaml").unwrap();
+    let ledger = serde_json::to_vec(&serde_json::json!({
+        "workstreams":{"version":1,"definitions":[{
+            "id":"00000000000000000000000001","external_key":"alpha","title":"Alpha",
+            "state":"active","authority_version":1,"goal_keys":["g"],"acceptance_contracts":[]
+        }]},
+        "goals":[{"id":"g","title":"Synthetic goal","status":"active"}],
+        "work_items":[{
+            "id":"work-a","title":"Synthetic large upload","status":"planned","workstream":"alpha",
+            "goals":["g"],"acceptance":["x".repeat(awr_team_pg::MAX_FILE_BYTES + 1)],
+            "paths":["src"],"depends_on":[]
+        }]
+    }))
+    .unwrap();
+    let package = awr_source::prepare_publish_from_ledger_bytes(
+        &location,
+        std::path::Path::new(root),
+        &ledger,
+        PROJECT,
+        &awr_source::PublishPrepOptions::default(),
+    )
+    .unwrap();
+    assert!(
+        package
+            .files
+            .iter()
+            .find(|file| file.path == "workstreams.json")
+            .unwrap()
+            .bytes
+            .len()
+            > awr_team_pg::MAX_FILE_BYTES
+    );
+    IngestRequest {
+        tenant_id: TENANT.into(),
+        project_id: PROJECT.into(),
+        actor_id: AUTHOR.into(),
+        parser_version: package.parser_version,
+        files: package
+            .files
+            .into_iter()
+            .map(|file| SourceFile {
+                path: file.path,
+                bytes: file.bytes,
+            })
+            .collect(),
+    }
+}
+
+fn assert_upload_file_limit(error: PgError) {
+    assert!(matches!(
+        error,
+        PgError::SourcePackageTooLarge {
+            limit_kind: awr_team_pg::SourcePackageLimitKind::FileBytes,
+            actual,
+            limit,
+            ..
+        } if limit == awr_team_pg::MAX_FILE_BYTES as u64 && actual > limit
+    ));
+}
+
+async fn assert_generated_ingest_accepts(store: &SourceStore, admin: &Client) {
+    let candidate = store
+        .ingest_generated_for_test(oversized_publish_request())
+        .await
+        .unwrap();
+    assert!(!candidate.snapshot_id.is_empty());
+    let count: i64 = admin
+        .query_one("SELECT count(*) FROM awr_team.source_snapshots", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn ingest_publish_candidate_enforces_upload_limit_and_generated_ingest_accepts() {
+    let (_lock, admin, store) = setup().await;
+    let error = store
+        .ingest_publish_candidate(oversized_publish_request())
+        .await
+        .unwrap_err();
+    assert_upload_file_limit(error);
+    assert_generated_ingest_accepts(&store, &admin).await;
+}
+
+#[tokio::test]
+async fn ingest_enforces_upload_limit_and_generated_ingest_accepts() {
+    let (_lock, admin, store) = setup().await;
+    let error = store.ingest(oversized_publish_request()).await.unwrap_err();
+    assert_upload_file_limit(error);
+    assert_generated_ingest_accepts(&store, &admin).await;
+}
+
 #[test]
 fn path_safety_is_enforced_without_postgres() {
     assert!(validate_source_path("../etc/passwd").is_err());
