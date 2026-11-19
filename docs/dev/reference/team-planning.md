@@ -20,6 +20,94 @@ outcome is unknown, inspect it first and preserve its original intent. Changing
 a previously recorded request's confirmation requires a new reviewed request,
 rather than reusing its ID with a different payload.
 
+## Source package limits
+
+Publish preparation and activation validate the complete source package before it is
+stored. Limits are inclusive: exactly the stated size or count is accepted, and one
+more byte or file is refused. They are named constants selected by the server code
+path, not configuration values and never fields in an MCP or HTTP request.
+
+| Package origin | Files | Largest file | Whole package | Where it applies |
+| --- | ---: | ---: | ---: | --- |
+| `UPLOAD` | 64 | 1 MiB | 4 MiB | Client-submitted packages, including `ingest_publish_candidate` and its subsequent ingest |
+| `GENERATED` | 256 | 16 MiB | 64 MiB | Packages generated from a registered server source: planning writeback and activation, generated ingest, activation's revalidation of a stored snapshot, and delivery-sync load/reparse |
+
+The upload budget is unchanged. A request cannot select `GENERATED`, and choosing it
+for a server-generated package does not relax path, UTF-8, duplicate-path, binding,
+provenance, contract or graph validation.
+
+The locked ledger has a separate byte limit, passed explicitly through read,
+replacement and delivery-note patch functions. Local command-line paths retain
+`YAML_READ_CAP = 4 MiB`. Server planning writeback and delivery synchronization use
+`SERVER_LEDGER_READ_CAP = 32 MiB`.
+
+For capacity planning, a detailed task adds approximately **3,047 bytes** to pretty
+`workstreams.json`, **2,677 bytes** to the YAML ledger, and **5,961 bytes** to the
+whole package. At 605 tasks, that shape gives approximately 897,817 bytes in
+`workstreams.json`. These are estimates, not quotas or performance guarantees.
+
+- Upload reaches the 1 MiB single-file limit at about **700 tasks**, the 4 MiB
+  package limit at about **1,400 tasks**, and the old 4 MiB ledger limit at about
+  **3,600 tasks**. The first two limits remain intentional for client uploads.
+- Generated packages reach the 16 MiB `workstreams.json` limit at about **5,817
+  tasks**. That is normally the next task-count-driven bottleneck. The 64 MiB whole
+  package and 32 MiB ledger estimates are about **11,955** and **14,568 tasks**,
+  respectively, but the 10,000-contract bundle limit precedes them.
+- `task_definitions.json`, provenance, binding, the original ledger and referenced
+  documents all count toward the whole package. The exact original ledger and every
+  generated JSON file are retained in every snapshot.
+
+### Size-refusal contract
+
+A size refusal is `SourcePackageTooLarge` with HTTP status **413** and the same
+structured body on MCP. It contains only deterministic metadata:
+
+| Field | Meaning |
+| --- | --- |
+| `code` | Always `SourcePackageTooLarge` |
+| `limit_kind` | `file_bytes`, `package_bytes`, `file_count` or `ledger_bytes` |
+| `file` | Relative package/ledger path; `null` for `package_bytes` and `file_count` |
+| `actual` | Observed bytes or file count |
+| `limit` | Inclusive limit that was exceeded |
+| `package_bytes` | Total input package bytes; for a ledger rejected before package generation, the observed ledger bytes |
+| `files` | Package file count; `1` for a ledger rejected before package generation |
+| `next_step` | Reduce plan content or ask a service operator to review the fixed limits |
+
+`planning.outcome` uses the same public error mapping, and delivery synchronization
+preserves this error instead of converting it to `SourceDivergence`. Path violations
+remain `UnsafeSourcePath`. Responses do not include source bodies, absolute source
+locations or request-supplied content.
+
+### Other fixed limits on the publish/read path
+
+This inventory distinguishes project-wide limits from per-request, per-document and
+per-work bounds. A small request body does **not** limit total project tasks when the
+caller uses reviewed batches.
+
+| Limit | When it becomes effective | Disposition in this change |
+| --- | --- | --- |
+| Controlled `source.content` | Default 64 KiB, maximum 1 MiB per response; the maximum can no longer return all of `workstreams.json` at about 700 detailed tasks | Unchanged; activated projections remain readable through scoped reads. Whole-source paging is a separate follow-up |
+| `MAX_ARTIFACT_BYTES` | 1 MiB for one artifact, independent of project task count | Unchanged; this is not the generated-package budget |
+| Generated file count | At most 250 unique referenced documents with governance, or 251 without, after the five generated files and optional governance file; one more document is refused | Unchanged at 256 files |
+| Workstream references | At most 256 goal/spec references per workstream; the 257th is refused, but package file count normally refuses document-heavy packages first | Unchanged |
+| Referenced-document reads | Publish preparation reads a referenced document before package validation; there is no separate pre-read byte cap in this path. The generated 16 MiB per-file limit applies afterwards. The local adapter's separate `MARKDOWN_READ_CAP` is 2 MiB | Unchanged; streaming or earlier bounded reads are outside this fix |
+| Workstream bundle contracts | 10,000 accepted; task 10,001 is refused | After the estimated 16 MiB file bottleneck |
+| Governance `MAX_WORKS` | 20,000 governed works accepted; work 20,001 is refused | Unchanged |
+| `MAX_WORKSTREAMS` | 4,096 accepted; stream 4,097 is refused. A design with one stream per task reaches this before 5,000 tasks | Unchanged and explicitly left for a separate capacity decision |
+| Graph nodes | 16,384 accepted; node 16,385 is refused | Unchanged |
+| Graph edges | 65,536 accepted. One dependency per task reaches the refusal at task 65,537; a dense DAG reaches it at 363 tasks | Unchanged; dense graphs need a separate capacity decision |
+| Planning request body | 64 KiB on HTTP and MCP, roughly 22 detailed changes at 3,047 bytes each | Unchanged; use reviewed batches rather than one project-wide draft |
+| Draft changes | MCP schema allows 256 per draft; the domain candidate allows 1,024 | Unchanged per candidate; not a project-wide task cap |
+| Delivery source note | 16 KiB per note and 32 observations/facts per work | Unchanged per work; independent of total project tasks |
+| Delivery/read responses | Several envelopes are bounded at 256 KiB and list queries are paged | Unchanged; not a whole-project activation budget |
+| PostgreSQL bind parameters | Protocol maximum 65,535 per statement. Activation binds at most 8 and delivery publication at most 21 per statement; parameters are not accumulated across tasks | No task-count cliff in the current implementation |
+| PostgreSQL JSONB/BYTEA values | Approximately 1 GiB per value. At the byte estimates above this is roughly 180,000 tasks for a snapshot JSON value or 400,000 for one ledger BYTEA, well after the explicit package/ledger limits | Unchanged |
+
+Every activation still stores a full snapshot, including full source text and a new
+projection. Sharding, snapshot deduplication, compact JSON, package-capacity preview,
+pre-publication size preflight and closure of interrupted `published / pending /
+unlogged` writeback states are intentionally not part of this limit correction.
+
 ## Changes and task definitions
 
 `changes` contains closed objects with `op`, `after` and optional nullable

@@ -200,7 +200,9 @@ impl SourceStore {
                 .map_err(|_| PgError::Protocol("invalid sole source location".into()))?;
         let guard = LockedSourceFile::open(&req.source_root, &req.ledger_relative_path)
             .map_err(source_write_error)?;
-        let disk = guard.read().map_err(source_write_error)?;
+        let disk = guard
+            .read(awr_source::SERVER_LEDGER_READ_CAP)
+            .map_err(|error| source_ledger_write_error(error, &req.ledger_relative_path))?;
         let observed = fingerprint(&disk);
         let (before_fp, after_fp, after_bytes, source_written) = if prior.is_some() {
             if observed == intent.after_fingerprint {
@@ -251,7 +253,7 @@ impl SourceStore {
                 bytes: f.bytes.clone(),
             })
             .collect();
-        Self::validate_publish_package(&files)?;
+        Self::validate_generated_publish_package(&files)?;
         let raw_files: Vec<_> = files
             .iter()
             .map(|f| (f.path.clone(), f.bytes.clone()))
@@ -343,12 +345,16 @@ impl SourceStore {
                 return Err(PgError::SourceDivergence);
             }
             guard
-                .replace(&before_fp, &after_bytes)
-                .map_err(source_write_error)?;
+                .replace(&before_fp, &after_bytes, awr_source::SERVER_LEDGER_READ_CAP)
+                .map_err(|error| source_ledger_write_error(error, &req.ledger_relative_path))?;
         }
         refuse_external_overwrite(
             &after_fp,
-            &fingerprint(&guard.read().map_err(source_write_error)?),
+            &fingerprint(
+                &guard
+                    .read(awr_source::SERVER_LEDGER_READ_CAP)
+                    .map_err(|error| source_ledger_write_error(error, &req.ledger_relative_path))?,
+            ),
         )
         .map_err(|_| {
             PgError::WritebackRefused("source fingerprint changed before confirmation".into())
@@ -394,7 +400,11 @@ impl SourceStore {
         };
         refuse_external_overwrite(
             &after_fp,
-            &fingerprint(&guard.read().map_err(source_write_error)?),
+            &fingerprint(
+                &guard
+                    .read(awr_source::SERVER_LEDGER_READ_CAP)
+                    .map_err(|error| source_ledger_write_error(error, &req.ledger_relative_path))?,
+            ),
         )
         .map_err(|_| PgError::WritebackRefused("source changed before atomic activation".into()))?;
         let candidate = intent.candidate.as_ref().ok_or(PgError::SourceDivergence)?;
@@ -669,6 +679,13 @@ async fn load_activation_receipt(
     }))
 }
 
+fn source_ledger_write_error(error: awr_source::Error, relative: &str) -> PgError {
+    if let Some((actual, limit)) = awr_source::ledger_size_limit_exceeded(&error) {
+        return PgError::source_ledger_too_large(relative, actual, limit);
+    }
+    source_write_error(error)
+}
+
 fn source_write_error(error: awr_source::Error) -> PgError {
     match error {
         awr_source::Error::Io(error) => PgError::source_storage_unavailable(error),
@@ -697,7 +714,11 @@ mod tests {
         std::fs::set_permissions(&target, readonly).unwrap();
         let guard = LockedSourceFile::open(&root, "private-ledger").unwrap();
         let error = guard
-            .replace(&fingerprint(b"preserved"), b"replacement")
+            .replace(
+                &fingerprint(b"preserved"),
+                b"replacement",
+                awr_source::YAML_READ_CAP,
+            )
             .map_err(source_write_error)
             .unwrap_err();
         // All supported platforms retain bounded storage classification without

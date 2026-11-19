@@ -15,6 +15,25 @@ pub enum BindingStage {
     Revalidate,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourcePackageLimitKind {
+    FileBytes,
+    PackageBytes,
+    FileCount,
+    LedgerBytes,
+}
+
+impl SourcePackageLimitKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::FileBytes => "file_bytes",
+            Self::PackageBytes => "package_bytes",
+            Self::FileCount => "file_count",
+            Self::LedgerBytes => "ledger_bytes",
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum PgError {
     #[error(transparent)]
@@ -27,6 +46,15 @@ pub enum PgError {
     ProjectNotAvailable,
     #[error("unsafe source path: {0}")]
     UnsafeSourcePath(String),
+    #[error("source package or server ledger exceeds a deterministic size limit")]
+    SourcePackageTooLarge {
+        limit_kind: SourcePackageLimitKind,
+        file: Option<String>,
+        actual: u64,
+        limit: u64,
+        package_bytes: u64,
+        files: usize,
+    },
     #[error("file is not valid UTF-8: {0}")]
     InvalidUtf8(String),
     #[error("snapshot content drifted from its recorded digest: {0}")]
@@ -170,6 +198,18 @@ pub enum PgError {
 }
 
 impl PgError {
+    pub fn source_ledger_too_large(file: &str, actual: u64, limit: u64) -> Self {
+        Self::SourcePackageTooLarge {
+            limit_kind: SourcePackageLimitKind::LedgerBytes,
+            file: Some(file.into()),
+            actual,
+            limit,
+            // No package exists yet; one observed ledger is the complete input.
+            package_bytes: actual,
+            files: 1,
+        }
+    }
+
     pub fn delivery_route_reuse_diagnostic(&self) -> Option<serde_json::Value> {
         let Self::DeliveryRouteReuseBlocked { reason } = self else {
             return None;

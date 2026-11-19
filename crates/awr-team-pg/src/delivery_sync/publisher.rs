@@ -47,6 +47,13 @@ struct BoundSource {
     initial_fingerprint: String,
 }
 
+fn source_ledger_error(error: awr_source::Error, relative: &str) -> PgError {
+    if let Some((actual, limit)) = awr_source::ledger_size_limit_exceeded(&error) {
+        return PgError::source_ledger_too_large(relative, actual, limit);
+    }
+    PgError::SourceDivergence
+}
+
 impl BoundSource {
     async fn load(
         tx: &Transaction<'_>,
@@ -80,7 +87,7 @@ impl BoundSource {
             .into_iter()
             .map(|(path, bytes)| SourceFile { path, bytes })
             .collect();
-        if SourceStore::validate_publish_package(&files)? != binding {
+        if SourceStore::validate_generated_publish_package(&files)? != binding {
             return Err(PgError::SourceDivergence);
         }
         let relative = binding
@@ -150,7 +157,10 @@ impl BoundSource {
                 bytes: f.bytes.clone(),
             })
             .collect();
-        SourceStore::validate_publish_package(&actual).map_err(|_| PgError::SourceDivergence)?;
+        SourceStore::validate_generated_publish_package(&actual).map_err(|error| match error {
+            error @ PgError::SourcePackageTooLarge { .. } => error,
+            _ => PgError::SourceDivergence,
+        })?;
         if package.bundle_digest != baseline.hash().map_err(|_| PgError::SourceDivergence)?
             || package.referenced_specs.iter().any(|spec| {
                 self.files
@@ -623,7 +633,9 @@ impl DeliverySyncStore {
             return Err(PgError::PreconditionsChanged);
         }
         let guard = bound.open().map_err(|_| PgError::SourceDivergence)?;
-        let before = guard.read().map_err(|_| PgError::SourceDivergence)?;
+        let before = guard
+            .read(awr_source::SERVER_LEDGER_READ_CAP)
+            .map_err(|error| source_ledger_error(error, bound.relative()))?;
         if fingerprint(&before) != request.expected_source_fingerprint {
             return Err(PgError::SourceDivergence);
         }
@@ -671,9 +683,14 @@ impl DeliverySyncStore {
         )
         .await?;
         let patch =
-            prepare_delivery_source_note(&before, &note).map_err(|_| PgError::SourceDivergence)?;
+            prepare_delivery_source_note(&before, &note, awr_source::SERVER_LEDGER_READ_CAP)
+                .map_err(|error| source_ledger_error(error, bound.relative()))?;
         let projection = bound.reindex(project, &patch.after_bytes)?;
-        if guard.read().map_err(|_| PgError::SourceDivergence)? != before {
+        if guard
+            .read(awr_source::SERVER_LEDGER_READ_CAP)
+            .map_err(|error| source_ledger_error(error, bound.relative()))?
+            != before
+        {
             return Err(PgError::SourceDivergence);
         }
         tx.execute("INSERT INTO awr_team.delivery_source_publications(tenant_id,project_id,id,source_snapshot_id,work_id,
@@ -964,8 +981,12 @@ impl DeliverySyncStore {
         Option<String>,
         Option<Value>,
     )> {
-        let Ok(mut actual) = guard.read() else {
-            return Ok(("failed", Some("source_unavailable"), None, None));
+        let mut actual = match guard.read(awr_source::SERVER_LEDGER_READ_CAP) {
+            Ok(bytes) => bytes,
+            Err(error) if awr_source::ledger_size_limit_exceeded(&error).is_some() => {
+                return Err(source_ledger_error(error, bound.relative()));
+            }
+            Err(_) => return Ok(("failed", Some("source_unavailable"), None, None)),
         };
         let mut observed = fingerprint(&actual);
         if observed != j.before_fingerprint && observed != j.after_fingerprint {
@@ -978,14 +999,27 @@ impl DeliverySyncStore {
             if confirm {
                 return Ok(("pending", None, Some(observed), None));
             }
-            if bound.reindex(project, &actual).is_err() {
+            if let Err(error) = bound.reindex(project, &actual) {
+                if matches!(error, PgError::SourcePackageTooLarge { .. }) {
+                    return Err(error);
+                }
                 return Ok(("conflict", Some("projection_changed"), Some(observed), None));
             }
             if let Some(worker) = worker {
                 pump::publication_guard(tx, tenant, project, auth, &j.id, Some(worker)).await?;
             }
-            if guard.replace(&j.before_fingerprint, &j.after).is_err() {
-                let observed = guard.read().ok().map(|b| fingerprint(&b));
+            if let Err(error) = guard.replace(
+                &j.before_fingerprint,
+                &j.after,
+                awr_source::SERVER_LEDGER_READ_CAP,
+            ) {
+                if awr_source::ledger_size_limit_exceeded(&error).is_some() {
+                    return Err(source_ledger_error(error, bound.relative()));
+                }
+                let observed = guard
+                    .read(awr_source::SERVER_LEDGER_READ_CAP)
+                    .ok()
+                    .map(|b| fingerprint(&b));
                 let phase = if observed.as_deref() == Some(&j.after_fingerprint) {
                     "source_written"
                 } else if observed.as_deref() == Some(&j.before_fingerprint) {
@@ -1003,8 +1037,12 @@ impl DeliverySyncStore {
                 &[&tenant, &project, &j.id],
             )
             .await?;
-            let Ok(bytes) = guard.read() else {
-                return Ok(("failed", Some("source_unavailable"), None, None));
+            let bytes = match guard.read(awr_source::SERVER_LEDGER_READ_CAP) {
+                Ok(bytes) => bytes,
+                Err(error) if awr_source::ledger_size_limit_exceeded(&error).is_some() => {
+                    return Err(source_ledger_error(error, bound.relative()));
+                }
+                Err(_) => return Ok(("failed", Some("source_unavailable"), None, None)),
             };
             actual = bytes;
             observed = fingerprint(&actual);
@@ -1036,11 +1074,17 @@ impl DeliverySyncStore {
         }
         let proof = match bound.reindex(project, &actual) {
             Ok(proof) if proof == j.projection => proof,
+            Err(error @ PgError::SourcePackageTooLarge { .. }) => return Err(error),
             _ => return Ok(("conflict", Some("projection_changed"), Some(observed), None)),
         };
-        if guard.read().ok().as_deref() != Some(actual.as_slice())
-            || guard.verify_identity(&j.identity).is_err()
-        {
+        let unchanged = match guard.read(awr_source::SERVER_LEDGER_READ_CAP) {
+            Ok(bytes) => bytes == actual,
+            Err(error) if awr_source::ledger_size_limit_exceeded(&error).is_some() => {
+                return Err(source_ledger_error(error, bound.relative()));
+            }
+            Err(_) => false,
+        };
+        if !unchanged || guard.verify_identity(&j.identity).is_err() {
             return Ok(("conflict", Some("source_drift"), Some(observed), None));
         }
         // Refresh current candidate, selected observations and domain receipt
@@ -1129,7 +1173,9 @@ impl DeliverySyncStore {
         guard
             .verify_identity(&j.identity)
             .map_err(|_| PgError::SourceDivergence)?;
-        let actual = guard.read().map_err(|_| PgError::SourceDivergence)?;
+        let actual = guard
+            .read(awr_source::SERVER_LEDGER_READ_CAP)
+            .map_err(|error| source_ledger_error(error, bound.relative()))?;
         if j.written || fingerprint(&actual) != j.before_fingerprint {
             return Err(PgError::SourceDivergence);
         }
@@ -1306,13 +1352,14 @@ impl DeliverySyncStore {
                 && projection_current
                 && actual_fingerprint.as_deref() == Some(confirmed.as_str())
                 && physical.as_ref().is_some_and(|b| {
-                    prepare_delivery_source_note(b, &j.note)
+                    prepare_delivery_source_note(b, &j.note, awr_source::SERVER_LEDGER_READ_CAP)
                         .is_ok_and(|patch| patch.after_bytes == *b)
                 })
                 && LockedSourceFile::observe(
                     Path::new(&bound.location.locator),
                     bound.relative(),
                     &j.identity,
+                    awr_source::SERVER_LEDGER_READ_CAP,
                 )
                 .is_ok_and(|bytes| physical.as_ref() == Some(&bytes))
                 && j.require_note(tx, tenant, project, auth).await.is_ok();
@@ -1337,5 +1384,63 @@ impl DeliverySyncStore {
             return Err(PgError::ResponseTooLarge);
         }
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod package_limit_tests {
+    use super::*;
+
+    #[test]
+    fn generated_delivery_reparse_accepts_more_than_the_upload_file_limit() {
+        let root = std::env::temp_dir().join(format!("awr-delivery-package-{}", ulid::Ulid::new()));
+        std::fs::create_dir(&root).unwrap();
+        let root = std::fs::canonicalize(root).unwrap();
+        let ledger = serde_json::to_vec(&json!({
+            "workstreams":{"version":1,"definitions":[{
+                "id":"00000000000000000000000001","external_key":"alpha","title":"Alpha",
+                "state":"active","authority_version":1,"goal_keys":["alpha"],"acceptance_contracts":[]
+            }]},
+            "goals":[{"id":"alpha","title":"Alpha","status":"active"}],
+            "work_items":[{
+                "id":"a","title":"Synthetic large contract","status":"planned","workstream":"alpha",
+                "goals":["alpha"],"acceptance":["x".repeat(1_100_000)],"paths":["src"],"depends_on":[]
+            }]
+        }))
+        .unwrap();
+        let location = SoleSourceLocation::server_directory(&root, "ledger.yaml").unwrap();
+        let package = prepare_publish_from_ledger_bytes(
+            &location,
+            &root,
+            &ledger,
+            "reader-project",
+            &PublishPrepOptions::default(),
+        )
+        .unwrap();
+        assert!(
+            package
+                .files
+                .iter()
+                .find(|file| file.path == crate::source::WORKSTREAMS_FILE)
+                .unwrap()
+                .bytes
+                .len()
+                > crate::MAX_FILE_BYTES
+        );
+        let bound = BoundSource {
+            location: package.source_location.clone(),
+            files: package
+                .files
+                .iter()
+                .map(|file| SourceFile {
+                    path: file.path.clone(),
+                    bytes: file.bytes.clone(),
+                })
+                .collect(),
+            initial_fingerprint: package.source_version_digest.clone(),
+        };
+        let proof = bound.reindex("reader-project", &ledger).unwrap();
+        assert_eq!(proof["referenced_spec_count"], 0);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
