@@ -1,0 +1,236 @@
+import { theme as antdTheme } from 'antd';
+import { act, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import '../i18n';
+import {
+  applyCraftTheme,
+  craftCssVariables,
+  craftThemes,
+  createThemeConfig,
+  type CraftThemeMode,
+} from '../theme';
+import { CraftThemeProvider, THEME_STORAGE_KEY } from './CraftThemeProvider';
+import { ThemeToggle } from './ThemeToggle';
+
+function channel(hex: string, index: number): number {
+  return Number.parseInt(hex.slice(index, index + 2), 16) / 255;
+}
+
+function luminance(hex: string): number {
+  const [red, green, blue] = [1, 3, 5].map((index) => channel(hex, index)).map((value) => (
+    value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+  ));
+  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+}
+
+function contrast(left: string, right: string): number {
+  const [high, low] = [luminance(left), luminance(right)].sort((a, b) => b - a);
+  return (high + 0.05) / (low + 0.05);
+}
+
+function ThemeProbe() {
+  const { token } = antdTheme.useToken();
+  return (
+    <output
+      data-testid="theme-probe"
+      data-primary={token.colorPrimary}
+      data-surface={token.colorBgContainer}
+      data-on-primary={token.colorTextLightSolid}
+    />
+  );
+}
+
+function renderTheme() {
+  return render(
+    <CraftThemeProvider>
+      <ThemeToggle />
+      <ThemeProbe />
+    </CraftThemeProvider>,
+  );
+}
+
+function mockSystemTheme(initial: CraftThemeMode) {
+  let dark = initial === 'dark';
+  const listeners = new Set<() => void>();
+  const media = {
+    get matches() { return dark; },
+    media: '(prefers-color-scheme: dark)',
+    onchange: null,
+    addListener: (listener: () => void) => listeners.add(listener),
+    removeListener: (listener: () => void) => listeners.delete(listener),
+    addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+    removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+    dispatchEvent: () => false,
+  };
+  window.matchMedia = vi.fn(() => media) as unknown as typeof window.matchMedia;
+  return {
+    setMode(mode: CraftThemeMode) {
+      dark = mode === 'dark';
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
+const originalMatchMedia = window.matchMedia;
+
+afterEach(() => {
+  window.matchMedia = originalMatchMedia;
+  window.localStorage.removeItem(THEME_STORAGE_KEY);
+  delete document.documentElement.dataset.theme;
+  document.documentElement.removeAttribute('style');
+});
+
+describe('complete prototype theme tokens', () => {
+  it.each(['light', 'dark'] as const)('keeps every text role readable on every %s surface', (mode) => {
+    const colors = craftThemes[mode].color;
+    const roles = ['ink', 'secondary', 'muted', 'accent', 'positive', 'negative', 'warning'] as const;
+    const surfaces = ['page', 'side', 'surface', 'raised'] as const;
+    for (const role of roles) {
+      for (const surface of surfaces) {
+        expect(contrast(colors[role], colors[surface]), `${mode} ${role} on ${surface}`)
+          .toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
+  it('pins every neutral, accent, semantic, soft-base and line token in both themes', () => {
+    expect(craftThemes.light.color).toEqual({
+      page: '#F3F5F9', side: '#FFFFFF', surface: '#FFFFFF', raised: '#ECEFF4',
+      ink: '#111827', secondary: '#4B5565', muted: '#626B7C',
+      hairline: 'rgba(17, 24, 39, 0.08)', hairlineStrong: 'rgba(17, 24, 39, 0.16)',
+      accent: '#1D4ED8', onAccent: '#FFFFFF', accentSoft: 'rgba(29, 78, 216, 0.08)',
+      positive: '#147B3B', positiveSoft: 'rgba(20, 123, 59, 0.10)',
+      negative: '#B91C1C', negativeSoft: 'rgba(185, 28, 28, 0.08)',
+      warning: '#925F0B', warningSoft: 'rgba(146, 95, 11, 0.10)',
+    });
+    expect(craftThemes.dark.color).toEqual({
+      page: '#0B0D14', side: '#07080D', surface: '#11141C', raised: '#1A1E28',
+      ink: '#EEF0F5', secondary: '#A3A9B8', muted: '#7E869A',
+      hairline: 'rgba(238, 240, 245, 0.08)', hairlineStrong: 'rgba(238, 240, 245, 0.16)',
+      accent: '#8AB0FF', onAccent: '#07080D', accentSoft: 'rgba(138, 176, 255, 0.12)',
+      positive: '#4CC38A', positiveSoft: 'rgba(76, 195, 138, 0.14)',
+      negative: '#F2686C', negativeSoft: 'rgba(242, 104, 108, 0.14)',
+      warning: '#E0A63A', warningSoft: 'rgba(224, 166, 58, 0.14)',
+    });
+    expect(craftThemes.light.shadow).toEqual({
+      small: '0 1px 2px rgba(17, 24, 39, 0.05)', floating: '0 8px 24px rgba(17, 24, 39, 0.10)',
+    });
+  });
+
+  it('retains the approved higher-contrast light muted role and repairs dark muted on raised', () => {
+    expect(craftThemes.light.color.muted).toBe('#626B7C');
+    expect(craftThemes.dark.color.muted).toBe('#7E869A');
+    expect(contrast('#6B7487', craftThemes.light.color.raised)).toBeLessThan(4.5);
+    expect(contrast('#7A8296', craftThemes.dark.color.raised)).toBeLessThan(4.5);
+  });
+
+  it('maps both themes to the exact supplied categorical series', () => {
+    expect(craftThemes.light.chart.series).toEqual(['#2A78D6', '#EB6834', '#1BAF7A', '#EDA100']);
+    expect(craftThemes.dark.chart.series).toEqual(['#3987E5', '#D95926', '#199E70', '#C98500']);
+  });
+
+  it('provides four validated ordered-blue completion steps in both themes', () => {
+    expect(craftThemes.light.chart.completion).toEqual({
+      verified: '#104281', reported: '#256ABF', inProgress: '#5598E7', notStarted: '#86B6EF',
+    });
+    expect(craftThemes.dark.chart.completion).toEqual({
+      verified: '#86B6EF', reported: '#3987E5', inProgress: '#256ABF', notStarted: '#184F95',
+    });
+  });
+
+  it('shares the radius and motion ladder while replacing both shadows and every color', () => {
+    expect(craftThemes.dark.radius).toEqual(craftThemes.light.radius);
+    expect(craftThemes.dark.motion).toEqual(craftThemes.light.motion);
+    expect(craftThemes.dark.shadow).toEqual({
+      small: 'none', floating: '0 16px 40px rgba(0, 0, 0, 0.50)',
+    });
+    for (const role of Object.keys(craftThemes.light.color)) {
+      expect(craftThemes.dark.color).toHaveProperty(role);
+    }
+  });
+
+  it.each(['light', 'dark'] as const)('uses the antd %s algorithm with token overrides', (mode) => {
+    const config = createThemeConfig(mode);
+    expect(config.algorithm).toEqual(expect.any(Function));
+    expect(config.cssVar).toEqual({ key: 'awr-observer' });
+    expect(config.token?.colorPrimary).toBe(craftThemes[mode].color.accent);
+    expect(config.token?.colorTextLightSolid).toBe(craftThemes[mode].color.onAccent);
+    expect(config.token?.colorSuccessBg).toBe(craftThemes[mode].color.positiveSoft);
+    expect(config.token?.colorErrorBg).toBe(craftThemes[mode].color.negativeSoft);
+    expect(config.token?.colorWarningBg).toBe(craftThemes[mode].color.warningSoft);
+    expect(config.token?.colorInfoBg).toBe(craftThemes[mode].color.accentSoft);
+    expect(config.token?.colorTextTertiary).toBe(craftThemes[mode].color.muted);
+    expect(config.token?.colorBorderSecondary).toBe(craftThemes[mode].color.hairline);
+    expect(config.token?.boxShadowSecondary).toBe(craftThemes[mode].shadow.floating);
+    expect(config.token?.colorBorder).toBe(craftThemes[mode].color.hairlineStrong);
+    expect(config.components?.Layout?.siderBg).toBe(craftThemes[mode].color.side);
+  });
+
+  it.each(['light', 'dark'] as const)('publishes a complete, defined CSS variable set for %s', (mode) => {
+    const variables = craftCssVariables(mode);
+    expect(Object.keys(variables).length).toBeGreaterThanOrEqual(35);
+    for (const value of Object.values(variables)) {
+      expect(value).not.toMatch(/undefined|null|NaN/);
+      expect(value).not.toBe('');
+    }
+    expect(variables['--craft-completion-verified']).toBe(craftThemes[mode].chart.completion.verified);
+    expect(variables['--craft-shadow-floating']).toBe(craftThemes[mode].shadow.floating);
+  });
+
+  it('updates the document color scheme and all custom properties synchronously', () => {
+    applyCraftTheme(document.documentElement, 'dark');
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(document.documentElement.style.colorScheme).toBe('dark');
+    expect(document.documentElement.style.getPropertyValue('--craft-color-surface'))
+      .toBe(craftThemes.dark.color.surface);
+  });
+});
+
+describe('theme selection behavior', () => {
+  it('defaults to the system preference and follows system changes until explicitly chosen', () => {
+    const media = mockSystemTheme('light');
+    renderTheme();
+    expect(document.documentElement.dataset.theme).toBe('light');
+    expect(screen.getByRole('button', { name: '深色' })).toBeTruthy();
+    expect(screen.getByTestId('theme-probe').getAttribute('data-primary')).toBe(craftThemes.light.color.accent);
+
+    act(() => media.setMode('dark'));
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(screen.getByRole('button', { name: '浅色' })).toBeTruthy();
+    expect(screen.getByTestId('theme-probe').getAttribute('data-primary')).toBe(craftThemes.dark.color.accent);
+    expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBeNull();
+  });
+
+  it('loads a remembered choice over the system preference and persists the next choice', async () => {
+    mockSystemTheme('light');
+    window.localStorage.setItem(THEME_STORAGE_KEY, 'dark');
+    const first = renderTheme();
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(screen.getByTestId('theme-probe').getAttribute('data-on-primary')).toBe(craftThemes.dark.color.onAccent);
+
+    await userEvent.click(screen.getByRole('button', { name: '浅色' }));
+    expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBe('light');
+    expect(document.documentElement.dataset.theme).toBe('light');
+    first.unmount();
+
+    renderTheme();
+    expect(document.documentElement.dataset.theme).toBe('light');
+    expect(screen.getByRole('button', { name: '深色' })).toBeTruthy();
+  });
+
+  it('still toggles when local storage reads and writes are unavailable', async () => {
+    mockSystemTheme('light');
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('Blocked'); });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Blocked'); });
+    renderTheme();
+    expect(document.documentElement.dataset.theme).toBe('light');
+
+    await userEvent.click(screen.getByRole('button', { name: '深色' }));
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(screen.getByRole('button', { name: '浅色' })).toBeTruthy();
+    expect(screen.getByTestId('theme-probe').getAttribute('data-surface')).toBe(craftThemes.dark.color.surface);
+    expect(document.documentElement.style.getPropertyValue('--craft-color-surface'))
+      .toBe(craftThemes.dark.color.surface);
+  });
+});

@@ -34,7 +34,12 @@ export function scanCraftSource(source: string, fileType: CraftFileType, filePat
   };
 
   add('hex-color', /#[0-9a-f]{3,8}\b/gi);
-  add('color-function', /\b(?:rgba?|hsla?)\s*\(/gi);
+  add('color-function', /\b(?:rgba?|hsla?|oklch|oklab|lch|lab|color|color-contrast)\s*\(/gi);
+  for (const match of source.matchAll(/\b(?:backgroundColor|background-color|background|border(?:Top|Right|Bottom|Left)?Color|border(?:-top|-right|-bottom|-left)?-color|outlineColor|outline-color|textDecorationColor|text-decoration-color|columnRuleColor|column-rule-color|caretColor|caret-color|fill|stroke)\s*:\s*['"]([A-Za-z]+)['"]/g)) {
+    if (!['currentColor', 'transparent', 'none', 'inherit', 'initial', 'unset', 'revert'].includes(match[1])) {
+      violations.push({ rule: 'named-color', match: match[0] });
+    }
+  }
   add('gradient', /\b(?:linear-gradient|radial-gradient|conic-gradient)\s*\(/gi);
   add('colored-shadow', /(?:boxShadow|box-shadow|drop-shadow)[^\n;}]*(?:#|rgba?\(|hsla?\(|blue|red|green|purple|orange|violet|magenta|cyan)/gi);
   add('icon-package', /@ant-design\/icons/g);

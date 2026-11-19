@@ -77,6 +77,17 @@ describe('craft source scanner self-test', () => {
       ]);
     }
   });
+
+  it.each(['light', 'dark'])('rejects an injected non-token color in a %s themed component', (mode) => {
+    const source = `<div data-theme="${mode}" style={{ backgroundColor: 'rebeccapurple', color: 'var(--craft-color-ink)' }} />`;
+    expect(scanCraftSource(source, 'tsx', `components/ThemeProbe.tsx`).map((violation) => violation.rule))
+      .toContain('named-color');
+  });
+
+  it.each(['light', 'dark'])('accepts token references in a %s themed component', (mode) => {
+    const source = `<div data-theme="${mode}" style={{ backgroundColor: 'var(--craft-color-surface)', color: 'var(--craft-color-ink)' }} />`;
+    expect(scanCraftSource(source, 'tsx', 'components/ThemeProbe.tsx')).toEqual([]);
+  });
 });
 
 describe('craft workspace scan', () => {

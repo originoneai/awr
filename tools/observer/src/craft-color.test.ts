@@ -30,7 +30,7 @@ describe('craft color tokens', () => {
       ...filesUnder('src/pages'),
       ...filesUnder('src/components'),
       'src/global.css',
-    ].filter((file) => /\.(tsx?|css)$/.test(file));
+    ].filter((file) => /\.(tsx?|css)$/.test(file) && !/\.test\.[cm]?[jt]sx?$/.test(file));
     const offenders = files.filter((file) => /#[0-9A-Fa-f]{3,8}\b/.test(readFileSync(file, 'utf8')));
     expect(offenders).toEqual([]);
   });

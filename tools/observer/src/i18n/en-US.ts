@@ -123,6 +123,8 @@ const enUS: Messages = {
     later: 'This feature is not available yet',
     openNav: 'Open navigation',
     closeNav: 'Close navigation',
+    switchToLight: 'Light',
+    switchToDark: 'Dark',
   },
   projectMaps: {
     search: 'Search work',

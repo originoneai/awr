@@ -35,6 +35,14 @@ describe('AppShell navigation', () => {
     expect(screen.queryByText('示例组织')).toBeNull();
   });
 
+  it('places the theme switch at the bottom of the desktop sidebar', () => {
+    stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
+    renderApp('/workbench');
+    const inner = document.querySelector('.shell-sider-inner');
+    expect(inner?.lastElementChild?.classList.contains('shell-theme')).toBe(true);
+    expect(inner?.lastElementChild?.querySelector('[data-testid="theme-toggle"]')).not.toBeNull();
+  });
+
   it('navigates through a real menu link', async () => {
     stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
     const user = userEvent.setup();

@@ -32,7 +32,7 @@ describe('prototype shell behavior', () => {
     expect(innerLayout?.querySelector(':scope > .ant-layout-header')).not.toBeNull();
     expect(innerLayout?.querySelector(':scope > .ant-layout-content')).not.toBeNull();
     expect(container.querySelector(':scope > .ant-layout > .ant-layout-header')).toBeNull();
-    expect(themeConfig.token?.colorBgLayout).toBe('#F5F7FA');
+    expect(themeConfig.token?.colorBgLayout).toBe('#F3F5F9');
     expect(themeConfig.components?.Menu?.itemHeight).toBe(36);
   });
 

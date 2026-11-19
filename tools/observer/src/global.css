@@ -6,6 +6,39 @@ body,
   min-height: 100vh;
 }
 
+html,
+body {
+  background: var(--craft-color-page);
+  color: var(--craft-color-ink);
+}
+
+.shell-theme {
+  flex: 0 0 auto;
+  padding: 8px 12px 16px;
+}
+
+.shell-theme-toggle.ant-btn {
+  height: 36px;
+  justify-content: flex-start;
+  gap: 8px;
+  padding-inline: 12px;
+  color: var(--ant-color-text-secondary);
+  font-weight: 400;
+}
+
+.shell-theme-toggle.ant-btn:hover {
+  color: var(--ant-color-text);
+}
+
+.shell-drawer .ant-drawer-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.shell-drawer .shell-theme-toggle.ant-btn {
+  height: 40px;
+}
+
 .shell-sider {
   min-height: 100vh;
 }
@@ -36,7 +69,8 @@ body,
 }
 
 .shell-nav .ant-menu-item,
-.shell-header .ant-btn {
+.shell-header .ant-btn,
+.shell-theme-toggle.ant-btn {
   transition:
     color 160ms cubic-bezier(0.22, 1, 0.36, 1),
     background-color 160ms cubic-bezier(0.22, 1, 0.36, 1),
@@ -50,6 +84,7 @@ body,
 
 .shell-header button:focus-visible,
 .shell-nav a:focus-visible,
+.shell-theme-toggle:focus-visible,
 .shell-content a:focus-visible,
 .shell-content button:focus-visible,
 .shell-content [role="button"]:focus-visible {
@@ -166,6 +201,7 @@ body,
 
   .shell-nav .ant-menu-item,
   .shell-header .ant-btn,
+  .shell-theme-toggle.ant-btn,
   .shell-content *,
   .shell-content *::before,
   .shell-content *::after {
