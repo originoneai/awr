@@ -137,6 +137,9 @@ describe('verified and unknown guards', () => {
     ['one criterion lacks evidence', verifiedTask(), [reviewRound('verified', 'approved')], (task: OverviewTask) => {
       task.acceptance = [{ evidence: [{ passed: true, current: true }] }, { evidence: [] }];
     }],
+    ['evidence passed only on an old candidate', verifiedTask(), [reviewRound('verified', 'approved')], (task: OverviewTask) => {
+      task.acceptance = [{ evidence: [{ passed: true, current: false }] }];
+    }],
     ['review is not independent', verifiedTask(), [reviewRound('verified', 'approved', { independent: false })], undefined],
     ['reviewer is the author', verifiedTask(), [reviewRound('verified', 'approved', { reviewerPersonId: 'person-a' })], undefined],
     ['result is not integrated', verifiedTask(), [reviewRound('verified', 'approved')], (task: OverviewTask) => {
