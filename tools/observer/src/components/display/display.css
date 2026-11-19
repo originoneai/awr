@@ -652,16 +652,15 @@ button.obs-row-control:hover {
   font-size: var(--craft-text-small);
 }
 
-/* Status tags: prototype .tag { height: 22px; padding: 0 8px; radius 6; gap: 6px;
-   font-size: 12px; line-height: 16px } and its data-h tint variants. 22 = 20 + 2, 6 = 4 + 2,
-   6 = 8 - 2. */
+/* Status tags: prototype .tag { height 22; padding 0 8; radius 6; gap 6; font 12/16 }
+   and its data-h tint variants — review round 2 named these tokens. */
 .obs-tag {
   display: inline-flex;
   align-items: center;
-  gap: calc(var(--ant-padding-xxs) + var(--ant-line-width-bold));
-  height: calc(var(--craft-leading-body) + var(--ant-line-width-bold));
+  gap: var(--craft-gap-tag);
+  height: var(--craft-height-tag);
   padding: 0 var(--ant-padding-xs);
-  border-radius: calc(var(--craft-radius-control) - var(--ant-line-width-bold));
+  border-radius: var(--craft-radius-tag);
   background: var(--craft-color-raised);
   color: var(--craft-color-secondary);
   font-size: var(--ant-font-size-sm);
@@ -723,7 +722,7 @@ button.obs-row-control:hover {
 /* waiting, record and none keep the muted token above. */
 .obs-lamp[data-ring="true"] {
   background: transparent;
-  box-shadow: inset 0 0 0 calc(var(--ant-line-width) * 1.5) var(--obs-lamp-color, var(--craft-color-muted));
+  box-shadow: inset 0 0 0 var(--craft-width-lamp-ring) var(--obs-lamp-color, var(--craft-color-muted));
 }
 
 /* The running lamp keeps a data-live marker for callers and assistive tooling. The
@@ -797,10 +796,13 @@ button.obs-kpi-open:focus-visible .obs-kpi-hint {
   opacity: 1;
 }
 
+/* The prototype's .v is a block whose unit small inherits the absolute metric line
+   height; that block layout is what makes the cell 121px tall (review R1). */
 .obs-kpi-value {
+  display: block;
   margin-top: var(--ant-padding-xxs);
-  font-size: var(--ant-font-size-heading-1);
-  line-height: calc(var(--ant-padding-md) * 2);
+  font-size: var(--craft-text-metric);
+  line-height: var(--craft-leading-metric);
   font-weight: var(--ant-font-weight-strong);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -863,8 +865,8 @@ button.obs-kpi-open:focus-visible .obs-kpi-hint {
 }
 
 .obs-kpis[data-compact="true"] .obs-kpi-value {
-  font-size: var(--ant-font-size-heading-2);
-  line-height: calc(var(--craft-leading-hero) + var(--ant-padding-xxs));
+  font-size: var(--craft-text-metric-compact);
+  line-height: var(--craft-leading-metric-compact);
 }
 
 /* Completion: prototype .seg4 { display: flex; gap: 2px; height: 8px },
@@ -930,6 +932,23 @@ button.obs-kpi-open:focus-visible .obs-kpi-hint {
 /* Chain: prototype .chain { margin-top: 20px; flex; align-items: center },
    .cn { flex: 1 1 0; min-height: 104px; padding: 12px 14px 14px; border line-2; radius 12 },
    .cn.root { red border, red-tinted surface, flex-grow 1.35 }, .cx { width: 48px }. */
+/* Chain canvas: the prototype's .why block — dotted canvas (--craft-color-canvas with a
+   hairline-strong dot on the 16px grid), padding 20/28/24 and a column flex so the footer
+   sits under the diagram; below 860px the padding tightens to 16/20/20 (review R2). */
+.obs-chain-block {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: var(--ant-padding-md) calc(var(--ant-padding-md) + var(--ant-padding-xs)) var(--ant-padding-lg);
+  background-color: var(--craft-color-canvas);
+  background-image: var(--craft-canvas-grid-image);
+  background-size: var(--craft-size-canvas-grid) var(--craft-size-canvas-grid);
+}
+
+.obs-chain-block[data-compact="true"] {
+  padding: var(--ant-padding-sm) var(--ant-padding-md) var(--ant-padding-md);
+}
+
 .obs-chain {
   display: flex;
   align-items: center;
@@ -940,7 +959,7 @@ button.obs-kpi-open:focus-visible .obs-kpi-hint {
   position: relative;
   flex: 1 1 0;
   min-width: 0;
-  min-height: calc(var(--ant-margin-xxl) * 2 + var(--ant-padding-xs));
+  min-height: var(--craft-height-chain-node);
   display: flex;
   flex-direction: column;
   gap: var(--ant-padding-xxs);
@@ -968,6 +987,31 @@ button.obs-chain-node {
 
 .obs-chain-node:hover {
   border-color: var(--craft-color-muted);
+}
+
+/* .cn.hot { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) } — the page
+   draws this while the matching rail card is hovered or focused (review R4). */
+.obs-chain-node[data-highlighted="true"] {
+  border-color: var(--craft-color-accent);
+  box-shadow: 0 0 0 var(--ant-line-width) var(--craft-color-accent);
+}
+
+/* .cn .you { position: absolute; top: -11px; right: 12px; height: 20px; padding: 0 8px;
+   radius 6; background: var(--accent); color: var(--on-accent); 12px/20px/500 }.
+   The badge is 20px tall (not the tag's 22); -11 = half of 20 plus the node's 1px border. */
+.obs-chain-you {
+  position: absolute;
+  top: calc((var(--craft-leading-body) / 2 + var(--ant-line-width)) * -1);
+  right: calc(var(--ant-padding-xs) + var(--ant-padding-xxs));
+  height: var(--craft-leading-body);
+  padding: 0 var(--ant-padding-xs);
+  border-radius: var(--craft-radius-tag);
+  background: var(--craft-color-accent);
+  color: var(--craft-color-on-accent);
+  font-size: var(--ant-font-size-sm);
+  line-height: var(--craft-leading-body);
+  font-weight: var(--ant-font-weight-strong);
+  white-space: nowrap;
 }
 
 .obs-chain-node-root {
@@ -1092,15 +1136,23 @@ button.obs-chain-node {
   line-height: var(--craft-leading-tight);
 }
 
+.obs-chain-connector-icon {
+  display: inline-flex;
+}
+
+.obs-chain-connector-icon svg {
+  display: block;
+}
+
 .obs-chain-connector[data-hot="true"] {
   color: var(--craft-color-negative);
 }
 
-/* Chain footer: prototype .why-foot { margin-top: 16px; gap 16px; ink-2; 13px }. */
+/* Chain footer: prototype .why-foot { margin-top: 16px; gap 16px; ink-2; 13px } — R6. */
 .obs-chain-footer {
   display: flex;
   align-items: center;
-  gap: var(--ant-padding-md);
+  gap: var(--ant-padding-sm);
   flex-wrap: wrap;
   margin-top: var(--ant-padding-sm);
   color: var(--craft-color-secondary);
@@ -1163,6 +1215,7 @@ button.obs-chain-node {
 }
 
 .obs-todo-count {
+  box-sizing: border-box;
   min-width: var(--ant-padding-md);
   height: var(--ant-padding-md);
   padding: 0 calc(var(--ant-padding-xxs) + var(--ant-line-width-bold));
@@ -1273,6 +1326,7 @@ button.obs-todo-card:hover {
   margin-top: calc(var(--ant-padding-xs) + var(--ant-padding-xxs));
 }
 
+/* .where-s { gap: 6px } and .link { font-size: 13px } (review R6). */
 .obs-todo-agent,
 .obs-todo-view {
   display: inline-flex;
@@ -1281,7 +1335,7 @@ button.obs-todo-card:hover {
 }
 
 .obs-todo-agent {
-  gap: var(--ant-padding-xs);
+  gap: var(--craft-gap-tag);
   color: var(--craft-color-secondary);
 }
 
@@ -1294,6 +1348,7 @@ button.obs-todo-card:hover {
 .obs-todo-view {
   gap: var(--ant-padding-xxs);
   color: var(--craft-color-accent);
+  font-size: var(--craft-text-small);
 }
 
 .obs-todo-min {

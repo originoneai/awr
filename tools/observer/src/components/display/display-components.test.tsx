@@ -496,6 +496,19 @@ describe('StatusTag', () => {
       stalled: 'risk',
       running: 'info',
     };
+    // Review R8: the lamp colour is the point of the tag; pin it for all ten statuses.
+    const lamps: Record<string, string> = {
+      verified: 'done',
+      claimed: 'record',
+      returned: 'blocked',
+      review: 'stalled',
+      running: 'running',
+      stalled: 'stalled',
+      waiting: 'waiting',
+      ready: 'ready',
+      planned: 'waiting',
+      unknown: 'none',
+    };
     const rings = new Set(['claimed', 'waiting', 'ready', 'planned', 'unknown']);
     for (const [status, word] of Object.entries(words)) {
       const tag = screen.getByText(word).closest('.obs-tag')!;
@@ -507,13 +520,39 @@ describe('StatusTag', () => {
         expect(tag, status).toHaveAttribute('data-tone', tones[status]);
       }
       const lamp = tag.querySelector('.obs-lamp')!;
-      expect(lamp, status).toBeInTheDocument();
+      expect(lamp, `${status} lamp colour`).toHaveAttribute('data-lamp', lamps[status]);
       if (rings.has(status)) {
         expect(lamp, status).toHaveAttribute('data-ring', 'true');
       } else {
         expect(lamp, status).not.toHaveAttribute('data-ring');
       }
     }
+  });
+
+  it('pins the lamp colour for every health grade', () => {
+    renderDisplay(
+      <>
+        {(['ok', 'risk', 'off', 'none', 'info'] as const).map((status) => (
+          <HealthTag key={status} status={status} />
+        ))}
+      </>,
+    );
+    // Review R8: health lamps reuse the task lamp scale; none stays the quiet ring.
+    const lamps: Record<string, string> = {
+      ok: 'done',
+      risk: 'stalled',
+      off: 'blocked',
+      none: 'none',
+      info: 'running',
+    };
+    for (const [status, lampState] of Object.entries(lamps)) {
+      const tag = document.querySelector(`.obs-lamp[data-lamp="${lampState}"]`)?.closest('.obs-tag');
+      expect(tag, `${status} renders the ${lampState} lamp`).not.toBeNull();
+      expect(tag!.querySelectorAll('.obs-lamp')).toHaveLength(1);
+    }
+    const allLamps = document.querySelectorAll('.obs-tag .obs-lamp');
+    expect([...allLamps].map((lamp) => lamp.getAttribute('data-lamp')).sort())
+      .toEqual(Object.values(lamps).sort());
   });
 
   it('keeps the live pulse to a running status and translates the words', async () => {
@@ -567,6 +606,19 @@ describe('CompletionBar', () => {
     view.unmount();
     renderDisplay(<CompletionBar showSummary={false} counts={{ verified: 3, reported: 1, inProgress: 0, notStarted: 0 }} />);
     expect(document.querySelector('.obs-completion-summary')).toBeNull();
+  });
+
+  it('keeps the prototype segment order and every number in the summary with all counts non-zero', () => {
+    // Review R8: the order is verified, reported, in progress, not started; the total
+    // includes the not-started count.
+    renderDisplay(<CompletionBar counts={{ verified: 6, reported: 2, inProgress: 1, notStarted: 1 }} />);
+    const segments = [...document.querySelectorAll('.obs-seg4-part')].map((part) => part.getAttribute('data-seg'));
+    expect(segments).toEqual(['verified', 'reported', 'inProgress', 'notStarted']);
+    const summary = document.querySelector('.obs-completion-summary')!.textContent;
+    expect(summary).toBe('核验过 6 · 标了完成 2 · 共 10');
+    expect(summary).toContain('6');
+    expect(summary).toContain('2');
+    expect(summary).toContain('10');
   });
 
   it('renders the four-word legend beside the bar', () => {
@@ -663,6 +715,35 @@ describe('Chain', () => {
     );
     expect(screen.getByText('3 件在排队')).toBeInTheDocument();
   });
+
+  it('renders the you badge and the hot outline only when the view asks for them', () => {
+    const view = renderDisplay(
+      <Chain
+        nodes={nodes}
+        connectors={connectors}
+        present={(node) => ({
+          ...present(node.id),
+          you: node.id === 'demo:task:a',
+          highlighted: node.id === 'demo:task:a',
+        })}
+      />,
+    );
+    const taskNode = screen.getByText('接口第 3 版', { selector: '.obs-chain-title' }).closest('.obs-chain-node')!;
+    expect(taskNode.querySelector('.obs-chain-you')?.textContent).toBe('你在这里');
+    expect(taskNode).toHaveAttribute('data-highlighted', 'true');
+    const rootNode = screen.getByText('复核队列').closest('.obs-chain-node')!;
+    expect(rootNode.querySelector('.obs-chain-you')).toBeNull();
+    expect(rootNode).not.toHaveAttribute('data-highlighted');
+    view.rerender(
+      <CraftThemeProvider>
+        <AntdApp>
+          <Chain nodes={nodes} connectors={connectors} present={(node) => present(node.id)} />
+        </AntdApp>
+      </CraftThemeProvider>,
+    );
+    expect(document.querySelector('.obs-chain-you')).toBeNull();
+    expect(document.querySelector('.obs-chain-node[data-highlighted]')).toBeNull();
+  });
 });
 
 describe('TodoRail', () => {
@@ -727,10 +808,17 @@ describe('AcceptanceList', () => {
       waiting: '在等',
       notStarted: '还没有开始',
     };
+    // Review R8: one distinct lucide glyph per criterion status.
+    const icons: Record<string, string> = {
+      supported: 'lucide-circle-check',
+      failed: 'lucide-circle-x',
+      waiting: 'lucide-clock',
+      notStarted: 'lucide-circle',
+    };
     for (const [status, word] of Object.entries(words)) {
       const row = screen.getByText(word).closest('.obs-acceptance-item')!;
       expect(row).toHaveAttribute('data-status', status);
-      expect(row.querySelector('.obs-acceptance-icon svg')).not.toBeNull();
+      expect(row.querySelector(`.${icons[status]}`), `${status} icon`).not.toBeNull();
     }
     expect(screen.getByText('测试 9 条通过')).toBeInTheDocument();
     expect(screen.getByRole('list', { name: '完成标准' })).toBeInTheDocument();

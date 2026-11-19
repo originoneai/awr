@@ -4,7 +4,9 @@ import { craftSelectionStyle, craftTokens, craftValueStyle, themeConfig } from '
 
 describe('craft details', () => {
   it('uses the control/card/panel radius ladder and neutral shadows', () => {
-    expect(craftTokens.radius).toEqual({ control: 8, card: 12, panel: 16, nested: 4 });
+    // radius.tag (6) is the prototype's status-tag corner, approved as a named token in
+    // the AWR-PPO-004 round-2 review; it joins the ladder beside the shared four.
+    expect(craftTokens.radius).toEqual({ control: 8, card: 12, panel: 16, nested: 4, tag: 6 });
     expect(themeConfig.token?.borderRadius).toBe(8);
     expect(themeConfig.token?.borderRadiusLG).toBe(12);
     expect(themeConfig.components?.Card?.borderRadiusLG).toBe(12);

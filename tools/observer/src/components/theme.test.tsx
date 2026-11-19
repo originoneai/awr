@@ -100,6 +100,7 @@ describe('complete prototype theme tokens', () => {
       ink: '#111827', secondary: '#4B5565', muted: '#626B7C',
       hairline: 'rgba(17, 24, 39, 0.08)', hairlineStrong: 'rgba(17, 24, 39, 0.16)',
       accent: '#1D4ED8', onAccent: '#FFFFFF', accentSoft: 'rgba(29, 78, 216, 0.08)',
+      canvas: '#EEF1F6',
       positive: '#147B3B', positiveSoft: 'rgba(20, 123, 59, 0.10)',
       negative: '#B91C1C', negativeSoft: 'rgba(185, 28, 28, 0.08)',
       warning: '#925F0B', warningSoft: 'rgba(146, 95, 11, 0.10)',
@@ -109,6 +110,7 @@ describe('complete prototype theme tokens', () => {
       ink: '#EEF0F5', secondary: '#A3A9B8', muted: '#7E869A',
       hairline: 'rgba(238, 240, 245, 0.08)', hairlineStrong: 'rgba(238, 240, 245, 0.16)',
       accent: '#8AB0FF', onAccent: '#07080D', accentSoft: 'rgba(138, 176, 255, 0.12)',
+      canvas: '#07080D',
       positive: '#4CC38A', positiveSoft: 'rgba(76, 195, 138, 0.14)',
       negative: '#F2686C', negativeSoft: 'rgba(242, 104, 108, 0.14)',
       warning: '#E0A63A', warningSoft: 'rgba(224, 166, 58, 0.14)',
@@ -152,8 +154,9 @@ describe('complete prototype theme tokens', () => {
 
   it('names the prototype typography and measure tokens identically in both themes', () => {
     for (const mode of ['light', 'dark'] as const) {
-      expect(craftThemes[mode].text).toEqual({ small: 13, title: 22 });
-      expect(craftThemes[mode].leading).toEqual({ tight: 16, body: 20, title: 28, hero: 32 });
+      // metric/metricCompact join the set as the approved round-2 tokens (R7).
+      expect(craftThemes[mode].text).toEqual({ small: 13, title: 22, metric: 32, metricCompact: 28 });
+      expect(craftThemes[mode].leading).toEqual({ tight: 16, body: 20, title: 28, hero: 32, metric: 40, metricCompact: 36 });
       expect(craftThemes[mode].measure).toEqual({ summary: 760 });
       const variables = craftCssVariables(mode);
       expect(variables['--craft-text-small']).toBe('13px');

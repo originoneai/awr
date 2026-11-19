@@ -317,23 +317,34 @@ test('metric strip matches the prototype kpis and kpi', async ({ page }, testInf
   const label = await readStyles(page, '.obs-kpi-label', ['font-size']);
   expect(label['font-size']).toBe('13px');
   // .kpi .v { margin-top: 4px; font-size: 32px; line-height: 40px; font-weight: 500 }
-  // (28px/36px below 860px)
-  const value = await readStyles(page, '.obs-kpi-value', ['margin-top', 'font-size', 'line-height', 'font-weight']);
+  // (28px/36px below 860px). The prototype's .v is a block whose unit small inherits the
+  // absolute metric line height, so the cell measures 121px tall (107px on phone) with a
+  // 47px value row (41px compact) — review R1.
+  const value = await readStyles(page, '.obs-kpi-value', ['margin-top', 'font-size', 'line-height', 'font-weight', 'display']);
   expect(value).toEqual({
     'margin-top': '4px',
     'font-size': phone ? '28px' : '32px',
     'line-height': phone ? '36px' : '40px',
     'font-weight': '500',
+    display: 'block',
   });
+  const cellBox = await readBox(page, '.obs-kpi:nth-child(2)');
+  expect(Math.round(cellBox.height)).toBe(phone ? 107 : 121);
+  const valueBox = await readBox(page, '.obs-kpi:nth-child(2) .obs-kpi-value');
+  expect(Math.round(valueBox.height)).toBe(phone ? 41 : 47);
   // .kpi .v small { margin-left: 4px; font-size: 14px; font-weight: 400 }
   const unit = await readStyles(page, '.obs-kpi-value small', ['margin-left', 'font-size', 'font-weight']);
   expect(unit).toEqual({ 'margin-left': '4px', 'font-size': '14px', 'font-weight': '400' });
   // .kpi .c { gap: 4px; margin-top: 2px; font-size: 12px; line-height: 16px }
   const change = await readStyles(page, '.obs-kpi-change', ['column-gap', 'margin-top', 'font-size', 'line-height']);
   expect(change).toEqual({ 'column-gap': '4px', 'margin-top': '2px', 'font-size': '12px', 'line-height': '16px' });
-  // .kpi .c[data-d="good"] { color: var(--ok) }
+  // .kpi .c[data-d="good"] { color: var(--ok) } and the warn/bad variants.
   const goodChange = await colorOf(page, '.obs-kpi-change[data-tone="good"]');
   expect(goodChange).toBe(await resolveColor(page, 'var(--craft-color-positive)'));
+  const warnChange = await colorOf(page, '.obs-kpi-change[data-tone="warn"]');
+  expect(warnChange).toBe(await resolveColor(page, 'var(--craft-color-warning)'));
+  const badChange = await colorOf(page, '.obs-kpi-change[data-tone="bad"]');
+  expect(badChange).toBe(await resolveColor(page, 'var(--craft-color-negative)'));
   // .kpi.me .v { color: var(--accent) }
   const emphasized = await colorOf(page, '.obs-kpi[data-emphasized="true"] .obs-kpi-value');
   expect(emphasized).toBe(await resolveColor(page, 'var(--craft-color-accent)'));
@@ -411,6 +422,20 @@ test('completion bar and legend match the prototype seg4 and legend', async ({ p
 test('chain matches the prototype chain, cn, cx and ql', async ({ page }, testInfo) => {
   await open(page, 'chain');
   const phone = isPhone(testInfo.project.name);
+  // .why { display: flex; flex-direction: column; padding: 20px 28px 24px } on the dotted
+  // canvas (--craft-color-canvas, radial-gradient dots on a 16px grid); below 860px the
+  // prototype re-pads it to 16px 20px 20px — review R2.
+  const block = await readStyles(page, '.obs-chain-block', [
+    'display', 'flex-direction', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+    'background-color', 'background-image', 'background-size',
+  ]);
+  expect(block['display']).toBe('flex');
+  expect(block['flex-direction']).toBe('column');
+  expect(`${block['padding-top']} ${block['padding-right']} ${block['padding-bottom']} ${block['padding-left']}`)
+    .toBe(phone ? '16px 20px 20px 20px' : '20px 28px 24px 28px');
+  expect(block['background-color']).toBe(await resolveColor(page, 'var(--craft-color-canvas)'));
+  expect(block['background-image']).toContain('radial-gradient');
+  expect(block['background-size']).toBe('16px 16px');
   // .chain { display: flex; align-items: center; margin-top: 20px }
   const chain = await readStyles(page, '.obs-chain', ['display', 'align-items', 'margin-top', 'flex-direction']);
   expect(chain['display']).toBe('flex');
@@ -449,10 +474,20 @@ test('chain matches the prototype chain, cn, cx and ql', async ({ page }, testIn
   expect(`${queueRow['padding-top']} ${queueRow['padding-left']}`).toBe('6px 10px');
   // .cx { width: 48px; gap: 2px } (.cx below 860px: height 36px, column flow, rotated arrow)
   const connector = await readStyles(page, '.obs-chain-connector', ['width', 'height', 'column-gap', 'grid-auto-flow', 'padding-left']);
+  const connectorBox = await readBox(page, '.obs-chain-connector');
+  // The prototype's connector is a 28x12 thin arrow plus the 16px word under it: 30px tall.
+  // On phone the arrow is rotated, so the intrinsic 28x12 is read from the attributes.
+  const arrowSize = await page.evaluate(() => {
+    const svg = document.querySelector('.obs-chain-connector svg')!;
+    return { width: svg.getAttribute('width'), height: svg.getAttribute('height') };
+  });
+  expect(`${arrowSize.width}x${arrowSize.height}`).toBe('28x12');
   if (phone) {
     expect(`${connector['height']} ${connector['grid-auto-flow']} ${connector['padding-left']}`).toBe('36px column 20px');
+    expect(Math.round(connectorBox.height)).toBe(36);
   } else {
     expect(`${connector['width']} ${connector['column-gap']}`).toBe('48px 2px');
+    expect(Math.round(connectorBox.height)).toBe(30);
   }
   // .cx.hotx { color: var(--bad) }
   const hot = await colorOf(page, '.obs-chain-connector[data-hot="true"]');
@@ -462,6 +497,23 @@ test('chain matches the prototype chain, cn, cx and ql', async ({ page }, testIn
   expect(`${foot['padding-top']} ${foot['font-size']}`).toBe('8px 12px');
   const progress = await readStyles(page, '.obs-chain-progress', ['height', 'border-top-left-radius']);
   expect(`${progress['height']} ${progress['border-top-left-radius']}`).toBe('4px 2px');
+  // .cn .you { position: absolute; top: -11px; right: 12px; height: 20px; padding: 0 8px;
+  // radius 6; background: var(--accent); color: var(--on-accent); 12px/20px/500 } — R4.
+  const you = await readStyles(page, '.obs-chain-you', [
+    'top', 'right', 'height', 'padding-left', 'padding-right', 'border-top-left-radius',
+    'background-color', 'color', 'font-size', 'line-height', 'font-weight',
+  ]);
+  expect(`${you['top']} ${you['right']} ${you['height']} ${you['padding-left']} ${you['border-top-left-radius']}`).toBe('-11px 12px 20px 8px 6px');
+  expect(you['background-color']).toBe(await resolveColor(page, 'var(--craft-color-accent)'));
+  expect(you['color']).toBe(await resolveColor(page, 'var(--craft-color-on-accent)'));
+  expect(`${you['font-size']} ${you['line-height']} ${you['font-weight']}`).toBe('12px 20px 500');
+  // .cn.hot { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) } — R4.
+  const hotNode = await readStyles(page, '.obs-chain-node[data-highlighted="true"]', ['border-top-color', 'box-shadow']);
+  expect(hotNode['border-top-color']).toBe(await resolveColor(page, 'var(--craft-color-accent)'));
+  expect(hotNode['box-shadow']).toContain('0px 0px 0px 1px');
+  // .why-foot { gap: 16px; margin-top: 16px } — R6.
+  const footer = await readStyles(page, '.obs-chain-footer', ['column-gap', 'row-gap', 'margin-top']);
+  expect(`${footer['column-gap']} ${footer['row-gap']} ${footer['margin-top']}`).toBe('16px 16px 16px');
 });
 
 test('todo rail matches the prototype rail and todo cards', async ({ page }, testInfo) => {
@@ -488,6 +540,11 @@ test('todo rail matches the prototype rail and todo cards', async ({ page }, tes
   const card = await readStyles(page, '.obs-todo-card', ['padding-top', 'padding-left', 'border-top-left-radius', 'background-color']);
   expect(`${card['padding-top']} ${card['padding-left']} ${card['border-top-left-radius']}`).toBe('12px 12px 12px');
   expect(card['background-color']).toBe(await resolveColor(page, 'color-mix(in srgb, var(--craft-color-raised) 45%, var(--craft-color-surface))'));
+  // .todo .where-s { gap: 6px } and .link { font-size: 13px } — review R6.
+  const agent = await readStyles(page, '.obs-todo-agent', ['column-gap', 'font-size']);
+  expect(`${agent['column-gap']} ${agent['font-size']}`).toBe('6px 12px');
+  const view = await readStyles(page, '.obs-todo-view', ['column-gap', 'font-size']);
+  expect(`${view['column-gap']} ${view['font-size']}`).toBe('4px 13px');
   // .todo .dd { -webkit-line-clamp: 2 }
   const detail = await readStyles(page, '.obs-todo-detail', ['-webkit-line-clamp']);
   expect(detail['-webkit-line-clamp']).toBe('2');

@@ -131,10 +131,19 @@
   margin-top: var(--ant-padding-sm);
 }
 
-.obs-catalog-frame {
-  border: 1px solid var(--craft-color-hairline);
-  border-radius: var(--craft-radius-panel);
-  background: var(--craft-color-surface);
+/* The rail composes into a narrow column, the prototype's own 348px rail width. */
+.obs-catalog-rail-column {
+  max-width: calc(var(--ant-padding-lg) * 14.5);
+}
+
+/* The prototype's .pnote: the quiet line under a block body. */
+.obs-catalog-pnote {
+  margin: 0;
+  padding: calc(var(--ant-padding-xs) + var(--ant-padding-xxs)) var(--ant-padding-md);
+  border-top: 1px solid var(--craft-color-hairline);
+  color: var(--craft-color-muted);
+  font-size: var(--ant-font-size-sm);
+  line-height: var(--craft-leading-tight);
 }
 
 @media (prefers-reduced-motion: reduce) {

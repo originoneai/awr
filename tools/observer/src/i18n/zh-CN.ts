@@ -756,6 +756,7 @@ const zhCN = {
       queueNoteUnknownAge: '{{queued}} 件在排队',
       days: '{{count}} 天',
       progress: '已核验 {{done}} / {{total}}',
+      youHere: '你在这里',
     },
     todo: {
       groupLabel: '待处理',

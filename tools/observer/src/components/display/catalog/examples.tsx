@@ -189,7 +189,7 @@ function KpiStripExample() {
             label: labels[2],
             value: '2',
             unit: text('kpiUnitAgents'),
-            change: { text: text('kpiThreeChange') },
+            change: { text: text('kpiThreeChange'), tone: 'bad' },
             onOpen: () => setOpened(labels[2]),
           },
           {
@@ -213,7 +213,7 @@ const TASK_STATUS_SAMPLE: readonly DerivedTaskStatus[] = [...TASK_STATUSES, 'unk
 function StatusTagExample() {
   const { t } = useCatalogTranslation();
   return (
-    <Section title={t('display.catalog.examples.project')}>
+    <Section title={t('display.catalog.examples.project')} padded>
       <div className="obs-catalog-tag-row">
         <span className="obs-catalog-dim">{t('display.catalog.examples.statusProjectGroup')}</span>
         {(['ok', 'risk', 'off', 'none', 'info'] as const).map((status) => (
@@ -236,6 +236,7 @@ function CompletionBarExample() {
   return (
     <Section
       title={text('completionSection')}
+      padded
       extra={<CompletionLegend />}
     >
       <div className="obs-catalog-completion-row">
@@ -291,6 +292,10 @@ function ChainExample() {
           title: text('chainTaskTwoTitle'),
           meta: text('chainTaskTwoMeta'),
           status: 'running' as const,
+          you: true,
+          // The example shows the hot outline here so the state has a baseline; on a real
+          // page the page draws it on the node whose rail card is hovered or focused.
+          highlighted: true,
         };
       default:
         return {
@@ -303,7 +308,8 @@ function ChainExample() {
     }
   };
   return (
-    <Section title={text('chainSection')}>
+    // No Section frame: the chain canvas is its own container, as .why is inside .inst (R9).
+    <>
       <Chain
         nodes={nodes}
         connectors={connectors}
@@ -312,7 +318,7 @@ function ChainExample() {
         footer={<span>{text('chainFooter')}</span>}
       />
       {opened ? <Notice>{t('display.catalog.examples.chainOpened', { title: opened })}</Notice> : null}
-    </Section>
+    </>
   );
 }
 
@@ -362,7 +368,8 @@ function TodoRailExample() {
   ];
   return (
     <>
-      <div className="obs-catalog-frame">
+      {/* The rail is a narrow column, the way the prototype composes it inside the panel. */}
+      <div className="obs-catalog-rail-column">
         <TodoRail
           title={text('todoTitle')}
           items={items}
@@ -379,7 +386,8 @@ function AcceptanceListExample() {
   const { t } = useCatalogTranslation();
   const text = (key: CatalogExampleTextKey) => t(`display.catalog.examples.${key}`);
   return (
-    <Section title={text('acceptanceSection')} count={4} padded>
+    // Unpadded: the prototype's acceptance rows carry the block's own 20px inset (R9).
+    <Section title={text('acceptanceSection')} count={4}>
       <AcceptanceList
         items={[
           { key: 'lookup', title: text('acceptanceOne'), evidence: text('acceptanceOneEvidence'), status: 'supported' },
@@ -388,7 +396,7 @@ function AcceptanceListExample() {
           { key: 'scenarios', title: text('acceptanceFour'), status: 'notStarted' },
         ]}
       />
-      <p className="obs-catalog-dim">{text('acceptanceNote')}</p>
+      <p className="obs-catalog-pnote">{text('acceptanceNote')}</p>
     </Section>
   );
 }

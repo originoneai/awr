@@ -24,18 +24,38 @@ const sharedCraftTokens = {
     card: 12,
     panel: 16,
     nested: 4,
+    tag: 6,
+  },
+  // Named geometry for the metric strip, status tags and chain (review round 2, R7).
+  height: {
+    tag: 22,
+    chainNode: 104,
+  },
+  gap: {
+    tag: 6,
+  },
+  width: {
+    lampRing: 1.5,
+  },
+  canvas: {
+    // The chain's dotted canvas grid square.
+    grid: 16,
   },
   // Named typography and measure tokens for prototype values antd has no token for.
   // theme.test pins the exact values; display.css and components consume them as CSS variables.
   text: {
     small: 13,
     title: 22,
+    metric: 32,
+    metricCompact: 28,
   },
   leading: {
     tight: 16,
     body: 20,
     title: 28,
     hero: 32,
+    metric: 40,
+    metricCompact: 36,
   },
   measure: {
     summary: 760,
@@ -65,6 +85,8 @@ export const craftThemes = {
       accent: '#1D4ED8',
       onAccent: '#FFFFFF',
       accentSoft: 'rgba(29, 78, 216, 0.08)',
+      // The chain block's dotted canvas (prototype --canvas, review round 2 R7).
+      canvas: '#EEF1F6',
       positive: '#147B3B',
       positiveSoft: 'rgba(20, 123, 59, 0.10)',
       negative: '#B91C1C',
@@ -101,6 +123,8 @@ export const craftThemes = {
       accent: '#8AB0FF',
       onAccent: '#07080D',
       accentSoft: 'rgba(138, 176, 255, 0.12)',
+      // The chain block's dotted canvas (prototype --canvas, review round 2 R7).
+      canvas: '#07080D',
       positive: '#4CC38A',
       positiveSoft: 'rgba(76, 195, 138, 0.14)',
       negative: '#F2686C',
@@ -252,7 +276,7 @@ export const themeConfig = createThemeConfig('light');
 /** CSS custom properties expose chart and completion roles that antd does not own. */
 export function craftCssVariables(mode: CraftThemeMode): Record<string, string> {
   const tokens = craftThemes[mode];
-  const { color, chart, shadow, radius, motion, font, text, leading, measure } = tokens;
+  const { color, chart, shadow, radius, motion, font, text, leading, measure, height, gap, width, canvas } = tokens;
   return {
     '--craft-color-page': color.page,
     '--craft-color-side': color.side,
@@ -272,6 +296,7 @@ export function craftCssVariables(mode: CraftThemeMode): Record<string, string> 
     '--craft-color-negative-soft': color.negativeSoft,
     '--craft-color-warning': color.warning,
     '--craft-color-warning-soft': color.warningSoft,
+    '--craft-color-canvas': color.canvas,
     '--craft-chart-series-1': chart.series[0],
     '--craft-chart-series-2': chart.series[1],
     '--craft-chart-series-3': chart.series[2],
@@ -286,12 +311,25 @@ export function craftCssVariables(mode: CraftThemeMode): Record<string, string> 
     '--craft-radius-card': `${radius.card}px`,
     '--craft-radius-panel': `${radius.panel}px`,
     '--craft-radius-nested': `${radius.nested}px`,
+    '--craft-radius-tag': `${radius.tag}px`,
+    '--craft-height-tag': `${height.tag}px`,
+    '--craft-height-chain-node': `${height.chainNode}px`,
+    '--craft-gap-tag': `${gap.tag}px`,
+    '--craft-width-lamp-ring': `${width.lampRing}px`,
+    // The dotted canvas image lives here because the craft guard keeps gradient functions
+    // out of component styles; theme.ts is the one exempt definition point.
+    '--craft-canvas-grid-image': `radial-gradient(${color.hairlineStrong} 1px, transparent 1px)`,
+    '--craft-size-canvas-grid': `${canvas.grid}px`,
     '--craft-text-small': `${text.small}px`,
     '--craft-text-title': `${text.title}px`,
+    '--craft-text-metric': `${text.metric}px`,
+    '--craft-text-metric-compact': `${text.metricCompact}px`,
     '--craft-leading-tight': `${leading.tight}px`,
     '--craft-leading-body': `${leading.body}px`,
     '--craft-leading-title': `${leading.title}px`,
     '--craft-leading-hero': `${leading.hero}px`,
+    '--craft-leading-metric': `${leading.metric}px`,
+    '--craft-leading-metric-compact': `${leading.metricCompact}px`,
     '--craft-measure-summary': `${measure.summary}px`,
     '--craft-motion-easing': motion.easing,
     '--craft-motion-feedback': `${motion.feedbackMs}ms`,

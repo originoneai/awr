@@ -128,11 +128,24 @@ describe('design-token and product-language source guards', () => {
     const namedTokens = [
       '--craft-text-small',
       '--craft-text-title',
+      '--craft-text-metric',
+      '--craft-text-metric-compact',
       '--craft-leading-tight',
       '--craft-leading-body',
       '--craft-leading-title',
       '--craft-leading-hero',
+      '--craft-leading-metric',
+      '--craft-leading-metric-compact',
       '--craft-measure-summary',
+      // Review round 2 (R7): the composed geometry became named tokens.
+      '--craft-height-tag',
+      '--craft-height-chain-node',
+      '--craft-radius-tag',
+      '--craft-gap-tag',
+      '--craft-width-lamp-ring',
+      '--craft-color-canvas',
+      '--craft-canvas-grid-image',
+      '--craft-size-canvas-grid',
     ];
     const unused = namedTokens.filter((token) => !styles.includes(`var(${token})`));
     expect(unused, 'tokens missing from display.css').toEqual([]);
@@ -140,6 +153,19 @@ describe('design-token and product-language source guards', () => {
     expect(styles).not.toContain('--ant-control-height-xs');
     expect(styles).not.toContain('--ant-control-height-lg');
     expect(styles).not.toContain('--ant-font-size-heading-4');
+    // Review round 2 (R7): the metric sizes and tag geometry must use the named tokens,
+    // not compositions that stand for the same numbers. (The data table's 40px header
+    // height keeps its own first-batch composition on purpose.)
+    expect(styles).not.toContain('--ant-font-size-heading-1');
+    expect(styles).not.toContain('--ant-font-size-heading-2');
+    expect(styles).not.toContain('calc(var(--craft-leading-body) + var(--ant-line-width-bold))');
+    expect(styles).not.toContain('calc(var(--craft-radius-control) - var(--ant-line-width-bold))');
+    expect(styles).not.toContain('calc(var(--ant-line-width) * 1.5)');
+    const metricValueRule = styles.match(/\.obs-kpi-value\s*\{[^}]+\}/);
+    expect(metricValueRule?.[0]).toContain('var(--craft-text-metric)');
+    expect(metricValueRule?.[0]).toContain('var(--craft-leading-metric)');
+    const chainNodeRule = styles.match(/\.obs-chain-node\s*\{[^}]+\}/);
+    expect(chainNodeRule?.[0]).toContain('var(--craft-height-chain-node)');
     // The static-row control must stay border-box so width: 100% cannot overflow its row (review item 4).
     const controlRule = styles.match(/\.obs-row-control\s*\{[^}]+\}/);
     expect(controlRule?.[0]).toContain('box-sizing: border-box');

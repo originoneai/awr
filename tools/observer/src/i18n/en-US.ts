@@ -760,6 +760,7 @@ const enUS: Messages = {
       queueNoteUnknownAge: '{{queued}} waiting',
       days: '{{count}} days',
       progress: 'Verified {{done}} / {{total}}',
+      youHere: 'You are here',
     },
     todo: {
       groupLabel: 'Pending',

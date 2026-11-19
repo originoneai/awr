@@ -1,9 +1,7 @@
-import { ArrowRight } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ChainConnector, ChainNode, DerivedTaskStatus } from '../../core/overview/types';
 import { useCompactViewport } from '../../lib/viewport';
-import { DisplayIcon } from './DisplayIcon';
 import { StatusLamp, healthLampState, taskLampState, type HealthStatus } from './StatusTag';
 import './display.css';
 
@@ -34,6 +32,10 @@ export interface ChainNodeView {
   progress?: { done: number; total: number } | null;
   /** Free-text footer for nodes without a queue or progress bar. */
   footNote?: string | null;
+  /** The viewer marker badge (.you in the prototype); at most one node per chain. */
+  you?: boolean;
+  /** The hot outline the prototype draws while the matching rail card is hovered. */
+  highlighted?: boolean;
   /** Whether the node opens something; defaults to the presence of an onOpen handler. */
   open?: boolean;
 }
@@ -69,7 +71,13 @@ export function Chain({ nodes, connectors, present, onOpen, footer }: ChainProps
           data-kind={connector?.kind}
           data-hot={index === 1 || undefined}
         >
-          <span className="obs-chain-connector-icon"><DisplayIcon icon={ArrowRight} /></span>
+          <span className="obs-chain-connector-icon">
+            {/* The prototype's own 28x12 thin arrow (connector() in app.js), the one
+                sanctioned non-lucide glyph; review round 2, R3. */}
+            <svg width="28" height="12" viewBox="0 0 28 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
+              <path d="M1 6h25M21 1.5 26 6l-5 4.5" />
+            </svg>
+          </span>
           <span>{t('display.chain.connector')}</span>
         </span>,
       );
@@ -83,6 +91,7 @@ export function Chain({ nodes, connectors, present, onOpen, footer }: ChainProps
     const classes = ['obs-chain-node', node.root ? 'obs-chain-node-root' : null].filter(Boolean).join(' ');
     const content = (
       <>
+        {view.you ? <span className="obs-chain-you">{t('display.chain.youHere')}</span> : null}
         <span className="obs-chain-kicker">
           {lamp}
           {view.kicker}
@@ -122,7 +131,7 @@ export function Chain({ nodes, connectors, present, onOpen, footer }: ChainProps
     );
     if (!open || onOpen === undefined) {
       rendered.push(
-        <div key={node.id} className={classes} data-node-kind={node.kind}>{content}</div>,
+        <div key={node.id} className={classes} data-node-kind={node.kind} data-highlighted={view.highlighted || undefined}>{content}</div>,
       );
     } else {
       rendered.push(
@@ -131,6 +140,7 @@ export function Chain({ nodes, connectors, present, onOpen, footer }: ChainProps
           type="button"
           className={classes}
           data-node-kind={node.kind}
+          data-highlighted={view.highlighted || undefined}
           onClick={() => onOpen(node)}
         >
           {content}
@@ -140,7 +150,7 @@ export function Chain({ nodes, connectors, present, onOpen, footer }: ChainProps
   });
 
   return (
-    <div className="obs-chain-block">
+    <div className="obs-chain-block" data-compact={compactViewport || undefined}>
       <div className="obs-chain" role="group" aria-label={t('display.chain.groupLabel')} data-compact={compactViewport || undefined}>
         {rendered}
       </div>
