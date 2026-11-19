@@ -1,4 +1,4 @@
-# Panorama fact semantics: status and waiting
+# Panorama fact semantics
 
 This shared contract aligns Observer's AWR-PPO-010 derivation with AWR-PPD-011 fact snapshots.
 Both sides use one meaning for **核验过**, **标了完成**, **等待**, and **压着**. The web presents
@@ -33,6 +33,12 @@ serve as developer documentation identifiers; product labels come from the UI vo
 | `countDetails` | 数字与明细 / Count and details | Every non-null count is constructed from the exact detail array exposed beside it: `count === items.length`. An incomplete result has `count: null`, confirmed `items`, and `unknownItems`; callers can say “未读全” without discarding known rows. | `count-from-detail-array` `unknown-count-is-null` |
 | `coverage` | 覆盖说明 / Read coverage | An unread or truncated collection differs from an empty collection. Coverage is reported per input plane and separately for status and waits. A read complete with zero rows is the only empty-read case that produces a known zero. | `unread-is-not-empty` `partial-count-is-unknown` |
 | `unknown` | 未知 / Unknown | Missing required fields and invalid references degrade to unknown. Unknown tasks without identities and unknown graph edges do not enter “压着” sums. A valid task whose status is unknown still counts as an existing downstream task because its identity and graph edge are known. | `missing-is-unknown` `unknown-is-not-zero` |
+| `chains` | 链路 / Blocker chains | Decision, review, and outside waits form roots. Review waits share a root only for the same explicit reviewer identity. A grouped root unions its members' impact sets and sorts by known impact descending, then oldest elapsed time. Dependency waits remain visible as task relationships. | `non-dependency-roots` `group-review-by-explicit-person` `union-impact` `sort-impact-descending` |
+| `commitments` | 受影响的承诺 / Affected commitments | Commitments come from tasks in the confirmed impact set. Nodes and connectors expose the root, tasks, dependencies, and commitments; footer counts reuse the same detail objects. Missing commitment data yields an unknown count with confirmed commitments retained. | `affected-task-commitments` `unknown-commitments-are-not-empty` |
+| `people` | 按人汇总 / Per-person summary | Each explicit person has four lists: non-dependency waits and pending handoffs addressed to them; prototype in-progress work; waits on their owned tasks; and dependency waits for results they own. | `explicit-person-identity` `pending-nondependency-and-handoff` `prototype-in-progress` `owned-waits` `owed-provider-results` |
+| `identity` | 同一个人 / Same person | Two present person ids must match exactly. A missing id belongs to neither the viewer nor an “other person” bucket, and unknown reviewer identities remain in separate queues. | `explicit-equal-only` `missing-is-neither-self-nor-other` |
+| `views` | 四个视角 / Four views | Me, lead, department, and top each expose four metrics in prototype order. Viewer ids, project scopes, and periods are caller inputs. Missing scope data produces unknown metrics and coverage rather than an empty organization. | `four-metrics-in-prototype-order` `caller-scopes-and-periods` `unknown-scope-is-not-empty` |
+| `vcount` | 周期核验数 / Period verified count | Period counts include verified tasks whose explicit verification time lies inside the caller's inclusive start/end bounds: a task verified exactly at the start and exactly at the end is counted. Both bounds being inclusive, the caller must pass non-overlapping periods, keeping adjacent periods one millisecond apart. Report or approval time is a separate fact. Previous periods use the identical rule. | `verified-only` `verified-at-in-inclusive-window` `caller-passes-non-overlapping-periods` |
 
 ## Status precedence
 
@@ -53,8 +59,23 @@ Waits are sorted by known “压着” count descending, unknown counts after kn
 whole elapsed days descending, unknown elapsed times after known times. Stable input order breaks
 remaining ties. Future or missing start times yield an unknown elapsed time instead of zero.
 
-The result deliberately omits chains, per-person summaries, and the four view-level metrics. Those
-are additive fields for the second AWR-PPO-010 PR and will consume the same task and wait identities.
+## Chain, people and view shapes
+
+The result exposes chains, per-person summaries, and view metrics beside the original task and wait
+lists. Chain nodes carry explicit root/task/commitment kinds and red-root tone data; connectors carry
+block, dependency, and commitment effects. All traversal is iterative and stable on cycles.
+
+The four view orders are:
+
+- **Me**: current-week verified, running Agents, waits on my tasks, pending items for me. The me-view pending queue is scoped to my project's tasks, like the lead view: a reviewer or decider is waited on for other people's tasks too, not only for tasks they own.
+- **Lead**: current-week verified, prototype in-progress work, waits, pending items for the lead.
+- **Department**: projects, current-month verified, cross-group waits, pending items for the viewer.
+- **Top**: goals, all verified work with a claimed comparison, blocker chains, decisions for the viewer.
+
+Department project catalogs and top goal catalogs are explicit view inputs, so units without tasks
+still appear with empty task details. Cross-group comparison uses explicit task/member group ids;
+outside waits cross a known project group by definition. Every current/previous period and claimed
+comparison retains its own count/detail invariant.
 
 ## Open alignment point for AWR-PPD-011
 

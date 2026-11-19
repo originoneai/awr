@@ -108,6 +108,13 @@ describe('status and waiting goldens', () => {
       kinds: { decision: 1, dependency: 1, review: 1, external: 1 },
       complete: true,
     });
+    expect(result.chains.map((chain) => [chain.root.kind, chain.impact.count])).toEqual([
+      ['review', 3], ['external', 1], ['decision', 1],
+    ]);
+    expect(result.peopleCounts.all.count).toBe(3);
+    expect(Object.fromEntries(result.people.map((summary) => [summary.person.id, summary.pending.count]))).toEqual({
+      'person-a': 1, 'person-b': 1, 'person-c': 0,
+    });
   });
 
   it('derives the same review golden from verbatim public run09 reply extracts, not a demo-only shape', () => {
@@ -163,7 +170,18 @@ describe('status and waiting goldens', () => {
     }]);
     expect(result.taskCounts.all.count).toBe(1);
     expect(result.waitCounts.byKind.review.count).toBe(1);
+    expect(result.chains.map((chain) => ({
+      kind: chain.root.kind,
+      impact: chain.impact.count,
+      details: chain.impact.items.map((item) => item.id),
+      commitments: chain.commitments.count,
+    }))).toEqual([{ kind: 'review', impact: 1, details: [taskId], commitments: null }]);
+    for (const view of Object.values(result.views)) {
+      for (const item of view.metrics) expect(item.count).toBeNull();
+    }
     expect(result.coverage.sections.status.complete).toBe(true);
     expect(result.coverage.sections.waits.complete).toBe(false);
+    expect(result.coverage.sections.chains.complete).toBe(false);
+    expect(result.coverage.sections.views.complete).toBe(false);
   });
 });
