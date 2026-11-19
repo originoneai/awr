@@ -39,7 +39,6 @@ import { projectLabel } from '../lib/project-label';
 import { useRevocation } from '../lib/revocation';
 import { useScope } from '../lib/scope';
 import { craftTokens } from '../theme';
-import { CraftThemeProvider } from './CraftThemeProvider';
 import { ThemeToggle } from './ThemeToggle';
 
 const { Header, Sider, Content } = Layout;
@@ -121,14 +120,6 @@ function ShellNavigationMenus({
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
-  return (
-    <CraftThemeProvider>
-      <AppShellContent>{children}</AppShellContent>
-    </CraftThemeProvider>
-  );
-}
-
-function AppShellContent({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
   const location = useLocation();
   const { token } = theme.useToken();
