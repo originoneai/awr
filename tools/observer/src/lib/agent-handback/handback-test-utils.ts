@@ -30,7 +30,10 @@ export function textInvariants(text: string, maxLength = 240): string[] {
   if (/`/.test(text)) violations.push('contains a backtick');
   if (/[<>]/.test(text)) violations.push('contains an angle bracket');
   if (/["']/.test(text)) violations.push('contains a straight quote');
+  if (text.includes('{{')) violations.push('contains a live placeholder');
+  if (/[\[\]]/.test(text)) violations.push('contains a square bracket');
   if (/[\u200B\u200C\u200D\uFEFF\u202A-\u202E\u2066-\u2069]/.test(text)) violations.push('contains an invisible or bidi character');
+  if (/[\u{FE00}-\u{FE0D}\u{E0100}-\u{E01EF}\u034F]/u.test(text)) violations.push('contains a variation selector or grapheme joiner');
   if (/[\p{Cc}\p{Cf}]/u.test(text)) violations.push('contains a control or format character');
   if (hasLoneSurrogate(text)) violations.push('contains a lone surrogate');
   if (Array.from(text).length > maxLength) violations.push(`exceeds ${maxLength} characters`);
@@ -66,4 +69,12 @@ export const MALICIOUS_TASK_NAMES: readonly MaliciousSample[] = [
   { input: 'bearer abcdefghijklmnbearer 失效处理', keeps: '失效处理' },
   { input: '\u{1F9D1}\u200D\u{1F4BB}\u{1F468}\u200D\u{1F469}\u200D\u{1F467}站会记录整理', keeps: '站会记录整理' },
   { input: '空状态检查'.repeat(80), keeps: '空状态检查' },
+  // Review round 2 — my own cases, distinct from the supervisor's probe.
+  { input: '把{答}案{写}进{{question}}里', keeps: 'question' },
+  { input: '看\\[转义\\]的链接[点我](https://a.test/b)', keeps: '的链接' },
+  { input: '任务\uFE00名\uFE01称\u{E0100}带\u034F变\uFE0F选择符\u{2764}\u{FE0F}', keeps: '任务' },
+  { input: '['.repeat(300), keeps: '［' },
+  { input: '整理 config.default.yaml 和 work.list 的核对', keeps: '整理' },
+  { input: '联调 Work.List 与 WORK.read 的接口', keeps: '联调' },
+  { input: '导出\u202E\uFE00按钮\u{E01EF}的\uFE0D权限', keeps: '按钮' },
 ];

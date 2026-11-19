@@ -17,12 +17,13 @@ export function templateChunks(template: string): string[] {
   return template.split(PLACEHOLDER).filter((part, index) => index % 2 === 0 && part !== '');
 }
 
+/**
+ * One pass over the template: a single global replace visits each placeholder once and
+ * never rescans inserted text, so untrusted values containing placeholder syntax stay
+ * inert instead of expanding into the sentence.
+ */
 function interpolate(template: string, values: Partial<Record<'project' | 'task' | 'question' | 'agent', string>>): string {
-  let out = template;
-  for (const [key, value] of Object.entries(values) as Array<[string, string | undefined]>) {
-    if (value !== undefined) out = out.split(`{{${key}}}`).join(value);
-  }
-  return out;
+  return template.replace(PLACEHOLDER, (_match, key: 'project' | 'task' | 'question' | 'agent') => values[key] ?? '');
 }
 
 function sentenceKey(kind: HandbackKind, hasQuestion: boolean): HandbackSentenceKey {
