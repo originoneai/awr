@@ -802,6 +802,8 @@ async fn completion_notes_require_selected_candidate_bound_evidence_and_actual_a
     );
 }
 
+// The registered server-directory fixture uses POSIX paths; set_len is not required to be sparse.
+#[cfg(unix)]
 #[tokio::test]
 async fn delivery_sync_reports_the_exact_server_ledger_limit() {
     let f = setup_publisher().await;

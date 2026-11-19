@@ -242,6 +242,16 @@ impl SourceStore {
         self.ingest_with_limits(request, UPLOAD).await
     }
 
+    /// Exercise the generated-package budget through real ingest in isolated PG tests.
+    #[cfg(feature = "pg-tests")]
+    #[doc(hidden)]
+    pub async fn ingest_generated_for_test(
+        &self,
+        request: IngestRequest,
+    ) -> PgResult<CandidateRecord> {
+        self.ingest_with_limits(request, GENERATED).await
+    }
+
     async fn ingest_with_limits(
         &self,
         request: IngestRequest,

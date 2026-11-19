@@ -2416,6 +2416,8 @@ fn grow_registered_ledger(root: &std::path::Path, total_tasks: usize, detail_byt
     );
 }
 
+// The registered server-directory fixture uses POSIX-only sole-source paths.
+#[cfg(unix)]
 #[tokio::test]
 async fn generated_package_above_upload_file_limit_activates_through_http_and_mcp() {
     let (_g, admin, db, read) = setup().await;
@@ -2470,6 +2472,8 @@ async fn generated_package_above_upload_file_limit_activates_through_http_and_mc
     client.cancel().await.unwrap();
 }
 
+// This measurement uses the same POSIX-only registered source fixture.
+#[cfg(unix)]
 #[tokio::test]
 #[ignore = "expensive synthetic package capacity measurement; run explicitly"]
 async fn generated_package_activation_measurements() {

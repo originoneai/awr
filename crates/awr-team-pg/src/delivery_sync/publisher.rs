@@ -1391,6 +1391,8 @@ impl DeliverySyncStore {
 mod package_limit_tests {
     use super::*;
 
+    // Server-directory sole-source locators are POSIX-only by design.
+    #[cfg(unix)]
     #[test]
     fn generated_delivery_reparse_accepts_more_than_the_upload_file_limit() {
         let root = std::env::temp_dir().join(format!("awr-delivery-package-{}", ulid::Ulid::new()));

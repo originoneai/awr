@@ -734,4 +734,42 @@ mod tests {
         drop(guard);
         std::fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn server_ledger_read_cap_is_32_mib() {
+        assert_eq!(awr_source::SERVER_LEDGER_READ_CAP, 32 * 1024 * 1024);
+    }
+
+    #[test]
+    fn server_ledger_between_local_and_server_limits_reads_and_replaces() {
+        let root = std::env::temp_dir().join(format!("awr-server-ledger-{}", ulid::Ulid::new()));
+        std::fs::create_dir(&root).unwrap();
+        let root = std::fs::canonicalize(root).unwrap();
+        let target = root.join("ledger.yaml");
+        let before = vec![b'x'; awr_source::YAML_READ_CAP as usize + 4096];
+        assert!((before.len() as u64) > awr_source::YAML_READ_CAP);
+        assert!((before.len() as u64) <= 32 * 1024 * 1024);
+        std::fs::write(&target, &before).unwrap();
+        // LockedSourceFile itself is cross-platform; no POSIX SoleSourceLocation is involved.
+        let guard = LockedSourceFile::open(&root, "ledger.yaml").unwrap();
+        assert_eq!(
+            guard.read(awr_source::SERVER_LEDGER_READ_CAP).unwrap(),
+            before
+        );
+        let mut after = before.clone();
+        after.extend_from_slice(&[b'y'; 1024]);
+        guard
+            .replace(
+                &fingerprint(&before),
+                &after,
+                awr_source::SERVER_LEDGER_READ_CAP,
+            )
+            .unwrap();
+        assert_eq!(
+            guard.read(awr_source::SERVER_LEDGER_READ_CAP).unwrap(),
+            after
+        );
+        drop(guard);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
