@@ -3748,6 +3748,7 @@ async fn unlogged_facts(
     })
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn oversized_activation_is_preflighted_without_publication_or_reservation_and_can_be_corrected()
  {
@@ -3884,6 +3885,7 @@ async fn oversized_activation_is_preflighted_without_publication_or_reservation_
     ));
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn package_capacity_is_read_only_and_unavailable_does_not_hide_the_diff() {
     let (_g, _admin, _db, store) = store_and_roles().await;
@@ -3979,6 +3981,7 @@ async fn make_unlogged_publication(
     )
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn unlogged_activation_is_readable_inspectable_and_owner_close_is_atomic_and_idempotent() {
     let (_g, mut admin, db, store, tmp, candidate, request, publication) =
@@ -4130,6 +4133,7 @@ async fn unlogged_activation_is_readable_inspectable_and_owner_close_is_atomic_a
     assert_eq!(activation_facts(&admin).await, active_before);
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn unlogged_close_is_refused_with_zero_writes_when_a_journal_exists() {
     let (_g, mut admin, _db, store, _tmp, candidate, request, publication) =
