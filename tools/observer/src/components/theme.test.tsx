@@ -150,6 +150,22 @@ describe('complete prototype theme tokens', () => {
     }
   });
 
+  it('names the prototype typography and measure tokens identically in both themes', () => {
+    for (const mode of ['light', 'dark'] as const) {
+      expect(craftThemes[mode].text).toEqual({ small: 13, title: 22 });
+      expect(craftThemes[mode].leading).toEqual({ tight: 16, body: 20, title: 28, hero: 32 });
+      expect(craftThemes[mode].measure).toEqual({ summary: 760 });
+      const variables = craftCssVariables(mode);
+      expect(variables['--craft-text-small']).toBe('13px');
+      expect(variables['--craft-text-title']).toBe('22px');
+      expect(variables['--craft-leading-tight']).toBe('16px');
+      expect(variables['--craft-leading-body']).toBe('20px');
+      expect(variables['--craft-leading-title']).toBe('28px');
+      expect(variables['--craft-leading-hero']).toBe('32px');
+      expect(variables['--craft-measure-summary']).toBe('760px');
+    }
+  });
+
   it.each(['light', 'dark'] as const)('uses the antd %s algorithm with token overrides', (mode) => {
     const config = createThemeConfig(mode);
     expect(config.algorithm).toEqual(expect.any(Function));
