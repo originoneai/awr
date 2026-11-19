@@ -32,15 +32,6 @@ body {
   color: var(--ant-color-text);
 }
 
-.shell-drawer .ant-drawer-body {
-  display: flex;
-  flex-direction: column;
-}
-
-.shell-drawer .shell-theme-toggle.ant-btn {
-  height: 40px;
-}
-
 .shell-sider {
   min-height: 100vh;
 }
@@ -54,20 +45,20 @@ body {
 .shell-brand {
   display: flex;
   align-items: center;
-  height: 64px;
-  padding: 0 24px;
-  flex: 0 0 64px;
+  height: 32px;
+  padding: 0 12px;
+  margin-bottom: 20px;
+  flex: 0 0 32px;
 }
 
-.shell-brand img {
+.shell-brand svg {
   display: block;
-  width: 120px;
-  height: auto;
+  flex: 0 0 auto;
 }
 
 .shell-nav {
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 400;
 }
 
 .shell-nav .ant-menu-item,
@@ -81,7 +72,10 @@ body {
 }
 
 .shell-nav .ant-menu-item-selected {
-  box-shadow: inset 0 0 0 1px var(--ant-color-border-secondary);
+  background: var(--craft-color-accent-soft);
+  color: var(--craft-color-accent);
+  font-weight: 500;
+  box-shadow: none;
 }
 
 .shell-header button:focus-visible,
@@ -138,31 +132,6 @@ body {
 
 .shell-avatar-button {
   flex: 0 0 auto;
-}
-
-/* Below lg the sider is replaced by the header entry (.shell-nav-toggle); its 40px box comes
-   from craftTokens.touchTarget as an inline style, because antd's icon-only button width would
-   otherwise win over a plain class rule. */
-.shell-nav-toggle {
-  flex: 0 0 auto;
-}
-
-/* The drawer shows the same menus with 40px rows: at touch widths the acceptance requires a
-   40px tap area, taller than the 36px desktop navigation rows. */
-.shell-drawer .shell-nav .ant-menu-item {
-  height: 40px;
-  line-height: 40px;
-}
-
-/* Phones have no Escape key, so the close button keeps antd's own button, raised to the same
-   40px touch target as the entry. */
-.shell-drawer .ant-drawer-close {
-  width: 40px;
-  height: 40px;
-}
-
-.shell-drawer .shell-brand {
-  padding: 0;
 }
 
 @media (max-width: 768px) {

@@ -126,6 +126,8 @@ const zhCN = {
     notifications: '通知',
     pendingNotifications: '待处理 {{count}} 件',
     currentMember: '当前成员：{{name}}',
+    avatarMenu: '{{name}}：账户与语言',
+    accountNavigation: '账户',
     you: '你',
     breadcrumbs: '所在位置',
     mainNavigation: '页面',

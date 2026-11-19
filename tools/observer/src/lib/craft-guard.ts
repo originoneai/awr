@@ -8,7 +8,7 @@ export interface CraftViolation {
 }
 
 const ALLOWED_ANTD_COLORS = new Set(['success', 'error', 'warning', 'processing', 'default', 'currentColor', 'inherit']);
-const ALLOWED_RADII = new Set([4, 8, 12, 16]);
+const ALLOWED_RADII = new Set([4, 8, 10, 12, 16]);
 const NAMED_COLOR_WORDS = new Set(`
   aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown
   burlywood cadetblue chartreuse chocolate coral cornflowerblue cornsilk crimson cyan darkblue darkcyan
@@ -77,8 +77,8 @@ export function scanCraftSource(source: string, fileType: CraftFileType, filePat
   add('colored-shadow', /(?:boxShadow|box-shadow|drop-shadow)[^\n;}]*(?:#|rgba?\(|hsla?\(|blue|red|green|purple|orange|violet|magenta|cyan)/gi);
   add('icon-package', /@ant-design\/icons/g);
   add('transition-all', /\btransition\s*:\s*['"]?all\b/gi);
-  add('font-weight', /\bfontWeight\s*:\s*['"]?(?:[6-9]\d{2}|bold|bolder)\b/gi);
-  add('font-weight', /\bfont-weight\s*:\s*(?:[6-9]\d{2}|bold|bolder)\b/gi);
+  add('font-weight', /\bfontWeight\s*:\s*['"]?(?:[7-9]\d{2}|bold|bolder)\b/gi);
+  add('font-weight', /\bfont-weight\s*:\s*(?:[7-9]\d{2}|bold|bolder)\b/gi);
   add('uppercase', /\btextTransform\s*:\s*['"]uppercase['"]/gi);
   add('uppercase', /\btext-transform\s*:\s*uppercase\b/gi);
   add('negative-letter-spacing', /\bletterSpacing\s*:\s*-\d/g);

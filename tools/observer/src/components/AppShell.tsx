@@ -4,11 +4,9 @@ import {
   Badge,
   Breadcrumb,
   Button,
-  Drawer,
   Dropdown,
   Layout,
   Menu,
-  Select,
   Tooltip,
   theme,
   type MenuProps,
@@ -29,7 +27,6 @@ import {
   SquareCheckBig,
   Sun,
   Users,
-  X as CloseIcon,
   type LucideIcon,
 } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
@@ -127,16 +124,7 @@ function nameInitial(name: string) {
   return Array.from(name.trim())[0]?.toLocaleUpperCase() ?? '';
 }
 
-/** The same navigation model drives the desktop sidebar, mobile page selector, and drawer. */
-function ShellNavigation({
-  selectedKey,
-  pendingLabel,
-  onNavigate,
-}: {
-  selectedKey: NavigationPath;
-  pendingLabel: string | null;
-  onNavigate?: MenuProps['onClick'];
-}) {
+function ShellNavigation({ selectedKey, pendingLabel }: { selectedKey: NavigationPath; pendingLabel: string | null }) {
   const { t } = useTranslation();
   const { projectKey } = useScope();
   const scopeSearch = projectKey ? `?scope=${encodeURIComponent(projectKey)}` : '';
@@ -144,6 +132,7 @@ function ShellNavigation({
     navigation.map((item) => ({
       key: item.path,
       icon: <NavigationIcon icon={item.icon} />,
+      style: { paddingInline: 12 },
       label: (
         <NavLink
           to={`${item.path}${scopeSearch}`}
@@ -156,11 +145,19 @@ function ShellNavigation({
             <span
               data-testid="inbox-count"
               style={{
+                flex: '0 0 auto',
+                minWidth: 20,
+                height: 20,
                 marginLeft: 'auto',
-                color: 'var(--craft-color-accent)',
+                padding: '0 6px',
+                borderRadius: 10,
+                background: 'var(--craft-color-accent)',
+                color: 'var(--craft-color-on-accent)',
                 fontFamily: craftTokens.font.meta,
                 fontSize: 12,
                 fontVariantNumeric: 'tabular-nums',
+                lineHeight: '20px',
+                textAlign: 'center',
               }}
             >
               {pendingLabel}
@@ -170,6 +167,7 @@ function ShellNavigation({
       ),
     }))
   );
+  const menuStyle = { display: 'grid', gap: 2, borderInlineEnd: 'none', padding: 0 } as const;
 
   return (
     <div style={{ flex: 1, minHeight: 0 }}>
@@ -179,8 +177,7 @@ function ShellNavigation({
           className="shell-nav"
           items={items(PRIMARY_NAVIGATION)}
           selectedKeys={[selectedKey]}
-          onClick={onNavigate}
-          style={{ borderInlineEnd: 'none', padding: 0 }}
+          style={menuStyle}
         />
       </nav>
       <div
@@ -195,8 +192,7 @@ function ShellNavigation({
           className="shell-nav"
           items={items(ADMIN_NAVIGATION)}
           selectedKeys={[selectedKey]}
-          onClick={onNavigate}
-          style={{ borderInlineEnd: 'none', padding: 0 }}
+          style={menuStyle}
         />
       </nav>
     </div>
@@ -204,7 +200,7 @@ function ShellNavigation({
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
   const { token } = theme.useToken();
@@ -217,12 +213,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pending = useQuery({ ...ordinaryDecisionsQueryOptions(projectKey ?? '', 'open', null, revoked), enabled: false });
   const compactNavigation = useMediaQuery(COMPACT_NAVIGATION_QUERY);
   const compactSearch = useMediaQuery(COMPACT_SEARCH_QUERY);
-  const [navigationOpen, setNavigationOpen] = useState(false);
   const selectedKey = selectedNavigation(location.pathname);
-
-  useEffect(() => {
-    if (!compactNavigation) setNavigationOpen(false);
-  }, [compactNavigation]);
 
   const projectItems = revoked ? [] : (projects.data?.projects ?? []);
   const selectedProject = projectItems.find((project) => project.key === projectKey);
@@ -241,6 +232,19 @@ export function AppShell({ children }: { children: ReactNode }) {
     selectedKeys: [projectKey ?? '__org__'],
     onClick: ({ key }) => setProjectKey(key === '__org__' ? null : key),
   };
+  const accountMenu: MenuProps = {
+    items: [
+      { key: 'account', label: <Link to={`/account${scopeSearch}`}>{t('nav.account')}</Link> },
+      { key: 'agent-connect', label: <Link to={`/agent-connect${scopeSearch}`}>{t('nav.agentConnect')}</Link> },
+      { type: 'divider' },
+      { key: 'zh-CN', label: '中文' },
+      { key: 'en-US', label: 'English' },
+    ],
+    selectedKeys: [i18n.language],
+    onClick: ({ key }) => {
+      if (key === 'zh-CN' || key === 'en-US') void i18n.changeLanguage(key);
+    },
+  };
 
   const pendingData = pending.data?.result.data;
   const pendingCount = pendingData?.items.length ?? null;
@@ -256,11 +260,48 @@ export function AppShell({ children }: { children: ReactNode }) {
       className="shell-brand"
       data-testid="awr-brand"
       style={mobile
-        ? { height: 40, flex: '0 0 auto', padding: 0, margin: 0 }
-        : { height: 32, flex: '0 0 32px', padding: '0 12px', marginBottom: 20 }}
+        ? { height: 32, flex: '0 0 auto', gap: 10, padding: 0, margin: 0 }
+        : { height: 32, flex: '0 0 32px', gap: 10, padding: '0 12px', marginBottom: 20 }}
     >
-      <img src="/awr-placeholder-logo.png" alt={t('app.wordmark')} style={{ width: mobile ? 88 : 120 }} />
+      <svg width={22} height={22} viewBox="0 0 24 24" aria-hidden data-testid="brand-mark">
+        <path
+          d="M3 21 9.6 5.2C10.5 3 13.5 3 14.4 5.2L21 21h-5l-4-10-4 10Z"
+          fill="var(--craft-color-accent)"
+        />
+      </svg>
+      <span
+        data-testid="brand-wordmark"
+        style={{ color: 'var(--craft-color-ink)', fontSize: 17, fontWeight: 600, lineHeight: '22px' }}
+      >
+        AWR
+      </span>
     </div>
+  );
+
+  const avatarMenu = (
+    <Dropdown
+      menu={accountMenu}
+      trigger={['click']}
+      placement="bottomRight"
+      popupRender={(menu) => <nav aria-label={t('shell.accountNavigation')}>{menu}</nav>}
+    >
+      <Button
+        type="text"
+        className="shell-avatar-button"
+        data-testid="avatar-menu-trigger"
+        aria-label={t('shell.avatarMenu', { name: memberName })}
+        style={{ width: 28, height: 28, padding: 0, borderRadius: '50%', flex: '0 0 auto' }}
+      >
+        <Avatar
+          aria-hidden
+          data-testid="current-member-avatar"
+          size={28}
+          style={{ background: token.colorFillSecondary, color: token.colorTextSecondary }}
+        >
+          {nameInitial(memberName)}
+        </Avatar>
+      </Button>
+    </Dropdown>
   );
 
   const tab = new URLSearchParams(location.search).get('tab');
@@ -301,14 +342,6 @@ export function AppShell({ children }: { children: ReactNode }) {
     crumbs = [{ label: t(`nav.${current.label}`) }];
   }
 
-  const navigation = (
-    <ShellNavigation
-      selectedKey={selectedKey}
-      pendingLabel={pendingLabel}
-      onNavigate={compactNavigation ? () => setNavigationOpen(false) : undefined}
-    />
-  );
-
   return (
     <Layout hasSider={!compactNavigation} style={{ minHeight: '100vh', background: 'var(--craft-color-page)' }}>
       {!compactNavigation ? (
@@ -325,7 +358,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         >
           <div className="shell-sider-inner">
             {brand()}
-            {navigation}
+            <ShellNavigation selectedKey={selectedKey} pendingLabel={pendingLabel} />
             <ThemeToggle />
           </div>
         </Sider>
@@ -344,22 +377,29 @@ export function AppShell({ children }: { children: ReactNode }) {
           }}
         >
           {brand(true)}
-          <Select
+          <select
             aria-label={t('shell.pageSelector')}
             data-testid="page-selector"
             value={selectedKey}
-            options={NAVIGATION.map((item) => ({ value: item.path, label: t(`nav.${item.label}`) }))}
-            suffixIcon={<ChevronDown size={16} strokeWidth={1.5} aria-hidden />}
-            open={false}
-            onOpenChange={(open) => {
-              if (open) setNavigationOpen(true);
+            onChange={(event) => navigate(`${event.target.value}${scopeSearch}`)}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              maxWidth: '100%',
+              height: 32,
+              padding: '0 28px 0 12px',
+              border: `1px solid ${token.colorBorder}`,
+              borderRadius: 8,
+              background: 'var(--craft-color-surface)',
+              color: 'var(--craft-color-ink)',
+              fontFamily: 'inherit',
+              fontSize: 13,
             }}
-            onChange={(path) => {
-              navigate(`${path}${scopeSearch}`);
-              setNavigationOpen(false);
-            }}
-            style={{ flex: 1, minWidth: 0, height: craftTokens.touchTarget }}
-          />
+          >
+            {NAVIGATION.map((item) => (
+              <option key={item.path} value={item.path}>{t(`nav.${item.label}`)}</option>
+            ))}
+          </select>
           <Button
             type="text"
             aria-label={mobileThemeLabel}
@@ -393,7 +433,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             aria-label={t('shell.breadcrumbs')}
             separator={<ChevronRight size={16} strokeWidth={1.5} aria-hidden />}
             style={{
-              flex: compactNavigation ? '1 1 100%' : '0 1 auto',
+              flex: compactNavigation ? '1 1 auto' : '0 1 auto',
               minWidth: 0,
               maxWidth: '100%',
               overflow: 'hidden',
@@ -445,6 +485,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               })),
             ]}
           />
+          {compactNavigation ? avatarMenu : null}
           {!compactNavigation && !compactSearch ? (
             <Tooltip title={t('shell.later')}>
               <Button
@@ -506,41 +547,12 @@ export function AppShell({ children }: { children: ReactNode }) {
                   style={{ width: 32, height: 32, padding: 0 }}
                 />
               </Badge>
-              <Tooltip title={t('shell.currentMember', { name: memberName })}>
-                <Avatar
-                  aria-label={t('shell.currentMember', { name: memberName })}
-                  data-testid="current-member-avatar"
-                  size={28}
-                  style={{ background: token.colorFillSecondary, color: token.colorTextSecondary, flex: '0 0 auto' }}
-                >
-                  {nameInitial(memberName)}
-                </Avatar>
-              </Tooltip>
+              {avatarMenu}
             </>
           ) : null}
         </Header>
         <Content className="shell-content" style={compactNavigation ? { padding: 16 } : undefined}>{children}</Content>
       </Layout>
-      <Drawer
-        className="shell-drawer"
-        placement="left"
-        size={craftTokens.siderWidth}
-        open={navigationOpen}
-        onClose={() => setNavigationOpen(false)}
-        title={brand()}
-        closable={{
-          closeIcon: <CloseIcon size={16} strokeWidth={1.5} aria-hidden />,
-          'aria-label': t('shell.closeNav'),
-        }}
-        styles={{ body: { display: 'flex', flexDirection: 'column', padding: 0 } }}
-      >
-        <ShellNavigation
-          selectedKey={selectedKey}
-          pendingLabel={pendingLabel}
-          onNavigate={() => setNavigationOpen(false)}
-        />
-        <ThemeToggle />
-      </Drawer>
     </Layout>
   );
 }

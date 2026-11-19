@@ -87,6 +87,32 @@ describe('AppShell navigation', () => {
     expect(document.querySelector('.ant-menu-item-selected')?.classList.contains('ant-menu-item-selected')).toBe(true);
   });
 
+  it('matches the prototype vector brand and navigation geometry', () => {
+    stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
+    renderApp('/workbench');
+    const brand = screen.getByTestId('awr-brand');
+    expect(brand.style.height).toBe('32px');
+    expect(brand.style.padding).toBe('0px 12px');
+    expect(brand.style.marginBottom).toBe('20px');
+    expect(brand.style.gap).toBe('10px');
+    const mark = screen.getByTestId('brand-mark');
+    expect(mark.getAttribute('width')).toBe('22');
+    expect(mark.getAttribute('height')).toBe('22');
+    expect(mark.querySelector('path')?.getAttribute('fill')).toBe('var(--craft-color-accent)');
+    const wordmark = screen.getByTestId('brand-wordmark');
+    expect(wordmark.style.fontSize).toBe('17px');
+    expect(wordmark.style.fontWeight).toBe('600');
+    expect(brand.querySelector('img')).toBeNull();
+    const menu = document.querySelector<HTMLElement>('.shell-nav');
+    expect(menu?.style.display).toBe('grid');
+    expect(menu?.style.gap).toBe('2px');
+    expect(document.querySelector<HTMLElement>('.shell-nav .ant-menu-item')?.style.paddingInline).toBe('12px');
+    const label = document.querySelector<HTMLElement>('.shell-side-label');
+    expect(label?.style.padding).toBe('24px 12px 8px');
+    expect(label?.style.fontSize).toBe('12px');
+    expect(label?.style.lineHeight).toBe('16px');
+  });
+
   it('uses the page-read open-item count and dot, then opens the inbox from the bell', async () => {
     stubShell({ count: 2 });
     const user = userEvent.setup();
@@ -98,6 +124,22 @@ describe('AppShell navigation', () => {
     await user.click(screen.getByRole('button', { name: '待处理 2 件' }));
     expect(router.state.location.pathname).toBe('/inbox');
     expect(router.state.location.search).toBe('?scope=demo');
+  });
+
+  it('renders the pending count as the prototype accent pill', async () => {
+    stubShell({ count: 2 });
+    renderApp('/inbox?scope=demo');
+    const count = await screen.findByTestId('inbox-count');
+    expect(count.style.minWidth).toBe('20px');
+    expect(count.style.height).toBe('20px');
+    expect(count.style.padding).toBe('0px 6px');
+    expect(count.style.borderRadius).toBe('10px');
+    expect(count.style.background).toBe('var(--craft-color-accent)');
+    expect(count.style.color).toBe('var(--craft-color-on-accent)');
+    expect(count.style.fontSize).toBe('12px');
+    expect(count.style.lineHeight).toBe('20px');
+    expect(count.style.textAlign).toBe('center');
+    expect(count.style.fontVariantNumeric).toBe('tabular-nums');
   });
 
   it('marks a partially read pending count instead of presenting it as a total', async () => {
@@ -147,7 +189,20 @@ describe('AppShell navigation', () => {
     renderApp('/projects/demo?tab=overview');
     const avatar = await screen.findByTestId('current-member-avatar');
     await waitFor(() => expect(avatar.textContent).toBe('陈'));
-    expect(avatar.getAttribute('aria-label')).toBe('当前成员：陈舟');
+    expect(screen.getByTestId('avatar-menu-trigger').getAttribute('aria-label')).toBe('陈舟：账户与语言');
+  });
+
+  it('offers account, Agent connection, and language entries from the avatar menu', async () => {
+    stubShell();
+    const user = userEvent.setup();
+    renderApp('/workbench?scope=demo');
+    await user.click(await screen.findByTestId('avatar-menu-trigger'));
+    expect((await screen.findByRole('link', { name: '账户与连接' })).getAttribute('href')).toBe('/account?scope=demo');
+    expect(screen.getAllByRole('link', { name: '连接我的 Agent' })
+      .some((link) => link.getAttribute('href') === '/agent-connect?scope=demo')).toBe(true);
+    await user.click(screen.getByText('English'));
+    await waitFor(() => expect(i18n.language).toBe('en-US'));
+    expect(screen.getByRole('menuitem', { name: /Workbench/ })).toBeTruthy();
   });
 
   it('adds no shell-only read and falls back without exposing an actor identifier', async () => {

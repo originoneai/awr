@@ -134,15 +134,15 @@ describe('narrow viewport guard', () => {
     expect(violations).toEqual([]);
   });
 
-  it('sizes the mobile navigation entry and drawer rows for touch', () => {
+  it('uses a native mobile page selector and keeps the theme target at 40px', () => {
     const css = readFileSync('src/global.css', 'utf8');
     const shell = readFileSync('src/components/AppShell.tsx', 'utf8');
     const theme = readFileSync('src/theme.ts', 'utf8');
-    // The entry box comes from the touch-target token as an inline style (antd's icon-only width
-    // would otherwise win over a class rule); the drawer rows raise the menu row height to it.
     expect(theme).toMatch(/touchTarget:\s*40/);
+    expect(shell).toMatch(/<select[\s\S]*data-testid="page-selector"/);
+    expect(shell).toMatch(/onChange=\{\(event\) => navigate\(`\$\{event\.target\.value\}\$\{scopeSearch\}`\)\}/);
     expect(shell).toMatch(/width: craftTokens\.touchTarget, height: craftTokens\.touchTarget/);
-    expect(css).toMatch(/\.shell-drawer \.shell-nav \.ant-menu-item\s*\{[^}]*height: 40px;/s);
-    expect(css).toMatch(/\.shell-drawer \.ant-drawer-close\s*\{[^}]*width: 40px;[^}]*height: 40px;/s);
+    expect(shell).not.toContain('<Drawer');
+    expect(css).not.toContain('.shell-drawer');
   });
 });

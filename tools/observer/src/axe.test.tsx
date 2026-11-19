@@ -18,16 +18,16 @@ describe('accessibility', () => {
     expect(results).toHaveNoViolations();
   });
 
-  it('the mobile navigation drawer has no axe violations when open', async () => {
+  it('the mobile shell and open avatar menu have no axe violations', async () => {
     const user = userEvent.setup();
     const viewport = mockViewport(375);
     try {
       stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/read': DEMO_WORK_NEXT });
       renderApp('/workbench?scope=demo&work=W1');
       await screen.findByRole('link', { name: 'Build the filter API' });
-      await user.click(screen.getByRole('combobox', { name: '页面' }));
-      await screen.findByRole('dialog');
-      // The drawer renders in a portal on body, so audit the whole document.
+      await user.click(screen.getByTestId('avatar-menu-trigger'));
+      await screen.findByRole('link', { name: '账户与连接' });
+      // The menu renders in a portal on body, so audit the whole document.
       const results = await axe(document.body, {
         rules: { 'color-contrast': { enabled: false } },
       });

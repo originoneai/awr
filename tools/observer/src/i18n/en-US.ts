@@ -130,6 +130,8 @@ const enUS: Messages = {
     notifications: 'Notifications',
     pendingNotifications: '{{count}} pending',
     currentMember: 'Current member: {{name}}',
+    avatarMenu: '{{name}}: account and language',
+    accountNavigation: 'Account',
     you: 'You',
     breadcrumbs: 'Current location',
     mainNavigation: 'Pages',

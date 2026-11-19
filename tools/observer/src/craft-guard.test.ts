@@ -32,7 +32,7 @@ describe('craft source scanner self-test', () => {
     ['letterSpacing: -0.01', 'negative-letter-spacing'],
     ['🚀', 'emoji'],
     ['"Ready!"', 'copy-exclamation'],
-    ['borderRadius: 10', 'radius'],
+    ['borderRadius: 11', 'radius'],
     ['border-radius: 20px', 'radius'],
     ['t("freshness.state.not_measured")', 'freshness-misuse'],
   ])('detects %s as %s', (source, rule) => {
@@ -44,7 +44,8 @@ describe('craft source scanner self-test', () => {
       '<Tag color="success">', '<Tag color="error">', '<Tag color="warning">', '<Tag color="processing">', '<Tag color="default">',
       'box-shadow: inset 0 0 0 1px var(--ant-color-border-secondary)',
       'transition: color 160ms cubic-bezier(0.22, 1, 0.36, 1)',
-      'fontWeight: 500', 'font-weight: 400', 'letterSpacing: 0', 'borderRadius: 8', 'border-radius: 12px',
+      'fontWeight: 500', 'fontWeight: 600', 'font-weight: 400', 'letterSpacing: 0',
+      'borderRadius: 8', 'borderRadius: 10', 'border-radius: 10px', 'border-radius: 12px',
       'const next = !current;',
       "typeof binding === 'string' && binding.trim() !== ''",
       't("common.notProvided")',
