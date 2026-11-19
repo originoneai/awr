@@ -76,6 +76,7 @@ enum WaitKind {
     Dependency,
     Review,
     External,
+    Unknown,
 }
 
 impl WaitKind {
@@ -85,6 +86,7 @@ impl WaitKind {
             Self::Dependency => "dependency",
             Self::Review => "review",
             Self::External => "external",
+            Self::Unknown => "unknown",
         }
     }
 }
@@ -92,20 +94,22 @@ impl WaitKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum FactEvent {
     Verified(String),
+    CompletedWithoutIndependentReview(String),
     WaitOpened(String, WaitKind),
     WaitCleared(String, WaitKind),
     ReviewReturned(String),
-    ClaimedUnverified(String),
+    DeliveredUnverified(String),
     DecisionMade(String),
 }
 
 #[derive(Default)]
 struct Facts {
     verified: std::collections::BTreeSet<String>,
+    completed_without_review: std::collections::BTreeSet<String>,
     opened: std::collections::BTreeMap<WaitKind, Vec<String>>,
     cleared: std::collections::BTreeMap<WaitKind, Vec<String>>,
     returned: std::collections::BTreeSet<String>,
-    claimed: std::collections::BTreeSet<String>,
+    delivered: std::collections::BTreeSet<String>,
     decisions: Vec<String>,
 }
 
@@ -144,6 +148,9 @@ fn build_facts(events: impl IntoIterator<Item = FactEvent>) -> Value {
             FactEvent::Verified(work) => {
                 facts.verified.insert(work);
             }
+            FactEvent::CompletedWithoutIndependentReview(work) => {
+                facts.completed_without_review.insert(work);
+            }
             FactEvent::WaitOpened(work, kind) => {
                 facts.opened.entry(kind).or_default().push(work);
             }
@@ -153,18 +160,19 @@ fn build_facts(events: impl IntoIterator<Item = FactEvent>) -> Value {
             FactEvent::ReviewReturned(work) => {
                 facts.returned.insert(work);
             }
-            FactEvent::ClaimedUnverified(work) => {
-                facts.claimed.insert(work);
+            FactEvent::DeliveredUnverified(work) => {
+                facts.delivered.insert(work);
             }
             FactEvent::DecisionMade(work) => facts.decisions.push(work),
         }
     }
     json!({
         "verified":counted_set(facts.verified),
+        "completed_without_independent_review":counted_set(facts.completed_without_review),
         "waits_opened":waits(facts.opened),
         "waits_cleared":waits(facts.cleared),
         "review_returned":counted_set(facts.returned),
-        "claimed_unverified":counted_set(facts.claimed),
+        "delivered_unverified":counted_set(facts.delivered),
         "decisions_made":counted(facts.decisions)
     })
 }
@@ -227,8 +235,9 @@ pub(crate) fn project_fact_snapshot(
     let mut all = std::collections::BTreeSet::new();
     for field in [
         "verified",
+        "completed_without_independent_review",
         "review_returned",
-        "claimed_unverified",
+        "delivered_unverified",
         "decisions_made",
     ] {
         all.extend(stored_ids(&stored[field])?);
@@ -245,10 +254,12 @@ pub(crate) fn project_fact_snapshot(
     Ok((
         json!({
             "verified":project_counted(&stored["verified"],visible)?,
+            "completed_without_independent_review":project_counted(
+                &stored["completed_without_independent_review"],visible)?,
             "waits_opened":project_waits(&stored["waits_opened"],visible)?,
             "waits_cleared":project_waits(&stored["waits_cleared"],visible)?,
             "review_returned":project_counted(&stored["review_returned"],visible)?,
-            "claimed_unverified":project_counted(&stored["claimed_unverified"],visible)?,
+            "delivered_unverified":project_counted(&stored["delivered_unverified"],visible)?,
             "decisions_made":project_counted(&stored["decisions_made"],visible)?
         }),
         hidden,
@@ -264,9 +275,23 @@ struct ComputedFacts {
 
 fn legacy_wait_kind(kind: Option<&str>) -> PgResult<WaitKind> {
     match kind {
-        None | Some("decision") => Ok(WaitKind::Decision),
+        None => Ok(WaitKind::Unknown),
+        Some("decision") => Ok(WaitKind::Decision),
         Some("external") => Ok(WaitKind::External),
         _ => Err(PgError::SourceDivergence),
+    }
+}
+
+/// A completion is verified only by independent acceptance: the current payload
+/// states `team_independent_acceptance`, or the older receipt names one of the
+/// two agent/simulated-member independent review policies. Everything else —
+/// including a payload with no basis at all — is recorded, never verified.
+fn independently_accepted(row: &tokio_postgres::Row) -> bool {
+    match row.get::<_, Option<bool>>(4) {
+        Some(independent) => independent,
+        None => matches!(row.get::<_, Option<String>>(5).as_deref(), Some(policy)
+            if policy == crate::review::AGENT_REVIEW_POLICY
+                || policy == crate::review::simulated_member::POLICY),
     }
 }
 
@@ -306,7 +331,8 @@ async fn compute_facts(
     let end_ms = window.get::<_, i64>(1);
     let rows = tx
         .query(
-            "SELECT event_type,work_id,payload_json->>'decision',payload_json->>'kind'
+            "SELECT event_type,work_id,payload_json->>'decision',payload_json->>'kind',
+                (payload_json->>'team_independent_acceptance')::boolean,payload_json->>'policy'
              FROM awr_team.events
              WHERE tenant_id=$1 AND project_id=$2 AND work_id IS NOT NULL
                AND created_at>=to_timestamp($3::bigint::double precision/1000)
@@ -323,7 +349,13 @@ async fn compute_facts(
     for row in rows {
         let work = row.get::<_, String>(1);
         match row.get::<_, String>(0).as_str() {
-            "work.completed" => events.push(FactEvent::Verified(work)),
+            "work.completed" => {
+                if independently_accepted(&row) {
+                    events.push(FactEvent::Verified(work));
+                } else {
+                    events.push(FactEvent::CompletedWithoutIndependentReview(work));
+                }
+            }
             "wait.opened" => {
                 let kind = legacy_wait_kind(row.get::<_, Option<String>>(3).as_deref())?;
                 events.push(FactEvent::WaitOpened(work, kind));
@@ -397,7 +429,7 @@ async fn compute_facts(
             && previous.as_deref() != Some("delivered")
             && !row.get::<_, bool>(3)
         {
-            events.push(FactEvent::ClaimedUnverified(work));
+            events.push(FactEvent::DeliveredUnverified(work));
         }
     }
     Ok(ComputedFacts {
@@ -642,20 +674,24 @@ mod tests {
             FactEvent::Verified("b".into()),
             FactEvent::Verified("a".into()),
             FactEvent::Verified("a".into()),
+            FactEvent::CompletedWithoutIndependentReview("e".into()),
+            FactEvent::CompletedWithoutIndependentReview("e".into()),
             FactEvent::WaitOpened("a".into(), WaitKind::Decision),
             FactEvent::WaitOpened("a".into(), WaitKind::Decision),
             FactEvent::WaitOpened("c".into(), WaitKind::Dependency),
             FactEvent::WaitOpened("b".into(), WaitKind::Review),
             FactEvent::WaitOpened("d".into(), WaitKind::External),
+            FactEvent::WaitOpened("u".into(), WaitKind::Unknown),
             FactEvent::WaitCleared("a".into(), WaitKind::Decision),
             FactEvent::WaitCleared("c".into(), WaitKind::Dependency),
             FactEvent::WaitCleared("b".into(), WaitKind::Review),
             FactEvent::WaitCleared("d".into(), WaitKind::External),
+            FactEvent::WaitCleared("u".into(), WaitKind::Unknown),
             FactEvent::ReviewReturned("b".into()),
             FactEvent::ReviewReturned("a".into()),
             FactEvent::ReviewReturned("b".into()),
-            FactEvent::ClaimedUnverified("c".into()),
-            FactEvent::ClaimedUnverified("c".into()),
+            FactEvent::DeliveredUnverified("c".into()),
+            FactEvent::DeliveredUnverified("c".into()),
             FactEvent::DecisionMade("b".into()),
             FactEvent::DecisionMade("a".into()),
             FactEvent::DecisionMade("a".into()),
@@ -664,27 +700,31 @@ mod tests {
             facts,
             json!({
                 "verified":{"count":2,"work_ids":["a","b"]},
-                "waits_opened":{"count":5,"kinds":[
+                "completed_without_independent_review":{"count":1,"work_ids":["e"]},
+                "waits_opened":{"count":6,"kinds":[
                     {"kind":"decision","count":2,"work_ids":["a","a"]},
                     {"kind":"dependency","count":1,"work_ids":["c"]},
                     {"kind":"review","count":1,"work_ids":["b"]},
-                    {"kind":"external","count":1,"work_ids":["d"]}
+                    {"kind":"external","count":1,"work_ids":["d"]},
+                    {"kind":"unknown","count":1,"work_ids":["u"]}
                 ]},
-                "waits_cleared":{"count":4,"kinds":[
+                "waits_cleared":{"count":5,"kinds":[
                     {"kind":"decision","count":1,"work_ids":["a"]},
                     {"kind":"dependency","count":1,"work_ids":["c"]},
                     {"kind":"review","count":1,"work_ids":["b"]},
-                    {"kind":"external","count":1,"work_ids":["d"]}
+                    {"kind":"external","count":1,"work_ids":["d"]},
+                    {"kind":"unknown","count":1,"work_ids":["u"]}
                 ]},
                 "review_returned":{"count":2,"work_ids":["a","b"]},
-                "claimed_unverified":{"count":1,"work_ids":["c"]},
+                "delivered_unverified":{"count":1,"work_ids":["c"]},
                 "decisions_made":{"count":3,"work_ids":["a","a","b"]}
             })
         );
         for field in [
             "verified",
+            "completed_without_independent_review",
             "review_returned",
-            "claimed_unverified",
+            "delivered_unverified",
             "decisions_made",
         ] {
             assert_eq!(
@@ -705,7 +745,7 @@ mod tests {
                 assert_eq!(kind["count"], kind["work_ids"].as_array().unwrap().len());
             }
         }
-        assert_eq!(facts.as_object().unwrap().len(), 6);
+        assert_eq!(facts.as_object().unwrap().len(), 7);
         assert!(!facts.to_string().contains("summary"));
         assert!(!facts.to_string().contains("person"));
     }
@@ -762,6 +802,7 @@ mod tests {
             WaitKind::Dependency,
             WaitKind::Review,
             WaitKind::External,
+            WaitKind::Unknown,
         ]
         .map(WaitKind::as_str)
         .to_vec();
@@ -790,7 +831,6 @@ mod tests {
 
         for (word, expected_fields) in [
             ("核验过", vec!["verified"]),
-            ("标了完成", vec!["claimed_unverified"]),
             ("等待", vec!["waits_opened", "waits_cleared"]),
             ("压着", vec!["none"]),
         ] {
@@ -810,12 +850,20 @@ mod tests {
         }
 
         let shared = include_str!("../../../../docs/dev/reference/overview-fact-semantics.md");
-        for word in ["核验过", "标了完成", "等待", "压着"] {
+        for word in ["核验过", "等待", "压着"] {
             assert!(
                 doc.contains(word) && shared.contains(word),
                 "shared word {word}"
             );
         }
+        assert!(
+            shared.contains("标了完成"),
+            "标了完成 stays an Observer-side word"
+        );
+        assert!(
+            doc.contains("标了完成") && doc.contains("delivered_unverified"),
+            "the service doc names the Observer word it does not map and its own field"
+        );
         for kind in [
             "decisionWait",
             "dependencyWait",
@@ -841,7 +889,8 @@ mod tests {
             FactEvent::WaitCleared("c".into(), WaitKind::Dependency),
             FactEvent::ReviewReturned("a".into()),
             FactEvent::ReviewReturned("b".into()),
-            FactEvent::ClaimedUnverified("c".into()),
+            FactEvent::CompletedWithoutIndependentReview("d".into()),
+            FactEvent::DeliveredUnverified("c".into()),
             FactEvent::DecisionMade("a".into()),
             FactEvent::DecisionMade("a".into()),
             FactEvent::DecisionMade("b".into()),
@@ -857,7 +906,11 @@ mod tests {
         );
         assert_eq!(projected["waits_cleared"]["count"], 2);
         assert_eq!(projected["review_returned"]["work_ids"], json!(["a"]));
-        assert_eq!(projected["claimed_unverified"]["work_ids"], json!(["c"]));
+        assert_eq!(
+            projected["completed_without_independent_review"]["work_ids"],
+            json!([])
+        );
+        assert_eq!(projected["delivered_unverified"]["work_ids"], json!(["c"]));
         assert_eq!(
             projected["decisions_made"],
             json!({"count":2,"work_ids":["a","a"]})

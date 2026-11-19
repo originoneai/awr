@@ -212,7 +212,7 @@ async fn fact_snapshots_follow_the_reference_table_window_and_immutability() {
             "work.completed",
             "c",
             "2026-11-16T04:59:59Z",
-            json!({}),
+            json!({"team_independent_acceptance":true}),
         ),
         (
             "verified-start",
@@ -220,7 +220,7 @@ async fn fact_snapshots_follow_the_reference_table_window_and_immutability() {
             "work.completed",
             "a",
             "2026-11-16T05:00:00Z",
-            json!({}),
+            json!({"team_independent_acceptance":true}),
         ),
         (
             "verified-end",
@@ -228,7 +228,7 @@ async fn fact_snapshots_follow_the_reference_table_window_and_immutability() {
             "work.completed",
             "d",
             "2026-11-23T05:00:00Z",
-            json!({}),
+            json!({"team_independent_acceptance":true}),
         ),
         (
             "legacy-open",
@@ -419,21 +419,24 @@ async fn fact_snapshots_follow_the_reference_table_window_and_immutability() {
         .to_owned();
     let expected = json!({
         "verified":{"count":1,"work_ids":["a"]},
+        "completed_without_independent_review":{"count":0,"work_ids":[]},
         "waits_opened":{"count":5,"kinds":[
-            {"kind":"decision","count":2,"work_ids":["a","c"]},
+            {"kind":"decision","count":1,"work_ids":["c"]},
             {"kind":"dependency","count":1,"work_ids":["a"]},
             {"kind":"review","count":1,"work_ids":["a"]},
-            {"kind":"external","count":1,"work_ids":["b-private"]}
+            {"kind":"external","count":1,"work_ids":["b-private"]},
+            {"kind":"unknown","count":1,"work_ids":["a"]}
         ]},
         "waits_cleared":{"count":7,"kinds":[
-            {"kind":"decision","count":3,"work_ids":["a","c","c"]},
+            {"kind":"decision","count":2,"work_ids":["c","c"]},
             {"kind":"dependency","count":1,"work_ids":["a"]},
             {"kind":"review","count":2,"work_ids":["a","c"]},
-            {"kind":"external","count":1,"work_ids":["b-private"]}
+            {"kind":"external","count":1,"work_ids":["b-private"]},
+            {"kind":"unknown","count":1,"work_ids":["a"]}
         ]},
         "review_returned":{"count":1,"work_ids":["a"]},
-        "claimed_unverified":{"count":2,"work_ids":["a","b-private"]},
-        "decisions_made":{"count":2,"work_ids":["a","c"]}
+        "delivered_unverified":{"count":2,"work_ids":["a","b-private"]},
+        "decisions_made":{"count":1,"work_ids":["c"]}
     });
     assert_eq!(stored_snapshot(&admin, &first_id).await, expected);
     let text = expected.to_string();
@@ -481,7 +484,7 @@ async fn fact_snapshots_follow_the_reference_table_window_and_immutability() {
         "work.completed",
         "b-private",
         "2026-11-19T05:00:00Z",
-        json!({}),
+        json!({"team_independent_acceptance":true}),
     )
     .await;
     let replay = record(&store, TENANT, A, &req).await.unwrap();
@@ -517,7 +520,7 @@ async fn fact_snapshots_follow_the_reference_table_window_and_immutability() {
         2
     );
     assert_eq!(
-        stored_snapshot(&admin, second_id).await["claimed_unverified"],
+        stored_snapshot(&admin, second_id).await["delivered_unverified"],
         json!({"count":1,"work_ids":["a"]})
     );
     assert_eq!(stored_snapshot(&admin, &first_id).await, expected);
@@ -544,7 +547,7 @@ async fn fact_snapshots_default_to_utc_and_refuse_unknown_stored_zones() {
         "work.completed",
         "a",
         "2026-11-16T00:00:00Z",
-        json!({}),
+        json!({"team_independent_acceptance":true}),
     )
     .await;
     let first = record(
@@ -587,6 +590,168 @@ async fn fact_snapshots_default_to_utc_and_refuse_unknown_stored_zones() {
         Err(PgError::SourceDivergence)
     ));
     assert_eq!(update_rows(&admin).await, 1);
+}
+
+#[tokio::test]
+async fn verified_requires_independent_acceptance_evidence() {
+    let (_guard, admin, db, store) = setup().await;
+    supervisor(&admin, &db).await;
+    for (index, (id, work, payload)) in [
+        ("tia-true", "a", json!({"team_independent_acceptance":true})),
+        (
+            "tia-false",
+            "b",
+            json!({"team_independent_acceptance":false}),
+        ),
+        (
+            "old-agent-policy",
+            "c",
+            json!({"policy":"caller_managed_execution_and_agent_review"}),
+        ),
+        (
+            "old-simulated-policy",
+            "d",
+            json!({"policy":"caller_managed_execution_and_simulated_member_review"}),
+        ),
+        ("old-ordinary", "e", json!({"policy":"ordinary_confirm"})),
+        ("no-basis", "f", json!({})),
+        (
+            "tia-true-with-policy-ordinary",
+            "g",
+            json!({"team_independent_acceptance":true,"policy":"ordinary_confirm"}),
+        ),
+        (
+            "tia-false-with-agent-policy",
+            "h",
+            json!({"team_independent_acceptance":false,
+                "policy":"caller_managed_execution_and_agent_review"}),
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        event(
+            &admin,
+            TENANT,
+            id,
+            100 + index as i64,
+            "work.completed",
+            work,
+            "2026-11-18T00:00:00Z",
+            payload,
+        )
+        .await;
+    }
+    let recorded = record(
+        &store,
+        TENANT,
+        A,
+        &request("verified-basis", "2026-W47", "Basis decides."),
+    )
+    .await
+    .unwrap();
+    let id = recorded["receipt"]["update_id"].as_str().unwrap();
+    let snapshot = stored_snapshot(&admin, id).await;
+    assert_eq!(
+        snapshot["verified"],
+        json!({"count":4,"work_ids":["a","c","d","g"]}),
+        "only current-payload true acceptances and old agent/simulated review policies verify"
+    );
+    assert_eq!(
+        snapshot["completed_without_independent_review"],
+        json!({"count":4,"work_ids":["b","e","f","h"]}),
+        "false acceptance, ordinary confirm, missing basis and false-despite-policy stay unverified"
+    );
+    let mut inspect_query = query("update.inspect");
+    inspect_query.update_id = Some(id.to_owned());
+    let inspected = read(&store, A, inspect_query).await.unwrap();
+    assert_eq!(
+        inspected["data"]["fact_snapshot"]["verified"],
+        json!({"count":2,"work_ids":["a","c"]}),
+        "the projection keeps only the reader's visible work"
+    );
+    assert_eq!(
+        inspected["data"]["fact_snapshot"]["completed_without_independent_review"],
+        json!({"count":0,"work_ids":[]})
+    );
+    assert_eq!(
+        inspected["data"]["fact_snapshot_coverage"],
+        json!({"complete":false,"hidden_work_count":6})
+    );
+    assert!(
+        !inspected["data"]["fact_snapshot"]
+            .to_string()
+            .contains("\"d\"")
+    );
+    let keys: Vec<&str> = inspected["data"]["fact_snapshot"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert!(keys.contains(&"delivered_unverified"));
+    assert!(!keys.contains(&"claimed_unverified"));
+}
+
+#[tokio::test]
+async fn untyped_legacy_waits_count_as_unknown_not_decisions() {
+    let (_guard, admin, db, store) = setup().await;
+    supervisor(&admin, &db).await;
+    for (index, (id, kind, work, payload)) in [
+        ("untyped-open", "wait.opened", "u", json!({})),
+        ("typed-open", "wait.opened", "t", json!({"kind":"decision"})),
+        ("untyped-reply", "wait.replied", "u", json!({})),
+        (
+            "typed-reply",
+            "wait.replied",
+            "t",
+            json!({"kind":"decision"}),
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        event(
+            &admin,
+            TENANT,
+            id,
+            100 + index as i64,
+            kind,
+            work,
+            "2026-11-18T00:00:00Z",
+            payload,
+        )
+        .await;
+    }
+    let recorded = record(
+        &store,
+        TENANT,
+        A,
+        &request("untyped-waits", "2026-W47", "Kinds must match the payload."),
+    )
+    .await
+    .unwrap();
+    let snapshot =
+        stored_snapshot(&admin, recorded["receipt"]["update_id"].as_str().unwrap()).await;
+    assert_eq!(
+        snapshot["waits_opened"],
+        json!({"count":2,"kinds":[
+            {"kind":"decision","count":1,"work_ids":["t"]},
+            {"kind":"unknown","count":1,"work_ids":["u"]}
+        ]})
+    );
+    assert_eq!(
+        snapshot["waits_cleared"],
+        json!({"count":2,"kinds":[
+            {"kind":"decision","count":1,"work_ids":["t"]},
+            {"kind":"unknown","count":1,"work_ids":["u"]}
+        ]})
+    );
+    assert_eq!(
+        snapshot["decisions_made"],
+        json!({"count":1,"work_ids":["t"]}),
+        "an untyped legacy reply is not a decision made"
+    );
 }
 
 #[tokio::test]
@@ -674,7 +839,7 @@ async fn record_versions_replay_and_read_verbatim_pages() {
         "work.completed",
         "a",
         "2026-11-18T00:00:00Z",
-        json!({}),
+        json!({"team_independent_acceptance":true}),
     )
     .await;
     let first = record(
@@ -1032,7 +1197,7 @@ async fn reads_require_project_visibility_and_never_promote_a_task_delegation() 
             "work.completed",
             work,
             "2026-11-18T00:00:00Z",
-            json!({}),
+            json!({"team_independent_acceptance":true}),
         )
         .await;
     }

@@ -551,7 +551,7 @@ read operations remain ordinary `awr_team_query` / HTTP query operations.
 The caller supplies the complete judgment. The service performs deterministic
 validation, attribution, versioning, task-fact calculation and receipt recovery;
 it does not call a model, generate a sentence, trim the sentence or rewrite it.
-The six fact rows, exact sources, deduplication and half-open period window are
+The seven fact rows, exact sources, deduplication and half-open period window are
 defined in [Project period-update fact snapshots](project-update-facts.md).
 The window uses `projects.settings_json.time_zone`, defaulting to UTC when absent.
 
