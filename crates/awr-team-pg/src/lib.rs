@@ -132,6 +132,7 @@ pub use source::planning_ops::{
     PlanningSuggestRequest,
 };
 pub use source::writeback::operator::{AbandonRequest, OperatorWriteback};
+pub use source::writeback::unlogged::UnloggedCloseRequest;
 pub use source::writeback::{ActivationImpactGate, WritebackActivateRequest};
 pub use source::{
     CandidateRecord, CurrentSource, CurrentWorkstreamSource, IngestRequest, SOURCE_BINDING_FILE,

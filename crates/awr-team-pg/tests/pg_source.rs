@@ -91,7 +91,7 @@ fn plan(candidate: &awr_team_pg::CandidateRecord, epoch: &str) -> SourceActivati
     }
 }
 
-fn oversized_publish_request() -> IngestRequest {
+fn publish_request_with_acceptance_len(acceptance_len: usize) -> IngestRequest {
     // This POSIX locator is only a validated string. No filesystem access occurs:
     // the ledger has no referenced documents, so the test remains Windows-safe.
     let root = "/var/awr/team/synthetic";
@@ -104,7 +104,7 @@ fn oversized_publish_request() -> IngestRequest {
         "goals":[{"id":"g","title":"Synthetic goal","status":"active"}],
         "work_items":[{
             "id":"work-a","title":"Synthetic large upload","status":"planned","workstream":"alpha",
-            "goals":["g"],"acceptance":["x".repeat(awr_team_pg::MAX_FILE_BYTES + 1)],
+            "goals":["g"],"acceptance":["x".repeat(acceptance_len)],
             "paths":["src"],"depends_on":[]
         }]
     }))
@@ -117,16 +117,6 @@ fn oversized_publish_request() -> IngestRequest {
         &awr_source::PublishPrepOptions::default(),
     )
     .unwrap();
-    assert!(
-        package
-            .files
-            .iter()
-            .find(|file| file.path == "workstreams.json")
-            .unwrap()
-            .bytes
-            .len()
-            > awr_team_pg::MAX_FILE_BYTES
-    );
     IngestRequest {
         tenant_id: TENANT.into(),
         project_id: PROJECT.into(),
@@ -143,15 +133,40 @@ fn oversized_publish_request() -> IngestRequest {
     }
 }
 
+fn workstreams_len(request: &IngestRequest) -> usize {
+    request
+        .files
+        .iter()
+        .find(|file| file.path == "workstreams.json")
+        .unwrap()
+        .bytes
+        .len()
+}
+
+fn oversized_publish_request() -> IngestRequest {
+    let minimal_acceptance = publish_request_with_acceptance_len(1);
+    let acceptance_len = 1 + awr_team_pg::MAX_FILE_BYTES + 1 - workstreams_len(&minimal_acceptance);
+    let request = publish_request_with_acceptance_len(acceptance_len);
+    assert_eq!(
+        workstreams_len(&request),
+        awr_team_pg::MAX_FILE_BYTES + 1,
+        "the upload fixture must cross the per-file limit by exactly one byte"
+    );
+    request
+}
+
 fn assert_upload_file_limit(error: PgError) {
     assert!(matches!(
         error,
         PgError::SourcePackageTooLarge {
             limit_kind: awr_team_pg::SourcePackageLimitKind::FileBytes,
+            file: Some(ref file),
             actual,
             limit,
             ..
-        } if limit == awr_team_pg::MAX_FILE_BYTES as u64 && actual > limit
+        } if file == "workstreams.json"
+            && limit == awr_team_pg::MAX_FILE_BYTES as u64
+            && actual == limit + 1
     ));
 }
 

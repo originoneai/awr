@@ -1727,7 +1727,7 @@ fn catalog() -> Vec<Tool> {
             planning_draft.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(false).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_planning_preview",
-            "Preview exact diffs, affected tasks, runtime impact and review requirements for a planning candidate. Read-only; does not mutate.",
+            "Preview exact diffs, affected tasks, runtime impact, review requirements and package_capacity for a planning candidate. Capacity reports the largest file, package and file-count limits, changed-ledger bytes and would_fit. If the registered source cannot be read, capacity is unavailable with a reason while the diff remains readable. Read-only; takes no source writer lock and does not mutate.",
             planning_preview.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(true).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_planning_approve",
@@ -1735,7 +1735,7 @@ fn catalog() -> Vec<Tool> {
             planning_approve.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(false).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_planning_publish",
-            "Publish an approved candidate (planning.publish). Optional activate uses the registered sole source only — no client path/URL/SQL. Size limits are fixed by code path, never by request fields: server-generated packages allow 256 files, 16 MiB per file and 64 MiB total; client uploads retain 64 files, 1 MiB per file and 4 MiB total. SourcePackageTooLarge (HTTP 413) reports limit_kind, a relative file when applicable, actual, limit, package_bytes and files; reduce plan content or ask a service operator to review the fixed limits. On disconnect, query outcome with the same request_id.",
+            "Publish an approved candidate (planning.publish). Optional activate uses the registered sole source only — no client path/URL/SQL. A fresh activation generates and validates the package before publication or request reservation, so a deterministic size refusal leaves the approved candidate unchanged and no half-committed activation. Size limits are fixed by code path, never by request fields: server-generated packages allow 256 files, 16 MiB per file and 64 MiB total; client uploads retain 64 files, 1 MiB per file and 4 MiB total. SourcePackageTooLarge (HTTP 413) reports limit_kind, a relative file when applicable, actual, limit, package_bytes and files; reduce plan content or ask a service operator to review the fixed limits. On disconnect, query outcome with the same request_id.",
             planning_publish.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(false).destructive(true).idempotent(true).open_world(false)),
         Tool::new("awr_team_planning_reject",
@@ -1743,7 +1743,7 @@ fn catalog() -> Vec<Tool> {
             planning_reject.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(false).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_planning_outcome",
-            "Inspect the original planning request_id before retrying. Reserved or absent means unconfirmed; follow its recovery step. A stored known_rejection is a final refusal, not approval; follow its guidance. Never repeat the original intent with a new ID.",
+            "Inspect the original planning request_id before retrying. Reserved or absent means unconfirmed; follow its recovery step. A reserved activation without a journal returns status=reserved and writeback=absent, with exact-retry and owner-inspection guidance rather than SourceDivergence. An owner-closed unlogged activation returns its completed closure and reason. A stored known_rejection is a final refusal, not approval; follow its guidance. Never repeat the original intent with a new ID.",
             planning_outcome.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(true).destructive(false).idempotent(true).open_world(false)),
     ]

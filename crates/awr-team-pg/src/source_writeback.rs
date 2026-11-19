@@ -60,6 +60,180 @@ pub(crate) mod journal;
 pub mod operator;
 #[path = "source_writeback/request_binding.rs"]
 mod request_binding;
+#[path = "source_writeback/unlogged.rs"]
+pub(crate) mod unlogged;
+
+struct GeneratedPackage {
+    parser_version: String,
+    source_version_digest: String,
+    files: Vec<SourceFile>,
+    raw_files: Vec<(String, Vec<u8>)>,
+}
+
+/// Generate exactly the package activation validates, without persisting a snapshot.
+fn generate_package(
+    location: &SoleSourceLocation,
+    source_root: &std::path::Path,
+    ledger: &[u8],
+    project: &str,
+) -> PgResult<GeneratedPackage> {
+    let package = prepare_publish_from_ledger_bytes(
+        location,
+        source_root,
+        ledger,
+        project,
+        &PublishPrepOptions::default(),
+    )
+    .map_err(|e| PgError::Protocol(e.to_string()))?;
+    let files: Vec<SourceFile> = package
+        .files
+        .iter()
+        .map(|f| SourceFile {
+            path: f.path.clone(),
+            bytes: f.bytes.clone(),
+        })
+        .collect();
+    let raw_files = files
+        .iter()
+        .map(|f| (f.path.clone(), f.bytes.clone()))
+        .collect();
+    Ok(GeneratedPackage {
+        parser_version: package.parser_version,
+        source_version_digest: package.source_version_digest,
+        files,
+        raw_files,
+    })
+}
+
+fn validate_package(
+    project: &str,
+    package: &GeneratedPackage,
+) -> PgResult<super::SourceProjection> {
+    SourceStore::validate_generated_publish_package(&package.files)?;
+    let projection = super::SourceProjection::parse(&package.raw_files, project)?;
+    super::workstreams::reject_external_graph(&package.raw_files)?;
+    Ok(projection)
+}
+
+fn apply_and_generate(
+    binding: &super::SoleSourceBinding,
+    project: &str,
+    disk: &[u8],
+    changes: &[DraftChange],
+) -> PgResult<(Vec<u8>, GeneratedPackage)> {
+    let source_root = PathBuf::from(&binding.locator);
+    let ledger = binding
+        .ledger_relative_path
+        .clone()
+        .unwrap_or_else(|| "ledger.yaml".into());
+    let location = SoleSourceLocation::server_directory(&source_root, &ledger)
+        .map_err(|_| PgError::Protocol("invalid sole source location".into()))?;
+    let patch = apply_planning_changes_to_ledger(disk, changes)
+        .map_err(|e| PgError::Protocol(e.to_string()))?;
+    let package = generate_package(&location, &source_root, &patch.after_bytes, project)?;
+    Ok((patch.after_bytes, package))
+}
+
+/// Validate all deterministic source and package bounds before a fresh activation publishes.
+pub(crate) fn preflight_candidate_package(
+    binding: &super::SoleSourceBinding,
+    project: &str,
+    changes: &[DraftChange],
+) -> PgResult<()> {
+    if binding.kind != super::SoleSourceKind::ServerDirectory {
+        return Err(PgError::Unsupported(
+            "private management repo writeback adapter is not enabled for MCP/HTTP; register a server_directory sole source or use the operator-local writeback path".into(),
+        ));
+    }
+    let root = PathBuf::from(&binding.locator);
+    let ledger = binding
+        .ledger_relative_path
+        .as_deref()
+        .unwrap_or("ledger.yaml");
+    let guard = LockedSourceFile::open(&root, ledger).map_err(source_write_error)?;
+    let disk = guard
+        .read(awr_source::SERVER_LEDGER_READ_CAP)
+        .map_err(|error| source_ledger_write_error(error, ledger))?;
+    let (after, package) = apply_and_generate(binding, project, &disk, changes)?;
+    if after.len() as u64 > awr_source::SERVER_LEDGER_READ_CAP {
+        return Err(PgError::source_ledger_too_large(
+            ledger,
+            after.len() as u64,
+            awr_source::SERVER_LEDGER_READ_CAP,
+        ));
+    }
+    validate_package(project, &package).map(|_| ())
+}
+
+fn capacity_unavailable(reason: &str) -> Value {
+    json!({"status":"unavailable","would_fit":null,"reason":reason})
+}
+
+/// Read-only capacity observation. It deliberately takes no source writer lock.
+pub(crate) fn candidate_package_capacity(
+    binding: Option<&super::SoleSourceBinding>,
+    project: &str,
+    changes: &[DraftChange],
+) -> Value {
+    let Some(binding) = binding else {
+        return capacity_unavailable("the active snapshot has no registered sole source");
+    };
+    if binding.kind != super::SoleSourceKind::ServerDirectory {
+        return capacity_unavailable("the registered sole source is not a server directory");
+    }
+    let root = PathBuf::from(&binding.locator);
+    let ledger = binding
+        .ledger_relative_path
+        .as_deref()
+        .unwrap_or("ledger.yaml");
+    let disk = match awr_source::read_source_capped(
+        &root.join(ledger),
+        awr_source::SERVER_LEDGER_READ_CAP,
+    ) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return capacity_unavailable(
+                "the registered source ledger cannot be read within the server ledger limit",
+            );
+        }
+    };
+    let (after, package) = match apply_and_generate(binding, project, &disk, changes) {
+        Ok(prepared) => prepared,
+        Err(_) => {
+            return capacity_unavailable(
+                "the candidate package cannot be generated from the registered source",
+            );
+        }
+    };
+    let limits = crate::GENERATED_SOURCE_PACKAGE_LIMITS;
+    let package_bytes = package
+        .files
+        .iter()
+        .fold(0usize, |total, file| total.saturating_add(file.bytes.len()));
+    let largest = package.files.iter().max_by(|a, b| {
+        a.bytes
+            .len()
+            .cmp(&b.bytes.len())
+            .then_with(|| a.path.cmp(&b.path))
+    });
+    let would_fit = package.files.len() <= limits.max_files
+        && package_bytes <= limits.max_package_bytes
+        && largest.is_some_and(|file| file.bytes.len() <= limits.max_file_bytes)
+        && after.len() as u64 <= awr_source::SERVER_LEDGER_READ_CAP;
+    json!({
+        "status":"available",
+        "largest_file": largest.map(|file| json!({
+            "path":file.path,"bytes":file.bytes.len(),"limit":limits.max_file_bytes
+        })),
+        "package_bytes":package_bytes,
+        "package_limit":limits.max_package_bytes,
+        "file_count":package.files.len(),
+        "file_limit":limits.max_files,
+        "ledger_bytes":after.len(),
+        "ledger_limit":awr_source::SERVER_LEDGER_READ_CAP,
+        "would_fit":would_fit
+    })
+}
 
 impl SourceStore {
     /// Resume the same exact intent after inspecting physical source and PG state.
@@ -237,29 +411,10 @@ impl SourceStore {
                 false,
             )
         };
-        let package = prepare_publish_from_ledger_bytes(
-            &location,
-            &req.source_root,
-            &after_bytes,
-            project,
-            &PublishPrepOptions::default(),
-        )
-        .map_err(|e| PgError::Protocol(e.to_string()))?;
-        let files: Vec<SourceFile> = package
-            .files
-            .iter()
-            .map(|f| SourceFile {
-                path: f.path.clone(),
-                bytes: f.bytes.clone(),
-            })
-            .collect();
-        Self::validate_generated_publish_package(&files)?;
-        let raw_files: Vec<_> = files
-            .iter()
-            .map(|f| (f.path.clone(), f.bytes.clone()))
-            .collect();
-        let projection = super::SourceProjection::parse(&raw_files, project)?;
-        super::workstreams::reject_external_graph(&raw_files)?;
+        let package = generate_package(&location, &req.source_root, &after_bytes, project)?;
+        let projection = validate_package(project, &package)?;
+        let files = package.files.clone();
+        let raw_files = package.raw_files.clone();
         // This is the same server-derived gate as every direct source activation.
         let affected = projection
             .validate_transition_with_impact(&tx, tenant, project, Some(&auth.snapshot), None)

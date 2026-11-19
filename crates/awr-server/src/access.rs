@@ -274,6 +274,26 @@ pub enum AccessCommand {
         #[arg(long)]
         reason: String,
     },
+    /// Close a published, pending activation that has no writeback journal (owner only).
+    /// Review writeback-inspect first and pass its exact expected_* values. No source or snapshot writes.
+    WritebackCloseUnlogged {
+        #[arg(long)]
+        tenant_id: String,
+        #[arg(long)]
+        project_id: String,
+        #[arg(long)]
+        request_id: String,
+        #[arg(long)]
+        expected_candidate_id: String,
+        #[arg(long)]
+        expected_candidate_digest: String,
+        #[arg(long)]
+        expected_publish_receipt_id: String,
+        #[arg(long)]
+        expected_request_hash: String,
+        #[arg(long)]
+        reason: String,
+    },
 
     /// Preview explicit execution attribution with reviewed executor_client_id (owner only; no writes).
     ExecutionAttributionPreview {
@@ -808,6 +828,31 @@ pub async fn run(command: AccessCommand) -> Result<Value, Error> {
                     expected_source_state,
                     expected_source_fingerprint,
                     retain_source,
+                    reason,
+                },
+            )
+            .await
+        }
+        AccessCommand::WritebackCloseUnlogged {
+            tenant_id,
+            project_id,
+            request_id,
+            expected_candidate_id,
+            expected_candidate_digest,
+            expected_publish_receipt_id,
+            expected_request_hash,
+            reason,
+        } => {
+            OperatorWriteback::close_unlogged(
+                &mut client,
+                &tenant_id,
+                &project_id,
+                &awr_team_pg::UnloggedCloseRequest {
+                    request_id,
+                    expected_candidate_id,
+                    expected_candidate_digest,
+                    expected_publish_receipt_id,
+                    expected_request_hash,
                     reason,
                 },
             )

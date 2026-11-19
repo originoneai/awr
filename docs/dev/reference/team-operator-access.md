@@ -337,6 +337,8 @@ awr-server access quarantine-outcome --tenant-id tenant-a --project-id project-a
 Use `--claim-disposition quarantine` to revoke active claims that cannot be
 attributed. Covered by `pg_operator_recovery` with `--features pg-tests`.
 
+### Planning writeback recovery
+
 A pending planning source writeback whose original request can no longer resume
 (client gone, permission revoked, source changed from outside, journal without a
 recorded intent) keeps fencing source activation and the affected works. The
@@ -351,6 +353,43 @@ awr-server access writeback-abandon --tenant-id tenant-a --project-id project-a 
   --expected-intent-hash <hash, or unbound> --expected-source-state <state> \
   [--retain-source] --reason "<why it cannot be resumed>"
 ```
+
+Inspection also lists `kind: publication_without_journal` when a committed
+publication is still pending, its reserved `planning.activate` request has no
+writeback journal, and no activation receipt or activated snapshot exists. The item
+includes the candidate ID and digest, publish receipt ID, original request ID, request
+and publication times, and `writeback: absent`. Its `next_step` first asks the client
+to retry the identical request; a repeated pre-journal failure can then be closed by
+the schema owner. Inspection is read-only and does not acquire a source lock for this
+kind of item.
+
+Pass the item's `close_unlogged.expected_*` values exactly as reviewed:
+
+```sh
+awr-server access writeback-inspect --tenant-id tenant-a --project-id project-a \
+  --request-id <original planning request>
+awr-server access writeback-close-unlogged --tenant-id tenant-a --project-id project-a \
+  --request-id <original planning request> \
+  --expected-candidate-id <candidate> \
+  --expected-candidate-digest <digest> \
+  --expected-publish-receipt-id <publication> \
+  --expected-request-hash <request hash> --reason "<why it must be closed>"
+```
+
+The close is one transaction with exactly three effects: the publication's
+`source_writeback_pending` becomes false without an activation receipt or activated
+snapshot, the candidate becomes `superseded`, and the reserved original request becomes
+completed with `operator_closure`, `activated: false` and the owner's reason. It does
+not edit source files, install a snapshot, add a journal, bump project revision or write
+an activation event. Subsequent `planning.outcome` and exact request replay return the
+recorded closure; repeating the owner close with the same reviewed facts and reason
+returns `replayed: true` without further writes.
+
+Non-owner database roles, a different request ID or hash, changed candidate/publication
+facts, an already activated or non-pending publication, and the appearance of any
+writeback journal are refused with zero writes. A journaled interruption must use the
+existing `writeback-abandon` preview/apply path instead. The owner decision is retained
+in the original command receipt; no new migration or recovery column is required.
 
 See "Recover planning source writeback" in `cross-workstream-policy.md`. Covered
 by `pg_planning_writeback` with `--features pg-tests`.
