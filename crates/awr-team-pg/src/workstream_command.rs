@@ -15,7 +15,7 @@ pub(crate) mod task_intake;
 mod updates;
 
 pub use updates::UpdateRecordRequest;
-pub(crate) use updates::valid_date;
+pub(crate) use updates::{project_fact_snapshot, valid_date};
 
 use crate::workstream_auth::{
     CommandAuthPhase, ReaderAuthority, authenticate_writer, authorize_command,

@@ -2,11 +2,47 @@
   "coordinator_epoch": "epoch-a",
   "data": {
     "as_of": {
-      "at_unix_ms": 1795097087295,
+      "at_unix_ms": 1795121858534,
       "project_revision": "6",
-      "source_snapshot_id": "01M7T1ZK75GD9WPK3SSHZA6BGJ"
+      "source_snapshot_id": "01M7TSKHT08PWE6KDSN5Q2DH3M"
     },
     "execution_authorized": false,
+    "fact_snapshot": {
+      "completed_without_independent_review": {
+        "count": 0,
+        "work_ids": []
+      },
+      "decisions_made": {
+        "count": 0,
+        "work_ids": []
+      },
+      "delivered_unverified": {
+        "count": 0,
+        "work_ids": []
+      },
+      "review_returned": {
+        "count": 0,
+        "work_ids": []
+      },
+      "verified": {
+        "count": 1,
+        "work_ids": [
+          "a"
+        ]
+      },
+      "waits_cleared": {
+        "count": 0,
+        "kinds": []
+      },
+      "waits_opened": {
+        "count": 0,
+        "kinds": []
+      }
+    },
+    "fact_snapshot_coverage": {
+      "complete": true,
+      "hidden_work_count": 0
+    },
     "project_id": "reader-project",
     "update": {
       "author": {
@@ -15,15 +51,15 @@
       },
       "current": false,
       "ends_on": "2026-11-22",
-      "fact_snapshot_ref": null,
+      "fact_snapshot_ref": "01M7TSKHVDB96RG4VWKDNK8G5P",
       "period_key": "2026-W47",
       "period_kind": "week",
-      "recorded_at_unix_ms": 1795097087256,
+      "recorded_at_unix_ms": 1795121858441,
       "starts_on": "2026-11-16",
       "status": "risk",
       "summary": "  The lead wrote this exact sentence.  ",
       "supersedes_update_id": null,
-      "update_id": "01M7T1ZK8QG1R83MF2MB9468HF",
+      "update_id": "01M7TSKHVDC25RY7GZBC6K0ABK",
       "version": "1"
     }
   },
@@ -32,5 +68,5 @@
   "protocol_version": 1,
   "scope_id": "main",
   "selection_basis": "project",
-  "source_snapshot_id": "01M7T1ZK75GD9WPK3SSHZA6BGJ"
+  "source_snapshot_id": "01M7TSKHT08PWE6KDSN5Q2DH3M"
 }

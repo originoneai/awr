@@ -175,7 +175,7 @@ async fn update_record_tool_and_query_operations_work_on_the_real_mcp_service() 
         "ends_on":"2026-11-22","status":"risk","summary":"A sentence written by Jordan."});
     let recorded = call(&client, "awr_team_update_record", input.clone(), false).await;
     assert_eq!(recorded["receipt"]["op"], "update.record");
-    assert_eq!(recorded["receipt"]["fact_snapshot_ref"], Value::Null);
+    assert!(recorded["receipt"]["fact_snapshot_ref"].is_string());
     let replay = call(&client, "awr_team_update_record", input, false).await;
     assert_eq!(replay["receipt"], recorded["receipt"]);
     let id = recorded["receipt"]["update_id"].as_str().unwrap();
@@ -202,6 +202,11 @@ async fn update_record_tool_and_query_operations_work_on_the_real_mcp_service() 
     assert_eq!(
         inspected["data"]["update"]["summary"],
         "A sentence written by Jordan."
+    );
+    assert_eq!(inspected["data"]["fact_snapshot"]["verified"]["count"], 0);
+    assert_eq!(
+        inspected["data"]["fact_snapshot_coverage"]["complete"],
+        true
     );
 
     let refused = call(
