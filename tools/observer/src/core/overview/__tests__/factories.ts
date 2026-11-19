@@ -1,4 +1,6 @@
 import type {
+  ApprovalKind,
+  OverviewApproval,
   OverviewDecision,
   OverviewDependency,
   OverviewInput,
@@ -21,6 +23,7 @@ export function makeInput(overrides: Partial<OverviewInput> = {}): OverviewInput
     decisions: complete([]),
     reviewRounds: complete([]),
     handoffs: complete([]),
+    approvals: complete([]),
     members: complete([
       { personId: 'person-a', displayName: 'Owner One' },
       { personId: 'person-b', displayName: 'Reviewer Two' },
@@ -103,6 +106,22 @@ export function dependency(
     providerTaskId,
     satisfied: false,
     what: 'The synthetic provider result',
+    sinceUnixMs: NOW - 2 * DAY,
+    ...overrides,
+  };
+}
+
+export function approval(
+  kind: ApprovalKind,
+  recipientPersonId: string | null,
+  overrides: Partial<OverviewApproval> = {},
+): OverviewApproval {
+  return {
+    id: `approval-${kind}-${recipientPersonId ?? 'unknown'}`,
+    kind,
+    recipientPersonId,
+    projectId: 'project-one',
+    title: `Synthetic ${kind} approval`,
     sinceUnixMs: NOW - 2 * DAY,
     ...overrides,
   };

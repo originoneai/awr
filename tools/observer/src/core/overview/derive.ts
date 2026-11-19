@@ -130,11 +130,12 @@ export function deriveOverview(input: OverviewInput): OverviewDerivation {
     decisions: input.decisions,
     reviewRounds: input.reviewRounds,
     handoffs: input.handoffs,
+    approvals: input.approvals,
     members: input.members,
     activity: input.activity,
   };
   const partIssues: Record<OverviewPart, CoverageIssue[]> = {
-    tasks: [], dependencies: [], decisions: [], reviewRounds: [], handoffs: [], members: [], activity: [],
+    tasks: [], dependencies: [], decisions: [], reviewRounds: [], handoffs: [], approvals: [], members: [], activity: [],
   };
   for (const part of OVERVIEW_PARTS) {
     const slice = slices[part];
