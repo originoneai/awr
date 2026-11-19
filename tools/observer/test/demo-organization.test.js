@@ -92,6 +92,10 @@ function canonicalInput(data) {
       toPersonId: handoff.to_person_id,
       updatedAtUnixMs: handoff.updated_at_unix_ms,
     }))),
+    // The fixture's pending approvals are not mapped into canonical facts yet; the demo-data
+    // line owns that mapping. An empty complete read states these canonical facts establish
+    // no approvals, which keeps the pending counts below honest for this oracle.
+    approvals: complete([]),
     members: complete(data.people.map((member) => ({
       personId: member.person_id,
       displayName: member.display_name,

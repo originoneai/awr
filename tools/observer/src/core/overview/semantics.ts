@@ -22,6 +22,7 @@ export const OVERVIEW_RULES = {
   unknown: ['missing-is-unknown', 'unknown-is-not-zero'],
   chains: ['non-dependency-roots', 'group-review-by-explicit-person', 'union-impact', 'sort-impact-descending'],
   commitments: ['affected-task-commitments', 'unknown-commitments-are-not-empty'],
+  approvals: ['approval-kinds-explicit', 'approval-recipient-explicit', 'approval-project-scoped', 'decisions-exclude-approvals'],
   people: ['explicit-person-identity', 'pending-nondependency-and-handoff', 'prototype-in-progress', 'owned-waits', 'owed-provider-results'],
   identity: ['explicit-equal-only', 'missing-is-neither-self-nor-other'],
   views: ['four-metrics-in-prototype-order', 'caller-scopes-and-periods', 'unknown-scope-is-not-empty'],

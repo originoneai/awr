@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { deriveOverview, VIEW_IDS } from '../index';
 import type { OverviewDependency, OverviewTask, OverviewViewOptions } from '../index';
-import { DAY, NOW, complete, decision, dependency, makeInput, reviewRound, startedTask } from './factories';
+import {
+  DAY, NOW, approval, complete, decision, dependency, makeInput, reviewRound, startedTask,
+} from './factories';
 
 function benchmarkInput() {
   const tasks: OverviewTask[] = Array.from({ length: 4000 }, (_, index) => {
@@ -51,6 +53,16 @@ function benchmarkInput() {
       id: `handoff-${index}`, taskId: `task-${index}`, kind: 'execution', status: 'accepted', pending: false,
       fromPersonId: 'person-a', toPersonId: 'person-c', updatedAtUnixMs: NOW - 1000,
     }))),
+    approvals: complete(Array.from({ length: 500 }, (_, index) => approval(
+      index % 2 === 0 ? 'plan-approval' : 'lesson-confirmation',
+      index % 2 === 0 ? 'person-a' : 'person-c',
+      {
+        id: `approval-${index}`,
+        projectId: index % 4 === 3 ? 'project-b' : 'project-a',
+        title: `Synthetic approval ${index}`,
+        sinceUnixMs: NOW - index * 1000,
+      },
+    ))),
     members: complete([
       { personId: 'person-a', displayName: 'Owner One', groupId: 'group-a' },
       { personId: 'person-b', displayName: 'Reviewer Two', groupId: 'group-b' },
@@ -79,6 +91,12 @@ describe('full overview derivation performance', () => {
     expect(result.waitCounts.byKind.dependency.count).toBeGreaterThan(50);
     expect(result.chains.length).toBeGreaterThan(100);
     expect(result.peopleCounts.all.count).toBe(3);
+    // The approvals plane rides the same derivation: 250 plan approvals for person-a in
+    // project-a beside their 50 decision waits, and 250 lesson confirmations for person-c.
+    const owner = result.people.find((summary) => summary.person.id === 'person-a')!;
+    expect(owner.pending.count).toBe(300);
+    expect(result.views.me.metrics[3].count).toBe(300);
+    expect(result.views.department.metrics[3].count).toBe(250);
     for (const viewId of VIEW_IDS) expect(result.views[viewId].metrics).toHaveLength(4);
     expect(result.coverage.complete).toBe(true);
     expect(result.coverage.sections.chains.complete).toBe(true);
