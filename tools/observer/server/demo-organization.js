@@ -11,7 +11,7 @@ const DAY = 86_400_000;
 const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
 const clone = (value) => structuredClone(value);
 const asObject = (value) => value && typeof value === 'object' && !Array.isArray(value);
-const statusOf = (task) => task.demo_status ?? task.prototype_status;
+const statusOf = (task) => task.prototype_status;
 
 class DemoReadError extends Error {
   constructor(code, message, status = 503) {

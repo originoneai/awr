@@ -810,11 +810,11 @@
           "evidence_detail": "要等接口第 3 版"
         }
       ],
-      "one_sentence": "标了完成，但还没有提交复核；提交流程仍等接口第 3 版。",
-      "next_step": "补交复核材料；接口第 3 版通过复核后确认提交流程",
+      "one_sentence": "在等接口第 3 版通过复核。不依赖新接口的部分还在做。",
+      "next_step": "接口第 3 版通过复核后，改用第 3 版重新联调提交流程",
       "report": {
-        "summary": "页面联调已标完成，复核材料还没有提交；提交流程仍等接口第 3 版。",
-        "completed_declaration": true,
+        "summary": "列表分页已接通，正在补错误提示。提交流程在等接口第 3 版。",
+        "completed_declaration": false,
         "completed": [
           "列表分页接通"
         ],
@@ -841,7 +841,7 @@
       "integrated": false,
       "integration_note": null,
       "started": true,
-      "agent_active": false,
+      "agent_active": true,
       "verified_at_unix_ms": null,
       "delivery": null,
       "dependencies": [
@@ -902,8 +902,7 @@
       ],
       "lesson_ids": [
         "L-002"
-      ],
-      "demo_status": "claimed"
+      ]
     },
     {
       "work_id": "T-104",
@@ -1952,11 +1951,11 @@
           "evidence_detail": "自己说做完了，没有依据"
         }
       ],
-      "one_sentence": "Agent 正在补齐复核依据，最近有报告。",
-      "next_step": "补齐依据后提交复核",
+      "one_sentence": "标了完成，但还没有核验：没有提交复核。",
+      "next_step": "提交复核",
       "report": {
-        "summary": "正在补齐错误提示的复核依据，还没有标完成。",
-        "completed_declaration": false,
+        "summary": "12 条文案都写完了。",
+        "completed_declaration": true,
         "completed": [
           "12 条文案"
         ],
@@ -1975,7 +1974,7 @@
       "integrated": false,
       "integration_note": null,
       "started": true,
-      "agent_active": true,
+      "agent_active": false,
       "verified_at_unix_ms": null,
       "delivery": null,
       "dependencies": [],
@@ -1993,8 +1992,7 @@
           "tone": "now"
         }
       ],
-      "lesson_ids": [],
-      "demo_status": "running"
+      "lesson_ids": []
     },
     {
       "work_id": "T-201",

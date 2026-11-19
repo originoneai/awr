@@ -10,7 +10,7 @@ const fixture = require('../fixtures/demo-organization.json');
 const DAY = 86_400_000;
 const clone = (value) => structuredClone(value);
 const complete = (items) => ({ coverage: 'complete', items });
-const statusOf = (task) => task.demo_status ?? task.prototype_status;
+const statusOf = (task) => task.prototype_status;
 
 function canonicalInput(data) {
   const activity = data.tasks.flatMap((task) => task.timeline.map((entry) => ({
@@ -219,10 +219,17 @@ test('opaque keys are separate from every display title', () => {
   }
 });
 
-test('PPO-010 derives current demo statuses and the revised prototype metric goldens', () => {
+test('PPO-010 derives the prototype statuses and the revised prototype metric goldens', () => {
   const result = deriveOverview(canonicalInput(fixture));
+  // The prototype's task states are the reference and the derivation must reproduce them
+  // exactly: every task carries its prototype_status, nothing may override it, and each
+  // derived status must equal it. This is the check that catches data edits made to move
+  // a derived number instead of leaving the states as the prototype defines them.
+  assert.ok(fixture.tasks.every((task) => typeof task.prototype_status === 'string'));
+  assert.ok(fixture.tasks.every((task) => !('demo_status' in task)),
+    'no task may override its prototype_status with a demo status');
   assert.deepEqual(Object.fromEntries(result.tasks.map((task) => [task.id, task.status])),
-    Object.fromEntries(fixture.tasks.map((task) => [task.work_id, statusOf(task)])));
+    Object.fromEntries(fixture.tasks.map((task) => [task.work_id, task.prototype_status])));
   assert.equal(fixture.tasks.find((task) => task.work_id === 'T-103').prototype_status, 'waiting');
   assert.equal(fixture.tasks.find((task) => task.work_id === 'T-114').prototype_status, 'claimed');
   assert.equal(result.taskCounts.all.count, 29);
@@ -254,7 +261,7 @@ test('PPO-010 derives current demo statuses and the revised prototype metric gol
 
   const metrics = Object.fromEntries(Object.entries(result.views).map(([view, summary]) =>
     [view, summary.metrics.map((metric) => ({ count: metric.count, details: metric.items.length }))]));
-  assert.deepEqual(metrics.me, [{ count: 2, details: 2 }, { count: 1, details: 1 }, { count: 3, details: 3 }, { count: 2, details: 2 }]);
+  assert.deepEqual(metrics.me, [{ count: 2, details: 2 }, { count: 0, details: 0 }, { count: 3, details: 3 }, { count: 2, details: 2 }]);
   assert.deepEqual(metrics.lead, [{ count: 2, details: 2 }, { count: 7, details: 7 }, { count: 7, details: 7 }, { count: 1, details: 1 }]);
   assert.deepEqual(metrics.department, [{ count: 3, details: 3 }, { count: 10, details: 10 }, { count: 5, details: 5 }, { count: 0, details: 0 }]);
   assert.deepEqual(metrics.top, [{ count: 3, details: 3 }, { count: 12, details: 12 }, { count: 5, details: 5 }, { count: 0, details: 0 }]);
@@ -271,7 +278,7 @@ test('PPO-010 derives current demo statuses and the revised prototype metric gol
     department: { prototype: [3, 10, 2, 1], derived: metrics.department.map((metric) => metric.count) },
     top: { prototype: [3, 12, 2, 1], derived: metrics.top.map((metric) => metric.count) },
   }, {
-    me: { prototype: [2, 1, 3, 3], derived: [2, 1, 3, 2] },
+    me: { prototype: [2, 1, 3, 3], derived: [2, 0, 3, 2] },
     lead: { prototype: [2, 7, 7, 2], derived: [2, 7, 7, 1] },
     department: { prototype: [3, 10, 2, 1], derived: [3, 10, 5, 0] },
     top: { prototype: [3, 12, 2, 1], derived: [3, 12, 5, 0] },
@@ -287,6 +294,24 @@ test('a planted dependency contradiction fails both the structural and PPO-010 o
   assert.notEqual(result.tasks.find((task) => task.id === 'T-106').status,
     consumer.prototype_status,
     'the planted contradiction must change the derived status and fail the status golden');
+});
+
+test('a planted agent flag that contradicts a prototype_status fails the status oracle', () => {
+  // Re-planting the round-1 deviation (T-114's completion declaration withdrawn and its agent
+  // flag raised against prototype_status 'claimed') is exactly the kind of edit that moves a
+  // derived number (the me view's running Agents) by bending a task state; the
+  // derived-vs-prototype status check must reject it.
+  const mutant = clone(fixture);
+  const task = mutant.tasks.find((item) => item.work_id === 'T-114');
+  task.agent_active = true;
+  task.report.completed_declaration = false;
+  const result = deriveOverview(canonicalInput(mutant));
+  assert.equal(result.tasks.find((item) => item.id === 'T-114').status, 'running');
+  assert.notEqual(result.tasks.find((item) => item.id === 'T-114').status, task.prototype_status);
+  assert.throws(() => assert.deepEqual(
+    Object.fromEntries(result.tasks.map((item) => [item.id, item.status])),
+    Object.fromEntries(mutant.tasks.map((item) => [item.work_id, item.prototype_status]))),
+  /Expected values to be strictly deep-equal/);
 });
 
 function bridgeForTest(options = {}) {
