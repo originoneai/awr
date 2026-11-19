@@ -25,7 +25,7 @@ describe('accessibility', () => {
       stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/read': DEMO_WORK_NEXT });
       renderApp('/workbench?scope=demo&work=W1');
       await screen.findByRole('link', { name: 'Build the filter API' });
-      await user.click(screen.getByRole('button', { name: '打开导航' }));
+      await user.click(screen.getByRole('combobox', { name: '页面' }));
       await screen.findByRole('dialog');
       // The drawer renders in a portal on body, so audit the whole document.
       const results = await axe(document.body, {

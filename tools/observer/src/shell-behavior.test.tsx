@@ -73,32 +73,32 @@ describe('prototype shell behavior', () => {
     expect(screen.getByTestId('scope-switcher').textContent).toContain('全部授权范围');
   });
 
-  it('marks inert controls disabled and explains the later-slice tooltip', async () => {
+  it('marks future search and perspective slots disabled while keeping the bell available', async () => {
     const user = userEvent.setup();
     setup('/projects/demo');
-    const search = screen.getByPlaceholderText('搜索当前范围');
-    const notifications = screen.getByRole('button', { name: '通知' });
-    const avatar = screen.getByRole('button', { name: '范围身份' });
+    const search = screen.getByRole('button', { name: /搜索/ });
+    const perspective = screen.getByTestId('perspective-switcher');
+    const notifications = screen.getByRole('button', { name: '待处理' });
     const settings = await screen.findByRole('button', { name: '项目设置' });
-    for (const control of [search, notifications, avatar, settings]) {
+    for (const control of [search, perspective, settings]) {
       expect(control).toHaveProperty('disabled', true);
     }
+    expect(notifications).toHaveProperty('disabled', false);
+    expect(screen.getByTestId('current-member-avatar')).toBeTruthy();
     await user.hover(search);
     expect((await screen.findAllByText('该功能尚未开放')).length).toBeGreaterThan(0);
   });
 
   it('keeps the selected language key and persists the choice', async () => {
-    const user = userEvent.setup();
     setup();
-    await user.click(screen.getByTestId('language-switcher'));
-    await user.click(await screen.findByText('English'));
+    await act(async () => { await i18n.changeLanguage('en-US'); });
     await waitFor(() => expect(window.localStorage.getItem('i18nextLng')).toBe('en-US'));
-    await user.click(screen.getByTestId('language-switcher'));
-    const selected = document.querySelector('.ant-dropdown-menu-item-selected');
-    expect(selected?.textContent).toContain('English');
+    expect(screen.getByRole('menuitem', { name: /Workbench/ })).toBeTruthy();
+    expect(screen.queryByText('数据来源')).toBeNull();
+    expect(screen.queryByText('以谁的身份看')).toBeNull();
   });
 
-  it('switches the navigation at the lg breakpoint', () => {
+  it('switches the navigation at the prototype breakpoint', () => {
     const media = vi.fn((query: string) => ({
       matches: false,
       media: query,
@@ -111,7 +111,7 @@ describe('prototype shell behavior', () => {
     })) as unknown as typeof window.matchMedia;
     window.matchMedia = media;
     setup();
-    expect(vi.mocked(media).mock.calls.some(([query]) => query.includes('min-width: 992px'))).toBe(true);
+    expect(vi.mocked(media).mock.calls.some(([query]) => query.includes('max-width: 860px'))).toBe(true);
   });
 
   it('uses the narrow-screen layout without fixed-width content', () => {
