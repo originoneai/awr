@@ -2188,6 +2188,89 @@ async fn current_review(
     }
 }
 
+/// The relationships already recorded for one actor. Conflicting active
+/// bindings never select a person by row order. Display names are exposed only
+/// for an unambiguous, currently active person.
+pub(crate) struct ResolvedPerson {
+    actor_id: String,
+    kind: String,
+    bindings: std::collections::BTreeSet<String>,
+    active_names: std::collections::BTreeMap<String, String>,
+}
+
+impl ResolvedPerson {
+    fn person_id(&self) -> Option<&str> {
+        match self.bindings.len() {
+            0 if self.kind == "human" => Some(&self.actor_id),
+            1 => self.bindings.first().map(String::as_str),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn active_person(&self) -> Option<(&str, &str)> {
+        let person_id = self.person_id()?;
+        let display_name = self.active_names.get(person_id)?;
+        Some((person_id, display_name))
+    }
+}
+
+/// Read-only batch counterpart of `resolve_person_id`. It uses the same actor
+/// kind, active-binding and human fallback rules without creating persons.
+pub(crate) async fn resolve_person_ids(
+    tx: &tokio_postgres::Transaction<'_>,
+    tenant_id: &str,
+    project_id: &str,
+    actor_ids: &[String],
+) -> PgResult<std::collections::BTreeMap<String, ResolvedPerson>> {
+    let mut resolved = std::collections::BTreeMap::new();
+    if actor_ids.is_empty() {
+        return Ok(resolved);
+    }
+    let rows = tx
+        .query(
+            "SELECT a.id,a.kind,b.person_id,p.display_name,p.status
+             FROM awr_team.actors a
+             LEFT JOIN awr_team.person_agent_bindings b
+               ON b.tenant_id=$1 AND b.project_id=$2 AND b.agent_id=a.id AND b.status='active'
+             LEFT JOIN awr_team.persons p
+               ON p.tenant_id=$1 AND p.project_id=$2
+              AND p.id=COALESCE(b.person_id,CASE WHEN a.kind='human' THEN a.id END)
+             WHERE a.tenant_id=$1 AND a.id=ANY($3)
+             ORDER BY a.id,b.id",
+            &[&tenant_id, &project_id, &actor_ids],
+        )
+        .await?;
+    for row in rows {
+        let actor_id: String = row.get(0);
+        let person_id: Option<String> = row.get(2);
+        let display_name: Option<String> = row.get(3);
+        let person_status: Option<String> = row.get(4);
+        let entry = resolved
+            .entry(actor_id.clone())
+            .or_insert_with(|| ResolvedPerson {
+                actor_id,
+                kind: row.get(1),
+                bindings: std::collections::BTreeSet::new(),
+                active_names: std::collections::BTreeMap::new(),
+            });
+        if let Some(person_id) = person_id {
+            entry.bindings.insert(person_id.clone());
+            if person_status.as_deref() == Some("active") {
+                if let Some(display_name) = display_name {
+                    entry.active_names.insert(person_id, display_name);
+                }
+            }
+        } else if entry.kind == "human" && person_status.as_deref() == Some("active") {
+            if let Some(display_name) = display_name {
+                entry
+                    .active_names
+                    .insert(entry.actor_id.clone(), display_name);
+            }
+        }
+    }
+    Ok(resolved)
+}
+
 /// Resolve the responsible person for an actor.
 /// Humans map to a persons row with the same id (created if needed).
 /// Agents require an active person_agent_bindings row — another agent of the
@@ -2198,25 +2281,11 @@ pub(crate) async fn resolve_person_id(
     project_id: &str,
     actor_id: &str,
 ) -> PgResult<String> {
-    let kind: String = tx
-        .query_opt(
-            "SELECT kind FROM awr_team.actors WHERE tenant_id=$1 AND id=$2",
-            &[&tenant_id, &actor_id],
-        )
-        .await?
-        .map(|r| r.get(0))
-        .ok_or(PgError::Forbidden)?;
-    if let Some(row) = tx
-        .query_opt(
-            "SELECT person_id FROM awr_team.person_agent_bindings
-             WHERE tenant_id=$1 AND project_id=$2 AND agent_id=$3 AND status='active'",
-            &[&tenant_id, &project_id, &actor_id],
-        )
-        .await?
-    {
-        return Ok(row.get(0));
-    }
-    if kind == "human" {
+    let actor_ids = [actor_id.to_owned()];
+    let resolved = resolve_person_ids(tx, tenant_id, project_id, &actor_ids).await?;
+    let resolved = resolved.get(actor_id).ok_or(PgError::Forbidden)?;
+    let person_id = resolved.person_id().ok_or(PgError::Forbidden)?.to_owned();
+    if resolved.bindings.is_empty() && resolved.kind == "human" {
         tx.execute(
             "INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status)
              VALUES ($1,$2,$3,$3,'active')
@@ -2224,9 +2293,8 @@ pub(crate) async fn resolve_person_id(
             &[&tenant_id, &project_id, &actor_id],
         )
         .await?;
-        return Ok(actor_id.to_owned());
     }
-    Err(PgError::Forbidden)
+    Ok(person_id)
 }
 
 pub(crate) fn self_review_permitted(completion_policy: &str) -> bool {
@@ -2292,4 +2360,69 @@ async fn invalidate_open_rounds(
     )
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod resolved_person_tests {
+    use super::*;
+
+    fn person(kind: &str, bindings: &[&str], names: &[(&str, &str)]) -> ResolvedPerson {
+        ResolvedPerson {
+            actor_id: "actor-1".into(),
+            kind: kind.into(),
+            bindings: bindings.iter().map(|id| (*id).to_owned()).collect(),
+            active_names: names
+                .iter()
+                .map(|(id, name)| ((*id).to_owned(), (*name).to_owned()))
+                .collect(),
+        }
+    }
+
+    // `resolve_person_id` (review independence, admission, simulated members) refuses an agent that
+    // has no active binding. An agent never becomes a person of its own id, even when a persons row
+    // with that id exists and is active.
+    #[test]
+    fn an_agent_without_an_active_binding_is_nobody() {
+        let agent = person("agent", &[], &[("actor-1", "Same Id Person")]);
+        assert_eq!(agent.person_id(), None);
+        assert_eq!(agent.active_person(), None);
+    }
+
+    #[test]
+    fn a_human_without_bindings_is_its_own_person() {
+        let human = person("human", &[], &[("actor-1", "Human Name")]);
+        assert_eq!(human.person_id(), Some("actor-1"));
+        assert_eq!(human.active_person(), Some(("actor-1", "Human Name")));
+    }
+
+    // The recorded binding comes first for either kind, as in the original single-actor lookup.
+    #[test]
+    fn exactly_one_active_binding_selects_that_person() {
+        for kind in ["agent", "human"] {
+            let bound = person(kind, &["person-9"], &[("person-9", "Owner")]);
+            assert_eq!(bound.person_id(), Some("person-9"), "{kind}");
+            assert_eq!(bound.active_person(), Some(("person-9", "Owner")), "{kind}");
+        }
+    }
+
+    #[test]
+    fn conflicting_active_bindings_never_select_a_person() {
+        for kind in ["agent", "human"] {
+            let conflicted = person(
+                kind,
+                &["person-1", "person-2"],
+                &[("person-1", "First"), ("person-2", "Second")],
+            );
+            assert_eq!(conflicted.person_id(), None, "{kind}");
+            assert_eq!(conflicted.active_person(), None, "{kind}");
+        }
+    }
+
+    // A person that is not active has no name entry, so the identity is resolved but never named.
+    #[test]
+    fn a_resolved_person_without_an_active_name_is_not_named() {
+        let departed = person("agent", &["person-9"], &[]);
+        assert_eq!(departed.person_id(), Some("person-9"));
+        assert_eq!(departed.active_person(), None);
+    }
 }

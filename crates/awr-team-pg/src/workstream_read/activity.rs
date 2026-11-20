@@ -64,6 +64,7 @@ pub(super) async fn read(
     tenant: &str,
     project: &str,
     auth: &ReaderAuthority,
+    directory_auth: Option<&ReaderAuthority>,
     q: &WorkstreamQuery,
 ) -> PgResult<Value> {
     let project_wide =
@@ -133,12 +134,51 @@ pub(super) async fn read(
             ],
         )
         .await?;
-    let items: Vec<_> = rows
+    let page = rows.iter().take(limit as usize).collect::<Vec<_>>();
+    let actor_ids = page
         .iter()
-        .take(limit as usize)
+        .map(|row| row.get::<_, String>("actor_id"))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    // The directory.read gate for identity disclosure must see the reader's
+    // unrestricted workstream access. The query authority `auth` may already be
+    // narrowed to one delegated workstream for row visibility; re-deriving the
+    // gate from the pre-narrowing authority keeps disclosure exactly as broad
+    // (and no broader) than directory.read itself.
+    let disclose_names = if page.is_empty() {
+        false
+    } else {
+        match directory_auth {
+            Some(authority) => {
+                let mut gate = authority.clone();
+                match crate::directory::authorize_read(tx, &mut gate, project).await {
+                    Ok(()) => true,
+                    Err(PgError::Forbidden) => false,
+                    Err(error) => return Err(error),
+                }
+            }
+            None => false,
+        }
+    };
+    let people = if disclose_names {
+        crate::review::resolve_person_ids(tx, tenant, project, &actor_ids).await?
+    } else {
+        std::collections::BTreeMap::new()
+    };
+    let items: Vec<_> = page
+        .into_iter()
         .map(|r| {
+            let actor_id = r.get::<_, String>("actor_id");
+            let (person_id, display_name) = people
+                .get(&actor_id)
+                .and_then(|person| person.active_person())
+                .map_or((None, None), |(id, name)| (Some(id), Some(name)));
             json!({"id":r.get::<_,String>("id"),
-        "actor_id":r.get::<_,String>("actor_id"),"client_id":r.get::<_,Option<String>>("client_id"),
+        "actor_id":actor_id,"client_id":r.get::<_,Option<String>>("client_id"),
+        "actor":{"person_id":person_id,"display_name":display_name},
+        // ConnectionStore has no registered per-client display-name source.
+        "client":{"display_name":Value::Null},
         "action":r.get::<_,String>("action"),"work_id":r.get::<_,Option<String>>("work_id"),
         "result":r.get::<_,String>("result"),"created_at_unix_ms":r.get::<_,i64>("time_us")/1000,
         "credential_id":r.get::<_,Option<String>>("credential_id")})
