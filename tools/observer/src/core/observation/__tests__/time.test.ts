@@ -1,8 +1,46 @@
 import { describe, expect, it } from 'vitest';
-import { absoluteTimeText, ageText } from '../index';
+import { absoluteTimeText, ageText, compactTimeText } from '../index';
 import { OVERVIEW_REPLY, SNAPSHOT_REPLY } from './fixtures';
 
 const OPTIONS = { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false } as const;
+
+describe('compactTimeText', () => {
+  it('keeps relative and today wording without seconds in both languages', () => {
+    const at = Date.UTC(2026, 10, 18, 9, 40, 59);
+    expect(compactTimeText(at, { language: 'zh-CN', nowUnixMs: at + 12 * 60_000, timeZone: 'Asia/Shanghai' })).toBe('12 分钟前');
+    expect(compactTimeText(at, { language: 'en-US', nowUnixMs: at + 12 * 60_000, timeZone: 'America/New_York' })).toBe('12 minutes ago');
+    expect(compactTimeText(at, { language: 'zh-CN', nowUnixMs: at + 2 * 60 * 60_000, timeZone: 'Asia/Shanghai' })).toBe('今天 17:40');
+    expect(compactTimeText(at, { language: 'en-US', nowUnixMs: at + 2 * 60 * 60_000, timeZone: 'America/New_York' })).toBe('Today at 04:40');
+  });
+
+  it('uses the viewer zone across midnight instead of the UTC date', () => {
+    const now = Date.UTC(2026, 0, 3, 12, 0);
+    const at = Date.UTC(2026, 0, 1, 16, 30, 45);
+    expect(compactTimeText(at, { language: 'zh-CN', nowUnixMs: now, timeZone: 'Asia/Shanghai' })).toBe('昨天 00:30');
+    expect(compactTimeText(at, { language: 'en-US', nowUnixMs: now, timeZone: 'America/New_York' })).toBe('Jan 1, 11:30');
+  });
+
+  it('handles new year boundaries and includes the year only for earlier years', () => {
+    const now = Date.UTC(2027, 0, 1, 12, 0);
+    const at = Date.UTC(2026, 11, 31, 16, 5, 30);
+    expect(compactTimeText(at, { language: 'zh-CN', nowUnixMs: now, timeZone: 'Asia/Shanghai' })).toBe('今天 00:05');
+    expect(compactTimeText(at, { language: 'en-US', nowUnixMs: now, timeZone: 'America/New_York' })).toBe('Yesterday at 11:05');
+
+    const olderNow = Date.UTC(2027, 0, 3, 12, 0);
+    const older = Date.UTC(2025, 11, 31, 23, 5, 59);
+    expect(compactTimeText(older, { language: 'zh-CN', nowUnixMs: olderNow, timeZone: 'Asia/Shanghai' })).toBe('2026 年 1 月 1 日 07:05');
+    expect(compactTimeText(older, { language: 'en-US', nowUnixMs: olderNow, timeZone: 'America/New_York' })).toBe('Dec 31, 2025, 18:05');
+  });
+
+  it('uses compact numeric dates within the current year and never emits seconds', () => {
+    const now = Date.UTC(2026, 11, 31, 12, 0);
+    const at = Date.UTC(2026, 10, 18, 10, 2, 59);
+    expect(compactTimeText(at, { language: 'zh-CN', nowUnixMs: now, timeZone: 'Asia/Shanghai' })).toBe('11 月 18 日 18:02');
+    expect(compactTimeText(at, { language: 'en-US', nowUnixMs: now, timeZone: 'America/New_York' })).toBe('Nov 18, 05:02');
+    expect(compactTimeText(at, { language: 'en-US', nowUnixMs: now, timeZone: 'America/New_York' })).not.toContain(':59');
+    expect(compactTimeText(Number.NaN, { language: 'zh-CN', nowUnixMs: now, timeZone: 'Asia/Shanghai' })).toBe('未提供');
+  });
+});
 
 describe('absoluteTimeText', () => {
   it('matches the established absolute format for a real snapshot timestamp', () => {
