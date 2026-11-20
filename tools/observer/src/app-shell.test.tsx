@@ -10,53 +10,70 @@ const CURRENT_MEMBER_OVERVIEW = {
   members: [{ person_id: 'member-1', display_name: '陈舟' }],
 };
 
+const INBOX_AT = 1761840000000;
+
+/** A real-shaped overview-model reply whose inbox holds `count` pending decisions. */
+function inboxOverviewModel({ count = 0, partial = false }: { count?: number; partial?: boolean } = {}) {
+  const complete = (items: unknown[]) => ({ coverage: 'complete', items });
+  const part = (status: string) => ({ status, missing: [], ...(status === 'complete' ? {} : { reason: 'not-read' }) });
+  return {
+    ok: true,
+    project: 'demo',
+    read_at_unix_ms: INBOX_AT,
+    input: {
+      tasks: complete([{
+        id: 'work-1', title: 'Synthetic work', ownerPersonId: 'member-1', agentName: null,
+        acceptance: [], report: { completed: false, reportedAtUnixMs: INBOX_AT }, submittedResultAtUnixMs: null,
+        integrated: false, started: true, agentActive: false, externalWait: null,
+      }]),
+      dependencies: complete([]),
+      decisions: complete(Array.from({ length: count }, (_, index) => ({
+        id: `inbox-decision-${index + 1}`, taskId: 'work-1', state: 'open', current: true,
+        question: `Synthetic question ${index + 1}`, impact: null,
+        allowedResponderIds: ['member-1'], createdAtUnixMs: INBOX_AT - 86_400_000,
+      }))),
+      reviewRounds: complete([]),
+      handoffs: complete([]),
+      approvals: partial
+        ? { coverage: 'unread' as const, items: [], reason: 'not-read' as const }
+        : complete([]),
+      members: complete([{ personId: 'member-1', displayName: '陈舟' }]),
+      activity: complete([]),
+      options: {
+        nowUnixMs: INBOX_AT, stalledAfterDays: 3,
+        views: { me: { personId: 'member-1', projectId: 'demo' } },
+      },
+    },
+    coverage: {
+      tasks: part('complete'), dependencies: part('complete'),
+      decisions: part('complete'), reviewRounds: part('complete'), handoffs: part('complete'),
+      approvals: partial ? part('unread') : part('complete'),
+      members: part('complete'), activity: part('complete'),
+    },
+    freshness: {
+      report_received: { status: 'not_measured' },
+      authoritative: { status: 'measured', at_unix_ms: INBOX_AT },
+      page_read: { status: 'measured', at_unix_ms: INBOX_AT },
+    },
+  };
+}
+
 function json(payload: unknown) {
   return new Response(JSON.stringify(payload), { status: 200, headers: { 'content-type': 'application/json' } });
 }
 
-function decision(key: string) {
-  return {
-    decision_id: key,
-    work_id: 'work-1',
-    workstream_id: 'stream-1',
-    work_title: 'Synthetic work',
-    question: 'Should the synthetic copy stay?',
-    impact: 'Synthetic impact',
-    reply: null,
-    state: 'open',
-    baseline_matches_current: true,
-    requester: { person_id: 'member-2', display_name: '周宁' },
-    allowed_responders: [{ person_id: 'member-1', display_name: '陈舟' }],
-    resolution: null,
-    created_at_unix_ms: 1761840000000,
-  };
-}
-
-function stubShell({ count = 0, nextCursor = null, overview = CURRENT_MEMBER_OVERVIEW }: {
+function stubShell({ count = 0, partial = false, overview = CURRENT_MEMBER_OVERVIEW }: {
   count?: number;
-  nextCursor?: string | null;
+  partial?: boolean;
   overview?: typeof CURRENT_MEMBER_OVERVIEW;
 } = {}) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.includes('/api/team/projects')) return json(DEMO_PROJECTS);
+    if (url.includes('/api/team/overview-model')) return json(inboxOverviewModel({ count, partial }));
     if (url.includes('/api/team/overview')) return json(overview);
     if (url.includes('/api/team/read')) {
       const query = JSON.parse(String(init?.body)).query;
-      if (query.op === 'decisions.list') {
-        return json({
-          ok: true,
-          result: {
-            data: {
-              items: Array.from({ length: count }, (_, index) => decision(`decision-${index + 1}`)),
-              next_cursor: nextCursor,
-              truncated: nextCursor !== null,
-              execution_authorized: false,
-              as_of: { at_unix_ms: 1761840000000 },
-            },
-          },
-        });
-      }
       if (query.op === 'work.next') return json(DEMO_WORK_NEXT);
     }
     return json({ ok: false, error: { code: 'NoRoute', message: 'Synthetic missing read' } });
@@ -113,12 +130,13 @@ describe('AppShell navigation', () => {
     expect(label?.style.lineHeight).toBe('16px');
   });
 
-  it('uses the page-read open-item count and dot, then opens the inbox from the bell', async () => {
+  it('uses the shared inbox model count and dot, then opens the inbox from the bell', async () => {
     stubShell({ count: 2 });
     const user = userEvent.setup();
     const { router } = renderApp('/inbox?scope=demo');
     expect((await screen.findByTestId('inbox-count')).textContent).toBe('2');
     expect(document.querySelectorAll('.ant-badge-dot')).toHaveLength(1);
+    expect(screen.getByTestId('inbox-queue').textContent).toContain('Synthetic question 1');
     await user.click(screen.getByRole('link', { name: '工作台' }));
     await waitFor(() => expect(router.state.location.pathname).toBe('/workbench'));
     await user.click(screen.getByRole('button', { name: '待处理 2 件' }));
@@ -143,7 +161,7 @@ describe('AppShell navigation', () => {
   });
 
   it('marks a partially read pending count instead of presenting it as a total', async () => {
-    stubShell({ count: 10, nextCursor: 'synthetic-next-page' });
+    stubShell({ count: 10, partial: true });
     renderApp('/inbox?scope=demo');
     expect((await screen.findByTestId('inbox-count')).textContent).toBe('10+');
   });
@@ -216,7 +234,7 @@ describe('AppShell navigation', () => {
     expect(screen.getByRole('menuitem', { name: /Workbench/ })).toBeTruthy();
   });
 
-  it('adds no shell-only read and falls back without exposing an actor identifier', async () => {
+  it('reads only the shared inbox model for shell indicators and never falls back to an actor identifier', async () => {
     const fetchMock = stubShell({ overview: { ...CURRENT_MEMBER_OVERVIEW, members: [] } });
     renderApp('/workbench?scope=demo');
     const avatar = await screen.findByTestId('current-member-avatar');
@@ -224,10 +242,12 @@ describe('AppShell navigation', () => {
     expect(avatar.textContent).toBe('你');
     expect(avatar.textContent).not.toContain('member-1');
     const urls = fetchMock.mock.calls.map(([input]) => String(input));
-    expect(urls.some((url) => url.includes('/api/team/overview'))).toBe(false);
+    expect(urls.some((url) => url.includes('/api/team/overview?'))).toBe(false);
     const operations = fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/team/read'))
       .map(([, init]) => JSON.parse(String(init?.body)).query.op as string);
     expect(operations).not.toContain('decisions.list');
+    // The shell's pending pill and the inbox page read the same composed model, nothing else.
+    expect(urls.some((url) => url.includes('/api/team/overview-model?project='))).toBe(true);
   });
 
   it('keeps page read coverage and freshness inside the unchanged page content', async () => {
