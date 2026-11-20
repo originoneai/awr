@@ -32,7 +32,8 @@ function response(input: OverviewInput): TeamOverviewModelResponse {
   return {
     ok: true,
     project: 'demo',
-    read_at_unix_ms: NOW,
+    // The render clock advances from this real answer moment to the fixture's explicit derivation clock.
+    read_at_unix_ms: Date.now(),
     input,
     coverage: Object.fromEntries(PARTS.map((part) => [part, {
       status: input[part].coverage,
@@ -155,7 +156,7 @@ describe('prototype inbox page', () => {
     expect(document.querySelectorAll('.ant-badge-dot')).toHaveLength(1);
     expect(screen.getByTestId('inbox-bell').getAttribute('aria-label')).toBe(i18n.t('shell.pendingNotifications', { count: 4 }));
     expect(within(page).getByTestId('inbox-lead').textContent).toContain(language.startsWith('zh') ? '4 件事在等你' : '4 things are waiting for you');
-    expect(within(page).getByTestId('inbox-lead').textContent).toContain(language.startsWith('zh') ? '最久的一件等了 6 天' : 'the oldest has been waiting 6 days');
+    expect(within(page).getByTestId('inbox-lead').textContent).toContain(language.startsWith('zh') ? '最久的一件等了 2 天' : 'the oldest has been waiting 2 days');
     expect(within(page).getByTestId('inbox-focus')).toBeTruthy();
     expect(within(page).getByTestId('inbox-basis')).toBeTruthy();
     expect(within(page).getByTestId('inbox-impact')).toBeTruthy();
@@ -170,6 +171,111 @@ describe('prototype inbox page', () => {
     );
     expect(findHumanLanguageViolations(page)).toEqual([]);
     expect(defaultVisibleText(page)).not.toMatch(/undefined|null|NaN/);
+  });
+
+  it('composes prototype titles and calendar ages from facts, including the focused Agent handback', async () => {
+    const source = pageInput();
+    if (source.tasks.coverage === 'complete') {
+      const answer = source.tasks.items.find((task) => task.id === 'answer-task')!;
+      // 47 hours elapsed, but the report and the reference are two calendar dates apart.
+      answer.report = { completed: false, reportedAtUnixMs: NOW - 2 * DAY + 60 * 60 * 1000 };
+    }
+    if (source.decisions.coverage === 'complete') {
+      Object.assign(source.decisions.items[0], {
+        description: 'The recorded question detail explains the two empty-list choices.',
+      });
+    }
+    setup({ input: source });
+    const page = await screen.findByTestId('page-inbox');
+    const queue = await within(page).findByTestId('inbox-queue');
+    const rows = within(queue).getAllByTestId('inbox-queue-row');
+    const assignment = rows.find((row) => row.textContent?.includes('Synthetic assignment-task'))!;
+    const lesson = rows.find((row) => row.textContent?.includes('Check the interface version first'))!;
+
+    expect(within(page).getByTestId('inbox-lead').textContent).toContain('最久的一件等了 2 天');
+    expect(within(assignment).getByTestId('inbox-queue-title').textContent)
+      .toBe('Reviewer Two把“Synthetic assignment-task”派给了你');
+    expect(assignment.querySelector('.inbox-qrow-meta')?.textContent)
+      .toBe('接任务 · Reviewer Two今天通过自己的 Agent 派的');
+    expect(assignment.querySelector('.inbox-qrow-age')?.textContent).toBe('今天');
+    expect(lesson.querySelector('.inbox-qrow-meta')?.textContent)
+      .toBe('确认经验 · 你的 Agent 在 1 月 9 日的会话里记下的');
+    expect(lesson.querySelector('.inbox-qrow-age')?.textContent).toBe('6 天前');
+
+    await userEvent.click(rows.find((row) => row.textContent?.includes('Should the empty state explain the next step?'))!);
+    expect(within(page).getByTestId('inbox-basis').textContent).toContain('Agent 最后一次报告是 2 天前');
+    expect(within(page).getByTestId('inbox-handback').querySelector('p')?.textContent)
+      .toBe('你的「Desk Agent」停在这件任务上。回到那个会话回答，它会接着做。');
+    expect(within(page).getByTestId('inbox-focus').querySelector('.inbox-focus-ask')?.textContent)
+      .toBe('The recorded question detail explains the two empty-list choices.');
+  });
+
+  it('keeps the existing honest fallbacks when a person, task, session date, description or Agent is missing', async () => {
+    const source = pageInput();
+    if (source.tasks.coverage === 'complete') {
+      source.tasks.items.find((task) => task.id === 'answer-task')!.agentName = null;
+    }
+    if (source.handoffs.coverage === 'complete') source.handoffs.items[0].fromPersonId = 'person-not-in-directory';
+    if (source.approvals.coverage === 'complete') {
+      source.approvals.items.find((approval) => approval.kind === 'lesson-confirmation')!.sinceUnixMs = null;
+    }
+    const first = setup({ input: source });
+    const page = await screen.findByTestId('page-inbox');
+    const queue = await within(page).findByTestId('inbox-queue');
+    const assignment = within(queue).getAllByTestId('inbox-queue-row')
+      .find((row) => row.textContent?.includes('Synthetic assignment-task'))!;
+    expect(within(assignment).getByTestId('inbox-queue-title').textContent).toBe('Synthetic assignment-task');
+    expect(assignment.querySelector('.inbox-qrow-meta')?.textContent)
+      .toBe('接任务 · 一位成员通过自己的 Agent 派的');
+    const lesson = within(queue).getAllByTestId('inbox-queue-row')
+      .find((row) => row.textContent?.includes('Check the interface version first'))!;
+    expect(lesson.querySelector('.inbox-qrow-meta')?.textContent).toBe('确认经验 · 你的 Agent 记下的');
+    expect(lesson.querySelector('.inbox-qrow-age')?.textContent).toBe('不知道等了多久');
+
+    await userEvent.click(within(queue).getAllByTestId('inbox-queue-row')
+      .find((row) => row.textContent?.includes('Should the empty state explain the next step?'))!);
+    expect(within(page).getByTestId('inbox-handback').querySelector('p')?.textContent)
+      .toBe('在你的任意一个 Agent 里说一句');
+    expect(within(page).getByTestId('inbox-focus').querySelector('.inbox-focus-ask')?.textContent)
+      .toBe('「Should the empty state explain the next step?」这件事不回答，Synthetic answer-task就停在这里。');
+    first.unmount();
+
+    const missingTask = pageInput();
+    if (missingTask.tasks.coverage === 'complete') {
+      missingTask.tasks.items.find((task) => task.id === 'assignment-task')!.title = null;
+    }
+    setup({ input: missingTask });
+    const nextQueue = await screen.findByTestId('inbox-queue');
+    const unnamed = within(nextQueue).getAllByTestId('inbox-queue-row')
+      .find((row) => row.querySelector('.inbox-qrow-meta')?.textContent?.startsWith('接任务'))!;
+    expect(within(unnamed).getByTestId('inbox-queue-title').textContent).toBe('这件事的名称还没有记录');
+    expect(unnamed.textContent).not.toContain('派给了你');
+  });
+
+  it('words a waiting answer as how long it has waited and the other ages as how long ago', async () => {
+    setup();
+    const page = await screen.findByTestId('page-inbox');
+    const queue = await within(page).findByTestId('inbox-queue');
+    const rows = within(queue).getAllByTestId('inbox-queue-row');
+    const age = (needle: string) => rows.find((row) => row.textContent?.includes(needle))!
+      .querySelector('.inbox-qrow-age')?.textContent;
+    expect(age('Should the empty state explain the next step?')).toBe('等了 2 天');
+    expect(age('Recovery work breakdown')).toBe('1 天前');
+  });
+
+  it('shows the age and the report age as unknown, not a guess, when the read is stamped later than the derivation clock allows', async () => {
+    const source = pageInput();
+    if (source.tasks.coverage === 'complete') {
+      source.tasks.items.find((task) => task.id === 'answer-task')!.report = { completed: false, reportedAtUnixMs: NOW - DAY };
+    }
+    setup({ modelPayload: { ...response(source), read_at_unix_ms: Date.now() + 40 * DAY } });
+    const page = await screen.findByTestId('page-inbox');
+    const queue = await within(page).findByTestId('inbox-queue');
+    const answer = within(queue).getAllByTestId('inbox-queue-row')
+      .find((row) => row.textContent?.includes('Should the empty state explain the next step?'))!;
+    expect(answer.querySelector('.inbox-qrow-age')?.textContent).toBe('不知道等了多久');
+    await userEvent.click(answer);
+    expect(within(page).getByTestId('inbox-basis').textContent).toContain('Agent 最后一次报告的时间还没有读到');
   });
 
   it('uses the PPO-012 sentence and browser-only copy with a selection fallback', async () => {

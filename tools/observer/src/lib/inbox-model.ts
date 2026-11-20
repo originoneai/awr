@@ -21,7 +21,7 @@ export type InboxBasisTone = 'ok' | 'bad' | 'info';
 /** A basis fact the page words through the vocabulary; never a raw record. */
 export type InboxBasisFact =
   | { fact: 'task'; title: string }
-  | { fact: 'reportAge'; days: number; stale: boolean }
+  | { fact: 'reportAge'; atUnixMs: number; stale: boolean }
   | { fact: 'noReport' }
   | { fact: 'independentStart' }
   | { fact: 'blockedByDependencies'; count: number };
@@ -38,6 +38,8 @@ export interface InboxEntry {
   mine: boolean;
   /** Untrusted display text from the records; the page owns fallbacks and truncation. */
   title: string | null;
+  /** A recorded focus description, when the composed read supplies one; the page otherwise uses its template. */
+  description: string | null;
   projectName: string | null;
   projectKey: string;
   taskName: string | null;
@@ -49,9 +51,11 @@ export interface InboxEntry {
   impactText: string | null;
   /** How many tasks sit behind the waiting task; null is unknown, never zero-coerced. */
   impactBehindCount: number | null;
-  /** Whole days since the wait began; null is unknown and sorts last. */
+  /** Whole elapsed days on the derivation clock; retained for the existing queue ordering only. */
   durationDays: number | null;
   sinceUnixMs: number | null;
+  /** Date.now() plus this offset is the entry's explicit derivation clock, not the reply's read time. */
+  clockOffsetUnixMs: number;
   /** The member this entry is waiting for. */
   recipient: PersonRef;
   /** Who dispatched the assignment; null for the other kinds. */
@@ -132,15 +136,46 @@ function compareEntries(left: InboxEntry, right: InboxEntry): number {
   return left.key.localeCompare(right.key);
 }
 
+const DAY_MS = 86_400_000;
+
+function calendarDayNumber(unixMs: number, timeZone: string): number | null {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      year: 'numeric', month: 'numeric', day: 'numeric', timeZone,
+    }).formatToParts(new Date(unixMs));
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    const year = Number(values.year);
+    const month = Number(values.month);
+    const day = Number(values.day);
+    if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
+    return Date.UTC(year, month - 1, day) / DAY_MS;
+  } catch {
+    return null;
+  }
+}
+
+/** Calendar-date distance in the viewer's zone: Nov 17 to Nov 19 is two days even when only 47 hours elapsed. */
+export function inboxCalendarDays(
+  atUnixMs: number | null | undefined,
+  nowUnixMs: number,
+  timeZone: string,
+): number | null {
+  if (typeof atUnixMs !== 'number' || !Number.isFinite(atUnixMs) || atUnixMs < 0
+    || !Number.isFinite(nowUnixMs) || atUnixMs > nowUnixMs) return null;
+  const atDay = calendarDayNumber(atUnixMs, timeZone);
+  const nowDay = calendarDayNumber(nowUnixMs, timeZone);
+  return atDay == null || nowDay == null ? null : nowDay - atDay;
+}
+
 function reportBasis(task: OverviewTask | undefined, agentName: string | null, stalledAfterDays: number, nowUnixMs: number): InboxBasisItem[] {
   if (agentName == null) return [];
   const reportedAt = task?.report?.reportedAtUnixMs;
   if (typeof reportedAt !== 'number' || !Number.isFinite(reportedAt) || reportedAt < 0 || reportedAt > nowUnixMs) {
     return [{ tone: 'bad', fact: { fact: 'noReport' } }];
   }
-  const days = Math.floor((nowUnixMs - reportedAt) / 86_400_000);
-  const stale = days >= stalledAfterDays;
-  return [{ tone: stale ? 'bad' : 'info', fact: { fact: 'reportAge', days, stale } }];
+  // Staleness remains an elapsed-time decision; only the human-facing age uses calendar dates.
+  const stale = nowUnixMs - reportedAt >= stalledAfterDays * DAY_MS;
+  return [{ tone: stale ? 'bad' : 'info', fact: { fact: 'reportAge', atUnixMs: reportedAt, stale } }];
 }
 
 interface ProjectEntries {
@@ -154,6 +189,8 @@ interface ProjectEntries {
 function projectEntries(model: TeamOverviewModelResponse, projectName: string | null): ProjectEntries {
   const input = model.input;
   const derived = deriveOverview(input);
+  const clockOffsetUnixMs = Number.isFinite(model.read_at_unix_ms)
+    ? input.options.nowUnixMs - model.read_at_unix_ms : 0;
   const projectKey = validId(model.project) ?? '';
   const viewerPersonId = validId(input.options.views?.me?.personId);
   const members = input.members.coverage === 'unread' ? [] : input.members.items;
@@ -192,21 +229,24 @@ function projectEntries(model: TeamOverviewModelResponse, projectName: string | 
       const agentName = task.agentName;
       const basis: InboxBasisItem[] = taskId == null || task.title == null ? [] : [{ tone: 'info', fact: { fact: 'task', title: task.title } }];
       basis.push(...reportBasis(inputTask, agentName, input.options.stalledAfterDays, input.options.nowUnixMs));
+      const record = decisionRecord(input, wait);
       entries.push({
         key: `${kind}:${wait.sourceId ?? `task:${taskId ?? 'unknown'}`}:${responderId}`,
         kind,
         mine: responderId === viewerPersonId,
         title: wait.what,
+        description: decisionDescription(record),
         projectName,
         projectKey,
         taskName: task.title,
         taskId,
         executionAgentName: agentName,
         question: wait.what,
-        impactText: decisionImpact(input, wait),
+        impactText: decisionImpact(record),
         impactBehindCount: wait.behind.count,
         durationDays: wait.durationDays,
         sinceUnixMs: wait.startedAtUnixMs,
+        clockOffsetUnixMs,
         recipient: personNamed(members, responderId),
         fromPerson: null,
         taskOwner: task.owner,
@@ -239,6 +279,7 @@ function projectEntries(model: TeamOverviewModelResponse, projectName: string | 
         kind: 'assignment',
         mine: recipientId === viewerPersonId,
         title: task?.title ?? null,
+        description: null,
         projectName,
         projectKey,
         taskName: task?.title ?? null,
@@ -249,6 +290,7 @@ function projectEntries(model: TeamOverviewModelResponse, projectName: string | 
         impactBehindCount: null,
         durationDays: wholeDays(handoff.updatedAtUnixMs, input.options.nowUnixMs),
         sinceUnixMs: handoff.updatedAtUnixMs ?? null,
+        clockOffsetUnixMs,
         recipient: personNamed(members, recipientId),
         fromPerson: fromId == null ? null : personNamed(members, fromId),
         taskOwner: task?.owner ?? null,
@@ -277,6 +319,7 @@ function projectEntries(model: TeamOverviewModelResponse, projectName: string | 
         kind,
         mine: recipientId === viewerPersonId,
         title,
+        description: null,
         projectName,
         projectKey: validId(approval.projectId) ?? projectKey,
         taskName: title,
@@ -287,6 +330,7 @@ function projectEntries(model: TeamOverviewModelResponse, projectName: string | 
         impactBehindCount: null,
         durationDays: wholeDays(approval.sinceUnixMs, input.options.nowUnixMs),
         sinceUnixMs: approval.sinceUnixMs ?? null,
+        clockOffsetUnixMs,
         recipient: personNamed(members, recipientId),
         fromPerson: null,
         taskOwner: null,
@@ -311,12 +355,24 @@ function taskOwner(task: DerivedTask, responderId: string): boolean | null {
   return ownerId === responderId;
 }
 
-function decisionImpact(input: OverviewInput, wait: DerivedWait): string | null {
-  if (input.decisions.coverage === 'unread') return null;
-  const record = input.decisions.items.find((item) => validId(item?.id) != null && validId(item.id) === wait.sourceId)
+type InboxDecisionRecord = NonNullable<OverviewInput['decisions']['items']>[number];
+
+function decisionRecord(input: OverviewInput, wait: DerivedWait): InboxDecisionRecord | undefined {
+  if (input.decisions.coverage === 'unread') return undefined;
+  return input.decisions.items.find((item) => validId(item?.id) != null && validId(item.id) === wait.sourceId)
     ?? input.decisions.items.find((item) => validId(item?.taskId) != null && validId(item.taskId) === wait.task.id);
+}
+
+function decisionImpact(record: InboxDecisionRecord | undefined): string | null {
   const impact = record?.impact;
   return typeof impact === 'string' && impact.trim() !== '' ? impact : null;
+}
+
+function decisionDescription(record: InboxDecisionRecord | undefined): string | null {
+  // The canonical read carries this recorded focus text next to the short question. It is
+  // deliberately optional: live replies without it keep the page's deterministic template.
+  const description = (record as (InboxDecisionRecord & { description?: unknown }) | undefined)?.description;
+  return typeof description === 'string' && description.trim() !== '' ? description : null;
 }
 
 function wholeDays(sinceUnixMs: number | null | undefined, nowUnixMs: number): number | null {

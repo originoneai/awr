@@ -17,6 +17,7 @@ import {
 } from '../core/overview/__tests__/factories';
 import {
   buildInboxModel,
+  inboxCalendarDays,
   inboxPendingLabel,
   inboxTaskPath,
   resolveInboxSelection,
@@ -315,5 +316,65 @@ describe('cross-project inbox read model', () => {
     });
     expect(unidentified.viewer).toBeNull();
     expect(unidentified.entries).toEqual([]);
+  });
+
+  it('uses one calendar-date rule for the prototype answer, lesson, report and assignment ages', () => {
+    const now = Date.parse('2026-11-19T12:00:00.000Z');
+    expect(inboxCalendarDays(Date.parse('2026-11-17T12:00:00.000Z'), now, 'UTC')).toBe(2);
+    expect(inboxCalendarDays(Date.parse('2026-11-13T12:00:00.000Z'), now, 'UTC')).toBe(6);
+    // This is the prototype's 46-hour report interval: two dates, not two completed 24-hour periods.
+    expect(inboxCalendarDays(Date.parse('2026-11-17T14:00:00.000Z'), now, 'UTC')).toBe(2);
+    expect(inboxCalendarDays(Date.parse('2026-11-19T09:40:00.000Z'), now, 'UTC')).toBe(0);
+    // Calendar arithmetic, rather than dividing by 24 hours, also handles a daylight-saving transition.
+    expect(inboxCalendarDays(Date.parse('2026-11-01T01:30:00.000Z'), Date.parse('2026-11-02T00:30:00.000Z'), 'America/New_York')).toBe(1);
+    expect(inboxCalendarDays(now + 1, now, 'UTC')).toBeNull();
+    expect(inboxCalendarDays(null, now, 'UTC')).toBeNull();
+    expect(inboxCalendarDays(now, Number.NaN, 'UTC')).toBeNull();
+  });
+
+  it('carries the report timestamp, optional description and render-clock offset without deriving a second fact', () => {
+    const sourceInput = allKindsInput();
+    if (sourceInput.decisions.coverage === 'complete') {
+      Object.assign(sourceInput.decisions.items.find((item) => item.id === 'answer-record')!, {
+        description: 'A separately recorded focus description',
+      });
+    }
+    const source = model(sourceInput);
+    source.read_at_unix_ms = NOW + 60_000;
+    const result = buildInboxModel({ models: [source], projects });
+    const answer = result.entries.find((entry) => entry.kind === 'answer')!;
+    expect(answer.description).toBe('A separately recorded focus description');
+    expect(answer.clockOffsetUnixMs).toBe(-60_000);
+    expect(answer.basis).toContainEqual({
+      tone: 'info',
+      fact: { fact: 'reportAge', atUnixMs: NOW - DAY / 24, stale: false },
+    });
+    expect(result.entries.filter((entry) => entry.kind !== 'answer').every((entry) => entry.description === null)).toBe(true);
+  });
+  it('measures calendar dates in the viewer zone and at the edges of the clock', () => {
+    const now = Date.parse('2026-11-18T00:30:00.000Z');
+    const at = Date.parse('2026-11-17T23:30:00.000Z');
+    // One hour apart: two dates in UTC, one date in Tokyo.
+    expect(inboxCalendarDays(at, now, 'UTC')).toBe(1);
+    expect(inboxCalendarDays(at, now, 'Asia/Tokyo')).toBe(0);
+    // The same moment is today; the epoch is a valid moment; a negative one and an unknown zone are not.
+    expect(inboxCalendarDays(now, now, 'UTC')).toBe(0);
+    expect(inboxCalendarDays(0, Date.parse('1970-01-02T00:00:00.000Z'), 'UTC')).toBe(1);
+    expect(inboxCalendarDays(-1, now, 'UTC')).toBeNull();
+    expect(inboxCalendarDays(at, now, 'Not/AZone')).toBeNull();
+  });
+
+  it('calls a report stale exactly at the stalled bound and fresh one millisecond inside it', () => {
+    for (const [offset, stale] of [[0, true], [1, false]] as const) {
+      const sourceInput = allKindsInput();
+      const task = sourceInput.tasks.coverage === 'complete'
+        ? sourceInput.tasks.items.find((item) => item.id === 'answer-task')
+        : undefined;
+      task!.report = { completed: false, reportedAtUnixMs: NOW - 3 * DAY + offset };
+      const answer = buildInboxModel({ models: [model(sourceInput)], projects }).entries
+        .find((entry) => entry.kind === 'answer')!;
+      expect(answer.basis.find((item) => item.fact.fact === 'reportAge'), `offset ${offset}`)
+        .toMatchObject({ tone: stale ? 'bad' : 'info', fact: { stale } });
+    }
   });
 });
