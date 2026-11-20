@@ -451,6 +451,43 @@ test('demo directory IDs join the overview model and its hierarchy passes the re
   assert.equal(projectDirectory(missingParent), null);
 });
 
+test('only the canonical demo serves an organization directory with recorded duties and project memberships', async () => {
+  const canonical = bridgeForTest({ demoVariant: 'canonical', demoTimestampShiftMs: 0,
+    now: () => fixture.now_unix_ms });
+  const organization = await canonical.call('POST /api/team/directory', '/api/team/directory', {});
+  assert.equal(organization.ok, true, JSON.stringify(organization));
+  assert.equal(organization.data.organization, fixture.organization.name);
+  assert.deepEqual(organization.data.departments.map((department) => department.name), ['应用小组', '平台小组', '交付小组']);
+  assert.deepEqual(organization.data.members.map((member) => member.name), fixture.people.map((member) => member.display_name));
+  for (const member of organization.data.members) {
+    const source = fixture.people.find((person) => person.person_id === member.personId);
+    assert.equal(member.duty, source.role);
+    assert.deepEqual(member.projects.map((project) => project.name), fixture.projects
+      .filter((project) => project.member_person_ids.includes(member.personId)).map((project) => project.title));
+  }
+  assert.deepEqual(organization.data.members.find((member) => member.personId === 'M-004').projects
+    .map((project) => project.name), ['订单协作平台', '统一通知服务']);
+
+  const selected = await canonical.call('POST /api/team/directory', '/api/team/directory', { project: 'P-001' });
+  assert.equal(selected.ok, true);
+  assert.deepEqual(selected.data.members.map((member) => member.duty),
+    fixture.people.filter((member) => fixture.projects[0].member_person_ids.includes(member.person_id)).map((member) => member.role));
+  const model = await canonical.call('GET /api/team/overview-model', '/api/team/overview-model?project=');
+  assert.equal(model.ok, true, JSON.stringify(model));
+  assert.equal(model.project, '');
+  assert.equal(model.input.tasks.items.length, fixture.tasks.length);
+  const connections = await canonical.call('POST /api/team/connections/list', '/api/team/connections/list', { limit: 50 });
+  assert.equal(connections.ok, true, JSON.stringify(connections));
+  assert.equal(connections.data.items.length, fixture.people.flatMap((member) => member.agents).length);
+
+  const full = bridgeForTest({ demoTimestampShiftMs: 0, now: () => fixture.now_unix_ms });
+  assert.equal((await full.call('POST /api/team/directory', '/api/team/directory', {})).error.code, 'Unsupported');
+  const fullSelected = await full.call('POST /api/team/directory', '/api/team/directory', { project: 'P-001' });
+  assert.equal(fullSelected.ok, true);
+  assert.equal(fullSelected.data.members.some((member) => Object.hasOwn(member, 'duty')), false,
+    'the full variant keeps its directory projection without the canonical-only duty field');
+});
+
 test('update facts and lesson usage are computed from their detail arrays', async () => {
   const { read } = bridgeForTest();
   const expectedFactCounts = {

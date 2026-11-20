@@ -1,7 +1,7 @@
 {
   "page": "members",
   "proto": "#p=members",
-  "app": "/members?scope=P-001",
+  "app": "/members",
   "ready": "[data-testid=\"member-table\"]",
   "protoReady": ".block table.t",
   "notes": {"styleComparison": "Every style property is compared, colours included. This file is reviewer-owned: a builder may add pairs, never skip or loosen a style property."},

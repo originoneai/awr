@@ -42,6 +42,7 @@ function projectDirectory(value) {
     && member.member_ref.project_id === value.project_id && expected.has(member.member_ref.person_id)
     && typeof member.available === 'boolean' && (member.display_name === null || text(member.display_name))
     && (!member.available ? member.display_name === null : text(member.display_name))
+    && (member.duty === undefined || text(member.duty))
     && references(member.department_ids) && same(member.department_ids, expected.get(member.member_ref.person_id)))
     || !unique(value.members.map((member) => member.member_ref.person_id))) return null;
   const empty = plan.organization === null && plan.departments.length === 0
@@ -59,6 +60,8 @@ function projectDirectory(value) {
       name: member.display_name,
       available: member.available,
       departments: member.department_ids.map((id) => departments.get(id)),
+      // Demo-only optional recorded duty; live directory replies do not provide it yet.
+      ...(member.duty === undefined ? {} : { duty: member.duty }),
     })),
   };
 }

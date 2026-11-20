@@ -74,6 +74,7 @@ The Observer **Members & Agents** page reads `/v1/web/projects/{project}/directo
 | `members[].personId` | `members[].member_ref.person_id` | Stable person identity in the bound project. |
 | `members[].name` | `members[].display_name` | Display name when available; not an identity. |
 | `members[].available` | `members[].available` | Current relationship availability. |
+| `members[].duty` | demo fixture role | Demo-only recorded duty (see below); the projection includes it only when the reply records one. |
 | `members[].departments[]` | `members[].department_ids` | Every referenced group, represented by the same `key`, `name` and `parentKey` department objects. |
 
 `members[].personId` and the overview read model's `OverviewMember.personId` use the same project-scoped person-ID space. The Members page joins the two reads by that ID alone within one project; it is the unique key. There is no fallback that guesses identity from a display name, group membership, row order, or any combination of them. Two people with the same display name keep different IDs and separate rows, and one person belonging to multiple groups keeps one ID and one row with every group in `departments`. If a directory person ID has no matching `OverviewMember.personId`, that directory row keeps the existing unverified/unknown fact states and never displays another person's numbers. Person IDs are not merged across projects.
@@ -81,6 +82,17 @@ The Observer **Members & Agents** page reads `/v1/web/projects/{project}/directo
 The projection discloses these identities only after the existing authorized directory read. It adds no operation or grant, returns no credential or operational provenance, and does not cache directory replies across sessions or authorization changes. Operational provenance and unrelated internal references stay on the service; an invalid relationship set fails the whole projection instead of exposing a partial result.
 
 Members are shown as recorded in that project's directory. A directory may cover a subset of its people, and an available member record does not establish that an Agent is connected or executing work. The page provides member search, department filtering, name sorting, manual refresh and links to the existing personal connection controls. Each project is read separately, and same-name members retain separate rows. Relationship changes continue through the authorized Agent entries.
+
+## Organization scope and recorded duties (demo-only)
+
+The prototype's Members & Agents page is organization-wide, while the service read stays project-scoped and person IDs hold only inside one project. The Observer page therefore asks its bridge and merges nothing itself: with a project selected it reads that project's directory exactly as above, and with no project selected it sends one organization-directory request and renders whatever comes back.
+
+Two projections on that route are demo-only today:
+
+* An organization directory reply for a request without a `project` key is served by the `canonical` demo variant alone. The fixture keeps one stable synthetic person ID per person across its three projects, so a single ID space joins the whole roster; every member carries their recorded `duty`, and a `projects` array lists the projects each person belongs to on one row. The page renders that reply as the prototype's organization table. Every other demo variant and a live deployment answer `Unsupported`, and the page falls back to the existing per-project chooser; the bridge proxies nothing and guesses no service endpoint.
+* `members[].duty` is a demo-only recorded duty shown in the group column (小组负责人 / 开发 / 复核 in the fixture). Live replies and the `full` variant keep their exact byte shape, snapshot-tested, and the page keeps showing its existing placeholder line for an unrecorded duty until a real directory read supplies the field. When a later service read carries duties, this field maps onto it and the placeholder disappears on its own.
+
+Queue counts on the page stay derived from the same project-qualified facts as before; duties and project memberships arrive recorded in the directory reply, and the page infers neither.
 
 ## Focused verification
 

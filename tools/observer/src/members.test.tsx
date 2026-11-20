@@ -120,11 +120,25 @@ function identityOverviewModel(): TeamOverviewModelResponse {
     { ...task, id: 'identity-first', title: 'First recorded task', ownerPersonId: 'directory-person', groupId: 'engineering' },
     { ...task, id: 'identity-second', title: 'Second recorded task', ownerPersonId: 'directory-person-two', groupId: 'research' },
   ] };
-  model.input.approvals = { coverage: 'complete', items: [
-    { id: 'identity-pending-first', kind: 'plan-approval', recipientPersonId: 'directory-person', projectId: 'demo', title: 'First pending item' },
-    { id: 'identity-pending-second-a', kind: 'plan-approval', recipientPersonId: 'directory-person-two', projectId: 'demo', title: 'Second pending item A' },
-    { id: 'identity-pending-second-b', kind: 'plan-approval', recipientPersonId: 'directory-person-two', projectId: 'demo', title: 'Second pending item B' },
+  model.input.decisions = { coverage: 'complete', items: [
+    { id: 'identity-pending-first', taskId: 'identity-first', state: 'open', current: true,
+      question: 'First pending question', allowedResponderIds: ['directory-person'], createdAtUnixMs: NOW },
+    { id: 'identity-pending-second-a', taskId: 'identity-second', state: 'open', current: true,
+      question: 'Second pending question A', allowedResponderIds: ['directory-person-two'], createdAtUnixMs: NOW },
+    { id: 'identity-pending-second-b', taskId: 'identity-second', state: 'open', current: true,
+      question: 'Second pending question B', allowedResponderIds: ['directory-person-two'], createdAtUnixMs: NOW },
   ] };
+  model.input.approvals = { coverage: 'complete', items: [] };
+  return model;
+}
+
+/** Three open decisions waiting on Taylor's answer: the members table counts exactly these
+ * blocking waits, while the workbench inbox would also count her three confirmations. */
+function withTaylorDecisionWaits(model: TeamOverviewModelResponse): TeamOverviewModelResponse {
+  model.input.decisions = { coverage: 'complete', items: [1, 2, 3].map((number) => ({
+    id: `decision-${number}`, taskId: 'task / ?', state: 'open', current: true,
+    question: `Blocking question ${number}`, allowedResponderIds: ['person-taylor'], createdAtUnixMs: NOW,
+  })) };
   return model;
 }
 
@@ -176,8 +190,9 @@ afterEach(async () => {
 
 describe('members and Agents panorama', () => {
   it.each(['zh-CN', 'en-US'])('renders the prototype blocks and product language in %s', async (language) => {
-    setup();
+    const { setOverviewResponse } = setup();
     await act(async () => { await i18n.changeLanguage(language); });
+    setOverviewResponse(withTaylorDecisionWaits(overviewModel()));
     renderApp('/members?scope=demo');
     await loaded();
     const page = screen.getByTestId('page-members');
@@ -268,13 +283,15 @@ describe('members and Agents panorama', () => {
   });
 
   it('opens pending details from the same array as the pending count', async () => {
-    setup();
+    const { setOverviewResponse } = setup();
+    setOverviewResponse(withTaylorDecisionWaits(overviewModel()));
     renderApp('/members?scope=demo');
     await loaded();
     await userEvent.setup().click(screen.getByTestId('member-pending-person-taylor'));
     expect(await screen.findByTestId('members-detail')).toBeTruthy();
     expect(screen.getAllByTestId('members-detail-row')).toHaveLength(3);
     expect(screen.getByTestId('members-detail-count')).toHaveTextContent('3');
+    expect(screen.getByTestId('members-detail')).toHaveTextContent(i18n.t('members.pendingKinds.decision'));
   });
 
   it('renders a known zero as quiet text and leaves unknown counts closed', async () => {
@@ -289,13 +306,24 @@ describe('members and Agents panorama', () => {
     expect(screen.getByTestId('member-pending-unknown-2').tagName).not.toBe('BUTTON');
   });
 
-  it('renders a null pending count as the closed unknown dash, never as a number, a zero or a button', async () => {
+  it('nulls the wait count only when the wait facts are unread', async () => {
     const { setOverviewResponse } = setup();
-    const model = overviewModel();
-    // An unread approvals plane makes every person's pending total unknown (null), which must not read as zero.
-    model.input.approvals = { coverage: 'unread', reason: 'not-read' };
-    model.coverage.approvals = { status: 'unread', missing: [] };
-    setOverviewResponse(model);
+    // An unread confirmations plane leaves the blocking-wait count known: the members count
+    // reads waits alone, so Taylor's three open decisions still read as three items.
+    const unreadConfirmations = withTaylorDecisionWaits(overviewModel());
+    unreadConfirmations.input.approvals = { coverage: 'unread', items: [], reason: 'not-read' };
+    unreadConfirmations.coverage.approvals = { status: 'unread', missing: [] };
+    setOverviewResponse(unreadConfirmations);
+    const first = renderApp('/members?scope=demo');
+    await loaded();
+    expect(screen.getByTestId('member-pending-person-taylor').tagName).toBe('BUTTON');
+    expect(screen.getByTestId('member-pending-person-taylor')).toHaveTextContent('3');
+    first.unmount();
+    // An unread decisions plane makes the same count unknown; it must never read as zero.
+    const unreadWaits = withTaylorDecisionWaits(overviewModel());
+    unreadWaits.input.decisions = { coverage: 'unread', items: [], reason: 'not-read' };
+    unreadWaits.coverage.decisions = { status: 'unread', missing: [] };
+    setOverviewResponse(unreadWaits);
     renderApp('/members?scope=demo');
     await loaded();
     for (const id of ['person-taylor', 'person-riley']) {
@@ -304,6 +332,51 @@ describe('members and Agents panorama', () => {
       expect(cell).toHaveTextContent('—');
       expect(cell.textContent).not.toMatch(/null|\d/);
     }
+  });
+
+  it('counts the waits that block work and leaves inbox confirmations and dispatches to the workbench', async () => {
+    const { setOverviewResponse } = setup();
+    const model = overviewModel();
+    model.input.handoffs = { coverage: 'complete', items: [{
+      id: 'handoff-1', taskId: 'planned-task', kind: 'responsibility', status: 'proposed',
+      pending: true, fromPersonId: 'person-taylor', toPersonId: 'person-riley', updatedAtUnixMs: NOW,
+    }] };
+    setOverviewResponse(model);
+    renderApp('/members?scope=demo');
+    await loaded();
+    // Taylor holds three confirmations and Riley one dispatch; none of them blocks a task,
+    // so the members queue reads the quiet zero instead of a count.
+    for (const id of ['person-taylor', 'person-riley']) {
+      const cell = screen.getByTestId(`member-pending-${id}`);
+      expect(cell.tagName).not.toBe('BUTTON');
+      expect(cell).toHaveTextContent(i18n.t('members.noPending'));
+    }
+  });
+
+  it('composes the doing cell for a recorded reviewer from their review queue', async () => {
+    const { setDirectoryResponse, setOverviewResponse } = setup();
+    setDirectoryResponse({ ok: true, data: { ...DIRECTORY, members: DIRECTORY.members.map((member, index) => ({
+      ...member, ...(index === 0 ? { duty: '复核' } : {}),
+    })) } });
+    const model = overviewModel();
+    model.input.tasks = { coverage: 'complete', items: [...model.input.tasks.items!, {
+      id: 'reviewed-task', title: '接口第 3 版：提交与错误反馈', ownerPersonId: 'person-riley', agentName: 'Codex',
+      projectId: 'demo', groupId: 'research', started: true, agentActive: true, externalWait: null, acceptance: [],
+      report: { completed: false, reportedAtUnixMs: NOW - 1000 },
+    }] };
+    model.input.reviewRounds = { coverage: 'complete', items: [{
+      id: 'round-1', taskId: 'reviewed-task', roundIndex: 1, state: 'open', current: true, independent: true,
+      authorPersonId: 'person-riley', reviewerPersonId: 'person-taylor',
+      authorActorId: 'actor-riley', reviewerActorId: 'actor-taylor', openedAtUnixMs: NOW - 2 * 86400000,
+    }] };
+    setOverviewResponse(model);
+    renderApp('/members?scope=demo');
+    await loaded();
+    const doing = screen.getByTestId('member-doing-person-taylor');
+    expect(doing).toHaveTextContent('复核“接口第 3 版”等 1 件');
+    expect(doing.tagName).not.toBe('A');
+    // A developer reads their own running task, and Taylor's own task loses to her review queue.
+    expect(screen.getByTestId('member-doing-person-riley')).toHaveTextContent('接口第 3 版：提交与错误反馈');
   });
 
   it('clamps unknown detail parameters and opens person pages by click and keyboard', async () => {
@@ -317,24 +390,88 @@ describe('members and Agents panorama', () => {
     expect(await screen.findByTestId('state-not-open')).toBeTruthy();
   });
 
-  it('encodes task links and marks long task names for truncation', async () => {
+  it('encodes task links and lets long titles wrap in the inline doing cell', async () => {
     setup();
     renderApp('/members?scope=demo');
     await loaded();
     const link = screen.getByTestId('member-doing-person-taylor');
     expect(link).toHaveAttribute('href', '/tasks/task%20%2F%20%3F?scope=demo');
-    expect(link.className).toContain('members-ellipsis');
+    expect(link.className).toContain('members-cell-inline');
     expect(link).toHaveAttribute('title', expect.stringContaining('A very long task title'));
   });
 
-  it('retains the project chooser and reads only the selected project', async () => {
-    const { reads } = setup();
+  it('requests one organization directory without merging project rows in the page', async () => {
+    const { reads, setDirectoryResponse, setOverviewResponse } = setup();
+    setDirectoryResponse({ ok: true, data: { ...DIRECTORY, members: DIRECTORY.members.map((member, index) => ({
+      ...member,
+      duty: index === 0 ? '小组负责人' : undefined,
+      projects: index === 0 ? [{ key: 'demo', name: 'Team mainline' }, { key: 'docs', name: 'Docs stream' }]
+        : [{ key: 'demo', name: 'Team mainline' }],
+    })) } });
+    const model = overviewModel();
+    model.project = '';
+    setOverviewResponse(model);
+    renderApp('/members');
+    await loaded();
+    expect(reads).toEqual(['{}']);
+    expect(document.querySelectorAll('.members-table tbody tr.ant-table-row')).toHaveLength(3);
+    const first = screen.getByTestId('member-row-person-taylor');
+    expect(within(first).getByText('小组负责人')).toBeTruthy();
+    expect(screen.getByTestId('member-projects-person-taylor')).toHaveTextContent('Team mainline、Docs stream');
+    expect(screen.getAllByRole('link', { name: 'Team mainline' })[0]).toHaveAttribute('href', '/projects/demo');
+    expect(screen.getByRole('link', { name: 'Docs stream' })).toHaveAttribute('href', '/projects/docs');
+    const page = screen.getByTestId('page-members');
+    expect(within(page).getByRole('link', { name: i18n.t('members.viewConnections') })).toHaveAttribute('href', '/account');
+    expect(within(page).getByRole('link', { name: i18n.t('members.connectAgent') })).toHaveAttribute('href', '/agent-connect');
+  });
+
+  it('falls back to the existing project chooser when organization directories are unsupported', async () => {
+    const { reads, fetch, setDirectoryResponse } = setup();
+    setDirectoryResponse({ ok: false, error: { code: 'Unsupported' } });
     renderApp('/members');
     expect(await screen.findByText('Team mainline')).toBeTruthy();
-    expect(reads).toEqual([]);
+    expect(screen.getByTestId('page-members')).toHaveTextContent(i18n.t('members.chooseProject'));
+    expect(reads).toEqual(['{}']);
+    // The organization scope exists only behind an organization directory; an unsupported one
+    // leaves no empty-scope composed read behind (the shell's per-project indicators still read).
+    const organizationModelReads = fetch.mock.calls
+      .filter(([input]) => String(input).endsWith('/api/team/overview-model?project='));
+    expect(organizationModelReads).toHaveLength(0);
+    expect(fetch.mock.calls.filter(([input]) => String(input).includes('/api/team/connections/list'))).toHaveLength(0);
+    setDirectoryResponse({ ok: true, data: DIRECTORY });
     await userEvent.setup().click(screen.getAllByRole('button', { name: '查看成员' })[0]);
     await loaded();
-    expect(reads).toEqual([JSON.stringify({ project: 'demo' })]);
+    expect(reads).toEqual(['{}', JSON.stringify({ project: 'demo' })]);
+    expect(document.querySelectorAll('.members-table tbody tr.ant-table-row')).toHaveLength(3);
+    expect(screen.queryByText('Docs stream')).toBeNull();
+  });
+
+  it('shows a recorded duty and keeps the existing missing-duty fallback', async () => {
+    const { setDirectoryResponse } = setup();
+    setDirectoryResponse({ ok: true, data: { ...DIRECTORY, members: DIRECTORY.members.map((member, index) => ({
+      ...member, ...(index === 0 ? { duty: '小组负责人' } : {}),
+    })) } });
+    renderApp('/members?scope=demo');
+    await loaded();
+    expect(within(screen.getByTestId('member-row-person-taylor')).getByText('小组负责人')).toBeTruthy();
+    expect(within(screen.getByTestId('member-row-person-riley')).getByText(i18n.t('members.roleMissing'))).toBeTruthy();
+  });
+
+  it.each([
+    ['flat', 'directory-web-read-flat.json'],
+    ['hierarchical', 'directory-web-read-hierarchy.json'],
+    ['unconfigured', 'directory-web-read-unconfigured.json'],
+  ])('renders the verbatim %s directory reply without raw fields', async (_name, file) => {
+    const sample = JSON.parse(readFileSync(`test/fixtures/${file}`, 'utf8')) as { data: unknown };
+    const projection = projectDirectory(sample.data);
+    expect(projection).not.toBeNull();
+    const { setDirectoryResponse } = setup();
+    setDirectoryResponse({ ok: true, data: projection });
+    renderApp('/members?scope=demo');
+    expect(await screen.findByTestId('page-members')).toBeTruthy();
+    const page = screen.getByTestId('page-members');
+    expect(page.textContent).not.toMatch(/undefined|null|NaN|person_id|department_ids|updated_at_ms/i);
+    expect(findHumanLanguageViolations(page)).toEqual([]);
   });
 
   it('retains confirmed directory facts after a failed refresh and replaces them after recovery', async () => {
@@ -524,10 +661,11 @@ describe('members and Agents panorama', () => {
   it('highlights exactly three pending items but not two', async () => {
     const { setOverviewResponse } = setup();
     const model = overviewModel();
-    model.input.approvals = { coverage: 'complete', items: [
-      ...(model.input.approvals.items ?? []),
-      { id: 'riley-first', kind: 'plan-approval', recipientPersonId: 'person-riley', projectId: 'demo', title: 'Riley first' },
-      { id: 'riley-second', kind: 'plan-approval', recipientPersonId: 'person-riley', projectId: 'demo', title: 'Riley second' },
+    model.input.decisions = { coverage: 'complete', items: [
+      ...[1, 2, 3].map((number) => ({ id: `taylor-${number}`, taskId: 'task / ?', state: 'open', current: true,
+        question: `Question ${number}`, allowedResponderIds: ['person-taylor'], createdAtUnixMs: NOW })),
+      ...[1, 2].map((number) => ({ id: `riley-${number}`, taskId: 'planned-task', state: 'open', current: true,
+        question: `Question ${number}`, allowedResponderIds: ['person-riley'], createdAtUnixMs: NOW })),
     ] };
     setOverviewResponse(model);
     renderApp('/members?scope=demo');

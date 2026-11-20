@@ -159,7 +159,9 @@ const fullRoutes = [
 const variantRoutes = {
   empty: [
     { name: 'projects', path: '/projects' },
-    { name: 'members-chooser', path: '/members' },
+    // Without a selected project the page first asks for one organization directory; a
+    // service without that read answers Unsupported by design and the chooser remains.
+    { name: 'members-chooser', path: '/members', expectedErrors: ['Unsupported'] },
     { name: 'settings-empty', path: '/settings' },
   ],
   single: [
@@ -290,6 +292,51 @@ async function recordCanonicalProjects(page) {
   assert.deepEqual(ownerMeta, ['周宁 · 应用小组', '吴桐 · 平台小组', '郑岚 · 交付小组', '刚接管'],
     'the four owner-and-group cells must equal the prototype');
   canonicalProjectsRecords.push({ lead, statusTexts, sentences, updatedTexts, ownerMeta });
+}
+
+/* The canonical variant also serves the organization-wide directory the prototype's members
+   page reads: eight members, three groups, recorded duties, and each person's queue count
+   equal to the prototype (周宁 1、林悦 1、许宁 3, everyone else none). These assertions are
+   the page-level oracle; a red count means the demo facts or the queue rule drifted. */
+const canonicalMembersRecords = [];
+
+async function recordCanonicalMembers(page) {
+  await settle(page);
+  await page.getByTestId('member-table').waitFor();
+  const rows = page.locator('.members-table tbody tr.ant-table-row');
+  assert.equal(await rows.count(), 8, 'the canonical members table has the prototype eight rows');
+  const names = [];
+  const duties = [];
+  for (let index = 0; index < 8; index += 1) {
+    names.push((await rows.nth(index).locator('.members-name').innerText()).trim());
+    duties.push((await rows.nth(index).locator('.members-group-cell .members-small').innerText()).trim());
+  }
+  assert.deepEqual(names, ['周宁', '林悦', '陈宇', '许宁', '吴桐', '赵衡', '郑岚', '何川'],
+    'the eight member names must equal the prototype order');
+  assert.deepEqual(duties, ['小组负责人', '开发', '开发', '复核', '小组负责人', '开发', '小组负责人', '开发'],
+    'the recorded duties must equal the prototype');
+  const pending = [];
+  for (let index = 0; index < 8; index += 1) {
+    pending.push((await rows.nth(index).locator('[data-testid^="member-pending-"]').innerText()).trim());
+  }
+  assert.deepEqual(pending, ['1 件', '1 件', '没有', '3 件', '没有', '没有', '没有', '没有'],
+    'the waiting-on-this-person counts must equal the prototype');
+  const summary = (await page.getByTestId('members-summary').innerText()).replace(/\s+/g, '');
+  assert.ok(summary.includes('8位成员，3个小组'),
+    `the members lead must count eight members and three groups (read ${summary})`);
+  assert.equal((await rows.nth(3).locator('[data-testid^="member-doing-"]').innerText()).trim(),
+    '复核“接口第 3 版”等 3 件',
+    'the recorded reviewer reads their review queue like the prototype');
+  assert.equal((await rows.nth(7).locator('[data-testid^="member-doing-"]').innerText()).trim(),
+    '在甲方的测试环境走通 5 步接入',
+    'a waiting task without an agent still reads as the doing work, like the prototype');
+  const wide = (page.viewportSize()?.width ?? 0) >= 1240;
+  if (wide) {
+    assert.equal((await rows.nth(3).locator('[data-testid^="member-projects-"]').innerText()).trim(),
+      '订单协作平台、统一通知服务',
+      'a member of two projects reads both in one row like the prototype');
+  }
+  canonicalMembersRecords.push({ names, duties, pending, summary });
 }
 
 async function firstLoadGeometry(page) {
@@ -897,6 +944,15 @@ try {
             await settle(page);
             await recordCanonicalProjects(page);
           },
+        }, {
+          // The prototype's members page is organization-wide: without a selected project the
+          // canonical bridge serves that directory and the page reads it in one request.
+          name: 'members-canonical',
+          path: '/members',
+          action: async (page) => {
+            await settle(page);
+            await recordCanonicalMembers(page);
+          },
         }]
         : variantRoutes[variant];
     for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
@@ -926,10 +982,11 @@ const report = {
   documentedKeyLeaks,
   canonicalWorkbenchRecords,
   canonicalProjectsRecords,
+  canonicalMembersRecords,
   results,
 };
 await mkdir(evidence, { recursive: true });
 await writeFile(path.join(evidence, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
 console.log(JSON.stringify({ evidence, visited: results.length, failures, documentedKeyLeaks,
-  canonicalWorkbenchRecords, canonicalProjectsRecords }, null, 2));
+  canonicalWorkbenchRecords, canonicalProjectsRecords, canonicalMembersRecords }, null, 2));
 assert.deepEqual(failures, []);
