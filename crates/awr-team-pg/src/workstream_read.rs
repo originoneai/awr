@@ -1298,10 +1298,24 @@ pub(crate) async fn authenticated_read(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
+    // Audit identity disclosure judges directory-read authority on the
+    // unrestricted reader. `resolve_agent_read_delegation` below narrows `auth`
+    // to the query's own delegation (one workstream for a stream-scoped grant);
+    // the disclosure gate must not inherit that narrowing, nor escape it.
+    let directory_auth =
+        matches!(request.op.as_str(), "audit.requests" | "audit.development").then(|| auth.clone());
     crate::delegation_auth::resolve_agent_read_delegation(tx, &mut auth, project, request, now_ms)
         .await?;
     // Keep shared read state off nested handoff and checkpoint command stacks.
-    Box::pin(read(tx, tenant, project, &auth, request)).await
+    Box::pin(read(
+        tx,
+        tenant,
+        project,
+        &auth,
+        directory_auth.as_ref(),
+        request,
+    ))
+    .await
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -1410,6 +1424,7 @@ pub(crate) async fn read(
     tenant: &str,
     project: &str,
     auth: &ReaderAuthority,
+    directory_auth: Option<&ReaderAuthority>,
     q: &WorkstreamQuery,
 ) -> PgResult<Value> {
     let visible: Vec<_> = auth
@@ -1456,7 +1471,7 @@ pub(crate) async fn read(
         return handoffs::read(tx, tenant, project, auth, q).await;
     }
     if matches!(q.op.as_str(), "audit.requests" | "audit.development") {
-        return activity::read(tx, tenant, project, auth, q).await;
+        return activity::read(tx, tenant, project, auth, directory_auth, q).await;
     }
     if q.op == "capabilities" {
         let mut caps = json!({

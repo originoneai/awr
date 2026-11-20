@@ -10,6 +10,7 @@ import type {
   TeamOverviewModelResponse,
   TeamProjectsResponse,
   TeamReadResponse,
+  TeamShellResponse,
   WorkInboxData,
   WorkNextData,
   SourceContentData,
@@ -44,6 +45,7 @@ export const readQueryDefaults = {
 
 /** Query keys are namespaced per resource/tab. */
 export const queryKeys = {
+  shell: ['team', 'shell'] as const,
   projects: ['team', 'projects'] as const,
   overview: (project: string | null) => ['team', 'overview', project] as const,
   overviewModel: (project: string | null) => ['team', 'overview-model', project] as const,
@@ -71,6 +73,19 @@ export function readableSourceRef(path: string | null | undefined, sha256: strin
   return typeof path === 'string' && path.length > 0 && path.length <= 512
     && !forbiddenInPath.some((pattern) => pattern.test(path))
     && typeof sha256 === 'string' && /^[0-9a-f]{64}$/.test(sha256);
+}
+
+export function shellQueryOptions(revoked = false) {
+  return {
+    queryKey: queryKeys.shell,
+    queryFn: () => apiGet<TeamShellResponse>('/api/team/shell'),
+    // The shell's own facts (read source, perspective heights) change rarely; the shell
+    // cadence keeps them current without adding a page-level read. Revocation silences
+    // this read like every other restricted read.
+    enabled: !revoked,
+    ...readQueryDefaults,
+    refetchInterval: SHELL_POLL_INTERVAL_MS,
+  } satisfies UseQueryOptions<TeamShellResponse>;
 }
 
 export function projectsQueryOptions(revoked = false) {

@@ -31,6 +31,16 @@ export interface TeamProjectsResponse {
   view?: string;
 }
 
+/** The shell's own read: which records this deployment's pages read, the organization's
+ * display name (null when this deployment does not establish it), plus the perspective
+ * facts its directory establishes (null when this deployment does not establish them). */
+export interface TeamShellResponse {
+  ok: boolean;
+  source: 'demo' | 'live';
+  organizationName?: string | null;
+  perspective: import('../lib/perspective/types').PerspectiveFacts | null;
+}
+
 export interface CoveragePart {
   workstream_id?: string;
   status: 'succeeded' | 'failed';

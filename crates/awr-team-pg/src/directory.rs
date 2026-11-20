@@ -77,6 +77,16 @@ async fn authorize(
     Ok(())
 }
 
+/// The exact read gate used by `directory.read`, shared with optional name
+/// disclosure in adjacent read projections without widening that authority.
+pub(crate) async fn authorize_read(
+    tx: &Transaction<'_>,
+    auth: &mut ReaderAuthority,
+    project: &str,
+) -> PgResult<()> {
+    authorize(tx, auth, project, false).await
+}
+
 async fn snapshot(tx: &Transaction<'_>, tenant: &str, project: &str) -> PgResult<Value> {
     let row = tx
         .query_opt(
