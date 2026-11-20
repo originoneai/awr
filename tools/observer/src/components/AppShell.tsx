@@ -11,12 +11,12 @@ import {
   type MenuProps,
 } from 'antd';
 import {
-  ChevronDown,
-  ChevronRight,
-  Folder,
-  Sun,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  FolderIcon,
+  SunIcon,
   type LucideIcon,
-} from 'lucide-react';
+} from './icons/prototype-icons';
 import { useCallback, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, matchPath, NavLink, useLocation, useNavigate } from 'react-router';
@@ -33,17 +33,17 @@ import { craftTokens } from '../theme';
 import { useCraftTheme } from './CraftThemeProvider';
 import { SearchPanel } from './SearchPanel';
 import {
-  ShellActivityIcon,
-  ShellBellIcon,
-  ShellBuildingIcon,
-  ShellInboxIcon,
-  ShellLessonsIcon,
-  ShellMembersIcon,
-  ShellMoonIcon,
-  ShellSearchIcon,
-  ShellSettingsIcon,
-  ShellWorkbenchIcon,
-} from './ShellGlyphs';
+  ActivityIcon,
+  BellIcon,
+  BookIcon,
+  BuildingIcon,
+  HomeIcon,
+  InboxIcon,
+  MoonIcon,
+  SearchIcon,
+  SlidersIcon,
+  UsersIcon,
+} from './icons/prototype-icons';
 import { ThemeToggle } from './ThemeToggle';
 import { useCompactViewport, useMediaQuery } from '../lib/viewport';
 
@@ -51,16 +51,16 @@ const { Header, Sider, Content } = Layout;
 const COMPACT_SEARCH_QUERY = '(max-width: 1240px)';
 
 const PRIMARY_NAVIGATION = [
-  { path: '/workbench', icon: ShellWorkbenchIcon, label: 'workbench' },
-  { path: '/projects', icon: Folder, label: 'projects' },
-  { path: '/inbox', icon: ShellInboxIcon, label: 'inbox' },
-  { path: '/lessons', icon: ShellLessonsIcon, label: 'lessons' },
+  { path: '/workbench', icon: HomeIcon, label: 'workbench' },
+  { path: '/projects', icon: FolderIcon, label: 'projects' },
+  { path: '/inbox', icon: InboxIcon, label: 'inbox' },
+  { path: '/lessons', icon: BookIcon, label: 'lessons' },
 ] as const;
 
 const ADMIN_NAVIGATION = [
-  { path: '/members', icon: ShellMembersIcon, label: 'members' },
-  { path: '/activity', icon: ShellActivityIcon, label: 'activity' },
-  { path: '/settings', icon: ShellSettingsIcon, label: 'settings' },
+  { path: '/members', icon: UsersIcon, label: 'members' },
+  { path: '/activity', icon: ActivityIcon, label: 'activity' },
+  { path: '/settings', icon: SlidersIcon, label: 'settings' },
 ] as const;
 
 const NAVIGATION = [...PRIMARY_NAVIGATION, ...ADMIN_NAVIGATION];
@@ -237,7 +237,7 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
     ? `${pendingCount}${pendingData.truncated || pendingData.next_cursor !== null ? '+' : ''}`
     : null;
   const memberName = currentMemberName(overview.data) ?? t('shell.you');
-  const MobileThemeIcon = mode === 'dark' ? Sun : ShellMoonIcon;
+  const MobileThemeIcon = mode === 'dark' ? SunIcon : MoonIcon;
   const mobileThemeLabel = t(mode === 'dark' ? 'shell.switchToLight' : 'shell.switchToDark');
   const perspectiveFacts = revoked
     ? unknownPerspectiveFacts()
@@ -442,7 +442,7 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
         >
           <Breadcrumb
             aria-label={t('shell.breadcrumbs')}
-            separator={<ChevronRight size={14} strokeWidth={1.5} aria-hidden />}
+            separator={<ChevronRightIcon size={14} strokeWidth={1.5} aria-hidden />}
             style={{
               flex: compactNavigation ? '1 1 auto' : '0 1 auto',
               minWidth: 0,
@@ -456,7 +456,7 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
               {
                 title: (
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                    <ShellBuildingIcon size={16} strokeWidth={1.5} aria-hidden />
+                    <BuildingIcon size={16} strokeWidth={1.5} aria-hidden />
                     <Dropdown menu={scopeMenu} trigger={['click']}>
                       <Button
                         type="text"
@@ -465,7 +465,7 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
                         style={{ maxWidth: compactNavigation ? 160 : 300, height: 32, paddingInline: 4 }}
                       >
                         <span className="shell-scope-label">{scopeLabel}</span>
-                        <ChevronDown size={16} strokeWidth={1.5} aria-hidden />
+                        <ChevronDownIcon size={16} strokeWidth={1.5} aria-hidden />
                       </Button>
                     </Dropdown>
                   </span>
@@ -506,7 +506,7 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
                 aria-label={t('shell.search')}
                 aria-keyshortcuts="Meta+K Control+K"
                 onClick={(event) => openSearch(event.currentTarget)}
-                icon={<ShellSearchIcon size={16} strokeWidth={1.5} aria-hidden />}
+                icon={<SearchIcon size={16} strokeWidth={1.5} aria-hidden />}
               >
                 <span style={{ flex: 1 }}>{t('shell.search')}</span>
                 <span
@@ -537,7 +537,7 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
                     ? t('nav.inbox')
                     : t('shell.pendingNotifications', { count: pendingCount })}
                   onClick={() => navigate(inboxPath)}
-                  icon={<ShellBellIcon size={18} strokeWidth={1.5} aria-hidden />}
+                  icon={<BellIcon size={18} strokeWidth={1.5} aria-hidden />}
                   style={{ width: 32, height: 32, padding: 0 }}
                 />
               </Badge>

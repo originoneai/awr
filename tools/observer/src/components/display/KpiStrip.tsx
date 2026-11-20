@@ -1,7 +1,11 @@
-import { ArrowDown, ArrowUp, ChevronRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useCompactViewport } from '../../lib/viewport';
 import { DisplayIcon } from './DisplayIcon';
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
+  ChevronRightIcon,
+} from '../icons/prototype-icons';
 import './display.css';
 
 export type KpiChangeTone = 'good' | 'warn' | 'bad';
@@ -47,7 +51,7 @@ export function KpiStrip({ items }: KpiStripProps) {
             <span className="obs-kpi-label">
               {metric.label}
               {metric.onOpen === undefined ? null : (
-                <span className="obs-kpi-hint"><DisplayIcon icon={ChevronRight} /></span>
+                <span className="obs-kpi-hint"><DisplayIcon icon={ChevronRightIcon} /></span>
               )}
             </span>
             <span className="obs-kpi-value">
@@ -58,7 +62,7 @@ export function KpiStrip({ items }: KpiStripProps) {
               <span className="obs-kpi-change" data-tone={metric.change.tone}>
                 {metric.change.trend === undefined ? null : (
                   <span className="obs-kpi-trend">
-                    <DisplayIcon icon={metric.change.trend === 'up' ? ArrowUp : ArrowDown} />
+                    <DisplayIcon icon={metric.change.trend === 'up' ? ArrowUpIcon : ArrowDownIcon} />
                   </span>
                 )}
                 {metric.change.text}

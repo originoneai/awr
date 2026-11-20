@@ -3,9 +3,9 @@ import { ObservationValue } from '../components/ObservationValue';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { Button, Card, Col, Input, List, Pagination, Row, Space, Tabs, Tag, Typography, theme } from 'antd';
 import { useState } from 'react';
-import { Stamp } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
+import { StampIcon } from '../components/icons/prototype-icons';
 import { ObservationEmpty, ObservationForbidden } from '../components/states';
 
 import {
@@ -310,7 +310,7 @@ function WorkDocumentReferences({ project }: { project: string }) {
                         <Tag color="warning">{t('knowledge.partial')}</Tag>
                       ) : (
                         <Tag data-testid="read-digest" color={readVerdict === 'verified' ? 'success' : 'default'}>
-                          {readVerdict === 'verified' ? <Stamp size={16} strokeWidth={1.5} aria-label={t('knowledge.digestVerified')} /> : null}
+                          {readVerdict === 'verified' ? <StampIcon size={16} strokeWidth={1.5} aria-label={t('knowledge.digestVerified')} /> : null}
                           {t(DIGEST_LABEL[readVerdict === 'pending' ? 'pending' : readVerdict])}
                         </Tag>
                       )}
@@ -328,7 +328,7 @@ function WorkDocumentReferences({ project }: { project: string }) {
                           data-testid="digest-check"
                           color={digestCheck === 'verified' ? 'success' : digestCheck === 'mismatch' ? 'error' : 'default'}
                         >
-                          {digestCheck === 'verified' ? <Stamp size={16} strokeWidth={1.5} aria-label={t('knowledge.digestVerified')} /> : null}
+                          {digestCheck === 'verified' ? <StampIcon size={16} strokeWidth={1.5} aria-label={t('knowledge.digestVerified')} /> : null}
                           {t(DIGEST_LABEL[digestCheck])}
                         </Tag>
                       ) : null}

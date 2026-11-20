@@ -1,6 +1,7 @@
 import { App as AntdApp } from 'antd';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { readFileSync } from 'node:fs';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import i18n from '../../i18n';
@@ -223,6 +224,20 @@ describe('RowList', () => {
     renderDisplay(<RowList items={[]} empty={<span>没有资料</span>} />);
     expect(screen.getByText('没有资料')).toBeInTheDocument();
     expect(document.querySelector('.obs-row-list')).toBeNull();
+  });
+
+  it('draws the openable-row arrow as the prototype chev glyph', () => {
+    // The trailing arrow is the prototype's own chev node list, not any other arrow
+    // (icon-registry task: swapping the glyph here must turn this test red).
+    const rows = JSON.parse(readFileSync('src/test-fixtures/prototype-icons.json', 'utf8')).chev as string[];
+    renderDisplay(<RowList items={[{ key: 'one', title: '接口约定', onOpen: () => {} }]} />);
+    const arrow = document.querySelector('.obs-row-control svg');
+    expect(arrow).not.toBeNull();
+    const nodes = [...arrow!.children].map((child) => {
+      expect(child.tagName.toLowerCase()).toBe('path');
+      return { tag: 'path', d: (child as SVGPathElement).getAttribute('d') };
+    });
+    expect(nodes).toEqual(rows.map((row) => ({ tag: 'path', d: row })));
   });
 });
 
