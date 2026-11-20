@@ -254,6 +254,23 @@ exits 1 with the error on stderr and no result on stdout. Successful reads do no
 authorize execution. Usage errors still exit 2, and Personal error reports and
 exit behavior remain unchanged.
 
+Five runtime reads also use this contract: `team session inspect`, `team claim
+inspect`, `team execution inspect`, `team command inspect`, and `team work
+recovery`. Each sends one query, requires explicit `--remote`, and retains the
+original response envelope, version strings, hashes, permissions and nulls.
+Claim/execution/command record IDs require an additional work or session scope;
+the service checks both when supplied together. These reads do not accept paging
+or context-budget options.
+
+Ended sessions, expired/released claims, failed/settled executions and empty
+recovery lists still exit 0. So does `command inspect` with `data.state=unknown`:
+no committed receipt is visible, but an in-flight command may still commit.
+Consumers must inspect the state; a successful query does not prove the original
+command succeeded or failed. Recovery returns at most two current-ownership
+session/checkpoint candidates, with historical actions and current guidance; it
+neither grants authority nor automatically resumes work. The existing `team
+command --body` validation/refusal path remains separate from inspection.
+
 输入 JSON 语法或字段错误返回 `InvalidInput`。多个错误同时存在时，修正首个错误后继续处理。
 
 核心错误保留 `NotFound`、`SourceUnavailable`、`SourceStale`、`SourceConflict`、`RevisionConflict`、`DependencyBlocked`、`ClaimConflict`、`RuleViolation`、`EvidenceMissing`、`MutationUnsupported`、`MutationConflict`、`WorkspaceConflict`、`WorkspaceContended`、`ContextIncomplete`、`BudgetExceeded`、`InvalidTransition`。`InvalidInput`、`Unsupported`、`Storage`、`Io`、`Json` 表示输入、实现或底层错误。提案 / 恢复错误还可能包括 `proposal_required`、`MutationIncomplete`、`WorkActionIncomplete`、`CheckpointIncomplete`，其中附带的提案或尝试 ID 是恢复入口。
