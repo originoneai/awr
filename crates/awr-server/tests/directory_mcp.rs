@@ -42,6 +42,16 @@ fn hierarchy_plan() -> Value {
         "members":[{"person_id":"directory-person","department_ids":["scheduling"]}]})
 }
 
+/// Two active people intentionally share one display name; one belongs to both groups.
+fn identity_plan() -> Value {
+    json!({"organization":{"id":"example","name":"Example company"},
+        "departments":[{"id":"engineering","name":"Engineering"},
+            {"id":"research","name":"Research"}],
+        "project_department_ids":["engineering","research"],
+        "members":[{"person_id":"directory-person","department_ids":["engineering","research"]},
+            {"person_id":"directory-person-two","department_ids":["research"]}]})
+}
+
 /// Write one verbatim reply into the evidence sample directory when configured.
 /// The committed copies under tests/samples are compared in the same test run.
 fn save_verbatim(name: &str, value: &Value) {
@@ -447,6 +457,7 @@ async fn browser_directory_reads_reauthorize_the_current_session_and_keep_writes
     assert_eq!(denied.status(), 403);
     let denied: Value = denied.json().await.unwrap();
     assert!(!denied.to_string().contains("Project coordinator"));
+    assert!(!denied.to_string().contains("directory-person"));
 }
 
 #[tokio::test]
@@ -612,6 +623,54 @@ async fn hierarchical_directories_round_trip_the_real_entries_and_feed_the_sampl
     assert_eq!(web_hierarchy["ok"], true);
     assert_eq!(web_hierarchy["data"], agent_http);
     save_verbatim("directory-web-read-hierarchy.json", &web_hierarchy);
+    // 4. Stable person identity does not depend on a unique name or one group.
+    admin.batch_execute("INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status)
+        VALUES('reader-tenant','reader-project','directory-person-two','Project coordinator','active')")
+        .await.unwrap();
+    let identity_preview = call(
+        &client,
+        "awr_team_directory_preview",
+        json!({"protocol_version":1,"plan":identity_plan()}),
+        false,
+    )
+    .await;
+    let identity_receipt = call(
+        &client,
+        "awr_team_directory_apply",
+        json!({"protocol_version":1,"request_id":"identity-directory-v3",
+            "expected_version":identity_preview["expected_version"],
+            "expected_plan_digest":identity_preview["plan_digest"],"plan":identity_plan()}),
+        false,
+    )
+    .await;
+    assert_eq!(identity_receipt["receipt"]["version"], "3");
+    let web_identities: Value = web_read(json!({"protocol_version":1}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let identity_members = web_identities["data"]["members"].as_array().unwrap();
+    assert_eq!(identity_members.len(), 2);
+    assert!(
+        identity_members
+            .iter()
+            .all(|member| member["display_name"] == "Project coordinator")
+    );
+    let person_ids = identity_members
+        .iter()
+        .map(|member| member["member_ref"]["person_id"].as_str().unwrap())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        person_ids,
+        BTreeSet::from(["directory-person", "directory-person-two"])
+    );
+    assert_eq!(
+        identity_members[0]["department_ids"],
+        json!(["engineering", "research"])
+    );
+    save_verbatim("directory-web-read-identities.json", &web_identities);
     // The committed samples parse and keep the live deterministic shape.
     for (name, live) in [
         (
@@ -621,6 +680,10 @@ async fn hierarchical_directories_round_trip_the_real_entries_and_feed_the_sampl
         ("directory-web-read-flat.json", &flat["data"]),
         ("directory-agent-read-hierarchy.json", &agent_http),
         ("directory-web-read-hierarchy.json", &web_hierarchy["data"]),
+        (
+            "directory-web-read-identities.json",
+            &web_identities["data"],
+        ),
     ] {
         let full = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/samples")

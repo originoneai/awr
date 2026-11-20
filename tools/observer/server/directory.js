@@ -17,7 +17,23 @@ function projectDirectory(value) {
     || !unique(plan.departments.map((item) => item.id))
     || !Array.isArray(plan.members) || plan.members.length > 256
     || !Array.isArray(value.members) || value.members.length !== plan.members.length) return null;
-  const departments = new Map(plan.departments.map((item) => [item.id, { key: item.id, name: item.name }]));
+  const maxDepartmentDepth = 4;
+  const departments = new Map(plan.departments.map((item) => [item.id, {
+    key: item.id, name: item.name, parentKey: item.parent_id ?? null,
+  }]));
+  if (!plan.departments.every((item) => (item.parent_id === undefined || item.parent_id === null
+    || text(item.parent_id) && departments.has(item.parent_id) && item.parent_id !== item.id))) return null;
+  for (const item of plan.departments) {
+    const visited = new Set([item.id]);
+    let current = departments.get(item.id);
+    let depth = 1;
+    while (current.parentKey !== null) {
+      if (visited.has(current.parentKey) || depth >= maxDepartmentDepth) return null;
+      visited.add(current.parentKey);
+      current = departments.get(current.parentKey);
+      depth += 1;
+    }
+  }
   const references = (items) => Array.isArray(items) && unique(items) && items.every((id) => departments.has(id));
   if (!references(plan.project_department_ids) || !plan.members.every((member) => object(member)
     && text(member.person_id) && references(member.department_ids)) || !unique(plan.members.map((member) => member.person_id))) return null;
@@ -39,6 +55,7 @@ function projectDirectory(value) {
     departments: plan.project_department_ids.map((id) => departments.get(id)),
     updated_at_ms: value.updated_at_ms,
     members: value.members.map((member) => ({
+      personId: member.member_ref.person_id,
       name: member.display_name,
       available: member.available,
       departments: member.department_ids.map((id) => departments.get(id)),

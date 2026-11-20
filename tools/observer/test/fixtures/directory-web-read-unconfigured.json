@@ -1,0 +1,20 @@
+{
+  "data": {
+    "access_grants_changed": false,
+    "as_of_project_revision": "3",
+    "configured": false,
+    "cross_project_person_merging": false,
+    "members": [],
+    "plan": {
+      "departments": [],
+      "members": [],
+      "organization": null,
+      "project_department_ids": []
+    },
+    "project_id": "reader-project",
+    "provenance": null,
+    "updated_at_ms": null,
+    "version": "0"
+  },
+  "ok": true
+}

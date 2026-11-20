@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { after, before, test } = require('node:test');
 const { createServer } = require('vite');
 const { createTeamBridge } = require('../server/team-bridge');
+const { projectDirectory } = require('../server/directory');
 const {
   createDemoOrganization, DEMO_VARIANTS, DEMO_FUTURE_READ_OPS, canonicalOverviewInput,
 } = require('../server/demo-organization');
@@ -415,6 +416,39 @@ test('all projects, task details, historical outcomes and document bodies remain
     assert.equal(response.ok, true, document.path);
     assert.equal(response.result.data.text, document.body);
   }
+});
+
+test('demo directory IDs join the overview model and its hierarchy passes the real reply validator', () => {
+  const demo = createDemoOrganization({ variant: 'full', timestampShiftMs: 0 });
+  const overviewMembers = canonicalOverviewInput(demo.data).members.items;
+  const overviewById = new Map(overviewMembers.map((member) => [member.personId, member]));
+  for (const project of demo.data.projects) {
+    const reply = demo.directory(project.project_id);
+    assert.equal(reply.status, 200);
+    const result = projectDirectory(reply.json.data);
+    assert.notEqual(result, null, project.project_id);
+    assert.deepEqual(new Set(result.members.map((member) => member.personId)), new Set(project.member_person_ids));
+    for (const member of result.members) {
+      const overviewMember = overviewById.get(member.personId);
+      assert.ok(overviewMember, `${project.project_id} directory person exists in the overview model`);
+      assert.equal(member.name, overviewMember.displayName);
+      assert.ok(overviewMembers.some((candidate) => candidate.displayName === member.name && candidate.personId === member.personId),
+        'the same display name resolves to the same stable person ID');
+    }
+    for (const department of result.departments) {
+      const source = reply.json.data.plan.departments.find((item) => item.id === department.key);
+      assert.equal(department.parentKey, source.parent_id ?? null);
+      assert.notEqual(department.parentKey, department.key);
+      if (department.parentKey !== null) {
+        assert.ok(reply.json.data.plan.departments.some((item) => item.id === department.parentKey));
+      }
+    }
+  }
+  const first = demo.directory('P-001').json.data;
+  assert.deepEqual(projectDirectory(first).departments, [{ key: 'G-001', name: '应用小组', parentKey: 'G-004' }]);
+  const missingParent = clone(first);
+  missingParent.plan.departments.find((department) => department.id === 'G-004').parent_id = 'missing';
+  assert.equal(projectDirectory(missingParent), null);
 });
 
 test('update facts and lesson usage are computed from their detail arrays', async () => {
