@@ -147,6 +147,51 @@ test('portfolio bridge preserves real member and paged replies with read coverag
   }
 });
 
+test('portfolio bridge refuses replies that are not member-selected and non-executing, and cursors with control characters', async () => {
+  let reply = MEMBER;
+  let reads = 0;
+  const upstream = await startUpstream((request, response) => {
+    if (request.url === '/v1/web/session') {
+      jsonReply(response, { ok: true, session_id: 'ws_member', expires_at_ms: MEMBER.data.as_of.at_unix_ms + 60000 });
+      return;
+    }
+    if (request.url === '/v1/web/portfolio/overview' && request.method === 'POST') {
+      collectBody(request, () => { reads += 1; jsonReply(response, reply); });
+      return;
+    }
+    jsonReply(response, { code: 'NotFound' }, 404);
+  });
+  const bridge = await startBridge(upstream.base, () => MEMBER.data.as_of.at_unix_ms + 1000);
+  try {
+    // The page may only ever show what a member selection allows it to read and that grants no execution.
+    for (const [label, mutate] of [
+      ['an administrator selection basis', (value) => { value.selection_basis = 'admin'; }],
+      ['an execution-authorized reply', (value) => { value.data.execution_authorized = true; }],
+    ]) {
+      reply = structuredClone(MEMBER);
+      mutate(reply);
+      const refused = await read(bridge.base, '/api/team/portfolio', 'ws_member');
+      assert.equal(refused.ok, false, label);
+      assert.equal(refused.error.code, 'BadGateway', label);
+      assert.equal(refused.result, undefined, label);
+    }
+    reply = MEMBER;
+    assert.equal((await read(bridge.base, '/api/team/portfolio', 'ws_member')).ok, true);
+    // Control characters in a cursor are refused before anything reaches the service.
+    const before = reads;
+    for (const code of [1, 31, 127]) {
+      const cursor = encodeURIComponent('abc' + String.fromCharCode(code) + 'def');
+      const invalid = await read(bridge.base, `/api/team/portfolio?cursor=${cursor}`, 'ws_member');
+      assert.equal(invalid.ok, false, `control character ${code}`);
+      assert.equal(invalid.error.code, 'InvalidInput', `control character ${code}`);
+    }
+    assert.equal(reads, before, 'invalid cursors never reach the service');
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
 test('portfolio reads are session-isolated and revocation or upstream failure clears old content', async () => {
   const active = new Set(['ws_one', 'ws_two']);
   const portfolioCalls = [];
