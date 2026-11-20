@@ -174,10 +174,10 @@ describe('AppShell navigation', () => {
     expect(screen.queryByText('private-task')).toBeNull();
   });
 
-  it('keeps future search disabled and hides the single available perspective', () => {
+  it('enables search and hides the single available perspective', () => {
     stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
     renderApp('/workbench');
-    expect(screen.getByRole('button', { name: /搜索/ })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: /搜索/ })).toHaveProperty('disabled', false);
     expect(screen.queryByTestId('perspective-switcher')).toBeNull();
     expect(screen.queryByRole('button', { name: '做事的人' })).toBeNull();
     expect(screen.getByRole('button', { name: '待处理' })).toHaveProperty('disabled', false);

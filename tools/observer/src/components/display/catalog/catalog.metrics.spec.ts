@@ -337,3 +337,48 @@ test('perspective matches the prototype as, seg and compact top seg measurements
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   }
 });
+
+test('search panel matches the prototype sr, sr-top, sr-input, sr-list and sr-row metrics', async ({ page }, testInfo) => {
+  await open(page, 'search');
+  const dialog = page.getByRole('dialog', { name: '搜索' });
+  await dialog.waitFor();
+  await page.getByRole('option').first().waitFor();
+  expect(await page.getByRole('option').count()).toBe(6);
+  const phone = isPhone(testInfo.project.name);
+
+  // .sr { width: min(560px, 100%); border: 1px; border-radius: 16px }
+  const panel = await readStyles(page, '.search-dialog .sr', ['border-top-width', 'border-top-left-radius']);
+  expect(panel).toEqual({ 'border-top-width': '1px', 'border-top-left-radius': '16px' });
+  const panelBox = await readBox(page, '.search-dialog .sr');
+  expect(Math.round(panelBox.width)).toBe(phone ? 358 : 560);
+  // .sr-back { padding-top: 12vh }, implemented as the Modal's 12vh top offset.
+  const dialogBox = await readBox(page, '.search-dialog');
+  expect(Math.round(dialogBox.top)).toBe(Math.round((phone ? 844 : 900) * 0.12));
+  // .sr-back { place-items: start center }: horizontal centering is part of the same contract.
+  expect(Math.round(dialogBox.left)).toBe(phone ? 16 : 440);
+
+  // .sr-top { gap: 10px; height: 52px; padding: 0 16px; border-bottom: 1px }
+  const top = await readStyles(page, '.sr-top', ['height', 'column-gap', 'padding-left', 'padding-right', 'border-bottom-width']);
+  expect(top).toEqual({ height: '52px', 'column-gap': '10px', 'padding-left': '16px', 'padding-right': '16px', 'border-bottom-width': '1px' });
+  // .sr-input { font-size: 15px }; the visible 2px focus ring is the accessibility addition.
+  const input = await readStyles(page, '.sr-input', ['font-size', 'outline-style', 'outline-width']);
+  expect(input).toEqual({ 'font-size': '15px', 'outline-style': 'solid', 'outline-width': '2px' });
+  // .sr-list { max-height: 50vh; overflow-y: auto; padding: 6px }
+  const list = await readStyles(page, '.sr-list', ['max-height', 'overflow-y', 'padding-top', 'padding-left']);
+  expect(list).toEqual({ 'max-height': phone ? '422px' : '450px', 'overflow-y': 'auto', 'padding-top': '6px', 'padding-left': '6px' });
+  // .sr-row { gap: 10px; min-height: 40px; padding: 6px 10px; border-radius: 8px }
+  const row = await readStyles(page, '.sr-row', ['min-height', 'column-gap', 'padding-top', 'padding-left', 'border-top-left-radius']);
+  expect(row).toEqual({ 'min-height': '40px', 'column-gap': '10px', 'padding-top': '6px', 'padding-left': '10px', 'border-top-left-radius': '8px' });
+  // .sr-row .tag { height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px }
+  const tag = await readStyles(page, '.sr-row .tag', ['height', 'padding-left', 'border-top-left-radius', 'font-size']);
+  expect(tag).toEqual({ height: '22px', 'padding-left': '8px', 'border-top-left-radius': '6px', 'font-size': '12px' });
+  // .sr-row .tt and .mm: one-line ellipsis; metadata is 12px and at most 40% wide.
+  const title = await readStyles(page, '.sr-tt', ['overflow', 'text-overflow', 'white-space']);
+  expect(title).toEqual({ overflow: 'hidden', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' });
+  const meta = await readStyles(page, '.sr-mm', ['max-width', 'font-size', 'text-overflow', 'white-space']);
+  expect(meta).toEqual({ 'max-width': '40%', 'font-size': '12px', 'text-overflow': 'ellipsis', 'white-space': 'nowrap' });
+  // .pnote supplies the required range note: 12px/16px, 12px 20px padding and a hairline.
+  const coverage = await readStyles(page, '.sr-coverage', ['padding-top', 'padding-left', 'font-size', 'line-height', 'border-top-width']);
+  expect(coverage).toEqual({ 'padding-top': '12px', 'padding-left': '20px', 'font-size': '12px', 'line-height': '16px', 'border-top-width': '1px' });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});

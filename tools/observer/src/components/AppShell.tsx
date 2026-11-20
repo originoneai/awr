@@ -7,7 +7,6 @@ import {
   Dropdown,
   Layout,
   Menu,
-  Tooltip,
   theme,
   type MenuProps,
 } from 'antd';
@@ -42,6 +41,7 @@ import { useScope } from '../lib/scope';
 import type { TeamOverviewResponse } from '../lib/types';
 import { craftTokens } from '../theme';
 import { useCraftTheme } from './CraftThemeProvider';
+import { SearchPanel } from './SearchPanel';
 import { ThemeToggle } from './ThemeToggle';
 import { useCompactViewport, useMediaQuery } from '../lib/viewport';
 
@@ -483,11 +483,15 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
             ]}
           />
           {compactNavigation ? avatarMenu : null}
-          {!compactNavigation && !compactSearch ? (
-            <Tooltip title={t('shell.later')}>
+          <SearchPanel
+            projectKey={projectKey}
+            renderTrigger={(openSearch) => !compactNavigation && !compactSearch ? (
               <Button
-                disabled
+                disabled={revoked}
                 className="shell-search"
+                aria-label={t('shell.search')}
+                aria-keyshortcuts="Meta+K Control+K"
+                onClick={(event) => openSearch(event.currentTarget)}
                 icon={<Search size={16} strokeWidth={1.5} aria-hidden />}
                 style={{
                   display: 'flex',
@@ -517,8 +521,8 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
                   ⌘K
                 </span>
               </Button>
-            </Tooltip>
-          ) : null}
+            ) : null}
+          />
           <PerspectiveSwitcher alignEnd={compactSearch} />
           {!compactNavigation ? (
             <>
