@@ -69,6 +69,7 @@
 - `cargo fmt --all --check`（改了 Rust 时必须；本目录原则上不改 Rust）。
 - 本目录（CI 为 `.github/workflows/observer.yml`，Node 24）：`npm ci`、`npx tsc --noEmit`、`npx vitest run`、`npx vite build`、`node --test test/*.test.js`、dist 无外部资源检查；本地冒烟 `node server.js --demo --port 0`。
 - 浏览器截图验收：本地 Playwright 与原型图逐页对比，对比图与结论放 AWR 证据目录（不入 Git），差异写进 PR。
+- 组件目录的像素基线（`src/components/display/__screenshots__/`）只用 Playwright 托管的 Chromium 生成（`npx playwright install chromium` 按锁文件版本装的那份），不要用 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` 指到系统 Chrome：换浏览器构建会改抗锯齿，基线就只属于那一台机器。更新基线：`cd src/components/display/catalog && npx playwright test --update-snapshots`。跑规格前先停掉自己的 Vite 开发服务器——两个 Vite 实例共用 `node_modules/.vite`，会互相失效对方的优化缓存。
 
 ## PR 规则
 

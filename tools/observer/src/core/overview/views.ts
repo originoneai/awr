@@ -248,7 +248,12 @@ export function deriveViews(
   const agentIssues = [...meProject.issues, ...mePersonIssues];
   const agentByName = new Map<string, ViewAgentSummary>();
   for (const task of meTasks) {
-    if (task.status !== 'running') continue;
+    // Running work counts, and so does a waiting task whose Agent is explicitly active: the task
+    // waits on something else while the Agent keeps doing the wait-independent part, like the
+    // prototype's task held up by an upstream review. Stalled, review, returned and claimed work
+    // never counts, and a waiting task without an explicit active Agent is skipped silently
+    // rather than treated as unknown.
+    if (task.status !== 'running' && !(task.status === 'waiting' && task.agentActive === true)) continue;
     if (task.agentName == null) {
       agentIssues.push(makeIssue('tasks', 'view-agent-name-unknown', task.id));
       continue;

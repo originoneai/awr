@@ -301,7 +301,9 @@ impl DirectoryStore {
         audit.request_id = Some(request.request_id.clone());
         audit.digest = Some(digest.clone());
         audit.summary = json!({"plan_digest":digest,"directory_version":next.to_string(),
-            "department_count":plan.departments.len(),"member_count":plan.members.len()});
+            "department_count":plan.departments.len(),"member_count":plan.members.len(),
+            "department_depth":plan.department_depth().map_err(|_| invalid())?,
+            "leaf_department_count":plan.leaf_department_count()});
         crate::ops_audit::record_in_tx(&tx, tenant, project, &audit).await?;
         tx.commit().await?;
         Ok(json!({"replayed":false,"receipt":receipt}))

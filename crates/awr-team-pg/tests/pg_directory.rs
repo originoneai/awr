@@ -2,10 +2,10 @@
 mod common;
 #[path = "fixtures/workstream_access.rs"]
 mod fixture;
-use awr_team::{DirectoryMember, DirectoryUnit, ProjectDirectoryPlan};
+use awr_team::{DirectoryDepartment, DirectoryMember, DirectoryUnit, ProjectDirectoryPlan};
 use awr_team_pg::{DirectoryApplyRequest, PgError, WorkstreamReadStore};
 use fixture::*;
-use serde_json::json;
+use serde_json::{Value, json};
 use tokio_postgres::Client;
 
 fn plan() -> ProjectDirectoryPlan {
@@ -14,9 +14,10 @@ fn plan() -> ProjectDirectoryPlan {
             id: "example".into(),
             name: "Example company".into(),
         }),
-        departments: vec![DirectoryUnit {
+        departments: vec![DirectoryDepartment {
             id: "engineering".into(),
             name: "Engineering".into(),
+            parent_id: None,
         }],
         project_department_ids: vec!["engineering".into()],
         members: vec![
@@ -29,6 +30,36 @@ fn plan() -> ProjectDirectoryPlan {
                 department_ids: vec!["engineering".into()],
             },
         ],
+    }
+}
+
+/// A four-level chain whose leaf ("scheduling") is the group the project and
+/// its members attach under.
+fn hierarchical_plan() -> ProjectDirectoryPlan {
+    let chain = [
+        ("engineering", "Engineering", None),
+        ("platform", "Platform", Some("engineering")),
+        ("runtime", "Runtime", Some("platform")),
+        ("scheduling", "Scheduling", Some("runtime")),
+    ];
+    ProjectDirectoryPlan {
+        organization: Some(DirectoryUnit {
+            id: "example".into(),
+            name: "Example company".into(),
+        }),
+        departments: chain
+            .into_iter()
+            .map(|(id, name, parent)| DirectoryDepartment {
+                id: id.into(),
+                name: name.into(),
+                parent_id: parent.map(str::to_owned),
+            })
+            .collect(),
+        project_department_ids: vec!["scheduling".into()],
+        members: vec![DirectoryMember {
+            person_id: "person-one".into(),
+            department_ids: vec!["scheduling".into()],
+        }],
     }
 }
 
@@ -451,4 +482,257 @@ async fn a_human_supervisor_manages_grouping_with_live_scope_without_member_admi
         directory.preview(TENANT, PROJECT, A, &plan()).await,
         Err(PgError::Forbidden)
     ));
+}
+
+#[tokio::test]
+async fn hierarchical_plans_round_trip_and_report_depth_and_leaves_in_the_summary() {
+    let (_guard, admin, _, store) = setup().await;
+    prepare_directory(&admin).await;
+    let directory = store.directory();
+    let preview = directory
+        .preview(TENANT, PROJECT, A, &hierarchical_plan())
+        .await
+        .unwrap();
+    assert_eq!(preview["expected_version"], "0");
+    assert_eq!(
+        preview["plan_digest"],
+        hierarchical_plan().digest().unwrap()
+    );
+    assert_eq!(
+        preview["after"]["departments"][3]["parent_id"], "runtime",
+        "the previewed plan keeps the proposed hierarchy"
+    );
+    let input = request("hierarchy-v1", "0", hierarchical_plan());
+    let applied = directory.apply(TENANT, PROJECT, A, &input).await.unwrap();
+    assert_eq!(applied["receipt"]["version"], "1");
+    let observed = directory.read(TENANT, PROJECT, A).await.unwrap();
+    assert_eq!(observed["version"], "1");
+    let departments = observed["plan"]["departments"].as_array().unwrap();
+    assert_eq!(departments.len(), 4);
+    assert_eq!(departments[0]["parent_id"], json!(null));
+    assert_eq!(departments[1]["parent_id"], "engineering");
+    assert_eq!(departments[2]["parent_id"], "platform");
+    assert_eq!(departments[3]["parent_id"], "runtime");
+    assert_eq!(
+        observed["plan"]["project_department_ids"],
+        json!(["scheduling"]),
+        "the project is attached under the leaf group"
+    );
+    assert_eq!(
+        observed["members"][0]["department_ids"],
+        json!(["scheduling"])
+    );
+    assert_eq!(observed["members"][0]["display_name"], "Alex");
+    // The audit summary of the apply carries the hierarchy fields.
+    let summary: Value = admin
+        .query_one(
+            "SELECT summary_json FROM awr_team.ops_audit_records
+             WHERE tenant_id=$1 AND project_id=$2 AND action='directory.manage_project'
+             ORDER BY created_at DESC LIMIT 1",
+            &[&TENANT, &PROJECT],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(summary["department_count"], 4);
+    assert_eq!(summary["member_count"], 1);
+    assert_eq!(summary["department_depth"], 4);
+    assert_eq!(summary["leaf_department_count"], 1);
+    // A flat apply summarizes depth 1 with every department itself a leaf.
+    directory
+        .apply(TENANT, PROJECT, A, &request("flatten-v2", "1", plan()))
+        .await
+        .unwrap();
+    let summary: Value = admin
+        .query_one(
+            "SELECT summary_json FROM awr_team.ops_audit_records
+             WHERE tenant_id=$1 AND project_id=$2 AND action='directory.manage_project'
+             ORDER BY created_at DESC LIMIT 1",
+            &[&TENANT, &PROJECT],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(summary["department_depth"], 1);
+    assert_eq!(summary["leaf_department_count"], 1);
+}
+
+#[tokio::test]
+async fn hierarchy_faults_are_rejected_without_touching_the_directory() {
+    let (_guard, admin, _, store) = setup().await;
+    prepare_directory(&admin).await;
+    let directory = store.directory();
+    let mut cycle = hierarchical_plan();
+    cycle.departments[0].parent_id = Some("scheduling".into());
+    let mut too_deep = hierarchical_plan();
+    too_deep.departments.push(DirectoryDepartment {
+        id: "fair-share".into(),
+        name: "Fair share".into(),
+        parent_id: Some("scheduling".into()),
+    });
+    let mut sibling_rename = hierarchical_plan();
+    sibling_rename.departments.push(DirectoryDepartment {
+        id: "observability".into(),
+        name: " Scheduling ".into(),
+        parent_id: Some("runtime".into()),
+    });
+    // Two top-level departments whose names differ only by surrounding
+    // whitespace collide in the one top-level sibling group.
+    let mut top_level_rename = hierarchical_plan();
+    top_level_rename.departments.push(DirectoryDepartment {
+        id: "product".into(),
+        name: " Engineering ".into(),
+        parent_id: None,
+    });
+    let mut unknown_parent = hierarchical_plan();
+    unknown_parent.departments[1].parent_id = Some("unregistered".into());
+    for (label, broken) in [
+        ("cycle", cycle),
+        ("too deep", too_deep),
+        ("sibling rename", sibling_rename),
+        ("top-level rename", top_level_rename),
+        ("unknown parent", unknown_parent),
+    ] {
+        assert!(
+            matches!(
+                directory.preview(TENANT, PROJECT, A, &broken).await,
+                Err(PgError::Protocol(_))
+            ),
+            "{label} must fail preview with the existing invalid-input category"
+        );
+        // A placeholder digest: an invalid plan is refused while normalizing,
+        // before any digest comparison, so the value never takes effect.
+        let refused = DirectoryApplyRequest {
+            protocol_version: 1,
+            request_id: format!("fault-{label}"),
+            expected_version: "0".into(),
+            expected_plan_digest: "0".repeat(64),
+            plan: broken,
+        };
+        assert!(
+            matches!(
+                directory.apply(TENANT, PROJECT, A, &refused).await,
+                Err(PgError::Protocol(_))
+            ),
+            "{label} must fail apply with the existing invalid-input category"
+        );
+    }
+    let observed = directory.read(TENANT, PROJECT, A).await.unwrap();
+    assert_eq!(observed["version"], "0");
+    assert_eq!(observed["configured"], false);
+    let written: i64 = admin
+        .query_one(
+            "SELECT COUNT(*) FROM awr_team.ops_audit_records
+             WHERE tenant_id=$1 AND project_id=$2 AND action='directory.manage_project'",
+            &[&TENANT, &PROJECT],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(written, 0, "rejected plans record no directory audit row");
+    let stored: i64 = admin
+        .query_one(
+            "SELECT COUNT(*) FROM awr_team.project_directories WHERE tenant_id=$1 AND project_id=$2",
+            &[&TENANT, &PROJECT],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(stored, 0);
+}
+
+#[tokio::test]
+async fn directories_recorded_without_the_hierarchy_field_stay_readable_and_upgradable() {
+    let (_guard, admin, _, store) = setup().await;
+    prepare_directory(&admin).await;
+    // A directory exactly as the pre-hierarchy service stored it.
+    admin
+        .execute(
+            "INSERT INTO awr_team.project_directories(tenant_id,project_id,version,plan_json,provenance)
+             VALUES($1,$2,1,$3,'{}'::jsonb)",
+            &[
+                &TENANT,
+                &PROJECT,
+                &json!({"organization":{"id":"example","name":"Example company"},
+                    "departments":[{"id":"engineering","name":"Engineering"}],
+                    "project_department_ids":["engineering"],
+                    "members":[{"person_id":"person-one","department_ids":["engineering"]}]}),
+            ],
+        )
+        .await
+        .unwrap();
+    let directory = store.directory();
+    let legacy = directory.read(TENANT, PROJECT, A).await.unwrap();
+    assert_eq!(legacy["configured"], true);
+    assert_eq!(legacy["version"], "1");
+    assert_eq!(
+        legacy["plan"]["departments"][0].get("parent_id"),
+        None,
+        "an absent parent reference means top level, not an error"
+    );
+    assert_eq!(legacy["members"][0]["display_name"], "Alex");
+    assert_eq!(legacy["members"][0]["available"], true);
+    // A directory the older rules allowed: two same-named top-level
+    // departments. Reading keeps working; previewing the plan unchanged is
+    // refused until one of the two is renamed.
+    admin
+        .execute(
+            "UPDATE awr_team.project_directories SET plan_json=$3
+             WHERE tenant_id=$1 AND project_id=$2",
+            &[
+                &TENANT,
+                &PROJECT,
+                &json!({"organization":{"id":"example","name":"Example company"},
+                    "departments":[{"id":"engineering","name":"Engineering"},
+                        {"id":"product","name":"Engineering"}],
+                    "project_department_ids":["engineering","product"],
+                    "members":[{"person_id":"person-one","department_ids":["engineering"]}]}),
+            ],
+        )
+        .await
+        .unwrap();
+    let duplicated = directory.read(TENANT, PROJECT, A).await.unwrap();
+    assert_eq!(
+        duplicated["plan"]["departments"].as_array().unwrap().len(),
+        2
+    );
+    let unchanged: ProjectDirectoryPlan =
+        serde_json::from_value(duplicated["plan"].clone()).unwrap();
+    assert!(matches!(
+        directory.preview(TENANT, PROJECT, A, &unchanged).await,
+        Err(PgError::Protocol(_))
+    ));
+    // The old directory upgrades to a hierarchy through the normal flow.
+    let preview = directory
+        .preview(TENANT, PROJECT, A, &hierarchical_plan())
+        .await
+        .unwrap();
+    assert_eq!(preview["expected_version"], "1");
+    directory
+        .apply(
+            TENANT,
+            PROJECT,
+            A,
+            &request("upgrade-to-hierarchy", "1", hierarchical_plan()),
+        )
+        .await
+        .unwrap();
+    let upgraded = directory.read(TENANT, PROJECT, A).await.unwrap();
+    assert_eq!(upgraded["version"], "2");
+    assert_eq!(upgraded["plan"]["departments"][3]["parent_id"], "runtime");
+    // A flat apply keeps storing plans without parent references at all.
+    directory
+        .apply(TENANT, PROJECT, A, &request("back-to-flat", "2", plan()))
+        .await
+        .unwrap();
+    let flat: bool = admin
+        .query_one(
+            "SELECT NOT (plan_json->'departments'->0 ? 'parent_id')
+             FROM awr_team.project_directories WHERE tenant_id=$1 AND project_id=$2",
+            &[&TENANT, &PROJECT],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!(flat);
 }

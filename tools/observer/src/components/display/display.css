@@ -8,7 +8,14 @@
   .obs-row-list,
   .obs-data-table,
   .obs-detail-panel,
-  .obs-timeline
+  .obs-timeline,
+  .obs-tag,
+  .obs-kpis,
+  .obs-completion,
+  .obs-legend,
+  .obs-chain-block,
+  .obs-todo-rail,
+  .obs-acceptance
 ) {
   font-family: var(--craft-font-interface);
   font-size: var(--ant-font-size);
@@ -645,6 +652,788 @@ button.obs-row-control:hover {
   font-size: var(--craft-text-small);
 }
 
+/* Status tags: prototype .tag { height 22; padding 0 8; radius 6; gap 6; font 12/16 }
+   and its data-h tint variants — review round 2 named these tokens. */
+.obs-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--craft-gap-tag);
+  height: var(--craft-height-tag);
+  padding: 0 var(--ant-padding-xs);
+  border-radius: var(--craft-radius-tag);
+  background: var(--craft-color-raised);
+  color: var(--craft-color-secondary);
+  font-size: var(--ant-font-size-sm);
+  line-height: var(--craft-leading-tight);
+  white-space: nowrap;
+}
+
+.obs-tag[data-tone="ok"] {
+  background: var(--craft-color-positive-soft);
+  color: var(--craft-color-positive);
+}
+
+.obs-tag[data-tone="risk"] {
+  background: var(--craft-color-warning-soft);
+  color: var(--craft-color-warning);
+}
+
+.obs-tag[data-tone="off"] {
+  background: var(--craft-color-negative-soft);
+  color: var(--craft-color-negative);
+}
+
+.obs-tag[data-tone="info"] {
+  background: var(--craft-color-accent-soft);
+  color: var(--craft-color-accent);
+}
+
+/* State lamp: prototype .lamp { width: 8px; height: 8px; border-radius: 50% } with per-state
+   --c colors; .lamp.ring is the quiet outline variant (inset 1.5px = 1 * 1.5). */
+.obs-lamp {
+  position: relative;
+  flex: none;
+  width: var(--ant-padding-xs);
+  height: var(--ant-padding-xs);
+  border-radius: 50%;
+  background: var(--obs-lamp-color, var(--craft-color-muted));
+}
+
+.obs-lamp[data-lamp="done"] {
+  --obs-lamp-color: var(--craft-color-positive);
+}
+
+.obs-lamp[data-lamp="running"] {
+  --obs-lamp-color: var(--craft-color-accent);
+}
+
+.obs-lamp[data-lamp="stalled"] {
+  --obs-lamp-color: var(--craft-color-warning);
+}
+
+.obs-lamp[data-lamp="blocked"] {
+  --obs-lamp-color: var(--craft-color-negative);
+}
+
+.obs-lamp[data-lamp="ready"] {
+  --obs-lamp-color: var(--craft-color-ink);
+}
+
+/* waiting, record and none keep the muted token above. */
+.obs-lamp[data-ring="true"] {
+  background: transparent;
+  box-shadow: inset 0 0 0 var(--craft-width-lamp-ring) var(--obs-lamp-color, var(--craft-color-muted));
+}
+
+/* The running lamp keeps a data-live marker for callers and assistive tooling. The
+   prototype's quiet pulse is omitted: the accepted motion guard bans keyframes outright
+   (see the "Questions" section of the AWR-PPO-004 second-batch PR). */
+
+/* Metric strip: prototype .kpis { repeat(4, minmax(0, 1fr)); border top/bottom },
+   .kpi { padding: 16px 28px; border-left }, .kpi .l/.v/.c typography. */
+.obs-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-top: 1px solid var(--craft-color-hairline);
+  border-bottom: 1px solid var(--craft-color-hairline);
+}
+
+.obs-kpi {
+  min-width: 0;
+  padding: var(--ant-padding-sm) calc(var(--ant-padding-md) + var(--ant-padding-xs));
+  border-left: 1px solid var(--craft-color-hairline);
+}
+
+.obs-kpi:first-child {
+  border-left: 0;
+}
+
+button.obs-kpi-open {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  border-width: 0 0 0 1px;
+  border-style: solid;
+  border-color: var(--craft-color-hairline);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--craft-motion-feedback) var(--craft-motion-easing);
+}
+
+button.obs-kpi-open:first-child {
+  border-left-width: 0;
+}
+
+button.obs-kpi-open:hover {
+  background: color-mix(in srgb, var(--craft-color-raised) 50%, transparent);
+}
+
+.obs-kpi-label {
+  display: flex;
+  align-items: center;
+  color: var(--craft-color-secondary);
+  font-size: var(--craft-text-small);
+}
+
+.obs-kpi-hint {
+  display: inline-flex;
+  margin-left: var(--ant-padding-xxs);
+  color: var(--craft-color-muted);
+  opacity: 0;
+  transition: opacity var(--craft-motion-feedback) var(--craft-motion-easing);
+}
+
+.obs-kpi-hint .obs-display-icon {
+  width: var(--ant-font-size-sm);
+  height: var(--ant-font-size-sm);
+}
+
+button.obs-kpi-open:hover .obs-kpi-hint,
+button.obs-kpi-open:focus-visible .obs-kpi-hint {
+  opacity: 1;
+}
+
+/* The prototype's .v is a block whose unit small inherits the absolute metric line
+   height; that block layout is what makes the cell 121px tall (review R1). */
+.obs-kpi-value {
+  display: block;
+  margin-top: var(--ant-padding-xxs);
+  font-size: var(--craft-text-metric);
+  line-height: var(--craft-leading-metric);
+  font-weight: var(--ant-font-weight-strong);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.obs-kpi[data-emphasized="true"] .obs-kpi-value {
+  color: var(--craft-color-accent);
+}
+
+.obs-kpi-value small {
+  margin-left: var(--ant-padding-xxs);
+  color: var(--craft-color-secondary);
+  font-size: var(--ant-font-size);
+  font-weight: 400;
+}
+
+.obs-kpi-change {
+  display: flex;
+  align-items: center;
+  gap: var(--ant-padding-xxs);
+  margin-top: var(--ant-line-width-bold);
+  color: var(--craft-color-muted);
+  font-size: var(--ant-font-size-sm);
+  line-height: var(--craft-leading-tight);
+}
+
+.obs-kpi-change[data-tone="good"] {
+  color: var(--craft-color-positive);
+}
+
+.obs-kpi-change[data-tone="warn"] {
+  color: var(--craft-color-warning);
+}
+
+.obs-kpi-change[data-tone="bad"] {
+  color: var(--craft-color-negative);
+}
+
+.obs-kpi-trend .obs-display-icon {
+  width: var(--ant-font-size-sm);
+  height: var(--ant-font-size-sm);
+}
+
+/* Prototype 860px override: .kpis 2 columns, .kpi { padding: 12px 20px }, nth-child(3)
+   loses its left border, n+3 gains a top border, .kpi .v { 28px/36px }. */
+.obs-kpis[data-compact="true"] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.obs-kpis[data-compact="true"] .obs-kpi {
+  padding: calc(var(--ant-padding-xs) + var(--ant-padding-xxs)) var(--ant-padding-md);
+}
+
+.obs-kpis[data-compact="true"] .obs-kpi:nth-child(3) {
+  border-left: 0;
+}
+
+.obs-kpis[data-compact="true"] .obs-kpi:nth-child(n+3) {
+  border-top: 1px solid var(--craft-color-hairline);
+}
+
+.obs-kpis[data-compact="true"] .obs-kpi-value {
+  font-size: var(--craft-text-metric-compact);
+  line-height: var(--craft-leading-metric-compact);
+}
+
+/* Completion: prototype .seg4 { display: flex; gap: 2px; height: 8px },
+   .seg4 i { min-width: 2px; border-radius: 4px }, .seg4 + .sm { margin-top: 6px }. */
+.obs-seg4 {
+  display: flex;
+  gap: var(--ant-line-width-bold);
+  height: var(--ant-padding-xs);
+}
+
+.obs-seg4-part {
+  display: block;
+  flex: 1 1 0%;
+  min-width: var(--ant-line-width-bold);
+  border-radius: var(--craft-radius-nested);
+  background: var(--obs-seg-color);
+}
+
+.obs-completion-summary {
+  margin-top: calc(var(--ant-padding-xxs) + var(--ant-line-width-bold));
+  color: var(--craft-color-muted);
+  font-size: var(--ant-font-size-sm);
+  line-height: var(--craft-leading-tight);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Legend: prototype .legend { gap: 16px; 12px; nowrap }, .hlegend wraps with gap 6px 16px;
+   both hide below 860px because the summary line already speaks the counts. */
+.obs-legend {
+  display: flex;
+  align-items: center;
+  gap: var(--ant-padding-sm);
+  color: var(--craft-color-muted);
+  font-size: var(--ant-font-size-sm);
+  line-height: var(--craft-leading-tight);
+  white-space: nowrap;
+}
+
+.obs-legend[data-variant="wrapped"] {
+  flex-wrap: wrap;
+  gap: calc(var(--ant-padding-xxs) + var(--ant-line-width-bold)) var(--ant-padding-sm);
+  color: var(--craft-color-secondary);
+  white-space: normal;
+}
+
+.obs-legend[data-compact="true"] {
+  display: none;
+}
+
+.obs-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--ant-padding-xxs) + var(--ant-line-width-bold));
+}
+
+.obs-legend-swatch {
+  width: var(--ant-padding-xs);
+  height: var(--ant-padding-xs);
+  border-radius: calc(var(--craft-radius-nested) * 0.5);
+  background: var(--obs-seg-color);
+}
+
+/* Chain: prototype .chain { margin-top: 20px; flex; align-items: center },
+   .cn { flex: 1 1 0; min-height: 104px; padding: 12px 14px 14px; border line-2; radius 12 },
+   .cn.root { red border, red-tinted surface, flex-grow 1.35 }, .cx { width: 48px }. */
+/* Chain canvas: the prototype's .why block — dotted canvas (--craft-color-canvas with a
+   hairline-strong dot on the 16px grid), padding 20/28/24 and a column flex so the footer
+   sits under the diagram; below 860px the padding tightens to 16/20/20 (review R2). */
+.obs-chain-block {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: var(--ant-padding-md) calc(var(--ant-padding-md) + var(--ant-padding-xs)) var(--ant-padding-lg);
+  background-color: var(--craft-color-canvas);
+  background-image: var(--craft-canvas-grid-image);
+  background-size: var(--craft-size-canvas-grid) var(--craft-size-canvas-grid);
+}
+
+.obs-chain-block[data-compact="true"] {
+  padding: var(--ant-padding-sm) var(--ant-padding-md) var(--ant-padding-md);
+}
+
+.obs-chain {
+  display: flex;
+  align-items: center;
+  margin-top: var(--ant-padding-md);
+}
+
+.obs-chain-node {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: var(--craft-height-chain-node);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ant-padding-xxs);
+  padding:
+    calc(var(--ant-padding-xs) + var(--ant-padding-xxs))
+    calc(var(--ant-padding-sm) - var(--ant-line-width-bold))
+    calc(var(--ant-padding-sm) - var(--ant-line-width-bold));
+  border: 1px solid var(--craft-color-hairline-strong);
+  border-radius: var(--craft-radius-card);
+  background: var(--craft-color-surface);
+  color: inherit;
+  text-align: left;
+  box-shadow: var(--craft-shadow-small);
+  /* The prototype's staggered enter animation is omitted: the accepted motion guard bans
+     keyframes outright (see the "Questions" section of the second-batch PR). */
+  transition:
+    border-color var(--craft-motion-feedback) var(--craft-motion-easing),
+    background-color var(--craft-motion-feedback) var(--craft-motion-easing);
+}
+
+button.obs-chain-node {
+  font: inherit;
+  cursor: pointer;
+}
+
+.obs-chain-node:hover {
+  border-color: var(--craft-color-muted);
+}
+
+/* .cn.hot { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) } — the page
+   draws this while the matching rail card is hovered or focused (review R4). */
+.obs-chain-node[data-highlighted="true"] {
+  border-color: var(--craft-color-accent);
+  box-shadow: 0 0 0 var(--ant-line-width) var(--craft-color-accent);
+}
+
+/* .cn .you { position: absolute; top: -11px; right: 12px; height: 20px; padding: 0 8px;
+   radius 6; background: var(--accent); color: var(--on-accent); 12px/20px/500 }.
+   The badge is 20px tall (not the tag's 22); -11 = half of 20 plus the node's 1px border. */
+.obs-chain-you {
+  position: absolute;
+  top: calc((var(--craft-leading-body) / 2 + var(--ant-line-width)) * -1);
+  right: calc(var(--ant-padding-xs) + var(--ant-padding-xxs));
+  height: var(--craft-leading-body);
+  padding: 0 var(--ant-padding-xs);
+  border-radius: var(--craft-radius-tag);
+  background: var(--craft-color-accent);
+  color: var(--craft-color-on-accent);
+  font-size: var(--ant-font-size-sm);
+  line-height: var(--craft-leading-body);
+  font-weight: var(--ant-font-weight-strong);
+  white-space: nowrap;
+}
+
+.obs-chain-node-root {
+  flex-grow: 1.35;
+  border-color: color-mix(in srgb, var(--craft-color-negative) 60%, transparent);
+  background: color-mix(in srgb, var(--craft-color-negative) 7%, var(--craft-color-surface));
+}
+
+.obs-chain-node-root .obs-chain-kicker {
+  color: var(--craft-color-negative);
+}
+
+.obs-chain-kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--ant-padding-xs);
+  min-height: var(--ant-padding-md);
+  color: var(--craft-color-muted);
+  font-size: var(--ant-font-size-sm);
+  line-height: var(--craft-leading-tight);
+}
+
+.obs-chain-avatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  margin-left: auto;
+  width: var(--ant-padding-md);
+  height: var(--ant-padding-md);
+  border-radius: 50%;
+  background: var(--craft-color-raised);
+  color: var(--craft-color-secondary);
+  font-size: calc(var(--craft-text-small) - var(--ant-line-width-bold));
+  font-weight: var(--ant-font-weight-strong);
+}
+
+.obs-chain-title {
+  font-size: var(--ant-font-size);
+  line-height: var(--craft-leading-body);
+  font-weight: var(--ant-font-weight-strong);
+  overflow-wrap: anywhere;
+}
+
+.obs-chain-meta {
+  color: var(--craft-color-secondary);
+  font-size: var(--ant-font-size-sm);
+  line-height: var(--craft-leading-tight);
+  overflow-wrap: anywhere;
+}
+
+/* Root queue: prototype .ql { gap 0; margin-top 6px; radius 8px; inset line }, rows 6px 10px. */
+.obs-chain-queue {
+  display: grid;
+  gap: 0;
+  margin-top: calc(var(--ant-padding-xxs) + var(--ant-line-width-bold));
+  border-radius: var(--craft-radius-control);
+  background: var(--craft-color-surface);
+  box-shadow: inset 0 0 0 var(--ant-line-width) var(--craft-color-hairline);
+  overflow: hidden;
+}
+
+.obs-chain-queue-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ant-padding-xs);
+  padding:
+    calc(var(--ant-padding-xxs) + var(--ant-line-width-bold))
+    calc(var(--ant-padding-xs) + var(--ant-line-width-bold));
+  border-top: 1px solid var(--craft-color-hairline);
+  font-size: var(--ant-font-size-sm);
+  line-height: var(--craft-leading-tight);
+  overflow-wrap: anywhere;
+}
+
+.obs-chain-queue-row:first-child {
+  border-top: 0;
+}
+
+.obs-chain-queue-row em {
+  margin-left: auto;
+  padding-left: var(--ant-padding-xs);
+  color: var(--craft-color-muted);
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.obs-chain-foot {
+  margin-top: auto;
+  padding-top: var(--ant-padding-xs);
+  display: flex;
+  align-items: center;
+  gap: var(--ant-padding-xs);
+  color: var(--craft-color-secondary);
+  font-size: var(--ant-font-size-sm);
+  line-height: var(--craft-leading-tight);
+}
+
+.obs-chain-progress {
+  flex: 1;
+  height: var(--ant-padding-xxs);
+  border-radius: calc(var(--craft-radius-nested) * 0.5);
+  background: var(--craft-completion-not-started);
+}
+
+.obs-chain-progress i {
+  display: block;
+  height: 100%;
+  border-radius: calc(var(--craft-radius-nested) * 0.5);
+  background: var(--craft-completion-verified);
+}
+
+.obs-chain-connector {
+  flex: none;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: var(--ant-line-width-bold);
+  width: var(--ant-margin-xxl);
+  color: var(--craft-color-muted);
+  font-size: var(--ant-font-size-sm);
+  line-height: var(--craft-leading-tight);
+}
+
+.obs-chain-connector-icon {
+  display: inline-flex;
+}
+
+.obs-chain-connector-icon svg {
+  display: block;
+}
+
+.obs-chain-connector[data-hot="true"] {
+  color: var(--craft-color-negative);
+}
+
+/* Chain footer: prototype .why-foot { margin-top: 16px; gap 16px; ink-2; 13px } — R6. */
+.obs-chain-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--ant-padding-sm);
+  flex-wrap: wrap;
+  margin-top: var(--ant-padding-sm);
+  color: var(--craft-color-secondary);
+  font-size: var(--craft-text-small);
+}
+
+/* Prototype 860px override: the chain stacks and connectors turn sideways. */
+.obs-chain[data-compact="true"] {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.obs-chain[data-compact="true"] .obs-chain-node,
+.obs-chain[data-compact="true"] .obs-chain-node-root {
+  flex: none;
+  min-height: 0;
+}
+
+.obs-chain[data-compact="true"] .obs-chain-connector {
+  width: auto;
+  height: calc(var(--craft-leading-hero) + var(--ant-padding-xxs));
+  grid-auto-flow: column;
+  justify-content: start;
+  padding-left: var(--ant-padding-md);
+  gap: var(--ant-padding-xs);
+}
+
+.obs-chain[data-compact="true"] .obs-chain-connector-icon svg {
+  transform: rotate(90deg);
+}
+
+/* Todo rail: prototype .rail { padding: 20px; border-left }, .rail-head { gap 8px; margin
+   12px }, .rail-head .n pill 20px/10px accent, .todo { padding 12px; radius 12 },
+   .todo.min { padding 10px 12px }, .todo .dd clamps to two lines, .rail .more { margin 12px }. */
+.obs-todo-rail {
+  min-width: 0;
+  padding: var(--ant-padding-md);
+  border-left: 1px solid var(--craft-color-hairline);
+  background: var(--craft-color-surface);
+}
+
+.obs-todo-rail[data-compact="true"] {
+  border-left: 0;
+  border-top: 1px solid var(--craft-color-hairline);
+  padding: var(--ant-padding-sm) var(--ant-padding-md) var(--ant-padding-md);
+}
+
+.obs-todo-head {
+  display: flex;
+  align-items: center;
+  gap: var(--ant-padding-xs);
+  margin-bottom: calc(var(--ant-padding-xs) + var(--ant-padding-xxs));
+}
+
+.obs-todo-head h2 {
+  margin: 0;
+  font-size: var(--ant-font-size);
+  line-height: var(--craft-leading-body);
+  font-weight: var(--ant-font-weight-strong);
+}
+
+.obs-todo-count {
+  box-sizing: border-box;
+  min-width: var(--ant-padding-md);
+  height: var(--ant-padding-md);
+  padding: 0 calc(var(--ant-padding-xxs) + var(--ant-line-width-bold));
+  border-radius: calc(var(--craft-radius-control) + var(--ant-line-width-bold));
+  background: var(--craft-color-accent);
+  color: var(--craft-color-on-accent);
+  font-size: var(--ant-font-size-sm);
+  line-height: var(--craft-leading-body);
+  font-weight: var(--ant-font-weight-strong);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.obs-todo-all,
+.obs-todo-more {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ant-padding-xxs);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--craft-color-accent);
+  font: inherit;
+  font-size: var(--craft-text-small);
+  cursor: pointer;
+}
+
+.obs-todo-all:hover,
+.obs-todo-more:hover {
+  text-decoration: underline;
+  text-underline-offset: calc(var(--ant-line-width-bold) + var(--ant-line-width));
+}
+
+.obs-todo-all {
+  margin-left: auto;
+}
+
+.obs-todo-all .obs-display-icon,
+.obs-todo-more .obs-display-icon {
+  width: var(--ant-font-size);
+  height: var(--ant-font-size);
+}
+
+.obs-todo-card {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: calc(var(--ant-padding-xs) + var(--ant-padding-xxs));
+  border: 1px solid var(--craft-color-hairline);
+  border-radius: var(--craft-radius-card);
+  background: color-mix(in srgb, var(--craft-color-raised) 45%, var(--craft-color-surface));
+  color: inherit;
+  text-align: left;
+}
+
+.obs-todo-card + .obs-todo-card {
+  margin-top: var(--ant-padding-xs);
+}
+
+button.obs-todo-card {
+  font: inherit;
+  cursor: pointer;
+  transition: border-color var(--craft-motion-feedback) var(--craft-motion-easing);
+}
+
+button.obs-todo-card:hover {
+  border-color: var(--craft-color-muted);
+}
+
+.obs-todo-first-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--ant-padding-xs);
+  color: var(--craft-color-muted);
+  font-size: var(--ant-font-size-sm);
+  line-height: var(--craft-leading-tight);
+}
+
+.obs-todo-age {
+  margin-left: auto;
+  color: var(--craft-color-muted);
+  font-size: var(--ant-font-size-sm);
+  white-space: nowrap;
+}
+
+.obs-todo-title {
+  margin-top: var(--ant-padding-xs);
+  font-weight: var(--ant-font-weight-strong);
+  overflow-wrap: anywhere;
+}
+
+.obs-todo-detail {
+  margin-top: var(--ant-padding-xxs);
+  color: var(--craft-color-secondary);
+  font-size: var(--craft-text-small);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.obs-todo-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ant-padding-xs);
+  margin-top: calc(var(--ant-padding-xs) + var(--ant-padding-xxs));
+}
+
+/* .where-s { gap: 6px } and .link { font-size: 13px } (review R6). */
+.obs-todo-agent,
+.obs-todo-view {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--ant-font-size-sm);
+}
+
+.obs-todo-agent {
+  gap: var(--craft-gap-tag);
+  color: var(--craft-color-secondary);
+}
+
+.obs-todo-agent .obs-display-icon,
+.obs-todo-view .obs-display-icon {
+  width: var(--ant-font-size);
+  height: var(--ant-font-size);
+}
+
+.obs-todo-view {
+  gap: var(--ant-padding-xxs);
+  color: var(--craft-color-accent);
+  font-size: var(--craft-text-small);
+}
+
+.obs-todo-min {
+  display: flex;
+  align-items: center;
+  gap: var(--ant-padding-xs);
+  padding:
+    calc(var(--ant-padding-xs) + var(--ant-line-width-bold))
+    calc(var(--ant-padding-xs) + var(--ant-padding-xxs));
+}
+
+.obs-todo-min-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.obs-todo-more {
+  margin-top: calc(var(--ant-padding-xs) + var(--ant-padding-xxs));
+}
+
+/* Acceptance list: prototype .acc li { gap 12px; padding 12px 20px; border-top }, the icon
+   sits at 18px, .acc .e { 12px/16px; margin-top 2px }, .acc .s { 12px; padding-top 2px }. */
+.obs-acceptance {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.obs-acceptance-item {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(var(--ant-padding-xs) + var(--ant-padding-xxs));
+  padding: calc(var(--ant-padding-xs) + var(--ant-padding-xxs)) var(--ant-padding-md);
+  border-top: 1px solid var(--craft-color-hairline);
+}
+
+.obs-acceptance-item:first-child {
+  border-top: 0;
+}
+
+.obs-acceptance-icon {
+  flex: none;
+  margin-top: var(--ant-line-width-bold);
+  color: var(--craft-color-muted);
+}
+
+.obs-acceptance-icon .obs-display-icon {
+  width: calc(var(--ant-font-size-lg) + var(--ant-line-width-bold));
+  height: calc(var(--ant-font-size-lg) + var(--ant-line-width-bold));
+}
+
+.obs-acceptance-item[data-status="supported"] .obs-acceptance-icon {
+  color: var(--craft-color-positive);
+}
+
+.obs-acceptance-item[data-status="failed"] .obs-acceptance-icon {
+  color: var(--craft-color-negative);
+}
+
+.obs-acceptance-body {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.obs-acceptance-evidence {
+  margin-top: var(--ant-line-width-bold);
+  color: var(--craft-color-muted);
+  font-size: var(--ant-font-size-sm);
+  line-height: var(--craft-leading-tight);
+}
+
+.obs-acceptance-word {
+  flex: none;
+  padding-top: var(--ant-line-width-bold);
+  color: var(--craft-color-muted);
+  font-size: var(--ant-font-size-sm);
+  white-space: nowrap;
+}
+
 /* Keyboard focus remains visible inside and outside the application shell. */
 .obs-row-control:focus-visible,
 .obs-page-back:focus-visible,
@@ -652,6 +1441,20 @@ button.obs-row-control:hover {
   outline: var(--ant-control-outline-width) solid var(--craft-color-accent);
   outline-offset: var(--ant-line-width-bold);
   border-radius: var(--craft-radius-nested);
+}
+
+button.obs-kpi-open:focus-visible,
+button.obs-todo-card:focus-visible,
+.obs-todo-all:focus-visible,
+.obs-todo-more:focus-visible {
+  outline: var(--ant-control-outline-width) solid var(--craft-color-accent);
+  outline-offset: calc(var(--ant-control-outline-width) * -1);
+}
+
+button.obs-chain-node:focus-visible {
+  outline: var(--ant-control-outline-width) solid var(--craft-color-accent);
+  outline-offset: calc(var(--ant-control-outline-width) * -1);
+  border-radius: var(--craft-radius-card);
 }
 
 .obs-data-table tr[data-openable="true"]:focus-visible {
@@ -664,6 +1467,14 @@ button.obs-row-control:hover {
   .obs-data-table tr,
   .obs-data-table .obs-display-icon,
   .obs-detail-tabs .ant-tabs-tab {
+    animation: none;
+    transition: none;
+  }
+
+  .obs-kpi-open,
+  .obs-kpi-hint,
+  .obs-chain-node,
+  .obs-todo-card {
     animation: none;
     transition: none;
   }

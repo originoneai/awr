@@ -31,6 +31,41 @@ fn plan() -> Value {
         "members":[{"person_id":"directory-person","department_ids":["engineering"]}]})
 }
 
+/// A four-level chain; "scheduling" is the leaf group the project hangs under.
+fn hierarchy_plan() -> Value {
+    json!({"organization":{"id":"example","name":"Example company"},
+        "departments":[{"id":"engineering","name":"Engineering"},
+            {"id":"platform","name":"Platform","parent_id":"engineering"},
+            {"id":"runtime","name":"Runtime","parent_id":"platform"},
+            {"id":"scheduling","name":"Scheduling","parent_id":"runtime"}],
+        "project_department_ids":["scheduling"],
+        "members":[{"person_id":"directory-person","department_ids":["scheduling"]}]})
+}
+
+/// Write one verbatim reply into the evidence sample directory when configured.
+/// The committed copies under tests/samples are compared in the same test run.
+fn save_verbatim(name: &str, value: &Value) {
+    let Ok(directory) = std::env::var("AWR_DIRECTORY_SAMPLE_DIR") else {
+        return;
+    };
+    let directory = std::path::PathBuf::from(directory);
+    std::fs::create_dir_all(&directory).unwrap();
+    let mut bytes = serde_json::to_vec_pretty(value).unwrap();
+    bytes.push(b'\n');
+    std::fs::write(directory.join(name), bytes).unwrap();
+}
+
+/// Fields that stay identical between a committed sample and a live reply.
+/// Web-route samples wrap the reply under `data`; unwrap before comparing.
+fn compare_directory_reply(sample: &Value, live: &Value) {
+    let sample = sample.get("data").unwrap_or(sample);
+    assert_eq!(sample["configured"], live["configured"]);
+    assert_eq!(sample["version"], live["version"]);
+    assert_eq!(sample["plan"], live["plan"]);
+    assert_eq!(sample["members"], live["members"]);
+    assert_eq!(sample["cross_project_person_merging"], false);
+}
+
 async fn connect(server: &web::Server) -> Mcp {
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
@@ -412,4 +447,189 @@ async fn browser_directory_reads_reauthorize_the_current_session_and_keep_writes
     assert_eq!(denied.status(), 403);
     let denied: Value = denied.json().await.unwrap();
     assert!(!denied.to_string().contains("Project coordinator"));
+}
+
+#[tokio::test]
+async fn hierarchical_directories_round_trip_the_real_entries_and_feed_the_samples() {
+    let (_guard, admin, db, store) = setup().await;
+    seed_agent(&admin).await;
+    let grants =
+        AuthorizationStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let project = AuthorizationScope::Project {
+        project_id: PROJECT.into(),
+    };
+    issue(
+        &grants,
+        "directory-reader",
+        project.clone(),
+        BTreeSet::from([AuthorizedAction::Inspect]),
+    )
+    .await;
+    issue(
+        &grants,
+        "directory-manager",
+        project,
+        BTreeSet::from([AuthorizedAction::ManageDirectory]),
+    )
+    .await;
+    let server = web::start(store, false).await;
+    let client = connect(&server).await;
+    // The published tool contract documents the optional parent reference.
+    let tools = client.list_all_tools().await.unwrap();
+    let apply_tool = tools
+        .iter()
+        .find(|tool| tool.name == "awr_team_directory_apply")
+        .unwrap();
+    let published = serde_json::to_value(&apply_tool.input_schema).unwrap();
+    assert!(published.to_string().contains("parent_id"));
+    // Web session for the browser-shaped read.
+    let login = server
+        .post("/v1/web/login")
+        .header("origin", web::ISSUER)
+        .header("x-awr-web", "1")
+        .json(&json!({"bearer":A}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(login.status(), 200);
+    let cookie = login.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let web_read = |body: Value| {
+        server
+            .post("/v1/web/projects/one/directory/read")
+            .header("origin", web::ISSUER)
+            .header("x-awr-web", "1")
+            .header("cookie", &cookie)
+            .json(&body)
+    };
+    // 1. Unconfigured read, exactly as the browser route serves it.
+    let unconfigured: Value = web_read(json!({"protocol_version":1}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(unconfigured["ok"], true);
+    assert_eq!(unconfigured["data"]["configured"], false);
+    save_verbatim("directory-web-read-unconfigured.json", &unconfigured);
+    // 2. A flat plan — the legacy shape the service recorded before the field.
+    let flat_preview = call(
+        &client,
+        "awr_team_directory_preview",
+        json!({"protocol_version":1,"plan":plan()}),
+        false,
+    )
+    .await;
+    server
+        .post("/v1/projects/one/directory/apply")
+        .bearer_auth(A)
+        .json(
+            &json!({"protocol_version":1,"request_id":"flat-directory-v1",
+            "expected_version":flat_preview["expected_version"],
+            "expected_plan_digest":flat_preview["plan_digest"],"plan":plan()}),
+        )
+        .send()
+        .await
+        .unwrap();
+    let flat: Value = web_read(json!({"protocol_version":1}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(flat["data"]["version"], "1");
+    assert_eq!(
+        flat["data"]["plan"]["departments"][0].get("parent_id"),
+        None
+    );
+    save_verbatim("directory-web-read-flat.json", &flat);
+    // 3. The hierarchy: preview, apply, then read through both real entries.
+    let preview = call(
+        &client,
+        "awr_team_directory_preview",
+        json!({"protocol_version":1,"plan":hierarchy_plan()}),
+        false,
+    )
+    .await;
+    assert_eq!(preview["expected_version"], "1");
+    let receipt = call(
+        &client,
+        "awr_team_directory_apply",
+        json!({"protocol_version":1,"request_id":"hierarchy-directory-v2",
+            "expected_version":preview["expected_version"],
+            "expected_plan_digest":preview["plan_digest"],"plan":hierarchy_plan()}),
+        false,
+    )
+    .await;
+    assert_eq!(receipt["receipt"]["version"], "2");
+    let agent_http: Value = server
+        .post("/v1/projects/one/directory/read")
+        .bearer_auth(A)
+        .json(&json!({"protocol_version":1}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let agent_tool = call(
+        &client,
+        "awr_team_directory_read",
+        json!({"protocol_version":1}),
+        false,
+    )
+    .await;
+    assert_eq!(agent_http, agent_tool, "HTTP and MCP serve one reply");
+    assert_eq!(agent_http["version"], "2");
+    assert_eq!(
+        agent_http["plan"]["departments"].as_array().unwrap().len(),
+        4
+    );
+    assert_eq!(agent_http["plan"]["departments"][3]["parent_id"], "runtime");
+    assert_eq!(
+        agent_http["plan"]["project_department_ids"],
+        json!(["scheduling"])
+    );
+    assert_eq!(
+        agent_http["members"][0]["department_ids"],
+        json!(["scheduling"])
+    );
+    save_verbatim("directory-agent-read-hierarchy.json", &agent_http);
+    let web_hierarchy: Value = web_read(json!({"protocol_version":1}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(web_hierarchy["ok"], true);
+    assert_eq!(web_hierarchy["data"], agent_http);
+    save_verbatim("directory-web-read-hierarchy.json", &web_hierarchy);
+    // The committed samples parse and keep the live deterministic shape.
+    for (name, live) in [
+        (
+            "directory-web-read-unconfigured.json",
+            &unconfigured["data"],
+        ),
+        ("directory-web-read-flat.json", &flat["data"]),
+        ("directory-agent-read-hierarchy.json", &agent_http),
+        ("directory-web-read-hierarchy.json", &web_hierarchy["data"]),
+    ] {
+        let full = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/samples")
+            .join(name);
+        if !full.exists() {
+            continue;
+        }
+        let sample: Value = serde_json::from_slice(&std::fs::read(full).unwrap()).unwrap();
+        compare_directory_reply(&sample, live);
+    }
+    client.cancel().await.unwrap();
 }

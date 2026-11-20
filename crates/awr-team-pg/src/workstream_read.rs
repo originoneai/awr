@@ -1542,7 +1542,7 @@ pub(crate) async fn read(
             "record_tool":"awr_team_update_record","command":"update.record",
             "record_authority":"supervisor_duty_and_project_scoped_edit_planning_delegation",
             "read_authority":"current_project_or_workstream_read_delegation_no_task_promotion",
-            "sentence_provenance":"caller_supplied","fact_snapshots":"null_until_ppd_011",
+            "sentence_provenance":"caller_supplied","fact_snapshots":"immutable_task_counts_with_authorized_projection",
             "history":"immutable_versions_with_separate_current_pointer"});
         caps["business_role_presets"] = json!({
             "roles":awr_team::BusinessRole::all(), "explicit_combined_duties":true,

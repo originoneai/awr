@@ -166,6 +166,93 @@ async fn schema64_project_updates_are_atomic_versioned_and_isolated() {
 }
 
 #[tokio::test]
+async fn schema65_fact_snapshot_upgrade_preserves_legacy_null_and_requires_complete_facts() {
+    let (_guard, admin, _) = common::historical_team_schema(64).await;
+    admin
+        .batch_execute(
+            "INSERT INTO awr_team.tenants(id,name,status)
+               VALUES('fact-tenant','Synthetic facts','active');
+             INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status)
+               VALUES('fact-tenant','fact-project','facts','team','epoch','active');
+             INSERT INTO awr_team.project_period_updates(tenant_id,project_id,id,period_kind,
+               period_key,starts_on,ends_on,status,summary,author_person_id,author_display_name,
+               recorded_by_actor_id,recorded_by_client_id,request_id,version)
+               VALUES('fact-tenant','fact-project','legacy','week','2026-W47','2026-11-16',
+                 '2026-11-22','ok','Legacy sentence','lead','Synthetic lead','agent','client','legacy',1)",
+        )
+        .await
+        .unwrap();
+    let ddl = include_str!("../migrations/20261119000065_project_update_fact_snapshots.sql");
+    assert!(
+        admin
+            .batch_execute(&ddl.replace(
+                "UPDATE awr_team.schema_state",
+                "SELECT 1/0; UPDATE awr_team.schema_state",
+            ))
+            .await
+            .is_err()
+    );
+    admin.batch_execute("ROLLBACK").await.unwrap();
+    assert_eq!(
+        admin
+            .query_one("SELECT version FROM awr_team.schema_state", &[])
+            .await
+            .unwrap()
+            .get::<_, i32>(0),
+        64
+    );
+
+    migrate(&admin).await.unwrap();
+    migrate(&admin).await.unwrap();
+    check_schema(&admin).await.unwrap();
+    let legacy = admin
+        .query_one(
+            "SELECT p.settings_json,u.fact_snapshot_ref,u.fact_snapshot_json,
+                u.fact_window_start_unix_ms,u.fact_window_end_unix_ms,u.fact_time_zone,u.summary
+             FROM awr_team.projects p
+             JOIN awr_team.project_period_updates u ON u.tenant_id=p.tenant_id AND u.project_id=p.id
+             WHERE p.tenant_id='fact-tenant' AND p.id='fact-project'",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(legacy.get::<_, Value>(0), json!({}));
+    assert_eq!(legacy.get::<_, Option<String>>(1), None);
+    assert_eq!(legacy.get::<_, Option<Value>>(2), None);
+    assert_eq!(legacy.get::<_, Option<i64>>(3), None);
+    assert_eq!(legacy.get::<_, Option<i64>>(4), None);
+    assert_eq!(legacy.get::<_, Option<String>>(5), None);
+    assert_eq!(legacy.get::<_, String>(6), "Legacy sentence");
+
+    assert!(
+        admin
+            .execute(
+                "INSERT INTO awr_team.project_period_updates(tenant_id,project_id,id,period_kind,
+                   period_key,starts_on,ends_on,status,summary,author_person_id,author_display_name,
+                   recorded_by_actor_id,recorded_by_client_id,request_id,version,fact_snapshot_ref)
+                   VALUES('fact-tenant','fact-project','partial','month','2026-11','2026-11-01',
+                     '2026-11-30','ok','Partial facts','lead','Synthetic lead','agent','client','partial',1,
+                     'snapshot-without-facts')",
+                &[],
+            )
+            .await
+            .is_err()
+    );
+    admin.batch_execute("ROLLBACK").await.unwrap();
+    assert!(
+        admin
+            .execute(
+                "INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status,settings_json)
+                 VALUES('fact-tenant','bad-settings','bad','team','epoch','active','[]')",
+                &[],
+            )
+            .await
+            .is_err()
+    );
+    admin.batch_execute("ROLLBACK").await.unwrap();
+}
+
+#[tokio::test]
 async fn schema63_planning_rejection_upgrade_is_atomic_and_preserves_earlier_candidates() {
     let (_guard, admin, _) = common::historical_team_schema(62).await;
     admin.batch_execute("INSERT INTO awr_team.tenants(id,name,status) VALUES('planning-tenant','Planning','active');

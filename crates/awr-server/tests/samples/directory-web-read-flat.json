@@ -1,0 +1,60 @@
+{
+  "data": {
+    "access_grants_changed": false,
+    "as_of_project_revision": "4",
+    "configured": true,
+    "cross_project_person_merging": false,
+    "members": [
+      {
+        "available": true,
+        "department_ids": [
+          "engineering"
+        ],
+        "display_name": "Project coordinator",
+        "member_ref": {
+          "person_id": "directory-person",
+          "project_id": "reader-project"
+        }
+      }
+    ],
+    "plan": {
+      "departments": [
+        {
+          "id": "engineering",
+          "name": "Engineering"
+        }
+      ],
+      "members": [
+        {
+          "department_ids": [
+            "engineering"
+          ],
+          "person_id": "directory-person"
+        }
+      ],
+      "organization": {
+        "id": "example",
+        "name": "Example company"
+      },
+      "project_department_ids": [
+        "engineering"
+      ]
+    },
+    "project_id": "reader-project",
+    "provenance": {
+      "actor_id": "agent",
+      "authorization_binding": "c0fd06f55041faef8202abaf1508429c14bff1f798fea23777fec828489d2d30",
+      "client_id": "cli-a",
+      "delegation_id": "directory-manager",
+      "grant_versions": {
+        "00000000000000000000000001": 1,
+        "00000000000000000000000002": 1
+      },
+      "membership_version": "1",
+      "source_snapshot_id": "01M7TWRS95QCKCCV48EY4HJN3B"
+    },
+    "updated_at_ms": 1795125175837,
+    "version": "1"
+  },
+  "ok": true
+}
