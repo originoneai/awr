@@ -10,6 +10,7 @@ pub mod github_worker;
 pub mod local_git_worker;
 mod mcp;
 mod oauth;
+mod portfolio;
 mod web;
 
 pub use crate::named_agent_host::{

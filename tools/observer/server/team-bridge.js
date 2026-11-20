@@ -1882,6 +1882,116 @@ function createTeamBridge(opts) {
   }
 
   const routes = {
+    'GET /api/team/portfolio': async (url, _body, req, res) => {
+      if (!TEAM.live) {
+        return { ok: false, error: { code: 'Unsupported', message: 'Live Team observation required' },
+          freshness: unmeasuredFreshness(now()) };
+      }
+      const keys = [...url.searchParams.keys()];
+      if (keys.some((key) => !['limit', 'cursor'].includes(key) || url.searchParams.getAll(key).length !== 1)) {
+        return { ok: false, error: { code: 'InvalidInput', message: 'Only one bounded limit and cursor are allowed' },
+          freshness: unmeasuredFreshness(now()) };
+      }
+      const query = { protocol_version: 1 };
+      if (url.searchParams.has('limit')) {
+        const raw = url.searchParams.get('limit');
+        if (!/^[1-9]\d*$/.test(raw)) {
+          return { ok: false, error: { code: 'InvalidInput', message: 'Invalid project page limit' },
+            freshness: unmeasuredFreshness(now()) };
+        }
+        const limit = Number(raw);
+        if (!Number.isSafeInteger(limit) || limit > 200) {
+          return { ok: false, error: { code: 'InvalidInput', message: 'Invalid project page limit' },
+            freshness: unmeasuredFreshness(now()) };
+        }
+        query.limit = limit;
+      }
+      if (url.searchParams.has('cursor')) {
+        const cursor = url.searchParams.get('cursor');
+        if (!cursor || cursor.length > 4096 || /[\x00-\x1f\x7f]/.test(cursor)) {
+          return { ok: false, error: { code: 'InvalidInput', message: 'Invalid project page cursor' },
+            freshness: unmeasuredFreshness(now()) };
+        }
+        query.cursor = cursor;
+      }
+
+      // Session checks and this composition are revocation-sensitive: always
+      // revalidate, and never retain the member-scoped result in a bridge cache.
+      const signal = AbortSignal.timeout(readTimeoutMs);
+      let session;
+      try {
+        session = await readOverviewSession(req, signal);
+      } catch {
+        const code = signal.aborted ? 'ReadTimeout' : 'BadGateway';
+        return { ok: false, error: { code, message: 'Session validation failed' },
+          freshness: compositionFailedFreshness(code, now()) };
+      }
+      if (!session) {
+        return { ok: false, error: { code: 'BadGateway', message: 'live proxy unavailable' },
+          freshness: compositionFailedFreshness('BadGateway', now()) };
+      }
+      applyProxiedCookies(res, session.setCookie);
+      if (session.status >= 400) {
+        const failure = liveError(session);
+        return { ...failure, freshness: compositionFailedFreshness(failure.error.code, now()) };
+      }
+
+      let upstream;
+      try {
+        upstream = await proxyTeam('/v1/web/portfolio/overview', req, query, 'POST', signal);
+      } catch {
+        const code = signal.aborted ? 'ReadTimeout' : 'BadGateway';
+        return { ok: false, error: { code, message: 'Portfolio read failed' },
+          freshness: compositionFailedFreshness(code, now()) };
+      }
+      if (!upstream) {
+        return { ok: false, error: { code: 'BadGateway', message: 'live proxy unavailable' },
+          freshness: compositionFailedFreshness('BadGateway', now()) };
+      }
+      applyProxiedCookies(res, upstream.setCookie);
+      if (upstream.status >= 400) {
+        const failure = liveError(upstream);
+        if (READ_AUTH_FAILURES.has(failure.error.code)) clearOverviewCache(req);
+        return { ...failure, freshness: compositionFailedFreshness(failure.error.code, now()) };
+      }
+
+      const result = upstream.json;
+      const data = result?.data;
+      const projects = data?.projects;
+      if (result?.protocol_version !== 1 || result?.op !== 'portfolio.overview'
+        || result?.selection_basis !== 'member' || data?.execution_authorized !== false
+        || !Array.isArray(projects) || !Number.isSafeInteger(data?.total_projects)
+        || data.total_projects < projects.length || typeof data?.truncated !== 'boolean'
+        || !(data.next_cursor === null || typeof data.next_cursor === 'string' && data.next_cursor)) {
+        return { ok: false, error: { code: 'BadGateway', message: 'Invalid portfolio read response' },
+          freshness: compositionFailedFreshness('BadGateway', now()) };
+      }
+      const readAt = now();
+      const asOf = Number.isFinite(data.as_of?.at_unix_ms) ? data.as_of.at_unix_ms : null;
+      const notRead = projects.filter((project) => project?.read?.status === 'not_read').length;
+      return {
+        ok: true,
+        result,
+        read_at_unix_ms: readAt,
+        coverage: {
+          status: data.truncated || notRead ? 'partial' : 'complete',
+          returned_projects: projects.length,
+          total_projects: data.total_projects,
+          not_read_projects: notRead,
+          truncated: data.truncated,
+          next_cursor: data.next_cursor,
+        },
+        freshness: {
+          report_received: { status: 'not_measured' },
+          authoritative: asOf === null ? { status: 'not_measured' } : {
+            ...resolveCurrency({ atUnixMs: asOf, readAtMs: readAt, staleAfterMs: OBSERVATION_STALE_AFTER_MS }),
+            at_unix_ms: asOf,
+          },
+          page_read: { status: 'measured', at_unix_ms: readAt },
+        },
+      };
+    },
+
     'GET /api/team/overview-model': async (url, _body, req, res) => {
       if (!TEAM.live && !TEAM.demoOrganization) {
         return { ok: false, error: { code: 'Unsupported', message: 'Live Team observation required' },
