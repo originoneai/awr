@@ -14,10 +14,61 @@ describe('compactTimeText', () => {
   });
 
   it('uses the viewer zone across midnight instead of the UTC date', () => {
-    const now = Date.UTC(2026, 0, 3, 12, 0);
-    const at = Date.UTC(2026, 0, 1, 16, 30, 45);
-    expect(compactTimeText(at, { language: 'zh-CN', nowUnixMs: now, timeZone: 'Asia/Shanghai' })).toBe('昨天 00:30');
-    expect(compactTimeText(at, { language: 'en-US', nowUnixMs: now, timeZone: 'America/New_York' })).toBe('Jan 1, 11:30');
+    const at = Date.UTC(2026, 0, 2, 16, 30, 45);
+    const now = Date.UTC(2026, 0, 3, 4, 0);
+    expect(compactTimeText(at, { language: 'zh-CN', nowUnixMs: now, timeZone: 'Asia/Shanghai' })).toBe('今天 00:30');
+    expect(compactTimeText(at, { language: 'zh-CN', nowUnixMs: now, timeZone: 'UTC' })).toBe('昨天 16:30');
+    // Beyond 24 hours the same zone split reads as the two zones' own calendar dates.
+    const lateNow = Date.UTC(2026, 0, 3, 18, 0);
+    expect(compactTimeText(at, { language: 'zh-CN', nowUnixMs: lateNow, timeZone: 'Asia/Shanghai' })).toBe('1 月 3 日 00:30');
+    expect(compactTimeText(at, { language: 'en-US', nowUnixMs: lateNow, timeZone: 'America/New_York' })).toBe('Jan 2, 11:30');
+  });
+
+  it('keeps yesterday wording only inside the last 24 hours of the reference clock', () => {
+    // The prototype's ledger: 15:20 twenty hours old still says 昨天, the same yesterday
+    // five hours older already says its calendar date (11 月 18 日 10:02).
+    const now = Date.UTC(2026, 10, 19, 12, 0);
+    expect(compactTimeText(Date.UTC(2026, 10, 18, 15, 20), { language: 'zh-CN', nowUnixMs: now, timeZone: 'UTC' })).toBe('昨天 15:20');
+    expect(compactTimeText(Date.UTC(2026, 10, 18, 15, 20), { language: 'en-US', nowUnixMs: now, timeZone: 'UTC' })).toBe('Yesterday at 15:20');
+    expect(compactTimeText(Date.UTC(2026, 10, 18, 10, 2), { language: 'zh-CN', nowUnixMs: now, timeZone: 'UTC' })).toBe('11 月 18 日 10:02');
+    expect(compactTimeText(Date.UTC(2026, 10, 18, 10, 2), { language: 'en-US', nowUnixMs: now, timeZone: 'UTC' })).toBe('Nov 18, 10:02');
+  });
+
+  it('crosses midnight with relative wording inside the hour and calendar wording after it', () => {
+    const now = Date.UTC(2026, 10, 19, 0, 30);
+    expect(compactTimeText(Date.UTC(2026, 10, 18, 23, 45), { language: 'zh-CN', nowUnixMs: now, timeZone: 'UTC' })).toBe('45 分钟前');
+    expect(compactTimeText(Date.UTC(2026, 10, 18, 22, 0), { language: 'zh-CN', nowUnixMs: now, timeZone: 'UTC' })).toBe('昨天 22:00');
+    // The same pair in a zone west of UTC keeps its own day split.
+    expect(compactTimeText(Date.UTC(2026, 10, 18, 22, 0), { language: 'zh-CN', nowUnixMs: now, timeZone: 'America/New_York' })).toBe('今天 17:00');
+  });
+
+  it('crosses a month boundary with yesterday inside 24 hours and a calendar date beyond', () => {
+    const now = Date.UTC(2026, 11, 1, 10, 0);
+    expect(compactTimeText(Date.UTC(2026, 10, 30, 20, 0), { language: 'zh-CN', nowUnixMs: now, timeZone: 'UTC' })).toBe('昨天 20:00');
+    expect(compactTimeText(Date.UTC(2026, 10, 29, 8, 0), { language: 'zh-CN', nowUnixMs: now, timeZone: 'UTC' })).toBe('11 月 29 日 08:00');
+  });
+
+  it('crosses a year boundary the same way, adding the year only for earlier years', () => {
+    const now = Date.UTC(2027, 0, 1, 10, 0);
+    expect(compactTimeText(Date.UTC(2026, 11, 31, 20, 0), { language: 'zh-CN', nowUnixMs: now, timeZone: 'UTC' })).toBe('昨天 20:00');
+    expect(compactTimeText(Date.UTC(2026, 11, 30, 23, 0), { language: 'zh-CN', nowUnixMs: now, timeZone: 'UTC' })).toBe('2026 年 12 月 30 日 23:00');
+    expect(compactTimeText(Date.UTC(2026, 11, 30, 23, 0), { language: 'en-US', nowUnixMs: now, timeZone: 'UTC' })).toBe('Dec 30, 2026, 23:00');
+  });
+
+  it('keeps the zone calendar on daylight-saving switch days', () => {
+    // America/New_York leaves DST on 2026-11-01: the 22-hour-old fact below spans the
+    // repeated hour and still reads as yesterday's wall clock.
+    const fallNow = Date.UTC(2026, 10, 1, 17, 0);
+    expect(compactTimeText(Date.UTC(2026, 9, 31, 19, 0), { language: 'zh-CN', nowUnixMs: fallNow, timeZone: 'America/New_York' })).toBe('昨天 15:00');
+    // Entering DST on 2026-03-08: 23 hours old, still yesterday.
+    const springNow = Date.UTC(2026, 2, 8, 16, 0);
+    expect(compactTimeText(Date.UTC(2026, 2, 7, 17, 0), { language: 'zh-CN', nowUnixMs: springNow, timeZone: 'America/New_York' })).toBe('昨天 12:00');
+  });
+
+  it('falls back to the calendar fact when no reference clock is supplied', () => {
+    const at = Date.UTC(2026, 10, 18, 10, 2);
+    expect(compactTimeText(at, { language: 'zh-CN', nowUnixMs: Number.NaN, timeZone: 'UTC' })).toBe('2026 年 11 月 18 日 10:02');
+    expect(compactTimeText(at, { language: 'en-US', nowUnixMs: Number.NaN, timeZone: 'UTC' })).toBe('Nov 18, 2026, 10:02');
   });
 
   it('handles new year boundaries and includes the year only for earlier years', () => {

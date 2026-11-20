@@ -39,6 +39,9 @@ export interface TeamShellResponse {
   source: 'demo' | 'live';
   organizationName?: string | null;
   perspective: import('../lib/perspective/types').PerspectiveFacts | null;
+  /** A display time zone this deployment's pages must format in (canonical demo: UTC).
+   * Null means the viewer's own zone; an unreadable value reads the same as null. */
+  displayTimeZone?: string | null;
 }
 
 export interface CoveragePart {

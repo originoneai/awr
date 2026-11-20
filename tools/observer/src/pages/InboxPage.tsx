@@ -18,6 +18,7 @@ import {
 import { FreshnessBadge } from '../components/FreshnessBadge';
 import { ObservationForbidden } from '../components/states';
 import { buildHandback, copyText } from '../lib/agent-handback';
+import { referenceNowUnixMs, useDisplayTimeZone } from '../lib/display-clock';
 import { useInboxModel } from '../lib/inbox-queries';
 import {
   inboxCalendarDays,
@@ -85,6 +86,12 @@ export function InboxPage() {
 
   useEffect(() => { setCopyState('idle'); }, [selected?.key]);
 
+  // Display clock (AWR-PPO-079): the shared clock read plus each entry's own read offset
+  // (its project's derivation clock walked forward), and the deployment's pinned display
+  // zone. No page reads the browser clock directly anymore.
+  const renderNowUnixMs = referenceNowUnixMs(null);
+  const timeZone = useDisplayTimeZone();
+
   if (inbox.forbidden) {
     return (
       <div className="inbox-page" data-testid="page-inbox">
@@ -96,8 +103,6 @@ export function InboxPage() {
   const label = inboxPendingLabel(model);
   const countText = label ?? '—';
   const viewerName = model.viewer?.displayName ?? t('inbox.page.viewerUnknown');
-  const renderNowUnixMs = Date.now();
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const referenceUnixMs = (entry: InboxEntry) => renderNowUnixMs + entry.clockOffsetUnixMs;
   const ageDays = (entry: InboxEntry) => inboxCalendarDays(entry.sinceUnixMs, referenceUnixMs(entry), timeZone);
   // A lesson's date is when the session recorded it, not how long an answer has been waiting.

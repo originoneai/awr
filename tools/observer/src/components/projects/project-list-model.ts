@@ -208,6 +208,9 @@ export function deriveProjectListItem(
   entry: ProjectListEntry,
   model: ProjectListModel | undefined,
   timeZone = 'UTC',
+  /** The display clock (AWR-PPO-079): the model read's derivation clock walked forward.
+   * Unset keeps the reply's own recorded clock, exactly the pre-PPO-079 behavior. */
+  referenceUnixMs?: number | null,
 ): ProjectListItem {
   if (entry.takeover) {
     return {
@@ -230,7 +233,9 @@ export function deriveProjectListItem(
     };
   }
   const completion = model ? completionOf(model.input) : emptyCompletion();
-  const nowUnixMs = model?.input.options.nowUnixMs;
+  const nowUnixMs = typeof referenceUnixMs === 'number' && Number.isFinite(referenceUnixMs)
+    ? referenceUnixMs
+    : model?.input.options.nowUnixMs;
   const status = model && Number.isFinite(nowUnixMs)
     ? statusOf(model, nowUnixMs as number, timeZone)
     : { health: 'unknown' as const, summary: { kind: 'unknown' as const }, late: false, updatedAtUnixMs: null, updateId: null };

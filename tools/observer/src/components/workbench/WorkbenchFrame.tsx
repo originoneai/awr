@@ -57,6 +57,9 @@ interface WorkbenchFrameProps {
   projectTitles?: Readonly<Record<string, string>>;
   freshness?: TeamFreshness;
   readAtUnixMs?: number;
+  /** The display clock (AWR-PPO-079): the read's derivation clock walked forward. Ages on
+   * this frame format against it; readAtUnixMs stays the read's own answer moment. */
+  referenceUnixMs?: number;
   state?: WorkbenchFrameState;
 }
 
@@ -82,11 +85,13 @@ function validChain(value: string | null, count: number): number {
 }
 
 /** The four perspectives reuse this frame; this PR supplies only the My Work configuration. */
-export function WorkbenchFrame({ model, projectKey, projectName, projectTitles, freshness, readAtUnixMs, state }: WorkbenchFrameProps) {
+export function WorkbenchFrame({ model, projectKey, projectName, projectTitles, freshness, readAtUnixMs, referenceUnixMs, state }: WorkbenchFrameProps) {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const handbackWords = handbackVocabulary(i18n.language);
+  // Displayed ages ride the display clock; the read's answer moment stays readAtUnixMs.
+  const ageClockUnixMs = referenceUnixMs ?? readAtUnixMs;
   const activeChainIndex = validChain(searchParams.get('chain'), model.chains.length);
   const activeChain = model.chains[activeChainIndex];
   const activeTab = ['agents', 'waits', 'lessons'].includes(searchParams.get('tab') ?? '')
@@ -268,7 +273,7 @@ export function WorkbenchFrame({ model, projectKey, projectName, projectTitles, 
           : t('inbox.page.from.othersTaskUnnamed');
       }
     }
-    const days = pendingDurationDays(item, readAtUnixMs);
+    const days = pendingDurationDays(item, ageClockUnixMs);
     const age = days === null ? undefined : item.kind === 'wait'
       ? t('workbench.home.pendingAgeDays', { count: days })
       : days === 0
@@ -335,7 +340,7 @@ export function WorkbenchFrame({ model, projectKey, projectName, projectTitles, 
 
   const agentRows: DataTableRow[] = model.agentTasks.map((task, index) => {
     const declaration = reportDeclaration(task.report);
-    const age = reportAge(task.report?.reportedAtUnixMs, readAtUnixMs);
+    const age = reportAge(task.report?.reportedAtUnixMs, ageClockUnixMs);
     return {
       key: task.id ?? `task-${index}`,
       cells: [

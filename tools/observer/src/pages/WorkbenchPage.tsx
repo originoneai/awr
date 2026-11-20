@@ -14,6 +14,7 @@ import {
   type WorkbenchPeriodUpdate,
 } from '../components/workbench/model';
 import { isAuthError } from '../lib/api';
+import { readClockOffsetUnixMs, referenceNowUnixMs, useDisplayTimeZone } from '../lib/display-clock';
 import { usePerspective } from '../lib/perspective/PerspectiveProvider';
 import { overviewModelQueryOptions, projectsQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
@@ -46,6 +47,10 @@ export function WorkbenchPage() {
   const { projectKey } = useScope();
   const { selected } = usePerspective();
   const { revoked } = useRevocation();
+  // Display clock (AWR-PPO-079): the deployment's pinned zone, and the model read's own
+  // derivation clock walked forward with real time; the browser clock is only the
+  // fallback while no model has answered.
+  const displayTimeZone = useDisplayTimeZone();
   const projects = useQuery(projectsQueryOptions(revoked));
   const projectItems = projects.data?.projects;
   const onlyProject = projectItems?.length === 1 ? projectItems[0].key : null;
@@ -117,13 +122,17 @@ export function WorkbenchPage() {
     );
   }
 
+  // Display clock (AWR-PPO-079): the reference is this read's derivation clock
+  // (input.options.nowUnixMs) walked forward from its own read time, so displayed ages
+  // ride the read's clock instead of the wall clock; the reply's page_read time equals
+  // its read time and never serves as "now".
+  const referenceUnixMs = referenceNowUnixMs(readClockOffsetUnixMs(modelResponse));
   const model = buildMyWorkModel(derived, i18n.language, {
     personId,
     projectId: effectiveProject,
     readAtUnixMs: modelResponse.read_at_unix_ms,
-    // The clock at render (like the activity page): the reply's page_read time equals its read time, so using it
-    // as the reference would make the generated source line read 刚刚 however old the read is.
-    referenceUnixMs: Date.now(),
+    referenceUnixMs,
+    timeZone: displayTimeZone,
     latestPeriodUpdate: modelResponse.latestPeriodUpdate ?? null,
     inputTasks: modelInput?.tasks?.items,
   });
@@ -142,6 +151,7 @@ export function WorkbenchPage() {
       projectTitles={projectTitles}
       freshness={modelResponse.freshness}
       readAtUnixMs={modelResponse.read_at_unix_ms}
+      referenceUnixMs={referenceUnixMs}
       state={state}
     />
   );

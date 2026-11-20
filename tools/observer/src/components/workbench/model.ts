@@ -66,7 +66,7 @@ export interface WorkbenchPeriodUpdate {
 
 export interface WorkbenchVerdictContext {
   viewerPersonId?: string | null;
-  /** The page-read freshness clock; never supplied from Date.now() inside the model. */
+  /** The page-read freshness reference; the model never reads the live clock itself. */
   referenceUnixMs?: number;
   timeZone?: string;
 }
@@ -338,6 +338,8 @@ export interface MyWorkModelOptions {
   readAtUnixMs?: number;
   /** Explicit page-read freshness reference for the generated source age. */
   referenceUnixMs?: number;
+  /** The zone displayed ages format in; unset keeps the viewer's own zone. */
+  timeZone?: string;
   latestPeriodUpdate?: WorkbenchPeriodUpdate | null;
   /** The raw overview task items; the recorded report fact is joined by task id. */
   inputTasks?: readonly OverviewTask[];
@@ -545,7 +547,7 @@ export function buildMyWorkModel(
       language,
       options.readAtUnixMs,
       'me',
-      { viewerPersonId: options.personId, referenceUnixMs: options.referenceUnixMs },
+      { viewerPersonId: options.personId, referenceUnixMs: options.referenceUnixMs, timeZone: options.timeZone },
     ),
     coverage: {
       partial: (Object.entries(derived.coverage.parts) as Array<[OverviewPart, { state: string }]>)

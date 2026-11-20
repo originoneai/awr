@@ -30,6 +30,7 @@ import {
 } from '../i18n/activity-categories';
 import { activityListQueryOptions, capabilitiesQueryOptions, type ActivityKind } from '../lib/activity';
 import { isAuthError } from '../lib/api';
+import { readClockOffsetUnixMs, referenceNowUnixMs, useDisplayTimeZone } from '../lib/display-clock';
 import { overviewModelQueryOptions, projectsQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
 import { useScope } from '../lib/scope';
@@ -162,8 +163,12 @@ export function ActivityPage() {
     (contextData?.input.tasks.items ?? []).flatMap((task) => typeof task.id === 'string' && task.id ? [[task.id, task] as const] : []),
   ), [contextData]);
   const selectedEvent = folded.uniqueEvents.find((item) => item.id === searchParams.get('event'));
-  const nowUnixMs = Date.now();
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  // Display clock (AWR-PPO-079): the reference is this page's own overview read's
+  // derivation clock walked forward with real time, and the zone is the deployment's
+  // pinned display zone (canonical demo: UTC; otherwise the viewer's). The browser clock
+  // itself is only the fallback while no read has answered.
+  const nowUnixMs = referenceNowUnixMs(readClockOffsetUnixMs(contextData));
+  const timeZone = useDisplayTimeZone();
 
   function changeProject(nextProject: string) {
     const next = new URLSearchParams(searchParams);

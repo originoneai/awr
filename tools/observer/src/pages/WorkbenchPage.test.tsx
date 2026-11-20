@@ -126,6 +126,24 @@ describe('WorkbenchPage seven read states in Chinese and English', () => {
     }
   });
 
+  it('ages the read against its own derivation clock walked forward, not the wall clock', async () => {
+    const input = myWorkInput();
+    // The read answered ten minutes after the fixture clock it carries (options.nowUnixMs).
+    // The display clock keeps riding that fixture clock: ten real minutes later the byline
+    // reads thirty minutes old — the wall clock alone would say ten, the reply's own read
+    // moment would freeze it at zero.
+    stubModel(input, { read_at_unix_ms: input.options.nowUnixMs - 10 * 60_000 });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(input.options.nowUnixMs + 10 * 60_000 + 20_000);
+      renderWorkbench();
+      expect(await screen.findByTestId('workbench-frame')).toBeTruthy();
+      expect(screen.getByText('按你名下的任务和 Agent 的报告算出 · 30 分钟前')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each(['zh-CN', 'en-US'] as const)('renders loading and failure in %s', async (language) => {
     await i18n.changeLanguage(language);
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {

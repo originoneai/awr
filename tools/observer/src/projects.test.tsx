@@ -32,7 +32,9 @@ function model(project = 'project-a', options: {
   return {
     ok: true,
     project,
-    read_at_unix_ms: NOW,
+    // The render clock walks forward from this real answer moment to the input's explicit
+    // derivation clock (options.nowUnixMs), so the update column stays deterministic.
+    read_at_unix_ms: Date.now(),
     input: options.input ?? input(),
     coverage: {
       tasks: { status: 'complete', missing: [] }, dependencies: { status: 'complete', missing: [] },

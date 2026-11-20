@@ -103,7 +103,11 @@ function compactDateText(parts: CompactCalendarParts, language: string, includeY
     : `${month} ${parts.day}, ${time}`;
 }
 
-/** Compact ledger time: relative within an hour, then viewer-zone calendar labels without seconds. */
+/** Compact ledger time, one rule for every page: relative wording covers only the last
+ * hour, calendar wording (今天 / 昨天) only the last 24 hours of the reference clock, and
+ * anything older is the calendar fact itself (M 月 D 日 HH:MM, plus the year earlier than
+ * the reference year). The prototype's ledger reads exactly this way: an event 20 hours
+ * old says 昨天, the same yesterday five hours older already says 11 月 18 日. */
 export function compactTimeText(
   unixMs: number | null | undefined,
   options: { language: string; nowUnixMs: number; timeZone: string },
@@ -114,11 +118,12 @@ export function compactTimeText(
   const event = compactCalendarParts(unixMs, options.timeZone);
   if (!validTime(options.nowUnixMs)) return compactDateText(event, options.language, true);
   const current = compactCalendarParts(options.nowUnixMs, options.timeZone);
+  const elapsed = options.nowUnixMs - unixMs;
   const currentDay = Date.UTC(current.year, current.month - 1, current.day);
   const yesterdayKey = new Date(currentDay - 86_400_000).toISOString().slice(0, 10);
   const eventKey = `${event.year}-${String(event.month).padStart(2, '0')}-${String(event.day).padStart(2, '0')}`;
   const time = `${String(event.hour).padStart(2, '0')}:${String(event.minute).padStart(2, '0')}`;
-  if (eventKey === yesterdayKey) {
+  if (elapsed >= 0 && elapsed < 86_400_000 && eventKey === yesterdayKey) {
     return options.language.toLowerCase().startsWith('zh') ? `昨天 ${time}` : `Yesterday at ${time}`;
   }
   return compactDateText(event, options.language, event.year !== current.year);
