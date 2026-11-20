@@ -1009,4 +1009,80 @@ mod tests {
         );
         assert!(cookie_session_id(&headers).is_none());
     }
+
+    // A state that never reaches Postgres: the store points at a closed port, so a request that
+    // is refused (or rejected as malformed) before the read never needs it.
+    fn portfolio_state(session_tenant: &str) -> Arc<StateData> {
+        let store = awr_team_pg::WorkstreamReadStore::new("host=127.0.0.1 port=1 dbname=unused");
+        let web_sessions = Arc::new(WebSessionStore::default());
+        let now = now_ms();
+        web_sessions
+            .insert(WebSession {
+                connection_id: WebSession::reference("ws_portfolio"),
+                id: "ws_portfolio".into(),
+                bearer: "synthetic-test-bearer".into(),
+                tenant_id: session_tenant.into(),
+                created_at_ms: now,
+                expires_at_ms: now + 60_000,
+                last_seen_ms: now,
+                revoked: false,
+            })
+            .unwrap();
+        Arc::new(StateData {
+            commands: store.commands(),
+            store,
+            projects: BTreeMap::new(),
+            hosts: vec!["awr.test".into()],
+            web_origins: vec!["https://observer.test".into()],
+            web_sessions,
+            oauth: None,
+            permits: Arc::new(tokio::sync::Semaphore::new(1)),
+        })
+    }
+
+    async fn portfolio_call(state: Arc<StateData>, body: &'static [u8]) -> (StatusCode, Value) {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, HeaderValue::from_static("awr.test"));
+        headers.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("https://observer.test"),
+        );
+        headers.insert(WEB_GUARD_HEADER, HeaderValue::from_static("1"));
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_static("awr_web_session=ws_portfolio"),
+        );
+        let response = portfolio_overview(State(state), headers, Bytes::from_static(body)).await;
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    #[tokio::test]
+    async fn a_session_without_a_bound_tenant_is_refused_before_the_request_is_read() {
+        // Encrypted sessions written before the tenant was stored decode with an empty tenant
+        // (`#[serde(default)]`). They must not read a portfolio, and the refusal must not
+        // depend on what the request body says.
+        let refused = (
+            StatusCode::FORBIDDEN,
+            json!({"code":"Forbidden","message":"access denied"}),
+        );
+        assert_eq!(
+            portfolio_call(portfolio_state(""), b"{}").await,
+            refused,
+            "a legacy session with a valid request"
+        );
+        assert_eq!(
+            portfolio_call(portfolio_state(""), b"not json").await,
+            refused,
+            "the refusal comes before the body is parsed"
+        );
+        // Control: the same session carrying a tenant passes the origin, guard, cookie and tenant
+        // checks and only then fails on the malformed body, so the refusal above is the tenant's.
+        let (status, body) = portfolio_call(portfolio_state("reader-tenant"), b"not json").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["code"], "InvalidInput");
+    }
 }
