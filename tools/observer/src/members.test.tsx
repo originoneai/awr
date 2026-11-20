@@ -441,6 +441,25 @@ describe('members and Agents panorama', () => {
     expect(screen.queryByTestId('member-row-person-second')).toBeNull();
   });
 
+  it('refuses ambiguous overview people for a single directory member', async () => {
+    const { setDirectoryResponse, setOverviewResponse } = setup();
+    setDirectoryResponse({ ok: true, data: { ...DIRECTORY, members: [
+      { name: 'Taylor', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] },
+    ] } });
+    const model = overviewModel();
+    model.input.members = { coverage: 'complete', items: [
+      { personId: 'person-first', displayName: 'Taylor', groupId: 'engineering' },
+      { personId: 'person-second', displayName: 'Taylor', groupId: 'engineering' },
+    ] };
+    setOverviewResponse(model);
+    renderApp('/members?scope=demo');
+    expect(await screen.findByTestId('member-row-unknown-0')).not.toHaveAttribute('data-openable');
+    expect(screen.getByTestId('member-pending-unknown-0')).toHaveTextContent('—');
+    expect(screen.getByTestId('member-doing-unknown-0')).toHaveTextContent(i18n.t('members.doingUnknown'));
+    expect(screen.queryByTestId('member-row-person-first')).toBeNull();
+    expect(screen.queryByTestId('member-row-person-second')).toBeNull();
+  });
+
   it('highlights exactly three pending items but not two', async () => {
     const { setOverviewResponse } = setup();
     const model = overviewModel();
