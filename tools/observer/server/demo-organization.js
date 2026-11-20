@@ -1441,6 +1441,22 @@ function createDemoOrganization({ variant = 'full',
     return client ? `${actor[1]}-${client}` : null;
   }
 
+  // AWR-PPD-055 disclosure on the demo facts: each fixture event records its attribution
+  // as the phrase the prototype writes. Decompose it into the audit's own fields — the
+  // person's display name, the client's display name, and whether the operation is
+  // attributed to that client (client_id) or performed by the person through it.
+  //   'Claude 桌面（林悦）'            → actor 林悦, client Claude 桌面, client_id set
+  //   '周宁（通过 Claude 桌面）'        → actor 周宁, client Claude 桌面, client_id null
+  //   '陈宇的 Agent' / '许宁'          → the recorded attribution, no client named
+  function auditIdentity(item) {
+    const phrase = typeof item.actor_display_name === 'string' ? item.actor_display_name : '';
+    let match = /^(.+?)（通过 (.+?)）$/.exec(phrase);
+    if (match) return { person: match[1], client: match[2], attributed: false };
+    match = /^(.+?)（(.+?)）$/.exec(phrase);
+    if (match) return { person: match[2], client: match[1], attributed: true };
+    return { person: phrase, client: null, attributed: false };
+  }
+
   function audit(projectId, query) {
     const kind = query.op === 'audit.development' ? 'development' : 'requests';
     const items = data.activity.filter((item) => item.project_id === projectId
@@ -1448,16 +1464,25 @@ function createDemoOrganization({ variant = 'full',
       && (!query.member_actor_id || item.actor_id === query.member_actor_id));
     const result = page(items, query, 50);
     return reply(projectId, query, {
-      items: result.items.map((item) => ({
-        id: item.id,
-        actor_id: item.actor_id,
-        client_id: auditClientId(item),
-        action: kind === 'development' ? item.action : 'query',
-        work_id: item.work_id,
-        result: kind === 'development' ? item.result : 'succeeded',
-        created_at_unix_ms: item.created_at_unix_ms,
-        credential_id: item.credential_id,
-      })),
+      items: result.items.map((item) => {
+        const identity = auditIdentity(item);
+        const actor = /^M-\d{3}$|^(M-\d{3})-agent$/.exec(item.actor_id);
+        return {
+          id: item.id,
+          actor_id: item.actor_id,
+          client_id: identity.attributed ? auditClientId(item) : null,
+          actor: {
+            person_id: actor ? (actor[1] ?? actor[0]) : null,
+            display_name: identity.person || null,
+          },
+          client: { display_name: identity.client },
+          action: kind === 'development' ? item.action : 'query',
+          work_id: item.work_id,
+          result: kind === 'development' ? item.result : 'succeeded',
+          created_at_unix_ms: item.created_at_unix_ms,
+          credential_id: item.credential_id,
+        };
+      }),
       next_cursor: result.next_cursor,
       development_source: query.op,
       chat_text_collected: false,
@@ -1835,7 +1860,6 @@ function createDemoOrganization({ variant = 'full',
         available: true,
         display_name: member.display_name,
         department_ids: [member.group_id],
-        actor_ids: [member.person_id, ...(member.agents.length ? [`${member.person_id}-agent`] : [])],
       })),
     } }, setCookie: [] };
   }

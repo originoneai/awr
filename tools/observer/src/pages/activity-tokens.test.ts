@@ -36,6 +36,6 @@ describe('activity named prototype tokens', () => {
     const css = readFileSync('src/pages/ActivityPage.css', 'utf8');
     expect(css).toMatch(/\.activity-task-link\s*\{[^}]*color:\s*var\(--craft-color-ink\)/s);
     expect(css).toMatch(/\.activity-task-link:hover,\s*\.activity-task-link:focus-visible\s*\{[^}]*text-decoration:\s*underline/s);
-    expect(css).toMatch(/\.activity-section\.ant-card \.obs-section-title\s*\{[^}]*font-size:\s*var\(--craft-activity-section-title-text\)[^}]*line-height:\s*var\(--craft-leading-body\)/s);
+    expect(css).toMatch(/\.activity-section\.ant-card \.ant-card-head-title\s*\{[^}]*font-size:\s*var\(--craft-activity-section-title-text\)[^}]*line-height:\s*var\(--craft-leading-body\)/s);
   });
 });

@@ -1017,9 +1017,6 @@ function overviewMemberFromDirectory(item) {
   if (Array.isArray(item?.department_ids) && item.department_ids.length === 1) {
     member.groupId = item.department_ids[0];
   }
-  if (Array.isArray(item?.actor_ids) && item.actor_ids.every((actorId) => typeof actorId === 'string')) {
-    member.actorIds = [...item.actor_ids];
-  }
   return member;
 }
 

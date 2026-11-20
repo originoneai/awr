@@ -85,8 +85,8 @@ function overviewModel(): TeamOverviewModelResponse {
       handoffs: complete(),
       approvals: complete(approvals),
       members: complete([
-        { personId: 'person-taylor', displayName: 'Taylor', groupId: 'engineering', actorIds: ['actor-taylor'] },
-        { personId: 'person-riley', displayName: 'Riley', groupId: 'research', actorIds: ['actor-riley'] },
+        { personId: 'person-taylor', displayName: 'Taylor', groupId: 'engineering' },
+        { personId: 'person-riley', displayName: 'Riley', groupId: 'research' },
       ]),
       activity: complete(),
       options: {

@@ -51,10 +51,8 @@ function realShapedOverviewModel(state: State) {
   const directory = (overview.members ?? []) as Array<Record<string, unknown>>;
   const members = state === 'empty' ? [] : directory.flatMap((member) => {
     const personId = member.person_id;
-    const actorId = member.actor_id;
     return typeof personId === 'string' ? [{
       personId,
-      ...(typeof actorId === 'string' ? { actorIds: [actorId] } : {}),
       displayName: member.display_name ?? member.name ?? null,
     }] : [];
   });
