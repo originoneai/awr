@@ -190,6 +190,7 @@ pub fn router(state: Arc<StateData>) -> Router {
             "/v1/web/projects/{project}/connections/revoke",
             post(connections_revoke),
         )
+        .route("/v1/web/portfolio/overview", post(portfolio_overview))
         .route("/v1/web/projects", get(list_projects))
         .route(
             "/v1/web/projects/{project}/directory/read",
@@ -387,6 +388,15 @@ async fn login(State(state): State<Arc<StateData>>, headers: HeaderMap, body: By
         Err(PgError::Forbidden) => return with_cors(denied(), &origin),
         Err(error) => return with_cors(error_response(error), &origin),
     };
+    let tenant_id = authorized[0].tenant_id.clone();
+    if authorized
+        .iter()
+        .any(|project| project.tenant_id != tenant_id)
+    {
+        // A member credential is tenant-scoped. Refuse an ambiguous synthetic
+        // credential rather than choosing which tenant a cookie represents.
+        return with_cors(denied(), &origin);
+    }
     let project_keys: Vec<String> = authorized.iter().map(|p| p.key.clone()).collect();
     let session_id = match new_session_id() {
         Ok(id) => id,
@@ -397,6 +407,7 @@ async fn login(State(state): State<Arc<StateData>>, headers: HeaderMap, body: By
         connection_id: WebSession::reference(&session_id),
         id: session_id.clone(),
         bearer: parsed.bearer,
+        tenant_id,
         created_at_ms: now,
         expires_at_ms: now + SESSION_TTL_SECS * 1000,
         last_seen_ms: now,
@@ -701,6 +712,49 @@ async fn require_session(
     Ok((origin, session))
 }
 
+async fn portfolio_overview(
+    State(state): State<Arc<StateData>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let (origin, session) = match require_session(&state, &headers).await {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    if session.tenant_id.is_empty() {
+        return with_cors(denied(), &origin);
+    }
+    let request: Value = match serde_json::from_slice(&body) {
+        Ok(request) => request,
+        Err(_) => {
+            return with_cors(
+                response(StatusCode::BAD_REQUEST, json!({"code":"InvalidInput"})),
+                &origin,
+            );
+        }
+    };
+    if super::reject_forged_authority_fields(&request).is_err() {
+        return with_cors(denied(), &origin);
+    }
+    let Ok(_permit) = state.permits.try_acquire() else {
+        return with_cors(
+            response(StatusCode::SERVICE_UNAVAILABLE, json!({"code":"Busy"})),
+            &origin,
+        );
+    };
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        super::portfolio::overview(&state, &session.tenant_id, &session.bearer, request),
+    )
+    .await;
+    let response = match result {
+        Ok(Ok(data)) => response(StatusCode::OK, data),
+        Ok(Err(error)) => error_response(error),
+        Err(_) => super::unavailable(),
+    };
+    with_cors(response, &origin)
+}
+
 async fn web_query(
     State(state): State<Arc<StateData>>,
     Path(key): Path<String>,
@@ -924,6 +978,7 @@ mod tests {
                 connection_id: WebSession::reference("ws_a"),
                 id: "ws_a".into(),
                 bearer: "tok".into(),
+                tenant_id: "reader-tenant".into(),
                 created_at_ms: now,
                 expires_at_ms: now + 60_000,
                 last_seen_ms: now,
