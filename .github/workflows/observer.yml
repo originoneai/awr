@@ -58,13 +58,14 @@ jobs:
       run:
         working-directory: tools/observer
         shell: bash
-    env:
-      OBSERVER_EVIDENCE_DIR: ${{ runner.temp }}/observer-pixel-evidence
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - name: Evidence directory
+        # The runner context is not available in a job-level env, so the path is exported here.
+        run: echo "OBSERVER_EVIDENCE_DIR=$RUNNER_TEMP/observer-pixel-evidence" >> "$GITHUB_ENV"
       - name: Install
         run: npm ci
       - name: Install locked Chromium
