@@ -66,13 +66,15 @@ async fn both_audit_reads_use_only_unambiguous_active_recorded_relationships() {
              ('reader-tenant','disabled-binding','agent','Opaque agent','active'),
              ('reader-tenant','inactive-person','agent','Opaque agent','active'),
              ('reader-tenant','unbound-person','agent','Opaque agent','active'),
-             ('reader-tenant','human-without-person','human','Opaque human','active');
+             ('reader-tenant','human-without-person','human','Opaque human','active'),
+             ('reader-tenant','departed-human','human','Opaque human','active');
              INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status) VALUES
              ('reader-tenant','reader-project','person-one','Agent Owner','active'),
              ('reader-tenant','reader-project','person-two','Other Owner','active'),
              ('reader-tenant','reader-project','departed-person','Departed Owner','departed'),
              ('reader-tenant','reader-project','reviewer','Human Reviewer','active'),
-             ('reader-tenant','reader-project','unbound-person','Must Not Be Inferred','active');
+             ('reader-tenant','reader-project','unbound-person','Must Not Be Inferred','active'),
+             ('reader-tenant','reader-project','departed-human','Departed Human','departed');
              INSERT INTO awr_team.person_agent_bindings(tenant_id,project_id,id,person_id,agent_id,status) VALUES
              ('reader-tenant','reader-project','binding-one','person-one','agent-operator','active'),
              ('reader-tenant','reader-project','binding-two','person-one','ambiguous-agent','active'),
@@ -90,6 +92,7 @@ async fn both_audit_reads_use_only_unambiguous_active_recorded_relationships() {
         ("request-inactive", "inactive-person"),
         ("request-unbound", "unbound-person"),
         ("request-missing", "human-without-person"),
+        ("request-departed-human", "departed-human"),
     ] {
         seed_request(&admin, id, actor).await;
     }
@@ -126,6 +129,7 @@ async fn both_audit_reads_use_only_unambiguous_active_recorded_relationships() {
         "request-inactive",
         "request-unbound",
         "request-missing",
+        "request-departed-human",
     ] {
         assert_eq!(activity_item(&requests, id)["actor"], null_actor(), "{id}");
     }

@@ -2361,3 +2361,68 @@ async fn invalidate_open_rounds(
     .await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod resolved_person_tests {
+    use super::*;
+
+    fn person(kind: &str, bindings: &[&str], names: &[(&str, &str)]) -> ResolvedPerson {
+        ResolvedPerson {
+            actor_id: "actor-1".into(),
+            kind: kind.into(),
+            bindings: bindings.iter().map(|id| (*id).to_owned()).collect(),
+            active_names: names
+                .iter()
+                .map(|(id, name)| ((*id).to_owned(), (*name).to_owned()))
+                .collect(),
+        }
+    }
+
+    // `resolve_person_id` (review independence, admission, simulated members) refuses an agent that
+    // has no active binding. An agent never becomes a person of its own id, even when a persons row
+    // with that id exists and is active.
+    #[test]
+    fn an_agent_without_an_active_binding_is_nobody() {
+        let agent = person("agent", &[], &[("actor-1", "Same Id Person")]);
+        assert_eq!(agent.person_id(), None);
+        assert_eq!(agent.active_person(), None);
+    }
+
+    #[test]
+    fn a_human_without_bindings_is_its_own_person() {
+        let human = person("human", &[], &[("actor-1", "Human Name")]);
+        assert_eq!(human.person_id(), Some("actor-1"));
+        assert_eq!(human.active_person(), Some(("actor-1", "Human Name")));
+    }
+
+    // The recorded binding comes first for either kind, as in the original single-actor lookup.
+    #[test]
+    fn exactly_one_active_binding_selects_that_person() {
+        for kind in ["agent", "human"] {
+            let bound = person(kind, &["person-9"], &[("person-9", "Owner")]);
+            assert_eq!(bound.person_id(), Some("person-9"), "{kind}");
+            assert_eq!(bound.active_person(), Some(("person-9", "Owner")), "{kind}");
+        }
+    }
+
+    #[test]
+    fn conflicting_active_bindings_never_select_a_person() {
+        for kind in ["agent", "human"] {
+            let conflicted = person(
+                kind,
+                &["person-1", "person-2"],
+                &[("person-1", "First"), ("person-2", "Second")],
+            );
+            assert_eq!(conflicted.person_id(), None, "{kind}");
+            assert_eq!(conflicted.active_person(), None, "{kind}");
+        }
+    }
+
+    // A person that is not active has no name entry, so the identity is resolved but never named.
+    #[test]
+    fn a_resolved_person_without_an_active_name_is_not_named() {
+        let departed = person("agent", &["person-9"], &[]);
+        assert_eq!(departed.person_id(), Some("person-9"));
+        assert_eq!(departed.active_person(), None);
+    }
+}
