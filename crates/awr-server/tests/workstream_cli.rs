@@ -41,6 +41,25 @@ impl Drop for Project {
     }
 }
 
+async fn connect(
+    server: &Server,
+    token: &str,
+) -> rmcp::service::RunningService<rmcp::RoleClient, ()> {
+    let transport = StreamableHttpClientTransport::with_client(
+        reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap(),
+        StreamableHttpClientTransportConfig::with_uri(format!(
+            "{}/v1/projects/fixture/mcp",
+            server.url
+        ))
+        .auth_header(token),
+    );
+    ().serve(transport).await.unwrap()
+}
+
 fn build_cli() -> PathBuf {
     let output =
         std::process::Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
@@ -114,9 +133,19 @@ fn project(server: &Server) -> Project {
 }
 
 async fn cli(binary: &PathBuf, project: &Project, args: &[&str], expected_exit: i32) -> Value {
+    cli_as(binary, project, A, args, expected_exit).await
+}
+
+async fn cli_as(
+    binary: &PathBuf,
+    project: &Project,
+    token: &str,
+    args: &[&str],
+    expected_exit: i32,
+) -> Value {
     let output = tokio::process::Command::new(binary)
         .env("AWR_TEAM_ENABLED", "1")
-        .env("AWR_CLI_PARITY_TOKEN", A)
+        .env("AWR_CLI_PARITY_TOKEN", token)
         .env("NO_PROXY", "*")
         .env_remove("HTTP_PROXY")
         .env_remove("HTTPS_PROXY")
@@ -142,7 +171,7 @@ async fn cli(binary: &PathBuf, project: &Project, args: &[&str], expected_exit: 
         output.stderr
     };
     let result: Value = serde_json::from_slice(&bytes).unwrap();
-    assert!(!String::from_utf8_lossy(&bytes).contains(A));
+    assert!(!String::from_utf8_lossy(&bytes).contains(token));
     assert!(!project.0.join(".awr/state.db").exists());
     result
 }
@@ -247,19 +276,7 @@ async fn native_team_queries_match_mcp_without_business_mutations() {
     let commands = store.commands();
     let server = start(store).await;
     let project = project(&server);
-    let transport = StreamableHttpClientTransport::with_client(
-        reqwest::Client::builder()
-            .no_proxy()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .unwrap(),
-        StreamableHttpClientTransportConfig::with_uri(format!(
-            "{}/v1/projects/fixture/mcp",
-            server.url
-        ))
-        .auth_header(A),
-    );
-    let client = ().serve(transport).await.unwrap();
+    let client = connect(&server, A).await;
     let before = business_state(&admin).await;
     let cases: [(&str, Vec<&str>, Value); 9] = [
         ("capabilities", vec!["capabilities"], json!({})),
@@ -506,4 +523,413 @@ async fn native_team_queries_match_mcp_without_business_mutations() {
     assert_eq!(business_state(&admin).await, scoped);
     assert!(!project.0.join(".awr/state.db").exists());
     client.cancel().await.unwrap();
+}
+
+async fn runtime_command(
+    store: &awr_team_pg::WorkstreamReadStore,
+    request: &str,
+    op: &str,
+    args: Value,
+) -> Value {
+    store
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            command(&prepare(store, A, "a").await, request, op, args),
+        )
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+#[expect(
+    clippy::await_holding_lock,
+    reason = "The process-owned database fixture stays guarded for this entire single-thread test runtime."
+)]
+async fn native_runtime_inspections_match_mcp_for_active_terminal_unknown_and_mismatched_records() {
+    let binary = build_cli();
+    let (_guard, admin, db, store) = setup().await;
+    enable_writes(&admin).await;
+    let started = runtime_command(
+        &store,
+        "cli-session-start",
+        "session.start",
+        json!({"conversation_id":"cli-runtime-reads"}),
+    )
+    .await;
+    let session = started["receipt"]["data"]["session_id"].as_str().unwrap();
+    let taken = runtime_command(&store, "cli-claim", "claim.acquire", json!({
+        "session_id":session,"expected_session_version":"1","expected_work_version":"0","ttl_seconds":3600
+    })).await;
+    let claim = &taken["receipt"]["data"];
+    let claim_id = claim["claim_id"].as_str().unwrap();
+    let intent = runtime_command(&store, "cli-execution-prepare", "execution.prepare", json!({
+        "session_id":session,"expected_session_version":"1","claim_id":claim_id,
+        "expected_fence":claim["fence"],"expected_lease_version":claim["lease_version"],
+        "expected_work_version":claim["work_version"],"input_digest":"a".repeat(64),"declared_scope":["src"]
+    })).await;
+    let execution = intent["receipt"]["data"]["execution_id"].as_str().unwrap();
+    let server = start(awr_team_pg::WorkstreamReadStore::from_config(
+        common::with_app_role(&common::test_config(), &db),
+    ))
+    .await;
+    let project = project(&server);
+    let client = connect(&server, A).await;
+
+    for terminal in [false, true] {
+        if terminal {
+            let cancelled = runtime_command(&store, "cli-cancel", "execution.cancel", json!({
+                "session_id":session,"expected_session_version":"1","execution_id":execution,"expected_execution_version":"1"
+            })).await;
+            assert_eq!(cancelled["receipt"]["data"]["stop_confirmed"], true);
+            runtime_command(
+                &store,
+                "cli-release",
+                "claim.release",
+                json!({
+                    "session_id":session,"expected_session_version":"1","claim_id":claim_id,
+                    "expected_fence":claim["fence"],"expected_lease_version":claim["lease_version"]
+                }),
+            )
+            .await;
+            runtime_command(
+                &store,
+                "cli-session-end",
+                "session.end",
+                json!({
+                    "session_id":session,"expected_session_version":"1"
+                }),
+            )
+            .await;
+        }
+        let before = business_state(&admin).await;
+        for (op, args, extra) in [
+            (
+                "session.inspect",
+                vec!["session", "inspect", session],
+                json!({"session_id":session}),
+            ),
+            (
+                "claim.inspect",
+                vec![
+                    "claim",
+                    "inspect",
+                    claim_id,
+                    "--work",
+                    "a",
+                    "--session",
+                    session,
+                ],
+                json!({"work_id":"a","session_id":session,"claim_id":claim_id}),
+            ),
+            (
+                "execution.inspect",
+                vec!["execution", "inspect", execution, "--session", session],
+                json!({"session_id":session,"execution_id":execution}),
+            ),
+            (
+                "command.inspect",
+                vec!["command", "inspect", "cli-session-start", "--work", "a"],
+                json!({"work_id":"a","request_id":"cli-session-start"}),
+            ),
+            (
+                "work.recovery",
+                vec!["work", "recovery", "a", "--session", session],
+                json!({"work_id":"a","session_id":session}),
+            ),
+            (
+                "work.recovery",
+                vec!["work", "recovery", "c"],
+                json!({"work_id":"c"}),
+            ),
+            (
+                "command.inspect",
+                vec!["command", "inspect", "missing-request", "--work", "a"],
+                json!({"work_id":"a","request_id":"missing-request"}),
+            ),
+        ] {
+            let mut query = json!({"protocol_version":1,"op":op});
+            query
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            let start = now_ms();
+            let actual = cli(&binary, &project, &args, 0).await;
+            let result = client
+                .call_tool(
+                    CallToolRequestParams::new("awr_team_query")
+                        .with_arguments(query.as_object().unwrap().clone()),
+                )
+                .await
+                .unwrap();
+            assert!(!result.is_error.unwrap_or(false), "{op}: {result:?}");
+            match op {
+                "session.inspect" => {
+                    assert_eq!(actual["data"]["items"][0]["session_id"], session);
+                    assert_eq!(
+                        actual["data"]["items"][0]["state"],
+                        if terminal { "ended" } else { "active" }
+                    );
+                    assert!(actual["data"]["items"][0]["checkpoint_id"].is_null());
+                }
+                "claim.inspect" => {
+                    assert_eq!(
+                        actual["data"]["state"],
+                        if terminal { "released" } else { "active" }
+                    );
+                    assert_eq!(actual["data"]["lease_live"], !terminal);
+                    assert_eq!(actual["data"]["execution_authorized"], false);
+                }
+                "execution.inspect" => {
+                    assert_eq!(
+                        actual["data"]["state"],
+                        if terminal { "cancelled" } else { "prepared" }
+                    );
+                    assert_eq!(actual["data"]["artifact_verified"], false);
+                    assert!(actual["data"]["latest_receipt"].is_null());
+                }
+                "command.inspect" => {
+                    if extra["request_id"] == "missing-request" {
+                        assert_eq!(actual["data"]["state"], "unknown");
+                    } else {
+                        assert_eq!(actual["data"]["state"], "committed");
+                        assert_eq!(actual["data"]["receipt"], started["receipt"]);
+                    }
+                }
+                "work.recovery" => {
+                    assert_eq!(actual["data"]["automatic_resume"], false);
+                    assert_eq!(actual["data"]["checkpoint_actions_are_historical"], true);
+                    assert_eq!(
+                        actual["data"]["items"].as_array().unwrap().len(),
+                        if extra["work_id"] == "c" { 0 } else { 1 }
+                    );
+                }
+                _ => unreachable!(),
+            }
+            assert_same_facts(actual, result.structured_content.unwrap(), start, now_ms());
+        }
+        assert_eq!(
+            business_state(&admin).await,
+            before,
+            "runtime inspections must only add audit metadata"
+        );
+    }
+    let before = business_state(&admin).await;
+    for (op, args, extra) in [
+        (
+            "session.inspect",
+            vec!["session", "inspect", session, "--work", "c"],
+            json!({"work_id":"c","session_id":session}),
+        ),
+        (
+            "claim.inspect",
+            vec!["claim", "inspect", claim_id, "--work", "c"],
+            json!({"work_id":"c","claim_id":claim_id}),
+        ),
+        (
+            "execution.inspect",
+            vec![
+                "execution",
+                "inspect",
+                execution,
+                "--work",
+                "a",
+                "--session",
+                "session-b",
+            ],
+            json!({"work_id":"a","session_id":"session-b","execution_id":execution}),
+        ),
+        (
+            "command.inspect",
+            vec!["command", "inspect", "cli-session-start", "--work", "c"],
+            json!({"work_id":"c","request_id":"cli-session-start"}),
+        ),
+        (
+            "work.recovery",
+            vec!["work", "recovery", "c", "--session", session],
+            json!({"work_id":"c","session_id":session}),
+        ),
+    ] {
+        let mut query = json!({"protocol_version":1,"op":op});
+        query
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let actual = cli(&binary, &project, &args, 1).await;
+        let result = client
+            .call_tool(
+                CallToolRequestParams::new("awr_team_query")
+                    .with_arguments(query.as_object().unwrap().clone()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(true), "{op}: {result:?}");
+        assert!(actual["code"].is_string());
+        assert_eq!(actual, result.structured_content.unwrap());
+    }
+    assert_eq!(business_state(&admin).await, before);
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+#[expect(
+    clippy::await_holding_lock,
+    reason = "The process-owned database fixture stays guarded for this entire single-thread test runtime."
+)]
+async fn native_runtime_reads_match_mcp_for_receipt_visibility_and_unauthorized_clients() {
+    let binary = build_cli();
+    let (_guard, admin, db, store) = setup().await;
+    enable_writes(&admin).await;
+    let started = runtime_command(
+        &store,
+        "cli-permission-session",
+        "session.start",
+        json!({"conversation_id":"cli-runtime-permissions"}),
+    )
+    .await;
+    let session = started["receipt"]["data"]["session_id"].as_str().unwrap();
+    let taken = runtime_command(&store, "cli-permission-claim", "claim.acquire", json!({
+        "session_id":session,"expected_session_version":"1","expected_work_version":"0","ttl_seconds":3600
+    })).await;
+    let claim = &taken["receipt"]["data"];
+    let claim_id = claim["claim_id"].as_str().unwrap();
+    let intent = runtime_command(&store, "cli-permission-prepare", "execution.prepare", json!({
+        "session_id":session,"expected_session_version":"1","claim_id":claim_id,
+        "expected_fence":claim["fence"],"expected_lease_version":claim["lease_version"],
+        "expected_work_version":claim["work_version"],"input_digest":"a".repeat(64),"declared_scope":["src"]
+    })).await;
+    let execution = intent["receipt"]["data"]["execution_id"].as_str().unwrap();
+    let running = runtime_command(&store, "cli-permission-start", "execution.start", json!({
+        "session_id":session,"expected_session_version":"1","execution_id":execution,
+        "expected_execution_version":intent["receipt"]["data"]["execution_version"],
+        "claim_id":claim_id,"expected_fence":claim["fence"],"expected_lease_version":claim["lease_version"],
+        "expected_work_version":prepare(&store, A, "a").await["data"]["runtime"]["work_version"],
+        "execution_mode":"caller_managed"
+    })).await;
+    assert_eq!(running["execution_authorized"], true);
+    let private_note = "Synthetic private execution receipt for CLI permission checks.";
+    let reported = runtime_command(&store, "cli-permission-report", "execution.report", json!({
+        "session_id":session,"expected_session_version":"1","execution_id":execution,
+        "expected_execution_version":running["receipt"]["data"]["execution_version"],
+        "outcome":"succeeded","output_digest":"b".repeat(64),"observed_paths":["src/result.json"],
+        "note":private_note
+    })).await;
+    admin.execute("INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,workstream_id,authority_version,can_read)
+        VALUES($1,$2,'agent','cli-b',$3,1,true)", &[&TENANT,&PROJECT,&awr_core::Id::from(1).to_string()]).await.unwrap();
+    let server = start(awr_team_pg::WorkstreamReadStore::from_config(
+        common::with_app_role(&common::test_config(), &db),
+    ))
+    .await;
+    let project = project(&server);
+    let owner = connect(&server, A).await;
+    let peer = connect(&server, B).await;
+    for (token, client, allowed) in [(A, &owner, true), (B, &peer, true), (B, &peer, false)] {
+        if !allowed {
+            // Keep the peer's unrelated stream grant so MCP remains connected;
+            // the established connection must recheck access to this work.
+            let revoked = admin
+                .execute(
+                    "DELETE FROM awr_team.workstream_grants WHERE tenant_id=$1 AND project_id=$2
+                     AND client_id='cli-b' AND workstream_id=$3",
+                    &[&TENANT, &PROJECT, &awr_core::Id::from(1).to_string()],
+                )
+                .await
+                .unwrap();
+            assert_eq!(revoked, 1);
+        }
+        let before = business_state(&admin).await;
+        for (op, args, extra) in [
+            (
+                "session.inspect",
+                vec!["session", "inspect", session, "--work", "a"],
+                json!({"session_id":session}),
+            ),
+            (
+                "claim.inspect",
+                vec!["claim", "inspect", claim_id, "--work", "a"],
+                json!({"claim_id":claim_id}),
+            ),
+            (
+                "execution.inspect",
+                vec!["execution", "inspect", execution, "--work", "a"],
+                json!({"execution_id":execution}),
+            ),
+            (
+                "command.inspect",
+                vec!["command", "inspect", "cli-permission-report", "--work", "a"],
+                json!({"request_id":"cli-permission-report"}),
+            ),
+            ("work.recovery", vec!["work", "recovery", "a"], json!({})),
+        ] {
+            let mut query = json!({"protocol_version":1,"op":op,"work_id":"a"});
+            query
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            let start = now_ms();
+            let actual = cli_as(&binary, &project, token, &args, i32::from(!allowed)).await;
+            let result = client
+                .call_tool(
+                    CallToolRequestParams::new("awr_team_query")
+                        .with_arguments(query.as_object().unwrap().clone()),
+                )
+                .await
+                .unwrap();
+            if !allowed {
+                assert_eq!(result.is_error, Some(true), "{op}: {result:?}");
+                assert_eq!(actual["code"], "Forbidden");
+                assert!(actual.get("data").is_none());
+                assert!(!actual.to_string().contains(private_note));
+                assert_eq!(actual, result.structured_content.unwrap());
+                continue;
+            }
+            assert!(!result.is_error.unwrap_or(false), "{op}: {result:?}");
+            match op {
+                "claim.inspect" => {
+                    assert_eq!(actual["data"]["owned_by_client"], token == A);
+                }
+                "execution.inspect" => {
+                    assert_eq!(actual["data"]["owned_by_client"], token == A);
+                    assert_eq!(actual["data"]["receipt_details_available"], token == A);
+                    assert_eq!(actual["data"]["terminal_reported"], true);
+                    if token == A {
+                        assert_eq!(
+                            actual["data"]["latest_receipt"]["receipt_id"],
+                            reported["receipt"]["data"]["receipt_id"]
+                        );
+                        assert_eq!(
+                            actual["data"]["latest_receipt"]["payload"]["note"],
+                            private_note
+                        );
+                    } else {
+                        assert_eq!(actual["data"].get("latest_receipt"), Some(&Value::Null));
+                    }
+                }
+                "command.inspect" => {
+                    if token == A {
+                        assert_eq!(actual["data"]["state"], "committed");
+                        assert_eq!(actual["data"]["receipt"], reported["receipt"]);
+                    } else {
+                        assert_eq!(actual["data"]["state"], "unknown");
+                        assert_eq!(actual["data"]["request_id"], "cli-permission-report");
+                        assert!(actual["data"].get("receipt").is_none());
+                    }
+                }
+                _ => {}
+            }
+            if token == B {
+                assert!(!actual.to_string().contains(private_note));
+            }
+            assert_same_facts(actual, result.structured_content.unwrap(), start, now_ms());
+        }
+        assert_eq!(
+            business_state(&admin).await,
+            before,
+            "permission checks and receipt inspections must only add audit metadata"
+        );
+    }
+    owner.cancel().await.unwrap();
+    peer.cancel().await.unwrap();
 }
