@@ -187,7 +187,8 @@ describe('members and Agents panorama', () => {
     expect(screen.getByTestId('members-flat-note')).toHaveTextContent(i18n.t('members.flatHierarchy'));
     expect(screen.getByTestId('member-doing-person-taylor')).toHaveTextContent('A very long task title');
     expect(screen.getByTestId('member-pending-person-taylor')).toHaveTextContent('3');
-    expect(screen.getByTestId('member-pending-person-riley')).toHaveTextContent(i18n.t('members.noPending'));
+    // The prototype's quiet zero is the words 没有 / None, pinned literally: reading the catalog here would follow any edit of it.
+    expect(screen.getByTestId('member-pending-person-riley')).toHaveTextContent(language === 'zh-CN' ? '没有' : 'None');
     expect(screen.getByTestId('member-pending-unknown-2')).toHaveTextContent('—');
     expect(screen.getByTestId('member-row-person-taylor')).toHaveAttribute('data-highlighted', 'true');
     expect(screen.getAllByText(i18n.t('members.roleMissing')).length).toBeGreaterThan(0);
@@ -286,6 +287,23 @@ describe('members and Agents panorama', () => {
     expect(knownEmpty.className).toContain('members-dim');
     expect(screen.queryByTestId('members-detail')).toBeNull();
     expect(screen.getByTestId('member-pending-unknown-2').tagName).not.toBe('BUTTON');
+  });
+
+  it('renders a null pending count as the closed unknown dash, never as a number, a zero or a button', async () => {
+    const { setOverviewResponse } = setup();
+    const model = overviewModel();
+    // An unread approvals plane makes every person's pending total unknown (null), which must not read as zero.
+    model.input.approvals = { coverage: 'unread', reason: 'not-read' };
+    model.coverage.approvals = { status: 'unread', missing: ['approvals'] };
+    setOverviewResponse(model);
+    renderApp('/members?scope=demo');
+    await loaded();
+    for (const id of ['person-taylor', 'person-riley']) {
+      const cell = screen.getByTestId(`member-pending-${id}`);
+      expect(cell.tagName).not.toBe('BUTTON');
+      expect(cell).toHaveTextContent('—');
+      expect(cell.textContent).not.toMatch(/null|\d/);
+    }
   });
 
   it('clamps unknown detail parameters and opens person pages by click and keyboard', async () => {
