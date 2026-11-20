@@ -30,14 +30,6 @@
   --members-color-muted: color-mix(in srgb, var(--craft-color-muted) 97%, var(--craft-color-side) 3%);
 }
 
-@media (min-width: 861px) {
-  .members-page {
-    /* The existing shell sidebar is 8px narrower than the prototype; keep this page's canvas exact. */
-    width: calc(100% - var(--ant-padding-xs));
-    margin-left: var(--ant-padding-xs);
-  }
-}
-
 .members-page .obs-page-subtitle,
 .members-lead > span,
 .members-section .obs-section-count,
