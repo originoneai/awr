@@ -200,6 +200,12 @@ try {
   for (const configuration of configurations) {
     const actual = await actualPage(baseUrl, configuration.viewport, configuration.mode);
     if (configuration.viewport.width > 860) await actual.page.locator('.activity-task-link').first().waitFor({ state: 'attached' });
+    await actual.page.waitForFunction(() => {
+      const actors = [...document.querySelectorAll('.activity-actor')];
+      return actors.length > 0 && actors.every((actor) => !/未登记姓名|Name not registered/.test(actor.textContent ?? ''));
+    }, null, { timeout: 20_000 });
+    const unresolvedNameRows = await actual.page.locator('.activity-actor').filter({ hasText: /未登记姓名|Name not registered/ }).count();
+    assert.equal(unresolvedNameRows, 0, '063d demo actor links must resolve every visible name');
     const prototype = await prototypePage(configuration.viewport, configuration.mode);
     const actualPath = path.join(evidence, `${configuration.name}-observer.png`);
     const prototypeImagePath = path.join(evidence, `${configuration.name}-prototype.png`);
@@ -222,6 +228,7 @@ try {
       observer: actualPath,
       prototype: prototypeImagePath,
       sideBySide: combinedPath,
+      unresolvedNameRows,
       actualMetrics,
       prototypeMetrics,
     });
