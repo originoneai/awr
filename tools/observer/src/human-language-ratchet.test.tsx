@@ -40,6 +40,35 @@ function json(payload: unknown) {
   return new Response(JSON.stringify(payload), { status: 200, headers: { 'content-type': 'application/json' } });
 }
 
+function realShapedOverviewModel(state: State) {
+  const overview = realShapedOverview();
+  const complete = (items: Array<Record<string, unknown>>) => ({ coverage: 'complete', items });
+  const unread = { coverage: 'unread', items: [] };
+  const part = (status: string) => ({ status, missing: [] });
+  const tasks = state === 'empty' ? [] : overview.works.map((work) => ({ id: work.key, title: work.title }));
+  const directory = (overview.members ?? []) as Array<Record<string, unknown>>;
+  const members = state === 'empty' ? [] : directory.flatMap((member) => {
+    const personId = member.person_id ?? member.actor_id ?? member.id;
+    return typeof personId === 'string' ? [{ personId, displayName: member.display_name ?? member.name ?? null }] : [];
+  });
+  return {
+    ok: true,
+    project: 'demo',
+    read_at_unix_ms: 1790000000000,
+    input: {
+      tasks: complete(tasks), members: complete(members), dependencies: unread, decisions: unread,
+      reviewRounds: unread, handoffs: unread, approvals: unread, activity: unread,
+      options: { nowUnixMs: 1790000000000, stalledAfterDays: 7 },
+    },
+    coverage: {
+      tasks: part('complete'), members: part('complete'), dependencies: part('unread'),
+      decisions: part('unread'), reviewRounds: part('unread'), handoffs: part('unread'),
+      approvals: part('unread'), activity: part('unread'),
+    },
+    freshness: overview.freshness,
+  };
+}
+
 function installRealShapeMock(state: State, moment: RealMoment) {
   const failure = { ok: false, error: { code: 'ReadTimeout', message: 'synthetic read failure' } };
   const revoked = { ok: false, error: { code: 'Unauthenticated', message: 'revoked' } };
@@ -64,6 +93,7 @@ function installRealShapeMock(state: State, moment: RealMoment) {
         }],
       });
     }
+    if (url.includes('/api/team/overview-model')) return json(realShapedOverviewModel(state));
     if (url.includes('/api/team/overview')) {
       if (state === 'empty') return json({ ...DEMO_OVERVIEW, works: [], workstreams: [] });
       return json({
