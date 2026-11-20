@@ -1,7 +1,7 @@
 {
   "data": {
     "as_of": {
-      "at_unix_ms": 1795132963262
+      "at_unix_ms": 1795143038122
     },
     "execution_authorized": false,
     "next_cursor": null,
@@ -24,9 +24,10 @@
           "ends_on": "2026-11-22",
           "period_key": "2026-W47",
           "period_kind": "week",
-          "recorded_at_unix_ms": 1795132963235,
+          "recorded_at_unix_ms": 1795143038090,
           "starts_on": "2026-11-16",
           "status": "risk",
+          "summary": "A synthetic supervisor sentence.",
           "update_id": "update-clone"
         },
         "project_id": "portfolio-project-001",
@@ -40,7 +41,7 @@
         "waits": {
           "decision": 1,
           "dependency": 1,
-          "oldest_open_unix_ms": 1795132963233,
+          "oldest_open_unix_ms": 1795143038087,
           "review": 0
         },
         "works": {

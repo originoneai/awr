@@ -1,10 +1,10 @@
 {
   "data": {
     "as_of": {
-      "at_unix_ms": 1795132963284
+      "at_unix_ms": 1795143038145
     },
     "execution_authorized": false,
-    "next_cursor": "{\"binding\":\"72c85954b7eac5b23077732c637eaedd677d85d1a5bd224c288f98efb10630fa\",\"project_id\":\"portfolio-project-001\"}",
+    "next_cursor": "{\"binding\":\"ad247ba8200f92debe9cb194156937a5b8dbd3c87cdaf23644ae9405323c7028\",\"project_id\":\"portfolio-project-001\"}",
     "projects": [
       {
         "coordinator_epoch": "epoch-portfolio",
@@ -24,9 +24,10 @@
           "ends_on": "2026-11-22",
           "period_key": "2026-W47",
           "period_kind": "week",
-          "recorded_at_unix_ms": 1795132963235,
+          "recorded_at_unix_ms": 1795143038090,
           "starts_on": "2026-11-16",
           "status": "risk",
+          "summary": "A synthetic supervisor sentence.",
           "update_id": "update-clone"
         },
         "project_id": "portfolio-project-001",
@@ -40,7 +41,7 @@
         "waits": {
           "decision": 1,
           "dependency": 1,
-          "oldest_open_unix_ms": 1795132963233,
+          "oldest_open_unix_ms": 1795143038087,
           "review": 0
         },
         "works": {

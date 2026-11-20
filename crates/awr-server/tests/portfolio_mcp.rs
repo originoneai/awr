@@ -215,6 +215,7 @@ async fn seed_clone(admin: &tokio_postgres::Client) {
              INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,workstream_id,authority_version,can_read,active,grant_version)
                 SELECT tenant_id,'{CLONE}',actor_id,client_id,workstream_id,authority_version,can_read,true,1
                 FROM awr_team.workstream_grants WHERE tenant_id='{TENANT}' AND project_id='{PROJECT}';
+
              INSERT INTO awr_team.work_runtime(tenant_id,project_id,scope_id,work_id,state,work_version,last_fence)
                 VALUES('{TENANT}','{CLONE}','main','a','claimed',1,0);
              INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state,workstream_id,ownership_version)
@@ -328,7 +329,11 @@ async fn portfolio_tool_replies_match_committed_samples() {
         .unwrap();
     assert_eq!(base_item["read"]["status"], "complete");
     assert_eq!(base_item["latest_update"], Value::Null);
+    // The base project's reader holds one of two streams; the grouping
+    // labels follow project entry (owner decision), so the directory is
+    // disclosed with no saved plan.
     assert_eq!(base_item["directory"]["registered"], false);
+    assert_eq!(base_item["directory"]["group"], Value::Null);
     save_verbatim("portfolio-mcp-member.json", &member);
 
     // A bounded page with a resume cursor.

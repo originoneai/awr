@@ -8,9 +8,10 @@
 //! disclosure boundaries are documented in
 //! `docs/dev/reference/portfolio-overview.md`.
 //!
-//! Round-trip budget: `BEGIN`, admission statement, facts statement, `COMMIT`
-//! — four client-server exchanges regardless of project count. Per-project
-//! query loops are a defect; the counting test pins this. Unlike the locking
+//! Round-trip budget: `BEGIN`, one marker statement, the batched admission
+//! statement, the batched facts statement, `COMMIT` — five client-server
+//! statement exchanges regardless of project count. Per-project query loops
+//! are a defect; the counting test pins this. Unlike the locking
 //! read paths, admission takes no row locks here: a read-only repeatable-read
 //! snapshot already linearizes a concurrent grant or membership change before
 //! or after the whole read.
@@ -142,22 +143,33 @@ dependency_open AS (
     GROUP BY project_id,work_id
 ),
 decisions AS (
-    SELECT w.project_id,w.work_id,(extract(epoch FROM wi.created_at)*1000)::bigint AS opened_ms
+    SELECT w.project_id,w.work_id,count(*) AS open_count,
+        (extract(epoch FROM min(wi.created_at))*1000)::bigint AS opened_ms
     FROM works w
     JOIN awr_team.wait_items wi ON wi.tenant_id=$1 AND wi.project_id=w.project_id
       AND wi.work_id=w.work_id
     WHERE wi.decision_key IS NOT NULL AND wi.state='open'
+    GROUP BY w.project_id,w.work_id
 ),
 reviews AS (
-    SELECT w.project_id,w.work_id,(extract(epoch FROM rr.created_at)*1000)::bigint AS opened_ms
+    -- One work may hold several open rounds (same bundle or not); the work
+    -- stays one work and the wait carries the round count.
+    SELECT w.project_id,w.work_id,count(*) AS open_count,
+        (extract(epoch FROM min(rr.created_at))*1000)::bigint AS opened_ms
     FROM works w
     JOIN awr_team.review_rounds rr ON rr.tenant_id=$1 AND rr.project_id=w.project_id
       AND rr.work_id=w.work_id AND rr.state='open'
+    GROUP BY w.project_id,w.work_id
 ),
 completion_basis AS (
     SELECT w.project_id,w.work_id,
         e.payload_json->>'independence_kind' AS independence_kind,
-        (e.payload_json->>'team_independent_acceptance')::boolean AS team_independent_acceptance,
+        -- A stored flag that is not a boolean (corrupt text, a number) reads
+        -- as no stated flag and falls through to the policy; it must not
+        -- raise and fail the whole read.
+        CASE WHEN jsonb_typeof(e.payload_json->'team_independent_acceptance')='boolean'
+            THEN (e.payload_json->>'team_independent_acceptance')::boolean END
+            AS team_independent_acceptance,
         e.payload_json->>'policy' AS policy
     FROM works w
     JOIN LATERAL (
@@ -175,13 +187,13 @@ completion_basis AS (
 ),
 latest_updates AS (
     SELECT DISTINCT ON (c.project_id) c.project_id,u.id,u.period_kind,u.period_key,
-        u.starts_on::text,u.ends_on::text,u.status,u.author_person_id,u.author_display_name,
+        u.starts_on::text,u.ends_on::text,u.status,u.summary,u.author_person_id,u.author_display_name,
         (extract(epoch FROM u.recorded_at)*1000)::bigint AS recorded_ms
     FROM awr_team.project_period_update_current c
     JOIN awr_team.project_period_updates u ON u.tenant_id=c.tenant_id
       AND u.project_id=c.project_id AND u.id=c.update_id
     WHERE c.tenant_id=$1 AND c.project_id=ANY($3)
-    ORDER BY c.project_id,u.starts_on DESC,u.ends_on DESC,u.period_key DESC
+    ORDER BY c.project_id,u.starts_on DESC,u.ends_on DESC,u.period_key DESC,u.id DESC
 ),
 directories AS (
     SELECT project_id,plan_json FROM awr_team.project_directories
@@ -195,7 +207,8 @@ SELECT sc.project_id,
             'cmp',CASE WHEN cb.work_id IS NULL THEN NULL ELSE jsonb_build_object(
                 'k',cb.independence_kind,'a',cb.team_independent_acceptance,
                 'policy',cb.policy) END,
-            'wd',de.opened_ms,'wr',rv.opened_ms) ORDER BY w.work_id),'[]'::jsonb)
+            'wd',de.opened_ms,'wdn',de.open_count,
+            'wr',rv.opened_ms,'wrn',rv.open_count) ORDER BY w.work_id),'[]'::jsonb)
         FROM works w
         LEFT JOIN latest_phase lp ON lp.project_id=w.project_id AND lp.work_id=w.work_id
         LEFT JOIN dependency_open do_ ON do_.project_id=w.project_id AND do_.work_id=w.work_id
@@ -205,7 +218,7 @@ SELECT sc.project_id,
         WHERE w.project_id=sc.project_id),
     (SELECT jsonb_build_object('update_id',lu.id,'period_kind',lu.period_kind,
             'period_key',lu.period_key,'starts_on',lu.starts_on,'ends_on',lu.ends_on,
-            'status',lu.status,
+            'status',lu.status,'summary',lu.summary,
             'author',jsonb_build_object('person_id',lu.author_person_id,
                 'display_name',lu.author_display_name),
             'recorded_at_unix_ms',lu.recorded_ms)
@@ -235,6 +248,11 @@ struct ProjectAdmission {
     /// Task allowances for Agent readers: work ids with a Task-scope read
     /// delegation. Their works count only inside grant-readable streams.
     tasks: BTreeSet<String>,
+    /// Whether the period-update read (`updates.list`) would pass: humans
+    /// always; Agents with a Project- or Workstream-scope read delegation.
+    /// The directory grouping is disclosed to every reader that enters the
+    /// project (owner decision of 2026-11-19): no flag for it exists.
+    updates_readable: bool,
 }
 
 impl ProjectAdmission {
@@ -260,6 +278,7 @@ impl ProjectAdmission {
             grant_versions: BTreeMap::new(),
             streams: BTreeSet::new(),
             tasks: BTreeSet::new(),
+            updates_readable: false,
         }
     }
 }
@@ -301,6 +320,7 @@ fn admit(
         grant_versions: BTreeMap::new(),
         streams: BTreeSet::new(),
         tasks: BTreeSet::new(),
+        updates_readable: false,
     };
     if project["mode_enabled"] != json!(true) || admission.snapshot.is_none() {
         admission.denial = Some("no_active_snapshot");
@@ -492,6 +512,15 @@ fn admit(
             admission.denial = Some("no_read_authority");
             return Ok(admission);
         }
+        // Project-level disclosure: `updates.list` needs a Project- or
+        // Workstream-scope reader, so a Task-only reader gets no update. The
+        // directory grouping follows project entry itself (owner decision of
+        // 2026-11-19): any reader that enters the project sees its group.
+        admission.updates_readable = !readers.is_empty();
+    }
+    if !crate::delegation_auth::actor_requires_explicit_delegation(actor_kind) {
+        // Human and system readers: updates.list follows the project read.
+        admission.updates_readable = true;
     }
     admission.grant_streams = grant_streams;
     admission.grant_versions = grant_versions;
@@ -536,13 +565,23 @@ fn fold_work(
     let runtime = work["r"].as_str();
     let phase = work["p"].as_str();
     let mut opened: Vec<i64> = Vec::new();
-    if let Some(at) = work["wd"].as_i64() {
-        counts.decision += 1;
-        opened.push(at);
+    // A work may hold several open decisions or review rounds; the wait
+    // carries their count and the earliest start.
+    if let Some(count) = work["wdn"].as_i64() {
+        if count > 0 {
+            counts.decision += count;
+            if let Some(at) = work["wd"].as_i64() {
+                opened.push(at);
+            }
+        }
     }
-    if let Some(at) = work["wr"].as_i64() {
-        counts.review += 1;
-        opened.push(at);
+    if let Some(count) = work["wrn"].as_i64() {
+        if count > 0 {
+            counts.review += count;
+            if let Some(at) = work["wr"].as_i64() {
+                opened.push(at);
+            }
+        }
     }
     if phase == Some("waiting_dependency") {
         counts.dependency += 1;
@@ -843,21 +882,21 @@ impl WorkstreamReadStore {
                         "waits":{"decision":counts.decision,
                             "dependency":counts.dependency,"review":counts.review,
                             "oldest_open_unix_ms":counts.oldest_open},
-                        "latest_update":update_json.clone().unwrap_or(Value::Null),
+                        "latest_update":if project.updates_readable {
+                            update_json.clone().unwrap_or(Value::Null)
+                        } else {
+                            Value::Null
+                        },
                         "read":{"status":"complete"}}));
                     continue;
                 }
                 items.push(json!({
                     "project_id":project.id,"project_key":project.key,
-                    "project_status":project.status,"coordinator_epoch":project.epoch,
-                    "project_revision":project.revision.to_string(),
                     "read":{"status":"not_read","reason":"no_read_authority"}}));
                 continue;
             };
             items.push(json!({
                 "project_id":project.id,"project_key":project.key,
-                "project_status":project.status,"coordinator_epoch":project.epoch,
-                "project_revision":project.revision.to_string(),
                 "read":{"status":"not_read","reason":project.denial.expect("checked above")}}));
         }
         let result = json!({

@@ -716,7 +716,17 @@ async fn pages_never_overlap_or_drop_projects() {
     let projects = all_projects(&admin).await;
     let mut seen = Vec::new();
     let mut cursor = None;
+    // A fault that ignores the start cursor would loop forever; bound the
+    // walk so it fails instead of hanging.
+    let max_pages = projects.len() / 3 + 1;
+    let mut pages = 0usize;
     loop {
+        pages += 1;
+        assert!(
+            pages <= max_pages,
+            "pagination walked {pages} pages for {} projects; the start cursor is ignored",
+            projects.len()
+        );
         let page = store
             .portfolio_overview(
                 TENANT,
@@ -785,22 +795,26 @@ async fn forty_projects_stay_inside_the_round_trip_budget() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let proxy_addr = listener.local_addr().unwrap();
     let counter = Arc::new(AtomicUsize::new(0));
+    // Every Parse frame's SQL text, to pin that the scope markers are bound
+    // transaction-locally: a pooled connection must never keep them.
+    let statements = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
     {
         let counter = counter.clone();
+        let statements = statements.clone();
         let host = upstream_host.clone();
         tokio::spawn(async move {
             loop {
-                let Ok((mut client, _)) = listener.accept().await else {
+                let Ok((client, _)) = listener.accept().await else {
                     return;
                 };
-                let Ok(mut upstream) =
+                let Ok(upstream) =
                     tokio::net::TcpStream::connect((host.as_str(), upstream_port)).await
                 else {
                     return;
                 };
                 let counter = counter.clone();
+                let statements = statements.clone();
                 tokio::spawn(async move {
-                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
                     if std::env::var("AWR_PORTFOLIO_DEBUG").is_ok() {
                         eprintln!("proxy connection opened");
                     }
@@ -865,6 +879,21 @@ async fn forty_projects_stay_inside_the_round_trip_budget() {
                                         eprintln!("statement #{seen}");
                                     }
                                 }
+                                if kind == b'P' {
+                                    // Parse body: statement name, then the
+                                    // query, both NUL-terminated.
+                                    let body = &pending[offset + 5..offset + length];
+                                    if let Some(name_end) = body.iter().position(|b| *b == 0) {
+                                        let rest = &body[name_end + 1..];
+                                        if let Some(query_end) = rest.iter().position(|b| *b == 0) {
+                                            if let Ok(text) =
+                                                std::str::from_utf8(&rest[..query_end])
+                                            {
+                                                statements.lock().unwrap().push(text.to_owned());
+                                            }
+                                        }
+                                    }
+                                }
                                 offset += length;
                             }
                             pending.drain(..offset);
@@ -902,6 +931,19 @@ async fn forty_projects_stay_inside_the_round_trip_budget() {
         .await
         .unwrap();
     assert_eq!(result["data"]["total_projects"], json!(40));
+    // The scope markers must be transaction-local: if the statement ever
+    // binds them session-wide, a pooled connection keeps them and every
+    // later reuse of that connection reads with the portfolio marker on.
+    let captured = statements.lock().unwrap().clone();
+    let marker_statement = captured
+        .iter()
+        .find(|text| text.contains("awr.portfolio_read"))
+        .expect("the marker statement crossed the proxy");
+    assert!(
+        marker_statement.contains("set_config('awr.tenant_id',$1,true)")
+            && marker_statement.contains("set_config('awr.portfolio_read','on',true)"),
+        "markers must be bound with is_local=true: {marker_statement}"
+    );
     let exchanges = counter.load(Ordering::SeqCst);
     eprintln!("portfolio statement exchanges: {exchanges}");
     assert!(
@@ -1069,4 +1111,1209 @@ async fn cursor_binds_the_reader_authority() {
             .await,
         Err(PgError::CursorExpired)
     ));
+}
+
+/// One work may carry two open review rounds (the table forbids one open
+/// wait, not one open round per bundle). The per-work aggregate must not
+/// double-count the work, and the review wait carries both rounds.
+#[tokio::test]
+async fn two_open_review_rounds_on_one_work_stay_one_work() {
+    let (_guard, admin, _db, store) = fixture::setup().await;
+    let one = clone_project(&admin, 1).await;
+    seed_review(&admin, &one, "a").await;
+    admin
+        .execute(
+            "INSERT INTO awr_team.review_rounds(tenant_id,project_id,id,work_id,round_index,bundle_hash,contract_hash,author_actor_id,state)
+             VALUES($1,$2,'review-second-open','a',2,'bundle-two','contract','agent','open')",
+            &[&TENANT, &one],
+        )
+        .await
+        .unwrap();
+    let projects = all_projects(&admin).await;
+    let result = store
+        .portfolio_overview(TENANT, A, &registered(&projects), portfolio(None, None))
+        .await
+        .unwrap();
+    let item = by_project_id(&result, &one);
+    // work.list over the visible stream counts each work once.
+    let streams = read_project(&store, &one, query("workstreams.list")).await;
+    let mut listed = 0usize;
+    for stream in streams["items"].as_array().unwrap() {
+        let mut list = query("work.list");
+        list.workstream_id = stream["id"].as_str().and_then(|id| id.parse().ok());
+        list.limit = Some(100);
+        listed += read_project(&store, &one, list).await["data"]["items"]
+            .as_array()
+            .unwrap()
+            .len();
+    }
+    assert_eq!(
+        item["works"]["total"].as_i64().unwrap() as usize,
+        listed,
+        "a work with two open rounds is still one work (work.list says {listed})"
+    );
+    // The review wait counts the rounds, like review.rounds does.
+    let mut rounds = query("review.rounds");
+    rounds.work_id = Some("a".into());
+    rounds.limit = Some(100);
+    let open_rounds = read_project(&store, &one, rounds).await["data"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|round| round["state"] == "open")
+        .count();
+    assert_eq!(
+        item["waits"]["review"].as_i64().unwrap() as usize,
+        open_rounds
+    );
+    assert_eq!(open_rounds, 2);
+}
+
+/// A stored payload the reader can reach must never fail the whole read. The
+/// acceptance flag may be corrupt text or a non-boolean value: it then reads
+/// as "no stated flag"; with no `independence_kind` either, the completion
+/// falls through to the policy and stays recorded and unverified. A stated
+/// `independence_kind` still decides first, exactly as in the shared rule.
+#[tokio::test]
+async fn corrupt_completion_payloads_degrade_to_unverified_without_failing_the_read() {
+    let (_guard, admin, _db, store) = fixture::setup().await;
+    let one = clone_project(&admin, 1).await;
+    let two = clone_project(&admin, 2).await;
+    let three = clone_project(&admin, 3).await;
+    let four = clone_project(&admin, 4).await;
+    // Corrupt text flag, but the kind alone classifies this completion.
+    seed_completion(
+        &admin,
+        &one,
+        "a",
+        json!({"receipt_id":"r-text-kind","independence_kind":"team_independent",
+            "team_independent_acceptance":"maybe"}),
+        11,
+    )
+    .await;
+    // Corrupt text flag and no kind: no stated flag falls through to the
+    // policy, which is "recorded, never verified".
+    seed_completion(
+        &admin,
+        &two,
+        "a",
+        json!({"receipt_id":"r-text-nokind","team_independent_acceptance":"maybe"}),
+        12,
+    )
+    .await;
+    // A number flag used to cast to true; it must read as no stated flag too.
+    seed_completion(
+        &admin,
+        &three,
+        "a",
+        json!({"receipt_id":"r-number-nokind","team_independent_acceptance":1}),
+        13,
+    )
+    .await;
+    let projects = all_projects(&admin).await;
+    let result = store
+        .portfolio_overview(TENANT, A, &registered(&projects), portfolio(None, None))
+        .await
+        .expect("one corrupt payload in one project must not fail the whole portfolio");
+    let kind_wins = by_project_id(&result, &one);
+    assert_eq!(kind_wins["read"]["status"], "complete");
+    assert_eq!(kind_wins["works"]["verified"], json!(1));
+    for project in [&two, &three] {
+        let item = by_project_id(&result, project);
+        assert_eq!(item["read"]["status"], "complete", "{project}");
+        assert_eq!(
+            item["works"]["completed_without_independent_review"],
+            json!(1),
+            "{project}: a stated flag that is not a boolean is no stated flag"
+        );
+        assert_eq!(item["works"]["verified"], json!(0), "{project}");
+    }
+    let untouched = by_project_id(&result, &four);
+    assert_eq!(untouched["read"]["status"], "complete");
+    assert_eq!(untouched["works"]["not_started"], json!(2));
+}
+
+/// Find one project's item in a portfolio reply.
+fn by_project_id(result: &Value, project: &str) -> Value {
+    result["data"]["projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["project_id"] == project)
+        .unwrap_or_else(|| panic!("project {project} absent from portfolio"))
+        .clone()
+}
+
+/// Project-level disclosure: the directory grouping follows project entry
+/// (owner decision of 2026-11-19), so every reader whose item is `complete`
+/// sees it; `latest_update` is present exactly when `updates.list` succeeds
+/// for the same reader. Five reader kinds, one project, same data.
+#[tokio::test]
+async fn project_level_fields_follow_their_per_project_reads() {
+    use awr_core::{
+        AgentAuthorization, AuthorizationScope, AuthorizationStatus, AuthorizedAction,
+        ExecutionSubjectKind, IssueAuthorizationRequest, PersonId,
+    };
+    let (_guard, admin, db, store) = fixture::setup().await;
+    // A period record exists, so a reader with update authority receives it.
+    seed_update(&admin, PROJECT, "2026-W47", "risk").await;
+    // Person + binding for the Agent delegations below.
+    admin
+        .batch_execute(&format!(
+            "INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status)
+             VALUES('{TENANT}','{PROJECT}','parity-person','Parity Owner','active');
+             INSERT INTO awr_team.person_agent_bindings(tenant_id,project_id,id,person_id,agent_id,status)
+             VALUES('{TENANT}','{PROJECT}','parity-binding','parity-person','agent','active');"
+        ))
+        .await
+        .unwrap();
+    let projects = all_projects(&admin).await;
+    let issuer = awr_team_pg::AuthorizationStore::from_config(common::with_app_role(
+        &common::test_config(),
+        &db,
+    ));
+    let issue = |id: &str, scope: AuthorizationScope| {
+        let issuer = &issuer;
+        let request_key = format!("issue-{id}");
+        let authorization = AgentAuthorization {
+            id: id.into(),
+            authorizer_person_id: PersonId::new("parity-person").unwrap(),
+            responsible_person_id: PersonId::new("parity-person").unwrap(),
+            subject_kind: ExecutionSubjectKind::Agent,
+            subject_id: "agent".into(),
+            client_id: "cli-a".into(),
+            session_id: None,
+            model_id: None,
+            scope,
+            actions: [AuthorizedAction::Inspect].into_iter().collect(),
+            expires_at_ms: None,
+            status: AuthorizationStatus::Active,
+            revoked_at_ms: None,
+            revoked_by: None,
+            verifiable_capabilities: vec![],
+            self_reported_skill_hints: vec![],
+            parent_authorization_id: None,
+            maintainer_person_id: None,
+            created_at_ms: 1,
+            binding_id: Some("parity-binding".into()),
+        };
+        async move {
+            issuer
+                .issue(
+                    TENANT,
+                    PROJECT,
+                    &IssueAuthorizationRequest {
+                        request_key,
+                        authorization,
+                    },
+                )
+                .await
+                .unwrap();
+        }
+    };
+    let stream_of = |n: i64| format!("{:026}", n);
+    async fn check(store: &WorkstreamReadStore, projects: &[String], name: &str) -> bool {
+        {
+            let portfolio = store
+                .portfolio_overview(TENANT, A, &registered(projects), portfolio(None, None))
+                .await
+                .unwrap();
+            let item = by_project_id(&portfolio, PROJECT);
+            assert_eq!(item["read"]["status"], "complete", "{name}");
+            let updates_read = read_project(store, PROJECT, query("updates.list")).await;
+            let updates_ok = updates_read
+                .get("data")
+                .and_then(|d| d.get("items"))
+                .is_some();
+            // The grouping labels follow project entry, whatever the entry
+            // probe of directory.read itself would say for this reader.
+            assert!(
+                item["directory"].is_object(),
+                "{name}: every complete item carries the directory grouping"
+            );
+            assert_eq!(
+                item["latest_update"].is_null(),
+                !updates_ok,
+                "{name}: latest_update presence must equal updates.list"
+            );
+            if updates_ok {
+                assert_eq!(
+                    item["latest_update"]["summary"], updates_read["data"]["items"][0]["summary"],
+                    "{name}: the supervisor's sentence travels with the record"
+                );
+            }
+            updates_ok
+        }
+    }
+
+    // 1. Partial human: stream 1 only. directory.read itself refuses, but
+    //    the grouping labels follow project entry; updates.list succeeds.
+    assert!(store.directory().read(TENANT, PROJECT, A).await.is_err());
+    let updates = check(&store, &projects, "partial human").await;
+    assert!(updates);
+    // 2. Full-scope human: every stream of the catalog readable.
+    admin
+        .execute(
+            "INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,workstream_id,authority_version,can_read,active,grant_version)
+             VALUES($1,$2,'agent','cli-a',$3,1,true,true,1)",
+            &[&TENANT, &PROJECT, &stream_of(2)],
+        )
+        .await
+        .unwrap();
+    let updates = check(&store, &projects, "full human").await;
+    assert!(updates);
+    admin
+        .execute(
+            "DELETE FROM awr_team.workstream_grants WHERE tenant_id=$1 AND project_id=$2
+             AND actor_id='agent' AND client_id='cli-a' AND workstream_id=$3",
+            &[&TENANT, &PROJECT, &stream_of(2)],
+        )
+        .await
+        .unwrap();
+    // Agent readers keep the full-catalog grants for cases 3-5.
+    admin
+        .batch_execute(&format!(
+            "UPDATE awr_team.actors SET kind='agent' WHERE tenant_id='{TENANT}' AND id='agent';
+             INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,workstream_id,authority_version,can_read,active,grant_version)
+             VALUES('{TENANT}','{PROJECT}','agent','cli-a','{stream}',1,true,true,1);",
+            stream = stream_of(2)
+        ))
+        .await
+        .unwrap();
+    // 3. Project-scope Agent: directory and updates both readable.
+    issue(
+        "parity-project",
+        AuthorizationScope::Project {
+            project_id: PROJECT.into(),
+        },
+    )
+    .await;
+    let updates = check(&store, &projects, "project agent").await;
+    assert!(updates);
+    // 4. Workstream-scope Agent: updates yes, directory no (no Project scope).
+    admin
+        .execute(
+            "UPDATE awr_team.agent_authorizations SET body_json=jsonb_set(body_json,'{status}','\"revoked\"')
+             WHERE tenant_id=$1 AND project_id=$2",
+            &[&TENANT, &PROJECT],
+        )
+        .await
+        .unwrap();
+    issue(
+        "parity-stream",
+        AuthorizationScope::Workstream {
+            project_id: PROJECT.into(),
+            workstream_id: stream_of(1),
+        },
+    )
+    .await;
+    let updates = check(&store, &projects, "workstream agent").await;
+    assert!(updates);
+    // 5. Task-only Agent: the project reads through its task; neither
+    //    project-level field is disclosed.
+    admin
+        .execute(
+            "UPDATE awr_team.agent_authorizations SET body_json=jsonb_set(body_json,'{status}','\"revoked\"')
+             WHERE tenant_id=$1 AND project_id=$2",
+            &[&TENANT, &PROJECT],
+        )
+        .await
+        .unwrap();
+    issue(
+        "parity-task",
+        AuthorizationScope::Task {
+            project_id: PROJECT.into(),
+            work_item_id: "a".into(),
+        },
+    )
+    .await;
+    let portfolio = store
+        .portfolio_overview(TENANT, A, &registered(&projects), portfolio(None, None))
+        .await
+        .unwrap();
+    let item = by_project_id(&portfolio, PROJECT);
+    assert_eq!(item["read"]["status"], "complete");
+    // A Task-only reader still sees the grouping labels (owner decision),
+    // but no period update: updates.list refuses for it.
+    assert!(
+        item["directory"].is_object(),
+        "task agent: the grouping labels follow project entry"
+    );
+    assert_eq!(item["latest_update"], Value::Null, "task agent: no update");
+    assert_eq!(item["works"]["total"], json!(1), "only the task counts");
+}
+
+/// A credential id with the wrong secret is refused: the secret hash is part
+/// of admission, not only the id. The token keeps the valid id and format.
+#[tokio::test]
+async fn a_wrong_secret_for_a_known_credential_id_is_refused() {
+    let (_guard, admin, _db, store) = fixture::setup().await;
+    clone_project(&admin, 1).await;
+    let wrong_secret = format!("awr1.reader-a.{}", "d".repeat(64));
+    assert!(matches!(
+        store
+            .portfolio_overview(
+                TENANT,
+                &wrong_secret,
+                &registered(&all_projects(&admin).await),
+                portfolio(None, None)
+            )
+            .await,
+        Err(PgError::Forbidden)
+    ));
+    // The same call with the real secret still succeeds.
+    store
+        .portfolio_overview(
+            TENANT,
+            A,
+            &registered(&all_projects(&admin).await),
+            portfolio(None, None),
+        )
+        .await
+        .unwrap();
+}
+
+/// Credential, actor and tenant level states refuse the whole portfolio
+/// exactly as they refuse the per-project entry.
+#[tokio::test]
+async fn credential_actor_and_tenant_states_refuse_the_whole_portfolio() {
+    let (_guard, admin, _db, store) = fixture::setup().await;
+    clone_project(&admin, 1).await;
+    let projects = all_projects(&admin).await;
+    let steps: &[(&str, &str, &str)] = &[
+        (
+            "revoked credential",
+            "UPDATE awr_team.credentials SET revoked_at=now() WHERE id='reader-a'",
+            "UPDATE awr_team.credentials SET revoked_at=NULL WHERE id='reader-a'",
+        ),
+        (
+            "expired credential",
+            "UPDATE awr_team.credentials SET expires_at=now()-interval '1 hour' WHERE id='reader-a'",
+            "UPDATE awr_team.credentials SET expires_at=NULL WHERE id='reader-a'",
+        ),
+        (
+            "disabled actor",
+            "UPDATE awr_team.actors SET status='disabled' WHERE tenant_id='reader-tenant' AND id='agent'",
+            "UPDATE awr_team.actors SET status='active' WHERE tenant_id='reader-tenant' AND id='agent'",
+        ),
+        (
+            "disabled tenant",
+            "UPDATE awr_team.tenants SET status='disabled' WHERE id='reader-tenant'",
+            "UPDATE awr_team.tenants SET status='active' WHERE id='reader-tenant'",
+        ),
+        (
+            "membership removed everywhere",
+            "DELETE FROM awr_team.workstream_grants WHERE actor_id='agent'; DELETE FROM awr_team.project_memberships WHERE actor_id='agent'",
+            "INSERT INTO awr_team.project_memberships(tenant_id,project_id,actor_id,role)
+             SELECT tenant_id,id,'agent','admin' FROM awr_team.projects WHERE tenant_id='reader-tenant';
+             INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,workstream_id,authority_version,can_read,active,grant_version)
+             SELECT c.tenant_id,c.project_id,'agent','cli-a',ws->>'id',1,true,true,1
+             FROM awr_team.workstream_catalogs c
+             JOIN LATERAL jsonb_array_elements(c.catalog_json->'workstreams') ws ON true
+             WHERE c.tenant_id='reader-tenant'
+               AND c.snapshot_id=(SELECT active_snapshot_id FROM awr_team.projects p
+                                  WHERE p.tenant_id=c.tenant_id AND p.id=c.project_id);",
+        ),
+    ];
+    for (name, apply, restore) in steps {
+        admin.batch_execute(apply).await.unwrap();
+        let entry = store.authorize_project_entry(TENANT, PROJECT, A).await;
+        let whole = store
+            .portfolio_overview(TENANT, A, &registered(&projects), portfolio(None, None))
+            .await;
+        assert!(
+            whole.is_err(),
+            "{name}: the portfolio must refuse like the entry does ({entry:?})"
+        );
+        admin.batch_execute(restore).await.unwrap();
+    }
+    // Restored: the call works again.
+    store
+        .portfolio_overview(TENANT, A, &registered(&projects), portfolio(None, None))
+        .await
+        .unwrap();
+}
+
+/// The registered-project filter is the outer bound: an unregistered member
+/// project stays absent and out of the totals.
+#[tokio::test]
+async fn an_unregistered_member_project_stays_absent() {
+    let (_guard, admin, _db, store) = fixture::setup().await;
+    let one = clone_project(&admin, 1).await;
+    let two = clone_project(&admin, 2).await;
+    let subset = vec![PROJECT.to_owned(), one];
+    let result = store
+        .portfolio_overview(TENANT, A, &registered(&subset), portfolio(None, None))
+        .await
+        .unwrap();
+    let ids: Vec<&str> = result["data"]["projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["project_id"].as_str().unwrap())
+        .collect();
+    assert!(
+        !result.to_string().contains(&two),
+        "unregistered project leaked"
+    );
+    assert_eq!(ids.len(), 2);
+    assert_eq!(result["data"]["total_projects"], json!(2));
+}
+
+/// The verified classification follows the selected completion, not the
+/// newest event: an older verified event with a newer selected unverified
+/// completion reads unverified, and the reverse reads verified.
+#[tokio::test]
+async fn the_selected_completion_decides_not_the_newest_event() {
+    let (_guard, admin, _db, store) = fixture::setup().await;
+    let one = clone_project(&admin, 1).await;
+    let two = clone_project(&admin, 2).await;
+    // Project one: an older verified event, a newer selected unverified one.
+    seed_completion(
+        &admin,
+        &one,
+        "a",
+        json!({"receipt_id":"older-verified","independence_kind":"team_independent"}),
+        10,
+    )
+    .await;
+    admin
+        .batch_execute(&format!(
+            "INSERT INTO awr_team.completion_receipts(tenant_id,project_id,id,work_id,scope_id,
+                contract_hash,result_digest,dependency_binding_hash,evidence_bundle_hash,
+                policy,approved_by_json,independence_kind,author_actor_id,final_submitter_actor_id)
+             VALUES('{TENANT}','{one}','newer-plain','a','main','contract','result','deps','evidence',
+                'review','{{}}','ordinary_confirm','agent','agent');
+             INSERT INTO awr_team.events(tenant_id,project_id,id,project_revision,event_index,event_type,actor_id,work_id,payload_json)
+             VALUES('{TENANT}','{one}','event-newer-plain',11,0,'work.completed','agent','a',
+                '{{\"receipt_id\":\"newer-plain\",\"independence_kind\":\"ordinary_confirm\"}}'::jsonb);"
+        ))
+        .await
+        .unwrap();
+    seed_runtime(&admin, &one, "a", "completed", Some("newer-plain")).await;
+    // Project two: a newer selected verified event over an older plain one.
+    admin
+        .batch_execute(&format!(
+            "INSERT INTO awr_team.completion_receipts(tenant_id,project_id,id,work_id,scope_id,
+                contract_hash,result_digest,dependency_binding_hash,evidence_bundle_hash,
+                policy,approved_by_json,independence_kind,author_actor_id,final_submitter_actor_id)
+             VALUES('{TENANT}','{two}','older-plain','a','main','contract','result','deps','evidence',
+                'review','{{}}','ordinary_confirm','agent','agent');
+             INSERT INTO awr_team.events(tenant_id,project_id,id,project_revision,event_index,event_type,actor_id,work_id,payload_json)
+             VALUES('{TENANT}','{two}','event-older-plain',10,0,'work.completed','agent','a',
+                '{{\"receipt_id\":\"older-plain\",\"independence_kind\":\"ordinary_confirm\"}}'::jsonb);"
+        ))
+        .await
+        .unwrap();
+    seed_completion(
+        &admin,
+        &two,
+        "a",
+        json!({"receipt_id":"newer-verified","independence_kind":"team_independent"}),
+        11,
+    )
+    .await;
+    let projects = all_projects(&admin).await;
+    let result = store
+        .portfolio_overview(TENANT, A, &registered(&projects), portfolio(None, None))
+        .await
+        .unwrap();
+    let one_item = by_project_id(&result, &one);
+    assert_eq!(
+        one_item["works"]["verified"],
+        json!(0),
+        "selected plain wins"
+    );
+    assert_eq!(
+        one_item["works"]["completed_without_independent_review"],
+        json!(1)
+    );
+    let two_item = by_project_id(&result, &two);
+    assert_eq!(
+        two_item["works"]["verified"],
+        json!(1),
+        "selected verified wins"
+    );
+    assert_eq!(
+        two_item["works"]["completed_without_independent_review"],
+        json!(0)
+    );
+}
+
+/// An Agent's outstanding cursor expires when its delegation scope changes,
+/// not only when grant versions move: the cursor binds the admitted streams
+/// and task allowances.
+#[tokio::test]
+async fn an_agent_cursor_expires_when_its_delegation_scope_changes() {
+    use awr_core::{
+        AgentAuthorization, AuthorizationScope, AuthorizationStatus, AuthorizedAction,
+        ExecutionSubjectKind, IssueAuthorizationRequest, PersonId,
+    };
+    let (_guard, admin, db, store) = fixture::setup().await;
+    let one = clone_project(&admin, 1).await;
+    admin
+        .batch_execute(&format!(
+            "UPDATE awr_team.actors SET kind='agent' WHERE tenant_id='{TENANT}' AND id='agent';
+             INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status)
+             VALUES('{TENANT}','{one}','scope-person','Scope Owner','active');
+             INSERT INTO awr_team.person_agent_bindings(tenant_id,project_id,id,person_id,agent_id,status)
+             VALUES('{TENANT}','{one}','scope-binding','scope-person','agent','active');"
+        ))
+        .await
+        .unwrap();
+    let issuer = awr_team_pg::AuthorizationStore::from_config(common::with_app_role(
+        &common::test_config(),
+        &db,
+    ));
+    async fn issue_stream(
+        issuer: &awr_team_pg::AuthorizationStore,
+        project: &str,
+        scope: AuthorizationScope,
+    ) {
+        issuer
+            .issue(
+                TENANT,
+                project,
+                &IssueAuthorizationRequest {
+                    request_key: format!("issue-scope-{project}"),
+                    authorization: AgentAuthorization {
+                        id: format!("scope-{project}"),
+                        authorizer_person_id: PersonId::new("scope-person").unwrap(),
+                        responsible_person_id: PersonId::new("scope-person").unwrap(),
+                        subject_kind: ExecutionSubjectKind::Agent,
+                        subject_id: "agent".into(),
+                        client_id: "cli-a".into(),
+                        session_id: None,
+                        model_id: None,
+                        scope,
+                        actions: [AuthorizedAction::Inspect].into_iter().collect(),
+                        expires_at_ms: None,
+                        status: AuthorizationStatus::Active,
+                        revoked_at_ms: None,
+                        revoked_by: None,
+                        verifiable_capabilities: vec![],
+                        self_reported_skill_hints: vec![],
+                        parent_authorization_id: None,
+                        maintainer_person_id: None,
+                        created_at_ms: 1,
+                        binding_id: Some("scope-binding".into()),
+                    },
+                },
+            )
+            .await
+            .unwrap();
+    }
+    issue_stream(
+        &issuer,
+        &one,
+        AuthorizationScope::Workstream {
+            project_id: one.clone(),
+            workstream_id: format!("{:026}", 1),
+        },
+    )
+    .await;
+    let projects = all_projects(&admin).await;
+    let first = store
+        .portfolio_overview(TENANT, A, &registered(&projects), portfolio(None, Some(1)))
+        .await
+        .unwrap();
+    let cursor = first["data"]["next_cursor"].as_str().unwrap().to_owned();
+    store
+        .portfolio_overview(
+            TENANT,
+            A,
+            &registered(&projects),
+            portfolio(Some(cursor.clone()), Some(1)),
+        )
+        .await
+        .unwrap();
+    // Revoke the only read delegation: the admitted scope changed, so the
+    // outstanding cursor must expire even though no grant version moved.
+    admin
+        .execute(
+            "UPDATE awr_team.agent_authorizations SET body_json=jsonb_set(body_json,'{status}','\"revoked\"')
+             WHERE tenant_id=$1 AND project_id=$2",
+            &[&TENANT, &one],
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        store
+            .portfolio_overview(
+                TENANT,
+                A,
+                &registered(&projects),
+                portfolio(Some(cursor), Some(1))
+            )
+            .await,
+        Err(PgError::CursorExpired)
+    ));
+}
+
+/// The statements filter by tenant themselves, not only through row-level
+/// policies: a second tenant holding a project, a credential and a snapshot
+/// with the same ids cannot appear in this tenant's portfolio.
+#[tokio::test]
+async fn statement_tenant_filters_hold_beyond_row_level_policies() {
+    let (_guard, admin, db, store) = fixture::setup().await;
+    let one = clone_project(&admin, 1).await;
+    // A whole second tenant with colliding ids: project, credential id and
+    // snapshot id all match the first tenant's.
+    let hash = awr_team_pg::workstream_credential_hash(A).unwrap();
+    admin
+        .batch_execute(&format!(
+            "INSERT INTO awr_team.tenants(id,name,status) VALUES('mirror-tenant','Mirror','active');
+             INSERT INTO awr_team.actors(tenant_id,id,kind,display_name,status)
+             VALUES('mirror-tenant','agent','human','Mirror Worker','active');
+             INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status,active_snapshot_id,project_revision)
+             VALUES('mirror-tenant','{PROJECT}','p','team','epoch-mirror','active','snapshot-portfolio-001',3);
+             UPDATE awr_team.workstream_modes SET enabled=true WHERE tenant_id='mirror-tenant' AND project_id='{PROJECT}';
+             INSERT INTO awr_team.project_memberships(tenant_id,project_id,actor_id,role)
+             VALUES('mirror-tenant','{PROJECT}','agent','admin');
+             INSERT INTO awr_team.credentials(tenant_id,id,actor_id,client_id,secret_hash,project_id)
+             VALUES('mirror-tenant','reader-a','agent','cli-a','{hash}','{PROJECT}');
+             INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,workstream_id,authority_version,can_read,active,grant_version)
+             SELECT 'mirror-tenant','{PROJECT}','agent','cli-a',workstream_id,authority_version,true,true,1
+             FROM awr_team.workstream_grants WHERE tenant_id='{TENANT}' AND project_id='{PROJECT}';
+             INSERT INTO awr_team.source_snapshots(tenant_id,project_id,id,manifest_digest,source_ref_json,parser_version,created_by)
+             SELECT 'mirror-tenant','{PROJECT}','snapshot-portfolio-001',manifest_digest,source_ref_json,parser_version,created_by
+             FROM awr_team.source_snapshots WHERE tenant_id='{TENANT}' AND project_id='{one}';
+             INSERT INTO awr_team.workstream_catalogs(tenant_id,project_id,snapshot_id,catalog_json,projection_hash)
+             SELECT 'mirror-tenant','{PROJECT}','snapshot-portfolio-001',
+                jsonb_set(jsonb_set(catalog_json,'{{project_id}}',to_jsonb('{PROJECT}'::text)),
+                    '{{workstreams}}',
+                    (SELECT jsonb_agg(jsonb_set(ws,'{{project_id}}',to_jsonb('{PROJECT}'::text)))
+                     FROM jsonb_array_elements(catalog_json->'workstreams') ws)),
+                projection_hash
+             FROM awr_team.workstream_catalogs WHERE tenant_id='{TENANT}' AND project_id='{one}'
+               AND snapshot_id='snapshot-portfolio-001';"
+        ))
+        .await
+        .unwrap();
+    let projects = all_projects(&admin).await;
+    assert_eq!(
+        projects.len(),
+        2,
+        "the mirror project is not in this tenant's list"
+    );
+    let result = store
+        .portfolio_overview(TENANT, A, &registered(&projects), portfolio(None, None))
+        .await
+        .unwrap();
+    let text = result.to_string();
+    assert!(
+        !text.contains("mirror-tenant"),
+        "the mirror tenant must stay absent"
+    );
+    assert_eq!(result["data"]["total_projects"], json!(2));
+    // And the mirror credential, same id and secret in the other tenant,
+    // reads only the mirror tenant through its own transport binding.
+    let mirror_store =
+        WorkstreamReadStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let mirror = mirror_store
+        .portfolio_overview(
+            "mirror-tenant",
+            A,
+            &vec![PROJECT.to_owned()],
+            portfolio(None, None),
+        )
+        .await
+        .unwrap();
+    assert_eq!(mirror["data"]["total_projects"], json!(1));
+}
+
+/// The batched admission agrees with `authorize_project_entry` across a
+/// matrix of delegation and admission states: every disagreement between the
+/// re-implemented rule and the entry probe is a divergence.
+#[tokio::test]
+async fn batched_admission_matches_the_entry_probe_across_states() {
+    use awr_core::{
+        AgentAuthorization, AuthorizationScope, AuthorizedAction, DelegateAuthorizationRequest,
+        IssueAuthorizationRequest, PersonId,
+    };
+    let (_guard, admin, db, store) = fixture::setup().await;
+    // Human states first: the actor turns into an Agent only afterwards.
+    let human_states = [
+        ("human_control", "SELECT 1"),
+        (
+            "human_mode_disabled",
+            "UPDATE awr_team.workstream_modes SET enabled=false WHERE tenant_id='{TENANT}' AND project_id='{project}'",
+        ),
+        (
+            "human_grants_cannot_read",
+            "UPDATE awr_team.workstream_grants SET can_read=false WHERE tenant_id='{TENANT}' AND project_id='{project}'",
+        ),
+        (
+            "human_grants_inactive",
+            "UPDATE awr_team.workstream_grants SET active=false WHERE tenant_id='{TENANT}' AND project_id='{project}'",
+        ),
+        (
+            "human_no_grants",
+            "DELETE FROM awr_team.workstream_grants WHERE tenant_id='{TENANT}' AND project_id='{project}'",
+        ),
+        (
+            "human_snapshot_null",
+            "UPDATE awr_team.projects SET active_snapshot_id=NULL WHERE tenant_id='{TENANT}' AND id='{project}'",
+        ),
+    ];
+    let mut scenarios: Vec<(String, String)> = Vec::new();
+    for (index, (name, sql)) in human_states.iter().enumerate() {
+        let project = clone_project(&admin, index + 1).await;
+        admin
+            .batch_execute(&sql.replace("{project}", &project))
+            .await
+            .unwrap();
+        scenarios.push(((*name).to_owned(), project));
+    }
+    // Agent states: one cloned project per delegation shape.
+    admin
+        .batch_execute(&format!(
+            "UPDATE awr_team.actors SET kind='agent' WHERE tenant_id='{TENANT}' AND id='agent';"
+        ))
+        .await
+        .unwrap();
+    let agent_states = [
+        "agent_project_scope",
+        "agent_workstream_1",
+        "agent_workstream_2_ungranted",
+        "agent_task_a_stream1",
+        "agent_task_b_private_ungranted",
+        "agent_expired_in_body",
+        "agent_revoked_in_body",
+        "agent_binding_disabled",
+        "agent_person_disabled",
+        "agent_person_departed",
+        "agent_wrong_client",
+        "agent_session_bound",
+        "agent_claim_only_no_read",
+        "agent_narrowed_parent_child_unreadable_task",
+        "agent_ws2_plus_task_a",
+        "agent_responsible_person_not_bound",
+        "agent_no_binding_id",
+        "agent_binding_other_agent",
+        "agent_workstream_1_plus_task_b_private",
+    ];
+    let stream_of = |n: i64| format!("{:026}", n);
+    let issuer = awr_team_pg::AuthorizationStore::from_config(common::with_app_role(
+        &common::test_config(),
+        &db,
+    ));
+    for (offset, name) in agent_states.iter().enumerate() {
+        let project = clone_project(&admin, human_states.len() + offset + 1).await;
+        admin
+            .batch_execute(&format!(
+                "INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status)
+                 VALUES('{TENANT}','{project}','matrix-person','Matrix Owner','active'),
+                       ('{TENANT}','{project}','matrix-other','Other Owner','active');
+                 INSERT INTO awr_team.person_agent_bindings(tenant_id,project_id,id,person_id,agent_id,status)
+                 VALUES('{TENANT}','{project}','matrix-binding','matrix-person','agent','active');"
+            ))
+            .await
+            .unwrap();
+        let id = format!("matrix-{offset}");
+        let pscope = AuthorizationScope::Project {
+            project_id: project.clone(),
+        };
+        let ws = |n: i64| AuthorizationScope::Workstream {
+            project_id: project.clone(),
+            workstream_id: stream_of(n),
+        };
+        let task = |work: &str| AuthorizationScope::Task {
+            project_id: project.clone(),
+            work_item_id: work.into(),
+        };
+        let inspect = [AuthorizedAction::Inspect];
+        let issue = |auth: AgentAuthorization| {
+            let issuer = &issuer;
+            let project = project.clone();
+            async move {
+                let auth_id = auth.id.clone();
+                issuer
+                    .issue(
+                        TENANT,
+                        &project,
+                        &IssueAuthorizationRequest {
+                            request_key: format!("issue-{}", auth.id),
+                            authorization: auth,
+                        },
+                    )
+                    .await
+                    .unwrap_or_else(|error| panic!("issue {auth_id} failed: {error:?}"));
+            }
+        };
+        match *name {
+            "agent_project_scope" => {
+                let auth = grant_for(&id, pscope.clone(), &inspect);
+                issue(auth).await;
+            }
+            "agent_workstream_1" => {
+                let auth = grant_for(&id, ws(1), &inspect);
+                issue(auth).await;
+            }
+            "agent_workstream_2_ungranted" => {
+                let auth = grant_for(&id, ws(2), &inspect);
+                issue(auth).await;
+            }
+            "agent_task_a_stream1" => {
+                let auth = grant_for(&id, task("a"), &inspect);
+                issue(auth).await;
+            }
+            "agent_task_b_private_ungranted" => {
+                let auth = grant_for(&id, task("b-private"), &inspect);
+                issue(auth).await;
+            }
+            "agent_expired_in_body" => {
+                let auth = grant_for(&id, pscope.clone(), &inspect);
+                issue(auth).await;
+                admin
+                    .execute(
+                        "UPDATE awr_team.agent_authorizations SET body_json=jsonb_set(jsonb_set(body_json,'{expires_at_ms}','2'),'{created_at_ms}','1')
+                         WHERE tenant_id=$1 AND project_id=$2",
+                        &[&TENANT, &project],
+                    )
+                    .await
+                    .unwrap();
+            }
+            "agent_revoked_in_body" => {
+                let auth = grant_for(&id, pscope.clone(), &inspect);
+                issue(auth).await;
+                admin
+                    .execute(
+                        "UPDATE awr_team.agent_authorizations SET body_json=jsonb_set(body_json,'{status}','\"revoked\"')
+                         WHERE tenant_id=$1 AND project_id=$2",
+                        &[&TENANT, &project],
+                    )
+                    .await
+                    .unwrap();
+            }
+            "agent_binding_disabled" => {
+                let auth = grant_for(&id, pscope.clone(), &inspect);
+                issue(auth).await;
+                admin
+                    .execute(
+                        "UPDATE awr_team.person_agent_bindings SET status='disabled' WHERE tenant_id=$1 AND project_id=$2",
+                        &[&TENANT, &project],
+                    )
+                    .await
+                    .unwrap();
+            }
+            "agent_person_disabled" => {
+                let auth = grant_for(&id, pscope.clone(), &inspect);
+                issue(auth).await;
+                admin
+                    .execute(
+                        "UPDATE awr_team.persons SET status='disabled' WHERE tenant_id=$1 AND project_id=$2 AND id='matrix-person'",
+                        &[&TENANT, &project],
+                    )
+                    .await
+                    .unwrap();
+            }
+            "agent_person_departed" => {
+                let auth = grant_for(&id, pscope.clone(), &inspect);
+                issue(auth).await;
+                admin
+                    .execute(
+                        "UPDATE awr_team.persons SET status='departed' WHERE tenant_id=$1 AND project_id=$2 AND id='matrix-person'",
+                        &[&TENANT, &project],
+                    )
+                    .await
+                    .unwrap();
+            }
+            "agent_wrong_client" => {
+                let mut auth = grant_for(&id, pscope.clone(), &inspect);
+                auth.client_id = "cli-b".into();
+                issue(auth).await;
+            }
+            "agent_session_bound" => {
+                let mut auth = grant_for(&id, pscope.clone(), &inspect);
+                auth.session_id = Some("some-session".into());
+                issue(auth).await;
+            }
+            "agent_claim_only_no_read" => {
+                let auth = grant_for(
+                    &id,
+                    pscope.clone(),
+                    &[AuthorizedAction::AcceptResponsibility],
+                );
+                issue(auth).await;
+            }
+            "agent_narrowed_parent_child_unreadable_task" => {
+                let parent = grant_for(
+                    &format!("{id}-parent"),
+                    pscope.clone(),
+                    &[AuthorizedAction::Inspect, AuthorizedAction::StartWork],
+                );
+                issue(parent).await;
+                let child = grant_for(&id, task("b-private"), &inspect);
+                issuer
+                    .delegate(
+                        TENANT,
+                        &project,
+                        &DelegateAuthorizationRequest {
+                            request_key: format!("delegate-{id}"),
+                            parent_authorization_id: format!("{id}-parent"),
+                            child,
+                        },
+                        10,
+                    )
+                    .await
+                    .unwrap();
+            }
+            "agent_ws2_plus_task_a" => {
+                let ws2 = grant_for(&format!("{id}-ws2"), ws(2), &inspect);
+                issue(ws2).await;
+                let ta = grant_for(&format!("{id}-ta"), task("a"), &inspect);
+                issue(ta).await;
+            }
+            "agent_responsible_person_not_bound" => {
+                let mut auth = grant_for(&id, pscope.clone(), &inspect);
+                auth.responsible_person_id = PersonId::new("matrix-other").unwrap();
+                auth.authorizer_person_id = PersonId::new("matrix-other").unwrap();
+                issue(auth).await;
+            }
+            "agent_no_binding_id" => {
+                // The store refuses to issue an authorization without a
+                // person binding; seed the state directly, as a legacy row.
+                let auth = grant_for(&id, pscope.clone(), &inspect);
+                issue(auth).await;
+                admin
+                    .execute(
+                        "UPDATE awr_team.agent_authorizations SET body_json=jsonb_set(body_json,'{binding_id}','null'::jsonb)
+                         WHERE tenant_id=$1 AND project_id=$2",
+                        &[&TENANT, &project],
+                    )
+                    .await
+                    .unwrap();
+            }
+            "agent_binding_other_agent" => {
+                let auth = grant_for(&id, pscope.clone(), &inspect);
+                issue(auth).await;
+                admin
+                    .batch_execute(&format!(
+                        "UPDATE awr_team.actors SET kind='agent' WHERE tenant_id='{TENANT}' AND id='reviewer';
+                         UPDATE awr_team.person_agent_bindings SET agent_id='reviewer' WHERE tenant_id='{TENANT}' AND project_id='{project}';"
+                    ))
+                    .await
+                    .unwrap();
+            }
+            "agent_workstream_1_plus_task_b_private" => {
+                let ws1 = grant_for(&format!("{id}-ws1"), ws(1), &inspect);
+                issue(ws1).await;
+                let tb = grant_for(&format!("{id}-tb"), task("b-private"), &inspect);
+                issue(tb).await;
+            }
+            other => panic!("unknown scenario {other}"),
+        }
+        scenarios.push(((*name).to_owned(), project));
+    }
+    let all = all_projects(&admin).await;
+    let result = store
+        .portfolio_overview(TENANT, A, &registered(&all), portfolio(None, None))
+        .await
+        .unwrap();
+    let mut mismatches = Vec::new();
+    for (name, project) in &scenarios {
+        let entry_ok = store
+            .authorize_project_entry(TENANT, project, A)
+            .await
+            .is_ok();
+        let item = by_project_id(&result, project);
+        let complete = item["read"]["status"] == "complete";
+        if entry_ok != complete {
+            mismatches.push(format!(
+                "{name}: entry passes={entry_ok}, portfolio={}",
+                item["read"]
+            ));
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "admission diverged from the entry probe: {mismatches:#?}"
+    );
+    // Spot checks on the states the entry and the portfolio must both refuse.
+    for refused in [
+        "agent_task_b_private_ungranted",
+        "agent_expired_in_body",
+        "agent_binding_disabled",
+        "agent_wrong_client",
+        "agent_claim_only_no_read",
+        "agent_narrowed_parent_child_unreadable_task",
+        "human_mode_disabled",
+        "human_grants_cannot_read",
+        "human_grants_inactive",
+        "human_no_grants",
+        "human_snapshot_null",
+    ] {
+        let project = &scenarios
+            .iter()
+            .find(|(name, _)| name == refused)
+            .unwrap()
+            .1;
+        let item = by_project_id(&result, project);
+        assert_eq!(
+            item["read"]["status"], "not_read",
+            "{refused} must be not_read"
+        );
+    }
+}
+
+/// One delegation body for the matrix test.
+fn grant_for(
+    id: &str,
+    scope: awr_core::AuthorizationScope,
+    actions: &[awr_core::AuthorizedAction],
+) -> awr_core::AgentAuthorization {
+    use awr_core::{AgentAuthorization, AuthorizationStatus, ExecutionSubjectKind, PersonId};
+    AgentAuthorization {
+        id: id.into(),
+        authorizer_person_id: PersonId::new("matrix-person").unwrap(),
+        responsible_person_id: PersonId::new("matrix-person").unwrap(),
+        subject_kind: ExecutionSubjectKind::Agent,
+        subject_id: "agent".into(),
+        client_id: "cli-a".into(),
+        session_id: None,
+        model_id: None,
+        scope,
+        actions: actions.iter().copied().collect(),
+        expires_at_ms: None,
+        status: AuthorizationStatus::Active,
+        revoked_at_ms: None,
+        revoked_by: None,
+        verifiable_capabilities: vec![],
+        self_reported_skill_hints: vec![],
+        parent_authorization_id: None,
+        maintainer_person_id: None,
+        created_at_ms: 1,
+        binding_id: Some("matrix-binding".into()),
+    }
+}
+
+/// The permissive SELECT policies of schema 66 at the SQL level, as the
+/// application role without bypass: no marker or tenant-only marker sees
+/// nothing; the portfolio marker sees only its own tenant; writes stay
+/// pinned; nothing survives the transaction.
+#[tokio::test]
+async fn portfolio_policies_release_only_their_tenant_and_no_writes() {
+    let (_guard, admin, db, _store) = fixture::setup().await;
+    clone_project(&admin, 1).await;
+    admin
+        .batch_execute(
+            "INSERT INTO awr_team.tenants(id,name,status) VALUES('foreign-tenant','Foreign','active');
+             INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status,project_revision)
+             VALUES('foreign-tenant','foreign-project','fp','team','e','active',1);",
+        )
+        .await
+        .unwrap();
+    let mut app = common::connect_config(&common::with_app_role(&common::test_config(), &db)).await;
+    let tenant_counts = |rows: Vec<tokio_postgres::Row>| -> Vec<(String, i64)> {
+        rows.iter()
+            .map(|row| (row.get::<_, String>(0), row.get::<_, i64>(1)))
+            .collect()
+    };
+    // No markers at all: the isolation policy hides everything.
+    let rows = app
+        .query(
+            "SELECT tenant_id,count(*) FROM awr_team.projects GROUP BY 1",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert!(
+        tenant_counts(rows).is_empty(),
+        "without markers nothing is visible"
+    );
+    // The tenant marker alone (what every other path sets) releases nothing.
+    {
+        let tx = app.transaction().await.unwrap();
+        tx.execute(
+            "SELECT set_config('awr.tenant_id','reader-tenant',true)",
+            &[],
+        )
+        .await
+        .unwrap();
+        let rows = tx
+            .query(
+                "SELECT tenant_id,count(*) FROM awr_team.projects GROUP BY 1",
+                &[],
+            )
+            .await
+            .unwrap();
+        assert!(
+            tenant_counts(rows).is_empty(),
+            "the tenant marker alone must not release rows"
+        );
+        tx.rollback().await.unwrap();
+    }
+    // Both markers: own tenant only, and writes stay pinned.
+    {
+        let tx = app.transaction().await.unwrap();
+        tx.execute(
+            "SELECT set_config('awr.tenant_id','reader-tenant',true),
+                set_config('awr.portfolio_read','on',true)",
+            &[],
+        )
+        .await
+        .unwrap();
+        let seen = tenant_counts(
+            tx.query(
+                "SELECT tenant_id,count(*) FROM awr_team.projects GROUP BY 1",
+                &[],
+            )
+            .await
+            .unwrap(),
+        );
+        assert_eq!(seen.len(), 1, "the foreign tenant stays hidden: {seen:?}");
+        assert_eq!(seen[0].0, "reader-tenant");
+        assert!(seen[0].1 >= 2);
+        let updated = tx
+            .execute(
+                "UPDATE awr_team.projects SET key=key WHERE tenant_id='reader-tenant'",
+                &[],
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated, 0, "a SELECT policy must not widen UPDATE");
+        let deleted = tx
+            .execute(
+                "DELETE FROM awr_team.work_contracts WHERE tenant_id='reader-tenant'",
+                &[],
+            )
+            .await
+            .unwrap();
+        assert_eq!(deleted, 0, "a SELECT policy must not widen DELETE");
+        tx.rollback().await.unwrap();
+    }
+    // Another tenant string sees only that tenant.
+    {
+        let tx = app.transaction().await.unwrap();
+        tx.execute(
+            "SELECT set_config('awr.tenant_id','foreign-tenant',true),
+                set_config('awr.portfolio_read','on',true)",
+            &[],
+        )
+        .await
+        .unwrap();
+        let seen = tenant_counts(
+            tx.query(
+                "SELECT tenant_id,count(*) FROM awr_team.projects GROUP BY 1",
+                &[],
+            )
+            .await
+            .unwrap(),
+        );
+        assert_eq!(seen, vec![("foreign-tenant".to_owned(), 1)]);
+        tx.rollback().await.unwrap();
+    }
+    // Nothing survives the transaction on the pooled connection.
+    let rows = app
+        .query(
+            "SELECT tenant_id,count(*) FROM awr_team.projects GROUP BY 1",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert!(
+        tenant_counts(rows).is_empty(),
+        "markers must not leak past their transaction"
+    );
 }
