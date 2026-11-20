@@ -249,22 +249,30 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
 
   const brand = (mobile = false) => (
     <div
-      className="shell-brand"
+      className={mobile ? 'shell-brand shell-brand-mobile' : 'shell-brand'}
       data-testid="awr-brand"
-      style={mobile
-        ? { height: 32, flex: '0 0 auto', gap: 10, padding: 0, margin: 0 }
-        : { height: 32, flex: '0 0 32px', gap: 10, padding: '0 12px', marginBottom: 20 }}
     >
-      <svg width={22} height={22} viewBox="0 0 24 24" aria-hidden data-testid="brand-mark">
-        <path
-          d="M3 21 9.6 5.2C10.5 3 13.5 3 14.4 5.2L21 21h-5l-4-10-4 10Z"
-          fill="var(--craft-color-accent)"
-        />
-      </svg>
-      <span
-        data-testid="brand-wordmark"
-        style={{ color: 'var(--craft-color-ink)', fontSize: 17, fontWeight: 600, lineHeight: '22px' }}
-      >
+      <img
+        className="shell-brand-mark shell-brand-mark-color"
+        src="/awr-logo-color-72.png"
+        srcSet="/awr-logo-color-72.png 1x, /awr-logo-color-144.png 2x, /awr-logo-color-288.png 4x"
+        width={craftTokens.brand.markWidth}
+        height={craftTokens.brand.markHeight}
+        alt=""
+        aria-hidden
+        data-testid="brand-mark-color"
+      />
+      <img
+        className="shell-brand-mark shell-brand-mark-white"
+        src="/awr-logo-white-72.png"
+        srcSet="/awr-logo-white-72.png 1x, /awr-logo-white-144.png 2x, /awr-logo-white-288.png 4x"
+        width={craftTokens.brand.markWidth}
+        height={craftTokens.brand.markHeight}
+        alt=""
+        aria-hidden
+        data-testid="brand-mark-white"
+      />
+      <span className="shell-brand-wordmark" data-testid="brand-wordmark">
         AWR
       </span>
     </div>
