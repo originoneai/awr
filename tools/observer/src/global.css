@@ -171,12 +171,21 @@ html[data-theme="dark"] .shell-brand-mark-white {
 .shell-header {
   display: flex;
   align-items: center;
-  gap: 12px;
   min-width: 0;
-  padding-inline: 32px;
   /* Prototype .top: the page tone at 88% over the scrolled content, blurred 8px. */
   background: color-mix(in srgb, var(--craft-color-page) var(--craft-shell-topbar-page-mix), transparent);
   backdrop-filter: blur(var(--craft-shell-topbar-blur));
+}
+
+/* Prototype .top geometry (56px bar, 16px gaps, 0 32px padding, body 20px line box) owns
+   the class; the compact media block below is the only override. No inline metrics remain. */
+.shell-header.ant-layout-header {
+  flex-wrap: nowrap;
+  gap: 16px;
+  height: 56px;
+  min-height: 56px;
+  padding: 0 32px;
+  line-height: 20px;
 }
 
 /* Prototype .crumb: every level and its chevron share the same vertical centre. */
@@ -199,12 +208,23 @@ html[data-theme="dark"] .shell-brand-mark-white {
   line-height: 20px;
 }
 
+/* Prototype .crumb keeps a full 8px gap on each side of the chevron; antd's separator
+   margins are 4px. */
+.shell-header .ant-breadcrumb .ant-breadcrumb-separator {
+  margin-inline: 8px;
+}
+
 .shell-scope {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
   max-width: 300px;
+  /* Prototype .crumb text is 13px on the body line box, plain like the crumb's own
+     labels: antd's transparent 1px button border would add 2px of chrome. */
+  font-size: 13px;
+  line-height: 20px;
+  border: 0;
 }
 
 .shell-scope-label {
@@ -242,6 +262,49 @@ html[data-theme="dark"] .shell-brand-mark-white {
   color: var(--craft-color-secondary);
 }
 
+/* Prototype .top > .tog: the layers glyph beside a 13px label in a hairline 32px field.
+   The product control explains the page's read source; hover only deepens the ink. */
+.shell-data-source.ant-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border-color: var(--craft-color-hairline);
+  border-radius: 8px;
+  background: var(--craft-color-surface);
+  color: var(--craft-color-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  white-space: nowrap;
+  box-shadow: none;
+}
+
+.shell-data-source.ant-btn:not(:disabled):hover {
+  border-color: var(--craft-color-hairline);
+  background: var(--craft-color-surface);
+  color: var(--craft-color-ink);
+}
+
+.shell-data-source-explanation {
+  max-width: 280px;
+  color: var(--craft-color-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.shell-data-source-explanation p {
+  margin: 0;
+}
+
+.shell-data-source-explanation p + p {
+  margin-top: 4px;
+  color: var(--craft-color-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
 /* Prototype .bell: quiet ink-2 glyph; hover raises the surface and the ink. */
 .shell-header .ant-badge button.ant-btn {
   color: var(--craft-color-secondary);
@@ -258,6 +321,16 @@ html[data-theme="dark"] .shell-brand-mark-white {
   width: 100%;
   max-width: 1480px;
   padding: 0 32px 64px;
+}
+
+/* Prototype .side-foot .side-note: the weak 12px/16px notice under the theme row. The
+   product notice replaces the prototype's demo-only wording; its style and slot are shared. */
+.shell-demo-note {
+  flex: 0 0 auto;
+  margin: 8px 12px 0;
+  color: var(--craft-color-muted);
+  font-size: 12px;
+  line-height: 16px;
 }
 
 .shell-avatar-button {
@@ -311,11 +384,16 @@ html[data-theme="dark"] .shell-brand-mark-white {
 }
 
 /* Prototype @media (max-width: 860px): compact shell only. Desktop declarations above stay
-   byte-for-byte in effect at 861px and wider. The !important declarations supersede legacy
-   inline metrics that shell-responsive.test.tsx reads directly; computed browser geometry
-   follows the prototype without changing that existing DOM-level contract. */
+   byte-for-byte in effect at 861px and wider. Every compact metric lives here as a token
+   (antd padding steps, the mobile shell size tokens); AppShell keeps no inline sizing. */
 @media (max-width: 860px) {
   [data-testid="mobile-navigation"] {
+    display: flex;
+    align-items: center;
+    /* Prototype @media 860px .side row: 12px 16px (xs+xxs / sm) with the 8px gap. */
+    gap: 8px;
+    min-width: 0;
+    padding: 12px 16px;
     line-height: var(--craft-leading-body);
   }
 
@@ -325,8 +403,8 @@ html[data-theme="dark"] .shell-brand-mark-white {
   }
 
   [data-testid="mobile-theme-toggle"].ant-btn {
-    width: var(--craft-shell-mobile-theme-button-size) !important;
-    height: var(--craft-shell-mobile-theme-button-size) !important;
+    width: var(--craft-shell-mobile-theme-button-size);
+    height: var(--craft-shell-mobile-theme-button-size);
     flex: 0 0 var(--craft-shell-mobile-theme-button-size);
     justify-content: center;
     gap: var(--craft-brand-gap);
@@ -340,12 +418,20 @@ html[data-theme="dark"] .shell-brand-mark-white {
   }
 
   .shell-header.ant-layout-header {
-    min-height: 0 !important;
-    padding: var(--ant-padding-xs) var(--ant-padding-sm);
-    gap: var(--ant-padding-xs);
+    height: auto;
+    min-height: 0;
+    flex-wrap: wrap;
+    /* Prototype @media 860px .top: static auto-height bar, 8px 16px, 8px gaps. */
+    padding: 8px 16px;
+    gap: 8px;
     font-size: var(--craft-text-small);
-    line-height: var(--craft-leading-body) !important;
+    line-height: var(--craft-leading-body);
     text-align: start;
+  }
+
+  /* Prototype .tog .lbl below 860px: the glyph stands alone. */
+  .shell-data-source .shell-data-source-label {
+    display: none;
   }
 
   /* The probe reads text from the first real text owner: prototype .crumb's first span,
@@ -362,7 +448,7 @@ html[data-theme="dark"] .shell-brand-mark-white {
   }
 
   .shell-content {
-    padding: 0 var(--ant-padding-sm) var(--craft-shell-mobile-content-bottom) !important;
+    padding: 0 16px 48px;
   }
 }
 

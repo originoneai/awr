@@ -18,6 +18,7 @@ const THEME = {
     muted: 'rgb(107, 116, 135)',
     secondary: 'rgb(75, 85, 101)',
     raised: 'rgb(236, 239, 244)',
+    surface: 'rgb(255, 255, 255)',
   },
   dark: {
     page: [11, 13, 20],
@@ -26,6 +27,7 @@ const THEME = {
     muted: 'rgb(122, 130, 150)',
     secondary: 'rgb(163, 169, 184)',
     raised: 'rgb(26, 30, 40)',
+    surface: 'rgb(17, 20, 28)',
   },
 } as const;
 
@@ -109,6 +111,12 @@ test('the shell matches the prototype numbers at 1440x900', async ({ page }, tes
       themeIcon: box(q('.shell-theme button svg')),
       themeLabel: box(q('.shell-theme-label')),
       themeStyle: (() => { const s = style(q('.shell-theme button')); return s && { gap: s.columnGap, padding: s.padding, border: s.borderTopWidth, lineHeight: s.lineHeight, whiteSpace: s.whiteSpace, textAlign: s.textAlign }; })(),
+      demoNote: box(q('.shell-demo-note')),
+      demoNoteStyle: (() => { const s = style(q('.shell-demo-note')); return s && { size: s.fontSize, lineHeight: s.lineHeight, color: s.color, margin: s.margin }; })(),
+      tog: box(q('.shell-header .shell-data-source')),
+      togStyle: (() => { const s = style(q('.shell-header .shell-data-source')); return s && { padding: s.padding, color: s.color, fontSize: s.fontSize, borderTopColor: s.borderTopColor, radius: s.borderTopLeftRadius, background: s.backgroundColor }; })(),
+      togIcon: box(q('.shell-header .shell-data-source svg')),
+      togLabel: box(q('.shell-header .shell-data-source .shell-data-source-label')),
       topbar: box(q('.shell-header')),
       topbarStyle: (() => { const s = style(q('.shell-header')); return s && { padding: s.padding, backgroundColor: s.backgroundColor, backdropFilter: s.backdropFilter, borderBottom: s.borderBottomColor }; })(),
       crumbBuildingIcon: box(q('.shell-header nav.ant-breadcrumb svg:first-of-type')),
@@ -177,13 +185,38 @@ test('the shell matches the prototype numbers at 1440x900', async ({ page }, tes
   ]);
 
   // --- Theme button (prototype .side-foot button: full row, 36px, icon x 24, label x 50) ---
-  // The prototype's own button sits at y 792 because a prototype-only side note follows;
-  // without it the row is flush against the sidebar's 16px bottom padding: 900-16-36.
-  expect(metrics.themeButton).toMatchObject({ x: 12, w: 207, h: 36, y: expect.any(Number) });
-  expect(metrics.themeButton!.y).toBeGreaterThan(847);
+  // The prototype's own button sits at y 792 because its demo-only side note wraps three
+  // lines; the product's one-line demo note (示例数据，全部是合成的) keeps the identical
+  // bottom stack at 900 - 16 padding - 16 note - 8 note margin - 36 button.
+  expect(metrics.themeButton).toMatchObject({ x: 12, w: 207, h: 36 });
+  // The exact y carries a hair of subpixel rounding; the stack is pinned within half a pixel.
+  expect(metrics.themeButton!.y).toBeGreaterThan(823.5);
+  expect(metrics.themeButton!.y).toBeLessThan(824.5);
   expect(metrics.themeIcon).toMatchObject({ x: 24, w: 16, h: 16 });
   expect(metrics.themeLabel?.x).toBe(50);
   expect(metrics.themeStyle).toMatchObject({ gap: '10px', padding: '0px 12px', border: '0px', lineHeight: '20px', whiteSpace: 'normal', textAlign: 'left' });
+
+  // --- Demo note (prototype .side-foot .side-note: weak 12px/16px at the sider's text inset) ---
+  // The paragraph spans the sider's text column; one line of the product wording is 16px tall
+  // (a wrap would double it), which is what keeps the theme row at y 824 above.
+  expect(metrics.demoNote).toMatchObject({ x: 24, w: 183, h: 16 });
+  expect(metrics.demoNote!.y).toBeGreaterThan(867.5);
+  expect(metrics.demoNote!.y).toBeLessThan(868.5);
+  expect(metrics.demoNoteStyle).toEqual({ size: '12px', lineHeight: '16px', color: palette.muted, margin: '8px 12px 0px' });
+
+  // --- Data source control (prototype .top > .tog: 32px hairline field, layers glyph, 13px label) ---
+  expect(metrics.tog).toMatchObject({ y: 11.5, h: 32 });
+  expect(metrics.togStyle).toMatchObject({
+    padding: '0px 10px',
+    color: palette.secondary,
+    fontSize: '13px',
+    borderTopColor: palette.hairline,
+    radius: '8px',
+    background: palette.surface,
+  });
+  expect(metrics.togIcon).toMatchObject({ y: 19.5, w: 16, h: 16 });
+  expect(metrics.togLabel?.y).toBe(17.5);
+  expect(metrics.togLabel!.x - (metrics.togIcon!.x + metrics.togIcon!.w)).toBe(8);
 
   // --- Topbar (prototype .top: height 56, padding 0 32px, page tone at 88% + 8px blur) ---
   expect(metrics.topbar).toMatchObject({ x: 232, y: 0, w: 1208, h: 56 });
