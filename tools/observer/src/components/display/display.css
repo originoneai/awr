@@ -98,6 +98,16 @@
   font-variant-numeric: tabular-nums;
 }
 
+button.obs-section-count-button {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  line-height: inherit;
+  cursor: pointer;
+}
+
 .obs-section-content[data-padded="true"] {
   padding: var(--ant-padding-sm) var(--ant-padding-md);
 }
