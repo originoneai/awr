@@ -247,15 +247,15 @@ describe('search dialog behavior', () => {
 });
 
 describe('search panel in the real shell', () => {
-  it('opens from the top bar without a closed-panel overview read, closes on Escape and restores focus', async () => {
-    const { queryClient, user } = { user: userEvent.setup(), ...renderSearchApp() };
+  it('shares the page overview-model reads on open, then closes on Escape and restores focus', async () => {
+    const { fetchMock, queryClient, user } = { user: userEvent.setup(), ...renderSearchApp() };
     await screen.findByRole('link', { name: 'Team mainline' });
-    // The shell's own inbox indicators read the composed model; the search panel's
-    // dedicated query stays untouched until the panel opens.
-    expect(queryClient.getQueryData(['team', 'overview-model', 'demo'])).toBeUndefined();
+    const readsBeforeOpen = fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/team/overview-model')).length;
+    expect(readsBeforeOpen).toBeGreaterThan(0);
     const trigger = screen.getByRole('button', { name: '搜索' });
     expect(trigger).toHaveProperty('disabled', false);
     await user.click(trigger);
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/team/overview-model'))).toHaveLength(readsBeforeOpen);
     await waitFor(() => expect(queryClient.getQueryData(['team', 'overview-model', 'demo'])).toEqual(overviewModel()));
     const input = await screen.findByRole('combobox', { name: '搜索' });
     await user.type(input, '集成');
