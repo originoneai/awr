@@ -3,7 +3,7 @@ use crate::{
     AGENT_AUTHORIZATION_SQL, CATALOG_SQL, CONTENT_REVIEWS_SQL, DELIVERY_DEPS_SQL, DOMAIN_SQL,
     DRAFT_WORK_SQL, ETA_CHECKPOINTS_SQL, MigrationInfo, OPERATION_READSET_RECEIPTS_SQL,
     RESPONSIBILITY_SQL, SCHEMA_VERSION, SEARCH_SQL, TEAM_HANDOFF_SQL, USAGE_TIME_SQL,
-    WORKSTREAM_SESSIONS_SQL, WORKSTREAM_SQL, db_error,
+    WORKSTREAM_SESSIONS_SQL, WORKSTREAM_SQL,
 };
 use awr_core::{Error, Result};
 use rusqlite::Connection;
@@ -69,11 +69,14 @@ fn expected() -> Result<&'static Vec<Objects>> {
         .map_err(|error| Error::Storage(format!("cannot validate shipped schema: {error}")))
 }
 
-pub(crate) fn issues(conn: &Connection, version: i64) -> Result<Vec<String>> {
+pub(crate) fn issues_open(
+    conn: &Connection,
+    version: i64,
+) -> std::result::Result<Vec<String>, crate::OpenError> {
     if !(1..=SCHEMA_VERSION).contains(&version) {
         return Ok(vec![format!("unsupported schema version {version}")]);
     }
-    let observed = objects(conn).map_err(db_error)?;
+    let observed = objects(conn).map_err(crate::OpenError::from_sqlite)?;
     let expected = &expected()?[(version - 1) as usize];
     let mut issues = Vec::new();
     for (name, definition) in expected {
@@ -90,19 +93,16 @@ pub(crate) fn issues(conn: &Connection, version: i64) -> Result<Vec<String>> {
     Ok(issues)
 }
 
-pub(crate) fn migrations(conn: &Connection) -> Result<Vec<MigrationInfo>> {
-    conn.prepare("SELECT version,name,applied_at FROM schema_migrations ORDER BY version")
-        .map_err(db_error)?
+pub(crate) fn migrations_raw(conn: &Connection) -> rusqlite::Result<Vec<MigrationInfo>> {
+    conn.prepare("SELECT version,name,applied_at FROM schema_migrations ORDER BY version")?
         .query_map([], |row| {
             Ok(MigrationInfo {
                 version: row.get(0)?,
                 name: row.get(1)?,
                 applied_at: row.get(2)?,
             })
-        })
-        .map_err(db_error)?
-        .collect::<rusqlite::Result<_>>()
-        .map_err(db_error)
+        })?
+        .collect()
 }
 
 pub(crate) fn catalog_matches(migrations: &[MigrationInfo], version: i64) -> bool {
@@ -114,17 +114,25 @@ pub(crate) fn catalog_matches(migrations: &[MigrationInfo], version: i64) -> boo
 }
 
 pub(crate) fn verify(conn: &Connection, version: i64) -> Result<()> {
-    if !catalog_matches(&migrations(conn)?, version) {
-        return Err(Error::Storage(
+    verify_open(conn, version).map_err(crate::OpenError::into_error)
+}
+
+pub(crate) fn verify_open(
+    conn: &Connection,
+    version: i64,
+) -> std::result::Result<(), crate::OpenError> {
+    let applied = migrations_raw(conn).map_err(crate::OpenError::from_sqlite)?;
+    if !catalog_matches(&applied, version) {
+        return Err(crate::OpenError::Other(Error::Storage(
             "migration catalog does not match the supported schema".into(),
-        ));
+        )));
     }
-    let issues = issues(conn, version)?;
+    let issues = issues_open(conn, version)?;
     if !issues.is_empty() {
-        return Err(Error::Storage(format!(
+        return Err(crate::OpenError::Other(Error::Storage(format!(
             "AWR schema mismatch: {}",
             issues.join("; ")
-        )));
+        ))));
     }
     Ok(())
 }
