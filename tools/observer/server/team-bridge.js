@@ -919,6 +919,14 @@ function overviewTaskFromList(item, project, workstreamId) {
     if (typeof runtime.value === 'string') task.started = !['planned', 'draft'].includes(runtime.value);
     else if (runtime.value === null && runtime.reason === 'no_runtime') task.started = false;
   }
+  const execution = asObject(summary.execution);
+  if (hasField(execution, 'value')) {
+    if (execution.value === null && execution.reason === 'no_session') task.agentActive = false;
+    else if (execution.value != null && typeof execution.value === 'object') {
+      if (execution.value.session_state === 'active') task.agentActive = true;
+      else if (execution.value.session_state === 'ended') task.agentActive = false;
+    }
+  }
   const outcome = asObject(summary.outcome);
   if (hasField(outcome, 'value') && outcome.value != null && typeof outcome.value === 'object'
     && hasField(outcome.value, 'integration')) {
@@ -1007,6 +1015,9 @@ function overviewMemberFromDirectory(item) {
   // adds smaller groups later. Multiple department memberships stay unknown.
   if (Array.isArray(item?.department_ids) && item.department_ids.length === 1) {
     member.groupId = item.department_ids[0];
+  }
+  if (Array.isArray(item?.actor_ids) && item.actor_ids.every((actorId) => typeof actorId === 'string')) {
+    member.actorIds = [...item.actor_ids];
   }
   return member;
 }
@@ -1173,7 +1184,10 @@ function createTeamBridge(opts) {
   // demo serves the public synthetic organization through the live read path.
   const demoMode = !live && opts.demo !== false;
   const demoOrganization = demoMode && !opts.teamFixtureDir
-    ? createDemoOrganization({ variant: opts.demoVariant || process.env.AWR_OBSERVER_DEMO_VARIANT || 'full' })
+    ? createDemoOrganization({
+      variant: opts.demoVariant || process.env.AWR_OBSERVER_DEMO_VARIANT || 'full',
+      ...(opts.demoTimestampShiftMs === undefined ? {} : { timestampShiftMs: opts.demoTimestampShiftMs }),
+    })
     : null;
   const TEAM = {
     url: opts.teamUrl || null,
@@ -1674,11 +1688,13 @@ function createTeamBridge(opts) {
       handoffs: overviewReadSlice(handoffs.items.map(overviewHandoffFromList), [handoffs]),
       members: overviewReadSlice(members.items.map(overviewMemberFromDirectory), [members]),
       activity: overviewReadSlice(activityRead.items.map(overviewActivityFromAudit), [activityRead]),
-      approvals: {
-        slice: { coverage: 'unread', reason: 'not-read' },
-        detail: { status: 'unread', reason: 'not-read', missing: [],
-          note: 'No existing upstream read lists plan approvals or candidate lessons' },
-      },
+      approvals: demoOrganization?.variant === 'full'
+        ? overviewReadSlice(demoOrganization.data.approvals.map((approval) => ({ ...approval })), [])
+        : {
+          slice: { coverage: 'unread', reason: 'not-read' },
+          detail: { status: 'unread', reason: 'not-read', missing: [],
+            note: 'No existing upstream read lists plan approvals or candidate lessons' },
+        },
     };
     const allReads = [streams, ...workReads, ...globalReads, ...reviewReads];
     const firstFailure = allReads.find((read) => read.error)?.error;
@@ -1713,7 +1729,13 @@ function createTeamBridge(opts) {
           members: parts.members.slice,
           activity: parts.activity.slice,
           approvals: parts.approvals.slice,
-          options: { nowUnixMs: readAt, stalledAfterDays: OVERVIEW_MODEL_STALLED_AFTER_DAYS },
+          options: {
+            nowUnixMs: demoOrganization?.data.now_unix_ms ?? readAt,
+            stalledAfterDays: OVERVIEW_MODEL_STALLED_AFTER_DAYS,
+            ...(demoOrganization ? { views: { me: {
+              personId: demoOrganization.data.viewer.person_id, projectId: project,
+            } } } : {}),
+          },
         },
         coverage: Object.fromEntries(Object.entries(parts).map(([part, value]) => [part, value.detail])),
         freshness: {
@@ -2678,4 +2700,7 @@ function createTeamBridge(opts) {
   };
 }
 
-module.exports = { createTeamBridge, rewriteOwnedCookiePath, READ_OPS, READ_DEFERRED_OPS, READ_ECHOES, readFreshness, readAttributionError };
+module.exports = {
+  createTeamBridge, rewriteOwnedCookiePath, READ_OPS, READ_DEFERRED_OPS, READ_ECHOES, readFreshness,
+  readAttributionError, overviewTaskFromList, overviewMemberFromDirectory,
+};

@@ -142,7 +142,7 @@ export interface OverviewMember {
   personId?: string | null;
   displayName?: string | null;
   groupId?: string | null;
-  /** Account and Agent actor ids recorded for this person; absent means no recorded link. */
+  /** Human and Agent actor ids for audit attribution; absent when the directory has no such source. */
   actorIds?: string[];
 }
 

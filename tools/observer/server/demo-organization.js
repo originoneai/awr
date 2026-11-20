@@ -12,6 +12,15 @@ const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex'
 const clone = (value) => structuredClone(value);
 const asObject = (value) => value && typeof value === 'object' && !Array.isArray(value);
 const statusOf = (task) => task.prototype_status;
+const DEMO_TIMESTAMP_KEY = /(?:_ms|_unix_ms|UnixMs)$/;
+
+function shiftDemoTimestamps(value, shift, key = null) {
+  if (typeof value === 'number' && key !== null && DEMO_TIMESTAMP_KEY.test(key)) return value + shift;
+  if (Array.isArray(value)) return value.map((item) => shiftDemoTimestamps(item, shift));
+  if (!asObject(value)) return value;
+  return Object.fromEntries(Object.entries(value).map(([childKey, item]) =>
+    [childKey, shiftDemoTimestamps(item, shift, childKey)]));
+}
 
 class DemoReadError extends Error {
   constructor(code, message, status = 503) {
@@ -51,8 +60,10 @@ function variantData(variant) {
   return data;
 }
 
-function createDemoOrganization({ variant = 'full' } = {}) {
-  const data = variantData(variant);
+function createDemoOrganization({ variant = 'full',
+  timestampShiftMs = Date.now() - completeOrganization.now_unix_ms } = {}) {
+  if (!Number.isInteger(timestampShiftMs)) throw new Error('Demo timestamp offset must be an integer');
+  const data = shiftDemoTimestamps(variantData(variant), timestampShiftMs);
   const revokedConnections = new Set();
   const taskById = new Map(data.tasks.map((task) => [task.work_id, task]));
   const projectById = new Map(data.projects.map((project) => [project.project_id, project]));
@@ -83,6 +94,15 @@ function createDemoOrganization({ variant = 'full' } = {}) {
 
   function actor(personId, displayName) {
     return { ...person(personId, displayName), actor_id: `${personId}-agent`, client_id: `${personId}-client` };
+  }
+
+  function viewerIdentity() {
+    return {
+      actor_id: data.viewer.actor_id,
+      client_id: data.viewer.client_id,
+      role: data.viewer.role,
+      business_roles: [...data.viewer.business_roles],
+    };
   }
 
   function contractHash(workId) {
@@ -221,24 +241,50 @@ function createDemoOrganization({ variant = 'full' } = {}) {
     };
   }
 
+  function integration(task) {
+    if (!task.delivery) return null;
+    const round = latestRound(task);
+    return {
+      id: round ? `integration-${round.round_id}` : `integration-${task.work_id.toLowerCase()}`,
+      state: task.integrated ? 'confirmed' : round?.state === 'approved' ? 'dispatched' : 'prepared',
+      reviewed_execution_id: round?.execution_id ?? null,
+      current_binding: task.integrated ? true : round?.current ?? true,
+      target_changed: false,
+    };
+  }
+
   function summary(task) {
     const report = progress(task);
     const at = task.report?.reported_at_unix_ms ?? data.now_unix_ms;
     const owner = person(task.owner_person_id);
     const blockers = task.report?.blockers ?? [];
+    const deliveryIntegration = integration(task);
+    const hasOutcome = report !== null || deliveryIntegration !== null;
+    const hasRuntime = !['ready', 'planned'].includes(statusOf(task));
     return {
       version: 1,
       owner: { value: owner, as_of_unix_ms: data.now_unix_ms, reason: null },
       phase: { value: phase(task), as_of_unix_ms: at, reason: null },
-      runtime: { value: runtimeState(task), as_of_unix_ms: data.now_unix_ms, reason: null },
+      runtime: hasRuntime
+        ? { value: runtimeState(task), as_of_unix_ms: data.now_unix_ms, reason: null }
+        : { value: null, as_of_unix_ms: null, reason: 'no_runtime' },
       outcome: {
-        value: statusOf(task) === 'verified' || statusOf(task) === 'claimed'
-          ? { summary: task.report?.summary ?? null, completed_work: task.report?.completed ?? [],
-            integration_state: task.integrated ? 'confirmed' : 'not_integrated', current_binding: true }
-          : null,
-        as_of_unix_ms: statusOf(task) === 'verified' || statusOf(task) === 'claimed' ? at : null,
-        reason: statusOf(task) === 'verified' || statusOf(task) === 'claimed' ? null : 'no_reported_outcome',
+        value: hasOutcome ? {
+          summary: report?.summary ?? null,
+          completed: report?.completed ?? null,
+          integration: deliveryIntegration,
+        } : null,
+        as_of_unix_ms: hasOutcome ? deliveryIntegration ? data.now_unix_ms : at : null,
+        reason: hasOutcome ? null : 'no_reported_outcome',
       },
+      execution: task.agent_name ? {
+        value: {
+          session_state: task.agent_active ? 'active' : 'ended',
+          last_checkpoint_at_unix_ms: task.report?.reported_at_unix_ms ?? null,
+        },
+        as_of_unix_ms: data.now_unix_ms,
+        reason: null,
+      } : { value: null, as_of_unix_ms: null, reason: 'no_session' },
       blocker: {
         value: blockers.length ? { text: blockers[0] } : null,
         as_of_unix_ms: blockers.length ? at : null,
@@ -314,7 +360,7 @@ function createDemoOrganization({ variant = 'full' } = {}) {
     const limited = variant === 'partial' && projectId === 'orders' ? mine.slice(0, 3) : mine;
     const result = page(limited, query);
     return reply(projectId, query, {
-      identity: { ...data.viewer },
+      identity: { ...viewerIdentity() },
       items: result.items.map((item) => ({
         navigation: navigation(item),
         work_id: item.work_id,
@@ -1108,6 +1154,17 @@ function createDemoOrganization({ variant = 'full' } = {}) {
     });
   }
 
+  function auditClientId(item) {
+    const actor = /^(M-\d{3})-agent$/.exec(item.actor_id);
+    if (!actor) return null;
+    const member = personById.get(actor[1]);
+    const agent = member?.agents.find((candidate) => item.actor_display_name?.includes(candidate.client_name))
+      ?? member?.agents[0];
+    const client = agent?.client_name === 'Codex' ? 'codex'
+      : agent?.client_name.startsWith('Claude') ? 'claude' : null;
+    return client ? `${actor[1]}-${client}` : null;
+  }
+
   function audit(projectId, query) {
     const kind = query.op === 'audit.development' ? 'development' : 'requests';
     const items = data.activity.filter((item) => item.project_id === projectId
@@ -1118,7 +1175,7 @@ function createDemoOrganization({ variant = 'full' } = {}) {
       items: result.items.map((item) => ({
         id: item.id,
         actor_id: item.actor_id,
-        client_id: item.client_id,
+        client_id: auditClientId(item),
         action: kind === 'development' ? item.action : 'query',
         work_id: item.work_id,
         result: kind === 'development' ? item.result : 'succeeded',
@@ -1284,7 +1341,7 @@ function createDemoOrganization({ variant = 'full' } = {}) {
     switch (query.op) {
       case 'capabilities': return {
         protocol: 'awr-team-workstream', protocol_version: 1,
-        identity: { ...data.viewer, can_manage_members: false, can_read_project_audit: true,
+        identity: { ...viewerIdentity(), can_manage_members: false, can_read_project_audit: true,
           membership_action_ceiling: ['work.read'] },
         queries: ['capabilities', 'workstreams.list', 'work.list', 'work.graph', 'work.search', 'work.next', 'work.inbox',
           'work.prepare', 'work.snapshot', 'work.observe', 'work.admission', 'work.recovery', 'events.list',
@@ -1498,6 +1555,7 @@ function createDemoOrganization({ variant = 'full' } = {}) {
         available: true,
         display_name: member.display_name,
         department_ids: [member.group_id],
+        actor_ids: [member.person_id, ...(member.agents.length ? [`${member.person_id}-agent`] : [])],
       })),
     } }, setCookie: [] };
   }
@@ -1546,7 +1604,7 @@ function createDemoOrganization({ variant = 'full' } = {}) {
       session_id: 'demo-anonymous',
       created_at_ms: data.now_unix_ms - 60_000,
       last_seen_ms: data.now_unix_ms,
-      expires_at_ms: Date.now() + 3600000,
+      expires_at_ms: data.now_unix_ms + 3600000,
       projects: data.projects.map((item) => item.key),
     }),
   };
