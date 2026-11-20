@@ -133,7 +133,7 @@ const variantRoutes = {
     { name: 'project-plan', path: '/projects/P-001?tab=plan&work=T-101', action: planDetail },
   ],
   restricted: [
-    { name: 'projects', path: '/projects' },
+    { name: 'projects', path: '/projects', expectedErrors: ['Forbidden'] },
     { name: 'project-knowledge-denied', path: '/projects/P-001?tab=knowledge', expectedErrors: ['Forbidden'] },
     { name: 'onboard-denied', path: '/projects/P-003?tab=plan', expectedErrors: ['Forbidden'] },
   ],
@@ -279,6 +279,84 @@ function checkActivityGeometry(metric, compact) {
   return failures;
 }
 
+/* Prototype projects(): .head 24/16 desktop and 16/12 mobile; .lead 20/28 with a
+   20px bottom margin (18/26 mobile); .block radius 16; .block-head 48px and 0 20;
+   .t th 40px/12px; first/last cell inset 20px desktop and 16px mobile. */
+async function projectsGeometry(page) {
+  await page.locator('[data-testid="page-projects"], [data-testid="state-forbidden"]').first().waitFor();
+  return page.evaluate(() => {
+    const read = (selector) => {
+      const element = document.querySelector(selector);
+      if (!element) return null;
+      const style = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return {
+        height: rect.height,
+        paddingTop: style.paddingTop,
+        paddingBottom: style.paddingBottom,
+        paddingLeft: style.paddingLeft,
+        marginBottom: style.marginBottom,
+        borderRadius: style.borderRadius,
+        fontSize: style.fontSize,
+        lineHeight: style.lineHeight,
+        fontWeight: style.fontWeight,
+        fontVariantNumeric: style.fontVariantNumeric,
+      };
+    };
+    return {
+      forbidden: Boolean(document.querySelector('[data-testid="state-forbidden"]')),
+      header: read('.obs-page-header'),
+      lead: read('.projects-lead'),
+      section: read('.projects-section'),
+      sectionHead: read('.projects-section .ant-card-head'),
+      sectionTitle: read('.projects-section .obs-section-title'),
+      tableHead: read('.projects-table thead th'),
+      firstTableHead: read('.projects-table thead th:first-child'),
+      completionUnknown: read('.projects-completion-unknown'),
+      count: document.querySelector('.projects-section .obs-section-count')?.textContent ?? null,
+      rows: document.querySelectorAll('.projects-table tbody tr.ant-table-row').length,
+      headers: [...document.querySelectorAll('.projects-table thead th')].map((element) => element.textContent).filter(Boolean),
+      freshness: Boolean(document.querySelector('.projects-footer [data-testid="freshness-badge"]')),
+    };
+  });
+}
+
+function checkProjectsGeometry(metric, compact) {
+  if (metric.forbidden) return [];
+  const failures = [];
+  const number = (value) => typeof value === 'number' ? value : Number.parseFloat(value ?? '');
+  const equal = (actual, expected, label) => {
+    if (Math.abs(number(actual) - expected) > 0.01) failures.push(`${label}: expected ${expected}, got ${actual}`);
+  };
+  equal(metric.header?.paddingTop, compact ? 16 : 24, 'project header top padding');
+  equal(metric.header?.paddingBottom, compact ? 12 : 16, 'project header bottom padding');
+  equal(metric.lead?.marginBottom, 20, 'project summary bottom margin');
+  equal(metric.lead?.fontSize, compact ? 18 : 20, 'project summary font size');
+  equal(metric.lead?.lineHeight, compact ? 26 : 28, 'project summary line height');
+  equal(metric.lead?.fontWeight, 500, 'project summary font weight');
+  equal(metric.section?.borderRadius, 16, 'project section radius');
+  equal(metric.sectionHead?.height, 48, 'project section heading height');
+  equal(metric.sectionHead?.paddingLeft, 20, 'project section heading horizontal padding');
+  equal(metric.sectionTitle?.fontSize, 14, 'project section title font size');
+  equal(metric.sectionTitle?.lineHeight, 20, 'project section title line height');
+  equal(metric.tableHead?.height, 40, 'project table heading height');
+  equal(metric.tableHead?.fontSize, 12, 'project table heading font size');
+  equal(metric.firstTableHead?.paddingLeft, compact ? 16 : 20, 'project first table heading padding');
+  if (metric.completionUnknown) {
+    equal(metric.completionUnknown.fontSize, 12, 'unknown completion font size');
+    equal(metric.completionUnknown.lineHeight, 16, 'unknown completion line height');
+  }
+  if (metric.count !== null && !Number.isNaN(Number(metric.count))) equal(metric.count, metric.rows, 'project section count versus detail rows');
+  const expectedHeaders = metric.rows === 0 && metric.count === '0' ? [] : compact
+    ? ['项目', '状态', '一句话', '完成得怎么样']
+    : ['项目', '状态', '一句话', '完成得怎么样', '更新'];
+  if (JSON.stringify(metric.headers) !== JSON.stringify(expectedHeaders)) {
+    failures.push(`project table headings differ: ${JSON.stringify(metric.headers)}`);
+  }
+  if (!metric.freshness) failures.push('project freshness badge is missing');
+  return failures;
+}
+
 async function visit(baseUrl, variant, route, viewport) {
   const context = await browser.newContext({
     viewport,
@@ -320,6 +398,7 @@ async function visit(baseUrl, variant, route, viewport) {
     await page.waitForTimeout(350);
     const body = await page.locator('body').innerText();
     const activityMetric = route.name.startsWith('activity-') ? await activityGeometry(page) : null;
+    const projectMetric = route.name === 'projects' ? await projectsGeometry(page) : null;
     const state = await page.evaluate(() => ({
       width: document.documentElement.clientWidth,
       scrollWidth: document.documentElement.scrollWidth,
@@ -351,6 +430,7 @@ async function visit(baseUrl, variant, route, viewport) {
       horizontalOverflow: state.scrollWidth > state.width,
       firstLoadGeometry: geometry,
       activityGeometry: activityMetric,
+      projectsGeometry: projectMetric,
       pageErrors,
       requestFailures,
       apiErrors,
@@ -363,6 +443,11 @@ async function visit(baseUrl, variant, route, viewport) {
     results.push(record);
     if (activityMetric) {
       for (const failure of checkActivityGeometry(activityMetric, viewport.width <= 860)) {
+        failures.push(`${variant} ${route.path} ${viewport.width}: ${failure}`);
+      }
+    }
+    if (projectMetric) {
+      for (const failure of checkProjectsGeometry(projectMetric, viewport.width <= 860)) {
         failures.push(`${variant} ${route.path} ${viewport.width}: ${failure}`);
       }
     }

@@ -10,6 +10,27 @@ import {
   renderApp,
 } from './test-utils';
 
+function overviewModel(project: string) {
+  const complete = { coverage: 'complete', items: [] } as const;
+  return {
+    ok: true,
+    project,
+    read_at_unix_ms: 1761840000000,
+    input: {
+      tasks: complete, dependencies: complete, decisions: complete, reviewRounds: complete,
+      handoffs: complete, approvals: complete, members: complete, activity: complete,
+      options: { nowUnixMs: 1761840000000, stalledAfterDays: 7 },
+    },
+    coverage: Object.fromEntries(['tasks', 'dependencies', 'decisions', 'reviewRounds', 'handoffs', 'approvals', 'members', 'activity']
+      .map((part) => [part, { status: 'complete', missing: [] }])),
+    freshness: {
+      report_received: { status: 'not_measured' },
+      authoritative: { status: 'measured', at_unix_ms: 1761840000000 },
+      page_read: { status: 'measured', at_unix_ms: 1761840000000 },
+    },
+  };
+}
+
 function revocationFetch(calls: { count: number }, revoked: { value: boolean }) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     calls.count += 1;
@@ -19,6 +40,8 @@ function revocationFetch(calls: { count: number }, revoked: { value: boolean }) 
       payload = { ok: false, error: { code: 'Unauthenticated', message: 'revoked' } };
     } else if (url.includes('/api/team/projects')) {
       payload = DEMO_PROJECTS;
+    } else if (url.includes('/api/team/overview-model')) {
+      payload = overviewModel(new URL(url, 'http://synthetic.invalid').searchParams.get('project') ?? 'demo');
     } else if (url.includes('/api/team/overview')) {
       payload = DEMO_PROJECT_OVERVIEW;
     } else if (url.includes('/api/team/activity')) {
@@ -62,6 +85,7 @@ describe.each([
     const fetchMock = revocationFetch(calls, revoked);
     const { queryClient } = renderApp(path);
 
+    await advance(0);
     await advance(0);
     expect(screen.getAllByText(restrictedText)).not.toHaveLength(0);
     expect(screen.getByTestId(pageTestId)).toBeTruthy();
