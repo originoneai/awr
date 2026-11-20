@@ -176,6 +176,55 @@ const variantRoutes = {
   ],
 };
 
+/* The canonical variant exists so the workbench can be compared with the prototype with
+   every fact known. The server promises are asserted, and so are the page's four KPI
+   numbers: under the canonical variant they must equal the prototype's [2, 1, 2, 3]; a
+   red number assertion means the page or the derivation regressed. */
+const canonicalWorkbenchRecords = [];
+
+async function recordCanonicalWorkbench(page) {
+  await settle(page);
+  await page.getByTestId('workbench-frame').waitFor();
+  const pageNumbers = await page.evaluate(() =>
+    [...document.querySelectorAll('.obs-kpis .obs-kpi-value')]
+      .map((element) => (element.textContent ?? '').trim())
+      .map((text) => (/^(\d+)/.exec(text) ?? [])[0] ?? null));
+  assert.deepEqual(pageNumbers, ['2', '1', '2', '3'],
+    'the canonical workbench KPI numbers must equal the prototype [2, 1, 2, 3]');
+  const response = await page.request
+    .get(new URL('/api/team/overview-model?project=P-001', page.url()).href);
+  assert.equal(response.status(), 200);
+  const model = await response.json();
+  assert.equal(model.ok, true);
+  for (const [plane, detail] of Object.entries(model.coverage)) {
+    assert.deepEqual(detail, { status: 'complete', missing: [] }, `canonical ${plane} coverage`);
+  }
+  assert.deepEqual(model.input.options.views.me, { personId: 'M-002', projectId: 'P-001' });
+  assert.equal(model.input.tasks.items.length, 14);
+  assert.equal(model.input.approvals.items.length, 2);
+  // The default whole-week clock trails real "now" by up to half a week, so the model's
+  // authoritative age may honestly read stale; it must stay bounded by that rounding.
+  assert.ok(['measured', 'stale'].includes(model.freshness.authoritative.status),
+    `canonical authoritative status ${model.freshness.authoritative.status}`);
+  assert.ok(model.freshness.authoritative.age_ms < 3.5 * 24 * 3600 * 1000,
+    `canonical authoritative age ${model.freshness.authoritative.age_ms} exceeds the whole-week rounding`);
+  assert.ok(Math.abs(model.input.options.nowUnixMs - model.read_at_unix_ms) <= 3.5 * 24 * 3600 * 1000,
+    'the canonical "now" stays within half a week of the real read');
+  // End-to-end default clock check: the fixture's "now" is a Thursday 12:00 UTC, and the
+  // whole-week rounding keeps it there through the real server.js startup path.
+  assert.equal(new Date(model.input.options.nowUnixMs).getUTCDay(), 4,
+    'the demo clock keeps the fixture weekday');
+  assert.equal(model.input.options.nowUnixMs % (24 * 3600 * 1000), (12 * 3600 * 1000),
+    'the demo clock keeps the fixture time of day');
+  canonicalWorkbenchRecords.push({
+    route: '/workbench?scope=P-001&perspective=me',
+    prototypeNumbers: [2, 1, 2, 3],
+    pageNumbers,
+    modelReadAtUnixMs: model.read_at_unix_ms,
+    modelNowUnixMs: model.input.options.nowUnixMs,
+  });
+}
+
 async function firstLoadGeometry(page) {
   await page.locator('.shell-header .ant-breadcrumb > ol > li').first().waitFor();
   return page.evaluate(() => {
@@ -390,6 +439,7 @@ async function visit(baseUrl, variant, route, viewport) {
       forbiddenText,
       keyLeaks,
       documentedKeyLeaks: expectedKeyLeaks,
+      keyLeakExemptionReason: route.keyLeakReason ?? null,
       unexpectedKeyLeaks,
       missingExpectedKeys,
     };
@@ -421,9 +471,28 @@ async function visit(baseUrl, variant, route, viewport) {
 try {
   await mkdir(evidence, { recursive: true });
   browser = await chromium.launch({ headless: true });
-  for (const variant of ['full', 'empty', 'single', 'restricted', 'partial']) {
+  for (const variant of ['full', 'empty', 'single', 'restricted', 'partial', 'canonical']) {
     const baseUrl = await startServer(variant);
-    const routes = variant === 'full' ? fullRoutes : variantRoutes[variant];
+    const routes = variant === 'full' ? fullRoutes
+      : variant === 'canonical'
+        ? [{
+          name: 'workbench-canonical',
+          path: '/workbench?scope=P-001&perspective=me',
+          // Temporary, reason-recorded exemption: the chain impact nodes still render the
+          // raw project and goal keys. AWR-PPO-067 replaces them with product language;
+          // until then these two keys are documented leaks on this one route only.
+          expectedKeyLeaks: ['P-001', 'GOAL-001'],
+          keyLeakReason: 'AWR-PPO-067 replaces raw project and goal keys in the chain impact nodes',
+          // Record the default tab first (where the KPI numbers live), then take the
+          // same queue-and-detail walk the full variant uses, so the shared body checks
+          // see the same settled state they already guard for the full variant.
+          action: async (page) => {
+            await settle(page);
+            await recordCanonicalWorkbench(page);
+            await workbenchQueue(page);
+          },
+        }]
+        : variantRoutes[variant];
     for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
       for (const route of routes) await visit(baseUrl, variant, route, viewport);
     }
@@ -439,6 +508,8 @@ const documentedKeyLeaks = results.filter((item) => item.keyLeaks?.length).map((
   route: item.route,
   viewport: item.viewport,
   keys: item.keyLeaks,
+  exempted: item.documentedKeyLeaks,
+  exemptionReason: item.keyLeakExemptionReason,
   screenshot: item.screenshot,
 }));
 const report = {
@@ -447,9 +518,11 @@ const report = {
   visited: results.length,
   failures,
   documentedKeyLeaks,
+  canonicalWorkbenchRecords,
   results,
 };
 await mkdir(evidence, { recursive: true });
 await writeFile(path.join(evidence, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
-console.log(JSON.stringify({ evidence, visited: results.length, failures, documentedKeyLeaks }, null, 2));
+console.log(JSON.stringify({ evidence, visited: results.length, failures, documentedKeyLeaks,
+  canonicalWorkbenchRecords }, null, 2));
 assert.deepEqual(failures, []);
