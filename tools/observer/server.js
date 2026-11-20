@@ -55,7 +55,7 @@ function parseArgs(argv) {
         '',
         '  --port <port>         Listening port (default: 7390; 0 picks a free port)',
         '  --demo                Serve fixture data (default when --team-url is absent)',
-        '  --demo-variant <name> full, empty, single, restricted or partial',
+        '  --demo-variant <name> full, empty, single, restricted, partial or canonical',
         '  --team-url <url>      Proxy Team Web to awr-server /v1/web entry',
         '  --team-public-url <url> Public Team service base URL for member MCP setup',
         '  --team-fixture-dir    Use on-disk team-web-loop fixtures (demo/tests)',

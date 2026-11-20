@@ -289,19 +289,16 @@ fn legacy_wait_kind(kind: Option<&str>) -> PgResult<WaitKind> {
 /// `team_independent_acceptance`; else the older receipt's `policy` naming one
 /// of the two agent/simulated-member independent review policies. A payload
 /// with no basis at all is recorded, never verified.
+/// One rule shared with the portfolio overview (AWR-PPD-060): the payload's
+/// `independence_kind` decides first, then the stated acceptance flag, then
+/// the legacy policy. The order and the verifying kinds live in one module so
+/// the period snapshot writer and the portfolio reader cannot drift.
 fn independently_accepted(row: &tokio_postgres::Row) -> bool {
-    match row.get::<_, Option<String>>(6).as_deref() {
-        Some(kind) => matches!(
-            kind,
-            "team_independent" | "agent_review" | "simulated_member_independent"
-        ),
-        None => match row.get::<_, Option<bool>>(4) {
-            Some(independent) => independent,
-            None => matches!(row.get::<_, Option<String>>(5).as_deref(), Some(policy)
-                if policy == crate::review::AGENT_REVIEW_POLICY
-                    || policy == crate::review::simulated_member::POLICY),
-        },
-    }
+    crate::completion_independence::independently_accepted(
+        row.get::<_, Option<String>>(6).as_deref(),
+        row.get::<_, Option<bool>>(4),
+        row.get::<_, Option<String>>(5).as_deref(),
+    )
 }
 
 async fn compute_facts(

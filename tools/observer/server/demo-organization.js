@@ -3,16 +3,25 @@
 const crypto = require('node:crypto');
 const completeOrganization = require('../fixtures/demo-organization.json');
 
-const DEMO_VARIANTS = new Set(['full', 'empty', 'single', 'restricted', 'partial']);
+const DEMO_VARIANTS = new Set(['full', 'empty', 'single', 'restricted', 'partial', 'canonical']);
 const DEMO_FUTURE_READ_OPS = new Set([
   'updates.list', 'update.inspect', 'goals.list', 'goal.inspect', 'lessons.list', 'lesson.inspect',
 ]);
 const DAY = 86_400_000;
+const WEEK = 7 * DAY;
 const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
 const clone = (value) => structuredClone(value);
 const asObject = (value) => value && typeof value === 'object' && !Array.isArray(value);
 const statusOf = (task) => task.prototype_status;
 const DEMO_TIMESTAMP_KEY = /(?:_ms|_unix_ms|UnixMs)$/;
+const completeSlice = (items) => ({ coverage: 'complete', items });
+
+/** The demo clock's default offset lands the fixture "now" on the same weekday and time of
+ * day: pages cut their "this week" windows on the viewer's calendar, and only whole-week
+ * offsets keep the fixture's calendar weeks catching the same events as the prototype. */
+function defaultDemoTimestampShiftMs() {
+  return Math.round((Date.now() - completeOrganization.now_unix_ms) / WEEK) * WEEK;
+}
 
 function shiftDemoTimestamps(value, shift, key = null) {
   if (typeof value === 'number' && key !== null && DEMO_TIMESTAMP_KEY.test(key)) return value + shift;
@@ -60,8 +69,158 @@ function variantData(variant) {
   return data;
 }
 
+/** Monday-00:00 UTC week bounds of a moment; whole-week clock offsets keep them aligned
+ * with every fixed-offset viewer's calendar week for the fixture's mid-day timestamps. */
+function utcMondayWeek(nowUnixMs, weeksBefore = 0) {
+  const date = new Date(nowUnixMs);
+  const day = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+  const weekday = (date.getUTCDay() + 6) % 7;
+  const start = day - (weekday + weeksBefore * 7) * DAY;
+  return { startUnixMs: start, endUnixMs: start + WEEK - 1 };
+}
+
+function utcCalendarMonth(nowUnixMs, monthsBefore = 0) {
+  const date = new Date(nowUnixMs);
+  const start = Date.UTC(date.getUTCFullYear(), date.getUTCMonth() - monthsBefore, 1);
+  return { startUnixMs: start, endUnixMs: Date.UTC(date.getUTCFullYear(),
+    date.getUTCMonth() - monthsBefore + 1, 1) - 1 };
+}
+
+/**
+ * The fully-known overview input: every fact the derived model consumes, taken straight
+ * from the demo organization. The live reads cannot supply several of these planes yet
+ * (structured external waits, acceptance evidence, submitted-result times, approvals),
+ * so the `full` variant honestly reports them unknown; this canonical input is what the
+ * same organization looks like once every read exists. The periods follow the demo clock
+ * in UTC, so whole-week offsets move them with the facts they window.
+ */
+function canonicalOverviewInput(data) {
+  const activity = data.tasks.flatMap((task) => task.timeline.map((entry) => ({
+    id: entry.activity_id,
+    taskId: task.work_id,
+    action: 'session.checkpoint',
+    actorId: `${task.owner_person_id}-agent`,
+    atUnixMs: entry.at_unix_ms,
+  })));
+  return {
+    tasks: completeSlice(data.tasks.map((task) => ({
+      id: task.work_id,
+      title: task.title,
+      ownerPersonId: task.owner_person_id,
+      agentName: task.agent_name,
+      projectId: task.project_id,
+      groupId: task.group_id,
+      goalIds: task.goal_ids,
+      commitments: [
+        { id: `project-${task.project_id}`, title: task.project_id, kind: 'project' },
+        ...task.goal_ids.map((goalId) => ({ id: goalId, title: goalId, kind: 'goal' })),
+        ...(task.week_committed ? [{ id: `${task.project_id}-week-47`, title: 'Week 47 commitment', kind: 'project' }] : []),
+      ],
+      verifiedAtUnixMs: task.verified_at_unix_ms,
+      acceptance: task.acceptance_final ? task.acceptance.map((criterion) => ({
+        evidence: [{ passed: criterion.evidence_state === 'ok', current: true }],
+      })) : [],
+      report: task.report ? {
+        completed: task.report.completed_declaration,
+        reportedAtUnixMs: task.report.reported_at_unix_ms,
+      } : null,
+      submittedResultAtUnixMs: task.submitted_result_at_unix_ms,
+      integrated: task.integrated,
+      started: task.started,
+      agentActive: task.agent_active,
+      externalWait: task.wait?.kind === 'ext' ? {
+        party: task.wait.waiting_on_name,
+        what: task.wait.what,
+        sinceUnixMs: task.wait.started_at_unix_ms,
+      } : null,
+    }))),
+    dependencies: completeSlice(data.tasks.flatMap((task) => task.dependencies.map((dependency) => ({
+      id: dependency.dependency_id,
+      consumerTaskId: task.work_id,
+      providerTaskId: dependency.provider_work_id,
+      satisfied: dependency.satisfied,
+      what: dependency.required_version_label,
+      sinceUnixMs: dependency.since_unix_ms,
+    })))),
+    decisions: completeSlice(data.decisions.map((decision) => ({
+      id: decision.decision_id,
+      taskId: decision.work_id,
+      state: decision.state,
+      current: decision.current,
+      question: decision.question,
+      impact: decision.impact,
+      allowedResponderIds: decision.allowed_responder_person_ids,
+      createdAtUnixMs: decision.created_at_unix_ms,
+    }))),
+    reviewRounds: completeSlice(data.tasks.flatMap((task) => (task.delivery?.rounds || []).map((round) => ({
+      id: round.round_id,
+      taskId: task.work_id,
+      roundIndex: round.round_index,
+      state: round.state,
+      current: round.current,
+      independent: round.independent,
+      authorPersonId: round.author_person_id,
+      reviewerPersonId: round.reviewer_person_id,
+      authorActorId: round.author_actor_id,
+      reviewerActorId: round.reviewer_actor_id,
+      openedAtUnixMs: round.opened_at_unix_ms,
+    })))),
+    handoffs: completeSlice(data.handoffs.map((handoff) => ({
+      id: handoff.handoff_id,
+      taskId: handoff.work_id,
+      kind: handoff.kind,
+      status: handoff.status,
+      pending: handoff.pending,
+      fromPersonId: handoff.from_person_id,
+      toPersonId: handoff.to_person_id,
+      updatedAtUnixMs: handoff.updated_at_unix_ms,
+    }))),
+    // The fixture's approvals are the canonical pending-approval facts the prototype's inbox
+    // holds for 林悦 (the candidate lesson A-002) and 周宁 (the plan breakdown A-004). Each
+    // maps one-to-one onto OverviewApproval; the fixture checks pin every one to its pending
+    // record, its lesson or planning candidate, and its recipient and project.
+    approvals: completeSlice(data.approvals.map((approval) => ({
+      id: approval.id,
+      kind: approval.kind,
+      recipientPersonId: approval.recipientPersonId,
+      projectId: approval.projectId,
+      title: approval.title,
+      sinceUnixMs: approval.sinceUnixMs,
+    }))),
+    members: completeSlice([...data.people, ...data.view_roles].map((member) => ({
+      personId: member.person_id,
+      displayName: member.display_name,
+      groupId: member.group_id,
+    }))),
+    activity: completeSlice(activity),
+    options: {
+      nowUnixMs: data.now_unix_ms,
+      stalledAfterDays: 1,
+      views: {
+        me: { personId: 'M-002', projectId: 'P-001' },
+        lead: { personId: 'M-001', projectId: 'P-001' },
+        department: { personId: 'M-010', projectIds: ['P-001', 'P-002', 'P-003'] },
+        top: { personId: 'M-011', goalIds: ['GOAL-001', 'GOAL-002', 'GOAL-003'] },
+        currentWeek: utcMondayWeek(data.now_unix_ms, 0),
+        previousWeek: utcMondayWeek(data.now_unix_ms, 1),
+        currentMonth: utcCalendarMonth(data.now_unix_ms, 0),
+        previousMonth: utcCalendarMonth(data.now_unix_ms, 1),
+      },
+    },
+  };
+}
+
+/** The demo snapshot's shared as-of triple, mirrored by the canonical overview model. */
+function demoOverviewAsOf(projectId) {
+  return {
+    project_revision: '47',
+    source_snapshot_id: `snapshot-${projectId}-47`,
+    coordinator_epoch: `epoch-${projectId}-47`,
+  };
+}
+
 function createDemoOrganization({ variant = 'full',
-  timestampShiftMs = Date.now() - completeOrganization.now_unix_ms } = {}) {
+  timestampShiftMs = defaultDemoTimestampShiftMs() } = {}) {
   if (!Number.isInteger(timestampShiftMs)) throw new Error('Demo timestamp offset must be an integer');
   const data = shiftDemoTimestamps(variantData(variant), timestampShiftMs);
   const revokedConnections = new Set();
@@ -1610,4 +1769,7 @@ function createDemoOrganization({ variant = 'full',
   };
 }
 
-module.exports = { createDemoOrganization, DemoReadError, DEMO_VARIANTS, DEMO_FUTURE_READ_OPS };
+module.exports = {
+  createDemoOrganization, DemoReadError, DEMO_VARIANTS, DEMO_FUTURE_READ_OPS,
+  canonicalOverviewInput, demoOverviewAsOf,
+};

@@ -1702,6 +1702,22 @@ fn catalog() -> Vec<Tool> {
             "Inspect your original directory_apply request_id under current project-management authority. Recorded returns its historical receipt; absent leaves the change unconfirmed. Retry only the original unchanged request after inspection. This query changes no relationships.",
             super::directory::schema(super::directory::Operation::Outcome).as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(true).destructive(false).idempotent(true).open_world(false)),
+        Tool::new("awr_team_portfolio_overview",
+            "Read one member-scoped portfolio summary (portfolio.overview) covering every project this member can currently read in the serving instance: works by recorded state, open decision, dependency and review waits with the oldest open time, the latest current period update per project, and the registered directory group. Recorded facts only, with derived judgment left to the caller; hidden work appears as a count without ids or titles. One page carries at most 200 projects with a resume cursor; a project whose summary fails to read is marked not_read with a reason and never suppresses the others. The read grants no execution or approval authority.",
+            json!({
+                "type":"object",
+                "additionalProperties":false,
+                "required":["protocol_version"],
+                "properties":{
+                    "protocol_version":{"type":"integer","const":1,
+                        "description":"Protocol version of the portfolio read."},
+                    "limit":{"type":"integer","minimum":1,"maximum":200,
+                        "description":"Projects per page, 1 through 200; default 200."},
+                    "cursor":{"type":"string","minLength":1,"maxLength":4096,
+                        "description":"Opaque cursor from the previous page's next_cursor; omit for the first page."}
+                }
+            }).as_object().unwrap().clone())
+            .with_annotations(ToolAnnotations::new().read_only(true).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_access_inspect",
             "Project-admin only. Omit both subject selectors to list a bounded member directory (cursor/limit); supply both to inspect one actor/client. Returns permitted memberships, grants and credential metadata, never raw secrets. Requires access.manage_project and explicit manage grants.",
             access_inspect.as_object().unwrap().clone())
@@ -1976,6 +1992,27 @@ impl ServerHandler for Endpoint {
                 "awr_team_directory_read" | "awr_team_directory_preview" | "awr_team_directory_apply" | "awr_team_directory_outcome" => {
                     let operation = request.name.strip_prefix("awr_team_directory_").and_then(super::directory::Operation::parse).ok_or_else(|| PgError::Protocol("invalid project directory operation".into()))?;
                     super::directory::operate(&self.state, &self.project, &access.bearer, args, operation).await
+                }
+                "awr_team_portfolio_overview" => {
+                    let req: awr_team_pg::PortfolioOverviewRequest =
+                        serde_json::from_value(args)
+                            .map_err(|_| PgError::invalid_command_fields())?;
+                    let registered: Vec<String> = self
+                        .state
+                        .projects
+                        .values()
+                        .filter(|registered| registered.tenant_id == self.project.tenant_id)
+                        .map(|registered| registered.project_id.clone())
+                        .collect();
+                    self.state
+                        .store
+                        .portfolio_overview(
+                            &self.project.tenant_id,
+                            &access.bearer,
+                            &registered,
+                            req,
+                        )
+                        .await
                 }
                 "awr_team_access_inspect" => {
                     let req: super::AccessInspectBody = serde_json::from_value(args)
