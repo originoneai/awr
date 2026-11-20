@@ -6,6 +6,8 @@ import {
   buildMyWorkModel,
   buildWorkbenchVerdict,
   metricDetailItems,
+  reportAge,
+  reportDeclaration,
   waitingOnText,
   workbenchInputOptions,
   type WorkbenchPeriodUpdate,
@@ -16,6 +18,62 @@ import {
   WORKBENCH_WEEK_START as WEEK_START,
   WORKBENCH_WEEK_END as WEEK_END,
 } from '../../test-fixtures/workbench';
+
+const DAY_MS = 86_400_000;
+
+describe('recorded report facts joined by task id', () => {
+  it('joins the raw report fact by task id and keeps missing reports explicitly unread', () => {
+    const input = myWorkInput();
+    const model = buildMyWorkModel(deriveOverview(input), 'zh-CN', {
+      personId: 'person-a',
+      inputTasks: input.tasks.items,
+    });
+    const reports = new Map(model.agentTasks.map((task) => [task.id, task.report]));
+    expect(reports.get('mine-running')).toEqual({ completed: false, reportedAtUnixMs: NOW - 60_000 });
+    expect(reports.get('mine-decision')).toEqual({ completed: false, reportedAtUnixMs: NOW - 2 * DAY_MS });
+    expect(reports.get('mine-external')).toBeNull();
+  });
+
+  it('leaves every report unread when the raw items are not supplied', () => {
+    const model = buildMyWorkModel(deriveOverview(myWorkInput()), 'zh-CN', { personId: 'person-a' });
+    expect(model.agentTasks.length).toBeGreaterThan(0);
+    expect(model.agentTasks.every((task) => task.report === null)).toBe(true);
+  });
+
+  it('keeps reports unread when the raw item list is empty', () => {
+    const input = myWorkInput();
+    const model = buildMyWorkModel(deriveOverview(input), 'zh-CN', {
+      personId: 'person-a',
+      inputTasks: [],
+    });
+    expect(model.agentTasks.length).toBeGreaterThan(0);
+    expect(model.agentTasks.every((task) => task.report === null)).toBe(true);
+  });
+});
+
+describe('report age and declaration', () => {
+  it('buckets ages to whole units from the fixed now of the read', () => {
+    expect(reportAge(NOW - 30_000, NOW)).toEqual({ kind: 'justNow', count: 0 });
+    expect(reportAge(NOW - 60_000, NOW)).toEqual({ kind: 'minutes', count: 1 });
+    expect(reportAge(NOW - 59 * 60_000, NOW)).toEqual({ kind: 'minutes', count: 59 });
+    expect(reportAge(NOW - 2 * 3_600_000, NOW)).toEqual({ kind: 'hours', count: 2 });
+    expect(reportAge(NOW - 2 * DAY_MS, NOW)).toEqual({ kind: 'days', count: 2 });
+  });
+
+  it('refuses future times, missing times and a missing now', () => {
+    expect(reportAge(NOW + 60_000, NOW)).toEqual({ kind: 'unknown', count: 0 });
+    expect(reportAge(null, NOW)).toEqual({ kind: 'unknown', count: 0 });
+    expect(reportAge(undefined, NOW)).toEqual({ kind: 'unknown', count: 0 });
+    expect(reportAge(NOW, undefined)).toEqual({ kind: 'unknown', count: 0 });
+  });
+
+  it('maps only the completion declaration, never the report prose', () => {
+    expect(reportDeclaration(null)).toBe('unknown');
+    expect(reportDeclaration({ completed: true })).toBe('done');
+    expect(reportDeclaration({ completed: false, reportedAtUnixMs: 1 })).toBe('inProgress');
+    expect(reportDeclaration({})).toBe('noDeclaration');
+  });
+});
 
 describe('My Work model', () => {
   it('uses the me view metrics and keeps every count tied to the exact detail array', () => {
@@ -91,7 +149,11 @@ describe('fact-based KPI notes', () => {
     };
     const model = buildMyWorkModel(deriveOverview(input), 'zh-CN', { personId: 'person-a', readAtUnixMs: NOW });
     expect(model.metrics.map((metric) => metric.note)).toEqual([
-      '上周 0 件', '另有 1 个停着', '最久 5 天，等Example Client', '最久 2 天',
+      // Two verified this week against zero last week: the prototype's good tone and up arrow.
+      { text: '上周 0 件', tone: 'good', trend: 'up' },
+      { text: '另有 1 个停着', tone: 'warn' },
+      { text: '最久 5 天，等Example Client' },
+      { text: '最久 2 天' },
     ]);
   });
 

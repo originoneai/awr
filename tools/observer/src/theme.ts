@@ -131,6 +131,11 @@ const sharedCraftTokens = {
     waitDurationColumn: 150,
     waitBarMinWidth: 48,
     behindColumn: 104,
+    // Prototype .cn { min-width: 0 } only survives on its four-node demo rows; real rows with
+    // more nodes squeeze to a character. The row scrolls horizontally at this floor instead.
+    // The floor must stay below the smallest natural share of a fitting row (the four-node
+    // row hands each node ≈137px), so fitting rows keep the prototype's flex distribution.
+    chainNodeMinWidth: 132,
   },
 } as const;
 
@@ -367,6 +372,7 @@ export function craftCssVariables(mode: CraftThemeMode): Record<string, string> 
     '--craft-workbench-column-wait-duration': `${workbench.waitDurationColumn}px`,
     '--craft-workbench-wait-bar-min': `${workbench.waitBarMinWidth}px`,
     '--craft-workbench-column-behind': `${workbench.behindColumn}px`,
+    '--craft-workbench-chain-node-min': `${workbench.chainNodeMinWidth}px`,
     '--craft-perspective-option-padding-inline': `${perspective.optionPaddingInline}px`,
     '--craft-activity-column-time': `${activity.columnTime}px`,
     '--craft-activity-column-actor': `${activity.columnActor}px`,

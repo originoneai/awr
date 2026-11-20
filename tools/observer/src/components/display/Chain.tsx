@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ChainConnector, ChainNode, DerivedTaskStatus } from '../../core/overview/types';
 import { useCompactViewport } from '../../lib/viewport';
@@ -63,6 +63,20 @@ export interface ChainProps {
 export function Chain({ nodes, connectors, present, onOpen, header, empty, footer }: ChainProps) {
   const { t } = useTranslation();
   const compactViewport = useCompactViewport();
+  const rowRef = useRef<HTMLDivElement>(null);
+  // The prototype's rows always fit; a row whose nodes cannot fit at their minimum width
+  // scrolls horizontally instead. The flag is measured, so fitting rows are untouched.
+  const [overflowing, setOverflowing] = useState(false);
+  useLayoutEffect(() => {
+    const row = rowRef.current;
+    if (!row || typeof ResizeObserver !== 'function') return;
+    const measure = () => setOverflowing(row.scrollWidth > row.clientWidth + 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(row);
+    if (row.firstElementChild instanceof Element) observer.observe(row.firstElementChild);
+    return () => observer.disconnect();
+  }, [nodes.length]);
 
   const rendered: ReactNode[] = [];
   nodes.forEach((node, index) => {
@@ -157,7 +171,14 @@ export function Chain({ nodes, connectors, present, onOpen, header, empty, foote
     <div className="obs-chain-block" data-compact={compactViewport || undefined} data-empty={nodes.length === 0 && empty !== undefined || undefined}>
       {header}
       {nodes.length === 0 && empty !== undefined ? empty : (
-        <div className="obs-chain" role="group" aria-label={t('display.chain.groupLabel')} data-compact={compactViewport || undefined}>
+        <div
+          ref={rowRef}
+          className="obs-chain"
+          role="group"
+          aria-label={t('display.chain.groupLabel')}
+          data-compact={compactViewport || undefined}
+          data-overflow={overflowing || undefined}
+        >
           {rendered}
         </div>
       )}

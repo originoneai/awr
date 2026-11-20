@@ -478,11 +478,6 @@ try {
         ? [{
           name: 'workbench-canonical',
           path: '/workbench?scope=P-001&perspective=me',
-          // Temporary, reason-recorded exemption: the chain impact nodes still render the
-          // raw project and goal keys. AWR-PPO-067 replaces them with product language;
-          // until then these two keys are documented leaks on this one route only.
-          expectedKeyLeaks: ['P-001', 'GOAL-001'],
-          keyLeakReason: 'AWR-PPO-067 replaces raw project and goal keys in the chain impact nodes',
           // Record the default tab first (where the KPI numbers live), then take the
           // same queue-and-detail walk the full variant uses, so the shared body checks
           // see the same settled state they already guard for the full variant.

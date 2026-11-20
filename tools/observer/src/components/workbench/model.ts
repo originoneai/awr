@@ -6,6 +6,8 @@ import type {
   OverviewDerivation,
   OverviewDerivationOptions,
   OverviewPart,
+  OverviewProgressReport,
+  OverviewTask,
   OverviewViewSummary,
   PersonPendingItem,
   PersonSummary,
@@ -193,12 +195,20 @@ export function buildWorkbenchVerdict(
 
 export type MyMetricId = 'verified' | 'agents' | 'waiting' | 'pending';
 
+export interface WorkbenchMetricNote {
+  text: string;
+  /** The prototype's .kpi .c data-d tone, derived from the same facts as the sentence. */
+  tone?: 'good' | 'warn' | 'bad';
+  /** The prototype's up/down arrow, only when the comparison direction is known. */
+  trend?: 'up' | 'down';
+}
+
 export interface WorkbenchMetric {
   id: MyMetricId;
   key: ViewMetricKey;
   label: string;
   unit: string;
-  note: string | null;
+  note: WorkbenchMetricNote | null;
   count: number | null;
   emphasized: boolean;
   details: ViewMetric<unknown>;
@@ -211,13 +221,16 @@ export interface WorkbenchCoverage {
   approvalsUnread: boolean;
 }
 
+/** A derived task joined with its recorded report fact, read by id from the raw input. */
+export type ReportedTask = DerivedTask & { report: OverviewProgressReport | null };
+
 export interface MyWorkModel {
   metrics: [WorkbenchMetric, WorkbenchMetric, WorkbenchMetric, WorkbenchMetric];
   pending: CountDetails<PersonPendingItem>;
   chains: DerivedChain[];
   chainTabs: Array<{ id: string; label: string }>;
   currentPerson: PersonSummary | null;
-  agentTasks: DerivedTask[];
+  agentTasks: ReportedTask[];
   verdict: WorkbenchVerdict;
   coverage: WorkbenchCoverage;
 }
@@ -227,6 +240,8 @@ export interface MyWorkModelOptions {
   projectId?: string | null;
   readAtUnixMs?: number;
   latestPeriodUpdate?: WorkbenchPeriodUpdate | null;
+  /** The raw overview task items; the recorded report fact is joined by task id. */
+  inputTasks?: readonly OverviewTask[];
 }
 
 export function metricDetailItems(metric: WorkbenchMetric): unknown[] {
@@ -258,31 +273,40 @@ function metricNote(
   language: string,
   currentPerson: PersonSummary | null,
   readAtUnixMs: number | undefined,
-): string | null {
+): WorkbenchMetricNote | null {
   const vocabulary = workbenchVocabulary(language);
   if (id === 'verified') {
-    return typeof details.previousPeriod?.count === 'number'
-      ? fill(vocabulary.metrics.previousWeek, { count: details.previousPeriod.count })
-      : null;
+    if (typeof details.previousPeriod?.count !== 'number') return null;
+    const note: WorkbenchMetricNote = { text: fill(vocabulary.metrics.previousWeek, { count: details.previousPeriod.count }) };
+    if (typeof details.count === 'number') {
+      if (details.count > details.previousPeriod.count) {
+        note.tone = 'good';
+        note.trend = 'up';
+      } else if (details.count < details.previousPeriod.count) {
+        note.tone = 'bad';
+        note.trend = 'down';
+      }
+    }
+    return note;
   }
   if (id === 'agents') {
     if (!currentPerson) return null;
     const stalled = currentPerson.inProgress.items.filter((task) => task.status === 'stalled');
     if (stalled.some((task) => task.agentActive === null)) return null;
     const count = stalled.filter((task) => task.agentActive === false).length;
-    return count > 0 ? fill(vocabulary.metrics.stalledOther, { count }) : null;
+    return count > 0 ? { text: fill(vocabulary.metrics.stalledOther, { count }), tone: 'warn' } : null;
   }
   if (id === 'waiting') {
     const waits = details.items.filter(isDerivedWait);
     if (waits.length === 0 || waits.some((wait) => wait.durationDays === null)) return null;
     const longest = waits.reduce((left, right) => (left.durationDays ?? -1) >= (right.durationDays ?? -1) ? left : right);
-    return fill(vocabulary.metrics.waitingOldest, { days: longest.durationDays!, party: waitingOnText(longest, language) });
+    return { text: fill(vocabulary.metrics.waitingOldest, { days: longest.durationDays!, party: waitingOnText(longest, language) }) };
   }
   const pending = details.items.filter(isPersonPendingItem);
   if (pending.length === 0) return null;
   const durations = pending.map((item) => pendingDurationDays(item, readAtUnixMs));
   if (durations.some((days) => days === null)) return null;
-  return fill(vocabulary.metrics.pendingOldest, { days: Math.max(...durations as number[]) });
+  return { text: fill(vocabulary.metrics.pendingOldest, { days: Math.max(...durations as number[]) }) };
 }
 
 function metric(
@@ -309,6 +333,50 @@ function metric(
     emphasized: id === 'pending',
     details,
   };
+}
+
+function reportedTasks(derived: OverviewDerivation, personId: string | null, inputTasks: readonly OverviewTask[] | undefined): ReportedTask[] {
+  if (personId === null) return [];
+  const reports = new Map<string, OverviewProgressReport | null>();
+  if (inputTasks) {
+    for (const task of inputTasks) {
+      if (task.id != null) reports.set(task.id, task.report ?? null);
+    }
+  }
+  return derived.tasks
+    .filter((task) => task.owner?.id === personId && task.status !== 'verified')
+    .map((task) => ({ ...task, report: task.id == null ? null : reports.get(task.id) ?? null }));
+}
+
+/** Whole elapsed minutes between a recorded time and the read's fixed "now"; never negative. */
+export function elapsedMinutes(atUnixMs: number, nowUnixMs: number): number {
+  if (!Number.isFinite(atUnixMs) || !Number.isFinite(nowUnixMs) || atUnixMs > nowUnixMs) return -1;
+  return Math.floor((nowUnixMs - atUnixMs) / 60_000);
+}
+
+export type ReportAge = 'unknown' | 'justNow' | 'minutes' | 'hours' | 'days';
+
+/** The prototype's rail ages ("12 分钟前", "2 天前") bucketed to the nearest whole unit. */
+export function reportAge(atUnixMs: number | null | undefined, nowUnixMs: number | undefined): { kind: ReportAge; count: number } {
+  if (typeof atUnixMs !== 'number' || !Number.isFinite(atUnixMs) || nowUnixMs === undefined) {
+    return { kind: 'unknown', count: 0 };
+  }
+  const minutes = elapsedMinutes(atUnixMs, nowUnixMs);
+  if (minutes < 0) return { kind: 'unknown', count: 0 };
+  if (minutes < 1) return { kind: 'justNow', count: 0 };
+  if (minutes < 60) return { kind: 'minutes', count: minutes };
+  if (minutes < 24 * 60) return { kind: 'hours', count: Math.floor(minutes / 60) };
+  return { kind: 'days', count: Math.floor(minutes / (24 * 60)) };
+}
+
+export type ReportDeclaration = 'unknown' | 'done' | 'inProgress' | 'noDeclaration';
+
+/** What the reporter declared; the report prose itself stays in the backend. */
+export function reportDeclaration(report: OverviewProgressReport | null): ReportDeclaration {
+  if (!report) return 'unknown';
+  if (report.completed === true) return 'done';
+  if (report.completed === false) return 'inProgress';
+  return 'noDeclaration';
 }
 
 export function buildMyWorkModel(
@@ -344,9 +412,7 @@ export function buildMyWorkModel(
     chains,
     chainTabs,
     currentPerson,
-    agentTasks: options.personId === null ? [] : derived.tasks.filter((task) => (
-      task.owner?.id === options.personId && task.status !== 'verified'
-    )),
+    agentTasks: reportedTasks(derived, options.personId, options.inputTasks),
     verdict: buildWorkbenchVerdict(derived.views.me.metrics, options.latestPeriodUpdate, language, options.readAtUnixMs),
     coverage: {
       partial: (Object.entries(derived.coverage.parts) as Array<[OverviewPart, { state: string }]>)

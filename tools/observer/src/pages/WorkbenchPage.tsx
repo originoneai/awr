@@ -69,6 +69,14 @@ export function WorkbenchPage() {
     return deriveOverview(input);
   }, [effectiveProject, modelInput, personId]);
 
+  const projectTitles = useMemo(() => {
+    const titles: Record<string, string> = {};
+    for (const project of projectItems ?? []) {
+      if (typeof project.title === 'string' && project.title.trim()) titles[project.key] = project.title;
+    }
+    return titles;
+  }, [projectItems]);
+
   if (revoked || invalidScope || isAuthError(projects.error) || isAuthError(modelQuery.error)) {
     return <ObservationForbidden />;
   }
@@ -114,6 +122,7 @@ export function WorkbenchPage() {
     projectId: effectiveProject,
     readAtUnixMs: modelResponse.read_at_unix_ms,
     latestPeriodUpdate: modelResponse.latestPeriodUpdate ?? null,
+    inputTasks: modelInput?.tasks?.items,
   });
   const state: WorkbenchFrameState = modelResponse.ordering === 'incomparable'
     ? 'unknown'
@@ -127,6 +136,7 @@ export function WorkbenchPage() {
       model={model}
       projectKey={effectiveProject!}
       projectName={projectName}
+      projectTitles={projectTitles}
       freshness={modelResponse.freshness}
       readAtUnixMs={modelResponse.read_at_unix_ms}
       state={state}
