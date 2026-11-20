@@ -56,9 +56,9 @@ test('heading, verdict band, KPI strip, chain, rail and detail panel match the p
   const instrument = await styles(page, '.obs-workbench-instrument', ['border-top-left-radius', 'background-image', 'box-shadow']);
   expect(instrument['border-top-left-radius']).toBe('16px');
   expect(instrument['background-image']).toBe('none');
-  expect(instrument['box-shadow']).toBe(await page.evaluate(() => (
-    getComputedStyle(document.documentElement).getPropertyValue('--craft-shadow-floating').trim()
-  )));
+  expect(instrument['box-shadow']).toBe(testInfo.project.name === 'desktop-dark'
+    ? 'rgba(0, 0, 0, 0.5) 0px 16px 40px 0px'
+    : 'rgba(17, 24, 39, 0.1) 0px 8px 24px 0px');
   // .inst follows the page surface in the third draft.
   expect((await styles(page, '.obs-workbench-instrument', ['background-color']))['background-color'])
     .toBe(await resolvedColor(page, 'var(--craft-color-surface)'));

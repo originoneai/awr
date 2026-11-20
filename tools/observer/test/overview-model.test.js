@@ -197,7 +197,7 @@ test('overview-model composes canonical facts from real extracts without inventi
   assert.equal(task.report.reportedAtUnixMs, REPORT.reported_at_unix_ms);
   assert.equal(task.agentName, REPORT.origin.actor_name);
   assert.equal(task.started, true);
-  for (const fieldName of ['ownerPersonId', 'acceptance', 'integrated', 'externalWait', 'verifiedAtUnixMs']) {
+  for (const fieldName of ['ownerPersonId', 'acceptance', 'integrated', 'externalWait', 'verifiedAtUnixMs', 'agentActive']) {
     assert.equal(Object.hasOwn(task, fieldName), false, `${fieldName} was absent from the real extracts`);
   }
   assert.deepEqual(result.input.reviewRounds, { coverage: 'complete', items: [] });
@@ -207,6 +207,7 @@ test('overview-model composes canonical facts from real extracts without inventi
   assert.equal(result.freshness.authoritative.status, 'measured');
   assert.equal(result.freshness.authoritative.project_revision, '42');
   assert.equal(result.freshness.report_received.status, 'not_measured');
+  assert.equal(Object.hasOwn(result.input.options, 'views'), false, 'the live path does not invent a person identity');
   assert.deepEqual(result.input.approvals, { coverage: 'unread', reason: 'not-read' });
   assert.equal(result.coverage.approvals.status, 'unread');
   assert.equal(result.coverage.approvals.reason, 'not-read');
@@ -550,7 +551,8 @@ test('the demo composition feeds the real deriveOverview input surface directly'
   const derived = deriveOverview(result.input);
   assert.equal(derived.tasks.length, result.input.tasks.items.length);
   assert.equal(derived.coverage.parts.tasks.state, result.input.tasks.coverage);
-  assert.deepEqual(result.input.approvals, { coverage: 'unread', reason: 'not-read' });
-  assert.equal(derived.coverage.parts.approvals.state, 'unread');
-  assert.equal(derived.coverage.parts.approvals.reason, 'not-read');
+  assert.equal(result.input.approvals.coverage, 'complete');
+  assert.equal(result.input.approvals.items.length, 2);
+  assert.equal(derived.coverage.parts.approvals.state, 'complete');
+  assert.equal(derived.coverage.parts.approvals.reason, null);
 });
