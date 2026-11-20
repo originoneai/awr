@@ -9,6 +9,8 @@ import { defaultVisibleText, findHumanLanguageViolations } from './lib/human-lan
 import { buildInboxModel } from './lib/inbox-model';
 import { inboxProjectReadQueryOptions } from './lib/inbox-queries';
 import { revokeObservationReads } from './lib/queries';
+import { expectSvgDrawsPrototypeGlyph } from './components/icons/expect-prototype-glyph';
+import type { PrototypeIconName } from './components/icons/prototype-icons';
 import type { TeamOverviewModelResponse } from './lib/types';
 import type { OverviewInput, OverviewPart } from './core/overview';
 import {
@@ -420,5 +422,100 @@ describe('prototype inbox page', () => {
       expect(text).not.toMatch(/undefined|null|NaN|work_id|interaction_mode|schema|mcp_url/);
       expect(findHumanLanguageViolations(page)).toEqual([]);
     });
+  });
+});
+
+/*
+ * Every icon slot of the inbox page draws its prototype glyph. The expectation is
+ * always PROTOTYPE_ICONS[name] — never this page's own imports — so a swapped glyph
+ * (kind, evidence, "not waiting on you", jump arrow, terminal, copy) turns red.
+ */
+describe('inbox page icons (prototype glyphs)', () => {
+  const KIND_GLYPH = {
+    answer: 'help',
+    decision: 'scale',
+    'plan-approval': 'split',
+    assignment: 'inbox',
+    lesson: 'book',
+  } as const satisfies Record<string, PrototypeIconName>;
+
+  /** The queue fixture plus a decision-kind row (a decision on someone else's task). */
+  function iconInput(): OverviewInput {
+    const source = pageInput();
+    if (source.tasks.coverage === 'complete') {
+      // A missing report turns the answer entry's report evidence "bad" deterministically.
+      source.tasks.items[0].report = null;
+    }
+    if (source.decisions.coverage === 'complete') {
+      source.decisions.items = [...source.decisions.items, decision('other-task', {
+        id: 'decide-record',
+        allowedResponderIds: ['person-a'],
+        question: 'Pick the storage engine',
+        createdAtUnixMs: NOW - DAY,
+      })];
+    }
+    return source;
+  }
+
+  it('draws every queue kind icon from the prototype glyphs', async () => {
+    await i18n.changeLanguage('zh-CN');
+    setup({ input: iconInput() });
+    const page = await screen.findByTestId('page-inbox');
+    await within(page).findAllByTestId('inbox-queue-row');
+    const labelToGlyph = new Map((Object.keys(KIND_GLYPH) as Array<keyof typeof KIND_GLYPH>).map((kind) => [
+      i18n.t(`inbox.page.kind.${kind}` as `inbox.page.kind.${keyof typeof KIND_GLYPH}`),
+      KIND_GLYPH[kind],
+    ]));
+    const seen = new Set<string>();
+    for (const row of within(page).getAllByTestId('inbox-queue-row')) {
+      const meta = row.querySelector('.inbox-qrow-meta')?.textContent ?? '';
+      const glyph = labelToGlyph.get(meta.split(' · ')[0]);
+      if (glyph === undefined) throw new Error(`unmapped kind label in queue row: ${meta}`);
+      seen.add(glyph);
+      expectSvgDrawsPrototypeGlyph(row.querySelector('.inbox-ki svg'), `inbox queue row (${meta})`, glyph);
+    }
+    expect([...seen].sort()).toEqual(['book', 'help', 'inbox', 'scale', 'split']);
+  });
+
+  it('draws the three evidence icons per tone from the prototype glyphs', async () => {
+    await i18n.changeLanguage('zh-CN');
+    setup({ input: iconInput() });
+    const page = await screen.findByTestId('page-inbox');
+    // The answer entry: task-fact evidence (info) plus a missing report (bad).
+    await userEvent.click(await within(page).findByRole('button', { name: /Should the empty state explain the next step\?/ }));
+    await within(page).findByTestId('inbox-basis');
+    expectSvgDrawsPrototypeGlyph(
+      within(page).getByTestId('inbox-basis').querySelector('li[data-s="info"] svg'),
+      'inbox evidence info',
+      'dot',
+    );
+    expectSvgDrawsPrototypeGlyph(
+      within(page).getByTestId('inbox-basis').querySelector('li[data-s="bad"] svg'),
+      'inbox evidence bad',
+      'badc',
+    );
+    // The assignment entry starts independently: its second evidence line is "ok".
+    await userEvent.click(await within(page).findByRole('button', { name: /Synthetic assignment-task/ }));
+    await within(page).findByTestId('inbox-basis');
+    expectSvgDrawsPrototypeGlyph(
+      within(page).getByTestId('inbox-basis').querySelector('li[data-s="ok"] svg'),
+      'inbox evidence ok',
+      'okc',
+    );
+    // The related-task link carries the jump arrow; the mine block carries terminal and copy.
+    expectSvgDrawsPrototypeGlyph(within(page).getByTestId('inbox-task-link').querySelector('svg'), 'inbox task link arrow', 'arrow');
+    const handback = within(page).getByTestId('inbox-handback');
+    expectSvgDrawsPrototypeGlyph(handback.querySelector('.inbox-where-icon svg'), 'inbox handback marker', 'terminal');
+    expectSvgDrawsPrototypeGlyph(handback.querySelector('.inbox-copy svg'), 'inbox copy button', 'copy');
+  });
+
+  it('draws the not-waiting-on-you marker as the prototype dot glyph', async () => {
+    await i18n.changeLanguage('zh-CN');
+    // A linked, not-mine entry: the question owed by person-b on their own task
+    // (viewer person-a linked to it, so it resolves through allEntries, not the queue).
+    setup({ input: iconInput(), initialPath: '/inbox?detail=answer:other-record:person-b' });
+    const page = await screen.findByTestId('page-inbox');
+    const notMine = await within(page).findByTestId('inbox-not-mine');
+    expectSvgDrawsPrototypeGlyph(notMine.querySelector('.inbox-where-icon svg'), 'inbox not-waiting marker', 'dot');
   });
 });

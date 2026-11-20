@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import i18n from '../../i18n';
+import { expectSvgDrawsPrototypeGlyph } from '../icons/expect-prototype-glyph';
 import { TASK_STATUSES } from '../../core/overview/types';
 import { CraftThemeProvider } from '../CraftThemeProvider';
 import { AcceptanceList } from './AcceptanceList';
@@ -319,6 +320,16 @@ describe('DataTable', () => {
     );
     expect(screen.getByTestId('obs-empty-state')).toBeInTheDocument();
   });
+
+  it('draws the row arrow as the prototype chev glyph', () => {
+    renderDisplay(
+      <DataTable
+        columns={columns}
+        rows={[{ key: 'open', cells: ['接口约定', '林悦'], onOpen: () => {} }]}
+      />,
+    );
+    expectSvgDrawsPrototypeGlyph(document.querySelector('.obs-table-arrow-column svg'), 'data table row arrow', 'chev');
+  });
 });
 
 describe('DetailPanel', () => {
@@ -452,6 +463,22 @@ describe('KpiStrip', () => {
     button.focus();
     await user.keyboard('{Enter}');
     expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it('draws the trend arrows and the hover chevron as the prototype glyphs', () => {
+    renderDisplay(
+      <KpiStrip
+        items={[
+          { key: 'up', label: '本周通过核验', value: '5', change: { text: '上周 3 件', tone: 'good', trend: 'up' }, onOpen: () => {} },
+          { key: 'down', label: '本周退回', value: '2', change: { text: '上周 6 件', tone: 'bad', trend: 'down' } },
+        ]}
+      />,
+    );
+    const cells = document.querySelectorAll('.obs-kpi');
+    expectSvgDrawsPrototypeGlyph(cells[0].querySelector('.obs-kpi-trend svg'), 'kpi rising trend arrow', 'up');
+    expectSvgDrawsPrototypeGlyph(cells[1].querySelector('.obs-kpi-trend svg'), 'kpi falling trend arrow', 'down');
+    expectSvgDrawsPrototypeGlyph(cells[0].querySelector('.obs-kpi-hint svg'), 'kpi hover chevron', 'chev');
+    expect(cells[1].querySelector('.obs-kpi-hint')).toBeNull();
   });
 });
 
@@ -783,6 +810,13 @@ describe('TodoRail', () => {
     expect(screen.getAllByText('第二件', { selector: '.obs-todo-min-title' })).toHaveLength(1);
     expect(screen.queryByText('第四件')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /还有 2 件/ })).toBeInTheDocument();
+  });
+
+  it('draws the first-card terminal, the view arrows and the view-all arrow as the prototype glyphs', () => {
+    renderDisplay(<TodoRail title="等你的事" items={items} onViewAll={() => {}} />);
+    expectSvgDrawsPrototypeGlyph(document.querySelector('.obs-todo-agent svg'), 'todo first card Agent action', 'terminal');
+    expectSvgDrawsPrototypeGlyph(document.querySelector('.obs-todo-view svg'), 'todo first card view arrow', 'arrow');
+    expectSvgDrawsPrototypeGlyph(document.querySelector('.obs-todo-all svg'), 'todo view-all arrow', 'arrow');
   });
 
   it('opens a card, the full list and hides the more line within the limit', async () => {

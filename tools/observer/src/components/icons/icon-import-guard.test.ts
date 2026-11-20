@@ -29,7 +29,7 @@ describe('icon import guard', () => {
     expect(hits[0].excerpt).toContain('lucide-react');
   });
 
-  it('flags type-only, namespace, side-effect, dynamic, require and sub-path forms (counterexamples)', () => {
+  it('flags type-only, namespace, side-effect, dynamic, require, sub-path and template-literal forms (counterexamples)', () => {
     expect(findForbiddenIconImports(`import type { LucideIcon } from "lucide-react";`, 'a.ts')).toHaveLength(1);
     expect(findForbiddenIconImports(`import * as icons from 'lucide-react'`, 'b.ts')).toHaveLength(1);
     expect(findForbiddenIconImports(`import 'lucide-react';`, 'c.ts')).toHaveLength(1);
@@ -37,12 +37,16 @@ describe('icon import guard', () => {
     expect(findForbiddenIconImports(`const m = require('lucide-react');`, 'e.ts')).toHaveLength(1);
     expect(findForbiddenIconImports(`export { X } from 'lucide-react/dist/esm/icons/house.mjs';`, 'f.ts')).toHaveLength(1);
     expect(findForbiddenIconImports(`import { HomeOutlined } from '@ant-design/icons';`, 'g.tsx')).toHaveLength(1);
+    expect(findForbiddenIconImports('const m = await import(`lucide-react`);', 'h.ts')).toHaveLength(1);
+    expect(findForbiddenIconImports('const m = import(`lucide-react/${name}`);', 'i.ts')).toHaveLength(1);
+    expect(findForbiddenIconImports('require(`@ant-design/icons`);', 'j.ts')).toHaveLength(1);
   });
 
   it('passes registry imports and plain mentions (counterexamples)', () => {
-    expect(findForbiddenIconImports(`import { SearchIcon } from './icons/prototype-icons';`, 'h.tsx')).toHaveLength(0);
-    expect(findForbiddenIconImports(`const note = "lucide-react shapes stay in the registry";`, 'i.ts')).toHaveLength(0);
-    expect(findForbiddenIconImports(`const pattern = /from\\s*['"]x['"]/;`, 'j.ts')).toHaveLength(0);
+    expect(findForbiddenIconImports(`import { SearchIcon } from './icons/prototype-icons';`, 'k.tsx')).toHaveLength(0);
+    expect(findForbiddenIconImports(`const note = "lucide-react shapes stay in the registry";`, 'l.ts')).toHaveLength(0);
+    expect(findForbiddenIconImports(`const pattern = /from\\s*['"]x['"]/;`, 'm.ts')).toHaveLength(0);
+    expect(findForbiddenIconImports('const label = `icons come from lucide-react via the registry`;', 'n.ts')).toHaveLength(0);
   });
 
   it('reports nothing outside the registry and nothing missing inside it', () => {

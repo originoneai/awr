@@ -7,10 +7,10 @@ export interface ForbiddenIconImport {
 /*
  * Detector for icon-package imports outside the registry. The pattern is written so
  * that this file's own source never matches it: a violation needs the package name
- * in quotes, preceded by an import/require/from form.
+ * in quotes (single, double or backtick), preceded by an import/require/from form.
  */
 const PATTERN =
-  /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)['"](lucide-react|@ant-design[/]icons)(?:[/][^'"]*)?['"]/g;
+  /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)[`'"](lucide-react|@ant-design[/]icons)(?:[/][^`'"]*)?[`'"]/g;
 
 /** Returns one entry per icon-package import found in the source (line numbers are 1-based). */
 export function findForbiddenIconImports(source: string, file = '<source>'): ForbiddenIconImport[] {

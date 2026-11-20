@@ -1,7 +1,15 @@
 import { createElement } from 'react';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { PROTOTYPE_ICONS, type PrototypeIconName } from './prototype-icons';
+import {
+  ArrowLeftIcon,
+  ChevronDownIcon,
+  PROTOTYPE_ICONS,
+  RefreshCwIcon,
+  StampIcon,
+  TriangleAlertIcon,
+  type PrototypeIconName,
+} from './prototype-icons';
 import { comparableNodes, fixtureNodes, staticSvgNodes } from './static-svg-nodes';
 
 /*
@@ -47,3 +55,45 @@ describe('the prototype icon registry', () => {
     });
   });
 });
+
+/*
+ * The app-only glyphs: the registry's second section. Their acceptance standard is the
+ * installed lucide-react 1.66.0 (there is no prototype synonym), pinned by this fixture
+ * with the same verbatim rule and the same comparison as the prototype table above.
+ * Generated from node_modules/lucide-react/dist/esm/icons/<name>.mjs (__iconData.node).
+ */
+const APP_ONLY_FIXTURE = JSON.parse(readFileSync('src/test-fixtures/app-only-icons.json', 'utf8')) as Record<string, string[]>;
+
+const APP_ONLY_COMPONENTS = {
+  'arrow-left': ArrowLeftIcon,
+  'chevron-down': ChevronDownIcon,
+  stamp: StampIcon,
+  'refresh-cw': RefreshCwIcon,
+  'triangle-alert': TriangleAlertIcon,
+} as const;
+
+describe('the app-only glyphs of the registry', () => {
+  it('is exactly the set of names without a prototype synonym', () => {
+    expect(Object.keys(APP_ONLY_COMPONENTS).sort()).toEqual(Object.keys(APP_ONLY_FIXTURE).sort());
+  });
+
+  it('draws the installed lucide node list verbatim', () => {
+    for (const [name, Icon] of Object.entries(APP_ONLY_COMPONENTS)) {
+      const { children } = staticSvgNodes(createElement(Icon, { 'aria-hidden': true }));
+      expect(comparableNodes(children), `nodes of ${name}`).toEqual(fixtureNodes(APP_ONLY_FIXTURE[name]));
+    }
+  });
+
+  it('leaves no registry glyph outside PROTOTYPE_ICONS and the app-only set', () => {
+    // Every glyph declaration in the registry must belong to one of the two sets:
+    // a page icon that renders a prototype glyph, or a named app-only glyph.
+    const source = readFileSync('src/components/icons/prototype-icons.tsx', 'utf8');
+    const declared = [...source.matchAll(/export const \w+ = glyph\('([\w-]+)'/g)].map((match) => match[1]);
+    const rendered = new Set(Object.values(PROTOTYPE_ICONS).map((Icon) => {
+      const classes = staticSvgNodes(createElement(Icon, { size: 1 })).attrs.class ?? '';
+      return classes.replace(/^lucide lucide-/, '');
+    }));
+    expect(declared.sort()).toEqual([...new Set([...rendered, ...Object.keys(APP_ONLY_COMPONENTS)])].sort());
+  });
+});
+
