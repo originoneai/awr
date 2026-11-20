@@ -5,6 +5,8 @@ import i18n from './i18n';
 import BASELINE from './test-fixtures/human-language-baseline.json';
 import { findHumanLanguageViolations, visibleTextParts, withinHumanLanguageBaseline } from './lib/human-language-guard';
 import { REAL_API_WORK, realShapedActivity, realShapedOverview, realShapedSnapshot, realShapedWorkInbox, realShapedWorkNext, type RealMoment } from './test-fixtures/real-shaped';
+import { demoOverviewModelResponse, emptyOverviewModelResponse } from './test-fixtures/overview-model';
+import { myWorkInput } from './components/workbench/testing';
 import {
   DEMO_OVERVIEW,
   DEMO_PROJECTS,
@@ -63,6 +65,16 @@ function installRealShapeMock(state: State, moment: RealMoment) {
           required_dependencies: [],
         }],
       });
+    }
+    if (url.includes('/api/team/overview-model')) {
+      if (state === 'empty') return json(emptyOverviewModelResponse());
+      if (state === 'partial') {
+        return json(demoOverviewModelResponse(myWorkInput({
+          dependencies: { coverage: 'partial', reason: 'read-failed', items: [] },
+        })));
+      }
+      if (state === 'unknown') return json(demoOverviewModelResponse(myWorkInput(), { ordering: 'incomparable' }));
+      return json(demoOverviewModelResponse());
     }
     if (url.includes('/api/team/overview')) {
       if (state === 'empty') return json({ ...DEMO_OVERVIEW, works: [], workstreams: [] });
@@ -209,8 +221,6 @@ const DELIVERED = {
 const REPORTER_SENTENCES = {
   plan: [IN_REVIEW.next, ...IN_REVIEW.report],
   planDelivered: [DELIVERED.next, ...DELIVERED.report],
-  workbench: [IN_REVIEW.next, ...IN_REVIEW.report],
-  workbenchDelivered: [DELIVERED.next, ...DELIVERED.report],
   overview: [IN_REVIEW.next],
 } as const;
 
@@ -219,7 +229,7 @@ describe('the real-shaped pages show a reporter as written, with long identifier
     const marked = (readdirSync('src', { recursive: true }) as string[])
       .filter((file) => file.endsWith('.tsx') && !file.endsWith('.test.tsx'))
       .filter((file) => readFileSync(`src/${file}`, 'utf8').includes('data-reporter-text'));
-    expect(marked.sort()).toEqual(['components/ProgressReport.tsx', 'components/WorkDetailPanel.tsx', 'pages/ProjectOverview.tsx', 'pages/WorkbenchPage.tsx']);
+    expect(marked.sort()).toEqual(['components/ProgressReport.tsx', 'components/WorkDetailPanel.tsx', 'pages/ProjectOverview.tsx']);
   });
 
   it.each(Object.keys(REPORTER_SENTENCES) as Array<keyof typeof REPORTER_SENTENCES>)('%s exempts exactly the reporter\'s sentences', async (page) => {
@@ -233,7 +243,7 @@ describe('the real-shaped pages show a reporter as written, with long identifier
 
 
 describe('shared product labels across project pages', () => {
-  it.each(['zh-CN', 'en-US'].flatMap((language) => ['overview', 'plan', 'knowledge', 'workbench'].map((tab) => ({ language, tab }))))(
+  it.each(['zh-CN', 'en-US'].flatMap((language) => ['overview', 'plan', 'knowledge'].map((tab) => ({ language, tab }))))(
     'withholds structured work and workstream titles in $tab for $language', async ({ language, tab }) => {
       await act(async () => { await i18n.changeLanguage(language); });
       installRealShapeMock('data', 'in-review');

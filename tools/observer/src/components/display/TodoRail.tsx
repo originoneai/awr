@@ -1,5 +1,5 @@
 import { ArrowRight, Terminal } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { Fragment, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useCompactViewport } from '../../lib/viewport';
 import { DisplayIcon } from './DisplayIcon';
@@ -21,6 +21,14 @@ export interface TodoItem {
 export interface TodoRailProps {
   title: string;
   items: readonly TodoItem[];
+  /** A null total is unknown and must not be replaced by the confirmed row count. */
+  count?: number | null;
+  /** Product-language explanation shown when coverage is incomplete. */
+  coverageNote?: ReactNode;
+  /** Opens the first item's local Agent handback without submitting a business action. */
+  onFirstAgent?: () => void;
+  /** Optional local handback, shown by the caller only after onFirstAgent is used. */
+  firstAccessory?: ReactNode;
   /** How many cards stay visible before the "还有 N 件" line; the prototype keeps three. */
   visibleLimit?: number;
   onViewAll?: () => void;
@@ -32,17 +40,20 @@ export interface TodoRailProps {
  * rest collapse to one line, and anything past the limit becomes "还有 N 件". Every card
  * only opens a page; the handling itself stays in the person's own Agent.
  */
-export function TodoRail({ title, items, visibleLimit = 3, onViewAll, empty }: TodoRailProps) {
+export function TodoRail({
+  title, items, count, coverageNote, onFirstAgent, firstAccessory, visibleLimit = 3, onViewAll, empty,
+}: TodoRailProps) {
   const { t } = useTranslation();
   const compactViewport = useCompactViewport();
+  const resolvedCount = count === undefined ? items.length : count;
   const visible = items.slice(0, visibleLimit);
-  const remaining = Math.max(items.length - visibleLimit, 0);
+  const remaining = resolvedCount === null ? 0 : Math.max(resolvedCount - visibleLimit, 0);
 
   return (
     <aside className="obs-todo-rail" aria-label={t('display.todo.groupLabel')} data-compact={compactViewport || undefined}>
       <div className="obs-todo-head">
         <h2>{title}</h2>
-        <span className="obs-todo-count">{items.length}</span>
+        <span className="obs-todo-count" data-unknown={resolvedCount === null || undefined}>{resolvedCount === null ? '—' : resolvedCount}</span>
         {onViewAll === undefined ? null : (
           <button type="button" className="obs-todo-all" onClick={onViewAll}>
             {t('display.todo.viewAll')}
@@ -50,6 +61,7 @@ export function TodoRail({ title, items, visibleLimit = 3, onViewAll, empty }: T
           </button>
         )}
       </div>
+      {coverageNote === undefined ? null : <div className="obs-todo-coverage">{coverageNote}</div>}
       {items.length === 0 ? (
         empty ?? <EmptyState />
       ) : (
@@ -58,7 +70,7 @@ export function TodoRail({ title, items, visibleLimit = 3, onViewAll, empty }: T
             const shared = { 'data-open': item.onOpen !== undefined || undefined } as const;
             const onClick = item.onOpen;
             if (index === 0) {
-              const first = (
+              const firstBody = (
                 <>
                   <div className="obs-todo-first-meta">
                     <span className="obs-tag">{item.kind}</span>
@@ -67,15 +79,36 @@ export function TodoRail({ title, items, visibleLimit = 3, onViewAll, empty }: T
                   </div>
                   <div className="obs-todo-title">{item.title}</div>
                   {item.detail ? <div className="obs-todo-detail">{item.detail}</div> : null}
+                </>
+              );
+              if (onFirstAgent) {
+                return (
+                  <Fragment key={item.key}>
+                    <div className="obs-todo-card" {...shared}>
+                      {firstBody}
+                      <div className="obs-todo-acts">
+                        <button type="button" className="obs-todo-agent obs-todo-agent-control" onClick={onFirstAgent}>
+                          <DisplayIcon icon={Terminal} />{t('display.todo.handleInAgent')}
+                        </button>
+                        {onClick ? (
+                          <button type="button" className="obs-todo-view obs-todo-view-control" onClick={onClick}>
+                            {t('display.todo.viewItem')}<DisplayIcon icon={ArrowRight} />
+                          </button>
+                        ) : (
+                          <span className="obs-todo-view">{t('display.todo.viewItem')}<DisplayIcon icon={ArrowRight} /></span>
+                        )}
+                      </div>
+                    </div>
+                    {firstAccessory}
+                  </Fragment>
+                );
+              }
+              const first = (
+                <>
+                  {firstBody}
                   <div className="obs-todo-acts">
-                    <span className="obs-todo-agent">
-                      <DisplayIcon icon={Terminal} />
-                      {t('display.todo.handleInAgent')}
-                    </span>
-                    <span className="obs-todo-view">
-                      {t('display.todo.viewItem')}
-                      <DisplayIcon icon={ArrowRight} />
-                    </span>
+                    <span className="obs-todo-agent"><DisplayIcon icon={Terminal} />{t('display.todo.handleInAgent')}</span>
+                    <span className="obs-todo-view">{t('display.todo.viewItem')}<DisplayIcon icon={ArrowRight} /></span>
                   </div>
                 </>
               );

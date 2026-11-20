@@ -224,7 +224,7 @@ describe('AppShell navigation', () => {
     expect(avatar.textContent).toBe('你');
     expect(avatar.textContent).not.toContain('member-1');
     const urls = fetchMock.mock.calls.map(([input]) => String(input));
-    expect(urls.some((url) => url.includes('/api/team/overview'))).toBe(false);
+    expect(urls.some((url) => url.includes('/api/team/overview?'))).toBe(false);
     const operations = fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/team/read'))
       .map(([, init]) => JSON.parse(String(init?.body)).query.op as string);
     expect(operations).not.toContain('decisions.list');

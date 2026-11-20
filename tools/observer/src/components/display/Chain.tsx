@@ -47,6 +47,10 @@ export interface ChainProps {
   connectors?: readonly ChainConnector[];
   present: (node: ChainNode) => ChainNodeView;
   onOpen?: (node: ChainNode) => void;
+  /** The prototype's .why-head, inside the same dotted canvas as the diagram. */
+  header?: ReactNode;
+  /** Designed no-chain content; when supplied it replaces the empty diagram row. */
+  empty?: ReactNode;
   /** The quiet sentence under the chain (.why-foot). */
   footer?: ReactNode;
 }
@@ -56,7 +60,7 @@ export interface ChainProps {
  * joined by connectors, commitments at the end. Nodes are buttons when they open something;
  * the whole diagram is read-only and computes nothing.
  */
-export function Chain({ nodes, connectors, present, onOpen, footer }: ChainProps) {
+export function Chain({ nodes, connectors, present, onOpen, header, empty, footer }: ChainProps) {
   const { t } = useTranslation();
   const compactViewport = useCompactViewport();
 
@@ -151,9 +155,12 @@ export function Chain({ nodes, connectors, present, onOpen, footer }: ChainProps
 
   return (
     <div className="obs-chain-block" data-compact={compactViewport || undefined}>
-      <div className="obs-chain" role="group" aria-label={t('display.chain.groupLabel')} data-compact={compactViewport || undefined}>
-        {rendered}
-      </div>
+      {header}
+      {nodes.length === 0 && empty !== undefined ? empty : (
+        <div className="obs-chain" role="group" aria-label={t('display.chain.groupLabel')} data-compact={compactViewport || undefined}>
+          {rendered}
+        </div>
+      )}
       {footer === undefined ? null : <div className="obs-chain-footer">{footer}</div>}
     </div>
   );
