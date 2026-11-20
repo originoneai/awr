@@ -46,6 +46,28 @@ test('HTML responses carry distinct nonces in both CSP and served markup', async
   assert.notEqual(firstNonce, secondNonce);
 });
 
+test('owner brand images and root icons are same-origin static assets allowed by CSP', async () => {
+  const index = await fetch(`${base}/`);
+  const html = await index.text();
+  assert.match(index.headers.get('content-security-policy') || '', /img-src 'self' data:/);
+  for (const link of [
+    '<link rel="icon" type="image/png" sizes="32x32" href="/awr-favicon-32.png" />',
+    '<link rel="icon" type="image/png" sizes="256x256" href="/awr-favicon-256.png" />',
+    '<link rel="apple-touch-icon" href="/awr-apple-touch-180.png" />',
+  ]) assert.ok(html.includes(link), `index is missing ${link}`);
+  for (const name of [
+    'awr-favicon-32.png', 'awr-favicon-256.png', 'awr-apple-touch-180.png',
+    'awr-logo-color-72.png', 'awr-logo-color-144.png', 'awr-logo-color-288.png',
+    'awr-logo-white-72.png', 'awr-logo-white-144.png', 'awr-logo-white-288.png',
+  ]) {
+    const response = await fetch(`${base}/${name}`);
+    assert.equal(response.status, 200, name);
+    assert.equal(response.headers.get('content-type'), 'image/png', name);
+    const bytes = Buffer.from(await response.arrayBuffer());
+    assert.equal(bytes.subarray(1, 4).toString('ascii'), 'PNG', name);
+  }
+});
+
 test('extensionless routes use the SPA index and missing assets are 404', async () => {
   const route = await fetch(`${base}/projects/demo`);
   assert.equal(route.status, 200);

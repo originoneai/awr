@@ -12,6 +12,18 @@ const sharedCraftTokens = {
   controlHeight: 36,
   headerHeight: 64,
   siderWidth: 240,
+  // Prototype .brand and .brand b; the owner's supplied mark replaces the 22px prototype glyph.
+  brand: {
+    rowHeight: 32,
+    markWidth: 24,
+    markHeight: 18.75,
+    gap: 10,
+    paddingInline: 12,
+    marginBottom: 20,
+    wordmarkFontSize: 17,
+    wordmarkFontWeight: 600,
+    wordmarkLineHeight: 22,
+  },
   // Smallest touch target the mobile acceptance allows (drawer rows, header entry).
   touchTarget: 40,
   contentMaxWidth: 1600,
@@ -294,7 +306,7 @@ export function craftCssVariables(mode: CraftThemeMode): Record<string, string> 
   const tokens = craftThemes[mode];
   const {
     color, chart, shadow, radius, motion, font, text, leading, measure,
-    height, gap, width, canvas, perspective,
+    height, gap, width, canvas, perspective, brand,
   } = tokens;
   return {
     '--craft-color-page': color.page,
@@ -331,6 +343,15 @@ export function craftCssVariables(mode: CraftThemeMode): Record<string, string> 
     '--craft-radius-panel': `${radius.panel}px`,
     '--craft-radius-nested': `${radius.nested}px`,
     '--craft-radius-tag': `${radius.tag}px`,
+    '--craft-brand-row-height': `${brand.rowHeight}px`,
+    '--craft-brand-mark-width': `${brand.markWidth}px`,
+    '--craft-brand-mark-height': `${brand.markHeight}px`,
+    '--craft-brand-gap': `${brand.gap}px`,
+    '--craft-brand-padding-inline': `${brand.paddingInline}px`,
+    '--craft-brand-margin-bottom': `${brand.marginBottom}px`,
+    '--craft-brand-wordmark-font-size': `${brand.wordmarkFontSize}px`,
+    '--craft-brand-wordmark-font-weight': String(brand.wordmarkFontWeight),
+    '--craft-brand-wordmark-line-height': `${brand.wordmarkLineHeight}px`,
     '--craft-height-tag': `${height.tag}px`,
     '--craft-height-chain-node': `${height.chainNode}px`,
     '--craft-gap-tag': `${gap.tag}px`,

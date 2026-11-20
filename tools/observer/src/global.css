@@ -45,15 +45,44 @@ body {
 .shell-brand {
   display: flex;
   align-items: center;
-  height: 32px;
-  padding: 0 12px;
-  margin-bottom: 20px;
-  flex: 0 0 32px;
+  gap: var(--craft-brand-gap);
+  height: var(--craft-brand-row-height);
+  padding: 0 var(--craft-brand-padding-inline);
+  margin-bottom: var(--craft-brand-margin-bottom);
+  flex: 0 0 var(--craft-brand-row-height);
 }
 
-.shell-brand svg {
-  display: block;
+.shell-brand-mobile {
   flex: 0 0 auto;
+  padding: 0;
+  margin: 0;
+}
+
+.shell-brand-mark {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: var(--craft-brand-mark-width);
+  height: var(--craft-brand-mark-height);
+  object-fit: contain;
+}
+
+.shell-brand-mark-white {
+  display: none;
+}
+
+html[data-theme="dark"] .shell-brand-mark-color {
+  display: none;
+}
+
+html[data-theme="dark"] .shell-brand-mark-white {
+  display: inline-block;
+}
+
+.shell-brand-wordmark {
+  color: var(--craft-color-ink);
+  font-size: var(--craft-brand-wordmark-font-size);
+  font-weight: var(--craft-brand-wordmark-font-weight);
+  line-height: var(--craft-brand-wordmark-line-height);
 }
 
 .shell-nav {
