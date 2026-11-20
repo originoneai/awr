@@ -499,7 +499,9 @@ async fn effective_delegations(
     Ok(candidates)
 }
 
-fn covers_stream(grant: &AgentAuthorization, stream: awr_core::Id) -> bool {
+/// Whether one delegation's scope covers a whole workstream. Also used by the
+/// portfolio overview's batched entry admission so both resolve one rule.
+pub(crate) fn covers_stream(grant: &AgentAuthorization, stream: awr_core::Id) -> bool {
     match &grant.scope {
         awr_core::AuthorizationScope::Project { .. } => true,
         awr_core::AuthorizationScope::Workstream { workstream_id, .. } => {
