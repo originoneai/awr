@@ -2313,9 +2313,14 @@ async fn sdk_clients_negotiate_tools_and_isolate_workstreams_on_one_service() {
     assert!(info.capabilities.tools.is_some());
     let tools = a.list_all_tools().await.unwrap();
     // Query/command, input contracts, connections, directory, member access,
-    // planning and project updates are discoverable; calls still recheck authority.
-    assert_eq!(tools.len(), 21);
-    for name in ["awr_team_planning_reject", "awr_team_update_record"] {
+    // planning, project updates and the member portfolio overview are
+    // discoverable; calls still recheck authority.
+    assert_eq!(tools.len(), 22);
+    for name in [
+        "awr_team_planning_reject",
+        "awr_team_update_record",
+        "awr_team_portfolio_overview",
+    ] {
         assert!(tools.iter().any(|tool| tool.name == name), "missing {name}");
     }
     let caps = call(
