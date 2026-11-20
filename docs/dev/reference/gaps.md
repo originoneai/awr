@@ -65,6 +65,29 @@ with its route, resolution, state (`open`, `resolved` or `withdrawn`), who opene
 and the open ones with what they put in question. Withdrawing needs a reason and keeps the gap
 listed.
 
+## Lint advisories stay outside gaps
+
+At source indexing time every acceptance entry passes a purely mechanical lint
+(`acceptance_lint.empty`, `acceptance_lint.placeholder`). A hit is reported as an advisory in
+`source_issues` of the index report and `awr intake inspect`, with a field-level locator such as
+`ledger.yaml#/work_items/0/acceptance/2` and the matched words in `details`.
+
+An advisory lives entirely outside the gap system:
+
+- it records no event, opens no `work.gap` record and suspends no admission, claim or readiness;
+- the write proceeds unchanged and the index report's `ok` flag stays up;
+- a normal entry produces no output at all.
+
+The lint only makes obvious textual defects explicit (blank entries, explicit placeholders). Its
+word lists follow a strict false-negative-over-false-positive policy: they carry only wording a
+real criterion would avoid — placeholders such as `TBD`, `待定`, `等等`, `etc`, and
+open-ended adverbs such as `尽量`, `appropriately` — while common verbs and evaluative
+adjectives stay out, because an advisory is read by agents as "rewrite this entry" and a hit on an
+ordinary verifiable criterion (for example "优化到 200ms 以内") would cause legitimate wording to
+be rewritten. Whether an acceptance criterion is clear, sufficient and verifiable stays an
+attributed judgment: the lint leaves it alone, and wording that cites the word list itself can be
+reported; rewrite the entry to clear it.
+
 The program keeps the record, checks that a run really ran and that the right agent chose, and
 suspends only what reads the gap's layer. Whether the gap is real, whether an outcome answers it
 and whether a choice is wise stay attributed judgments.
