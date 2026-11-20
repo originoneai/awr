@@ -20,12 +20,15 @@ export interface DataTableRow {
   cells: readonly ReactNode[];
   onOpen?: () => void;
   highlighted?: boolean;
+  testId?: string;
 }
 
 export interface DataTableProps {
   columns: readonly DataTableColumn[];
   rows: readonly DataTableRow[];
   empty?: ReactNode;
+  navigationWidth?: number | string;
+  stickyNavigation?: boolean;
 }
 
 function isNestedInteraction(target: EventTarget, row: EventTarget) {
@@ -35,7 +38,7 @@ function isNestedInteraction(target: EventTarget, row: EventTarget) {
 }
 
 /** Read-only table with one reserved trailing navigation column only when a row can open. */
-export function DataTable({ columns, rows, empty }: DataTableProps) {
+export function DataTable({ columns, rows, empty, navigationWidth, stickyNavigation = true }: DataTableProps) {
   const { token } = theme.useToken();
   const compactViewport = useCompactViewport();
   const visibleColumns = compactViewport ? columns.filter((column) => !column.hideOnSmall) : [...columns];
@@ -53,8 +56,8 @@ export function DataTable({ columns, rows, empty }: DataTableProps) {
     tableColumns.push({
       key: 'open',
       title: '',
-      width: token.controlHeight,
-      fixed: 'right',
+      width: navigationWidth ?? token.controlHeight,
+      fixed: stickyNavigation ? 'right' : undefined,
       className: 'obs-table-arrow-column',
       onHeaderCell: () => ({ 'aria-hidden': true }),
       render: (_value, row) => row.onOpen ? <DisplayIcon icon={ChevronRightIcon} /> : null,
@@ -88,7 +91,9 @@ export function DataTable({ columns, rows, empty }: DataTableProps) {
         ].filter(Boolean).join(' ')}
         onRow={(row) => ({
           tabIndex: row.onOpen ? 0 : undefined,
+          'data-testid': row.testId,
           'data-openable': row.onOpen ? 'true' : undefined,
+          'data-highlighted': row.highlighted ? 'true' : undefined,
           onClick: (event) => openWithPointer(event, row),
           onKeyDown: (event) => openWithKeyboard(event, row),
         })}
