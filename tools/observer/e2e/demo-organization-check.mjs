@@ -411,7 +411,8 @@ async function visit(baseUrl, variant, route, viewport) {
     const keyLeaks = body.match(/\b(?:T|P|WS|M|Q|DOC|GOAL|U|A|L|H|PC|PW)-\d{3}\b/g) || [];
     const expectedKeyLeaks = route.expectedKeyLeaks || [];
     const unexpectedKeyLeaks = keyLeaks.filter((key) => !expectedKeyLeaks.includes(key));
-    const missingExpectedKeys = expectedKeyLeaks.filter((key) => !keyLeaks.includes(key));    const forbiddenText = [
+    const missingExpectedKeys = expectedKeyLeaks.filter((key) => !keyLeaks.includes(key));
+    const forbiddenText = [
       ...(body.match(/\b(?:undefined|null|NaN|Unsupported|BadGateway|ReadTimeout|protocol_version|workstream_id|contract_hash|source_snapshot_id|coordinator_epoch|execution_authorized|passed)\b/g) || []),
       ...(body.match(/(?:^|\n)##+\s/g) || []),
       ...unexpectedKeyLeaks,
