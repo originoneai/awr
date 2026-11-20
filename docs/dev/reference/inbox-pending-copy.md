@@ -43,9 +43,11 @@ how long a question has waited. The lead's `最久的一件等了 N 天` therefo
 questions, decisions, assignments and breakdowns, excluding lessons. If none of those
 entries has a known timestamp, the lead omits the oldest-age clause.
 
-The queue's existing ordering is unchanged: descending derived elapsed `durationDays`,
-unknown ages last, with the entry key as the tie-breaker. Calendar display ages leave
-that owner-pending ordering rule as it is.
+The queue lists waits first, longest derived wait (`durationDays`) first, unknown ages
+last, with the entry key as the tie-breaker. A lesson confirmation follows every wait
+whatever its age, for the reason the lead leaves it out of the oldest wait: its timestamp
+marks when the session recorded the candidate. Within the confirmations the same age order
+applies. Calendar display ages leave the ordering key untouched.
 
 ## Render clock instead of response-read age
 
@@ -81,6 +83,5 @@ its lead value as the hand-authored `VIEWS.me.oldest = "2 天"`; the product's d
 interpretation is the maximum non-lesson wait, which is the two-day question rather than
 the six-day-old lesson session.
 
-For 林悦, the prototype's hand-written queue order is answer, assignment, lesson. The
-unchanged product rule yields lesson (6 days), answer (2 days), assignment (today).
-Changing to the prototype order remains an owner decision, left open here.
+For 林悦, the prototype's hand-written queue order is answer, assignment, lesson. The rule
+above yields the same order: answer (2 days), assignment (today), lesson (6 days, last).

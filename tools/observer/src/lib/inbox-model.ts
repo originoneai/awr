@@ -126,7 +126,14 @@ function personNamed(members: readonly { personId?: string | null; displayName?:
   return { id: personId, displayName };
 }
 
+/**
+ * Waits come first, longest wait first. A lesson confirmation is not a wait: its date is when the
+ * session recorded the candidate, so it follows every wait whatever its age (the lead sentence's
+ * "oldest wait" excludes it for the same reason). Unknown ages sort last within each group.
+ */
 function compareEntries(left: InboxEntry, right: InboxEntry): number {
+  const leftIsConfirmation = left.kind === 'lesson';
+  if (leftIsConfirmation !== (right.kind === 'lesson')) return leftIsConfirmation ? 1 : -1;
   const leftAge = left.durationDays;
   const rightAge = right.durationDays;
   if (leftAge == null && rightAge == null) return left.key.localeCompare(right.key);
