@@ -32,6 +32,32 @@ describe('search index', () => {
     expect(searchIndex(index, '交付')).toHaveLength(1);
   });
 
+  it('matches plain text when an invisible control splits a word in either the title or the query', () => {
+    const cases = [
+      { title: '订单\u202e查询', query: '订单查询' },
+      { title: '订单查询', query: '订单\u202e查询' },
+      { title: '零\u200b宽匹配', query: '零宽匹配' },
+      { title: '零宽匹配', query: '零\u200b宽匹配' },
+    ];
+    for (const { title, query } of cases) {
+      const index = buildSearchIndex([{ kind: 'task', coverage: 'complete', items: [item(1, title)] }]);
+      expect(searchIndex(index, query), `query must match after removing embedded controls: ${JSON.stringify({ title, query })}`)
+        .toHaveLength(1);
+    }
+  });
+
+  it('keeps only the first entry when two sources contain the same key', () => {
+    const shared = item(1, '第一条来源');
+    const duplicate = { ...item(2, '第二条来源'), key: shared.key };
+    const index = buildSearchIndex([
+      { kind: 'task', coverage: 'complete', items: [shared] },
+      { kind: 'task', coverage: 'complete', items: [duplicate] },
+    ]);
+    expect(index.items).toHaveLength(1);
+    expect(searchIndex(index, '第一条来源')).toHaveLength(1);
+    expect(searchIndex(index, '第二条来源')).toHaveLength(0);
+  });
+
   it('returns at most the first ten matches in source order', () => {
     const index = buildSearchIndex([{ kind: 'task', coverage: 'complete', items: Array.from({ length: 14 }, (_, n) => item(n)) }]);
     const hits = searchIndex(index, '合成任务');

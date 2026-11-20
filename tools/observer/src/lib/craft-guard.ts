@@ -8,8 +8,7 @@ export interface CraftViolation {
 }
 
 const ALLOWED_ANTD_COLORS = new Set(['success', 'error', 'warning', 'processing', 'default', 'currentColor', 'inherit']);
-// Six is the existing perspective-option and prototype keycap radius; unslop allows 4–6 for tags.
-const ALLOWED_RADII = new Set([4, 6, 8, 10, 12, 16]);
+const ALLOWED_RADII = new Set([4, 8, 10, 12, 16]);
 const NAMED_COLOR_WORDS = new Set(`
   aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown
   burlywood cadetblue chartreuse chocolate coral cornflowerblue cornsilk crimson cyan darkblue darkcyan

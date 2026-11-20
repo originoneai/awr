@@ -29,9 +29,10 @@ export function SearchPanel({ projectKey, renderTrigger }: SearchPanelProps) {
     projects: projects.data,
     overview: overview.data,
     projectKey: effectiveProject,
+    allAuthorizedScope: projectKey === null,
     projectsFailed: projects.isError,
     overviewFailed: overview.isError,
-  }), [effectiveProject, i18n.language, overview.data, overview.isError, projects.data, projects.isError]);
+  }), [effectiveProject, i18n.language, overview.data, overview.isError, projectKey, projects.data, projects.isError]);
 
   const openPanel = useCallback((trigger: HTMLElement | null) => {
     if (open || revoked) return;

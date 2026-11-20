@@ -673,16 +673,19 @@ test('search panel matches the prototype sr, sr-top, sr-input, sr-list and sr-ro
   // .sr-top { gap: 10px; height: 52px; padding: 0 16px; border-bottom: 1px }
   const top = await readStyles(page, '.sr-top', ['height', 'column-gap', 'padding-left', 'padding-right', 'border-bottom-width']);
   expect(top).toEqual({ height: '52px', 'column-gap': '10px', 'padding-left': '16px', 'padding-right': '16px', 'border-bottom-width': '1px' });
-  // .sr-input { font-size: 15px }; the visible 2px focus ring is the accessibility addition.
+  // .sr-input { font-size: 15px; outline: 0 }; focus moves to a quiet inset line on .sr-top.
   const input = await readStyles(page, '.sr-input', ['font-size', 'outline-style', 'outline-width']);
-  expect(input).toEqual({ 'font-size': '15px', 'outline-style': 'solid', 'outline-width': '2px' });
+  expect(input).toEqual({ 'font-size': '15px', 'outline-style': 'none', 'outline-width': '0px' });
+  const focusLine = await readStyles(page, '.sr-top:focus-within', ['box-shadow']);
+  expect(focusLine['box-shadow']).toContain('inset');
+  expect(focusLine['box-shadow']).not.toBe('none');
   // .sr-list { max-height: 50vh; overflow-y: auto; padding: 6px }
   const list = await readStyles(page, '.sr-list', ['max-height', 'overflow-y', 'padding-top', 'padding-left']);
   expect(list).toEqual({ 'max-height': phone ? '422px' : '450px', 'overflow-y': 'auto', 'padding-top': '6px', 'padding-left': '6px' });
   // .sr-row { gap: 10px; min-height: 40px; padding: 6px 10px; border-radius: 8px }
   const row = await readStyles(page, '.sr-row', ['min-height', 'column-gap', 'padding-top', 'padding-left', 'border-top-left-radius']);
   expect(row).toEqual({ 'min-height': '40px', 'column-gap': '10px', 'padding-top': '6px', 'padding-left': '10px', 'border-top-left-radius': '8px' });
-  // .sr-row .tag { height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px }
+  // .sr-row .tag uses the named tag-radius token; the prototype computes 6px.
   const tag = await readStyles(page, '.sr-row .tag', ['height', 'padding-left', 'border-top-left-radius', 'font-size']);
   expect(tag).toEqual({ height: '22px', 'padding-left': '8px', 'border-top-left-radius': '6px', 'font-size': '12px' });
   // .sr-row .tt and .mm: one-line ellipsis; metadata is 12px and at most 40% wide.

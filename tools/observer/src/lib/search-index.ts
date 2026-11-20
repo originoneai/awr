@@ -20,6 +20,8 @@ export interface SearchSource {
   coverage: SearchCoverage;
   items: readonly SearchItem[];
   failed?: boolean;
+  /** Set only when all-authorized scope silently falls back to this project for tasks and people. */
+  implicitProjectName?: string;
 }
 
 export interface IndexedSearchItem extends SearchItem {

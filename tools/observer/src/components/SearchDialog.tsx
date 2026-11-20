@@ -59,6 +59,7 @@ function coverageText(sources: readonly SearchSource[], failed: boolean, showFai
   const loaded = sources.filter((source) => source.coverage !== 'unread');
   const unavailable = SEARCH_KINDS.filter((kind) => sources.find((source) => source.kind === kind)?.coverage === 'unread');
   const partial = sources.some((source) => source.coverage === 'partial');
+  const implicitProjectName = sources.find((source) => source.kind === 'task')?.implicitProjectName;
   const fragments: string[] = [];
   if (loaded.length > 0) {
     fragments.push(t(partial ? 'shell.searchCoveragePartial' : 'shell.searchCoverageLoaded', {
@@ -66,6 +67,9 @@ function coverageText(sources: readonly SearchSource[], failed: boolean, showFai
     }));
   } else {
     fragments.push(t('shell.searchCoverageNone'));
+  }
+  if (implicitProjectName) {
+    fragments.push(t('shell.searchImplicitProjectScope', { project: implicitProjectName }));
   }
   if (unavailable.length > 0) {
     fragments.push(t('shell.searchCoverageUnavailable', { types: unavailable.map(kindLabel).join(t('common.listSeparator')) }));

@@ -142,6 +142,7 @@ const enUS: Messages = {
     searchCoveragePartial: 'Searching only loaded {{types}}; records not fully read are excluded',
     searchCoverageNone: 'No loaded lists are available to search',
     searchCoverageUnavailable: '{{types}} are not connected to search yet',
+    searchImplicitProjectScope: 'Tasks and people are from “{{project}}”; choose another project to search its tasks',
     perspective: 'Perspective',
     perspectives: {
       me: { segment: 'Individual', title: 'My work' },

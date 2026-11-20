@@ -8,6 +8,8 @@ interface SearchReadInput {
   projects?: TeamProjectsResponse;
   overview?: TeamOverviewModelResponse;
   projectKey: string | null;
+  /** True only when the viewer left the scope at all authorized projects. */
+  allAuthorizedScope?: boolean;
   projectsFailed?: boolean;
   overviewFailed?: boolean;
   supplementalSources?: Partial<Record<'goal' | 'document' | 'lesson', SearchSource>>;
@@ -107,6 +109,7 @@ export function searchSourcesFromReads({
   projects,
   overview,
   projectKey,
+  allAuthorizedScope = false,
   projectsFailed = false,
   overviewFailed = false,
   supplementalSources,
@@ -118,6 +121,7 @@ export function searchSourcesFromReads({
   const selectedName = selectedKey
     ? projectName(selectedProject, selectedPosition >= 0 ? selectedPosition + 1 : 1)
     : i18n.t('shell.currentProject');
+  const implicitProjectName = allAuthorizedScope && visibleProjects.length > 1 ? selectedName : undefined;
   const model = overview && selectedKey && overview.project === selectedKey ? overview : undefined;
   const taskSlice = model?.input.tasks;
   const memberSlice = model?.input.members;
@@ -149,12 +153,14 @@ export function searchSourcesFromReads({
       coverage: taskSlice?.coverage ?? 'unread',
       items: selectedKey ? distinguishDuplicateMeta(taskItems(tasks, members, selectedKey, selectedName)) : [],
       failed: overviewFailed,
+      implicitProjectName,
     },
     {
       kind: 'person',
       coverage: memberSlice?.coverage ?? 'unread',
       items: selectedKey ? distinguishDuplicateMeta(memberItems(members, selectedKey, selectedName)) : [],
       failed: overviewFailed,
+      implicitProjectName,
     },
     supplementalSources?.goal ?? unread('goal'),
     supplementalSources?.document ?? unread('document'),

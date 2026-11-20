@@ -45,7 +45,7 @@ describe('craft source scanner self-test', () => {
       'box-shadow: inset 0 0 0 1px var(--ant-color-border-secondary)',
       'transition: color 160ms cubic-bezier(0.22, 1, 0.36, 1)',
       'fontWeight: 500', 'fontWeight: 600', 'font-weight: 400', 'letterSpacing: 0',
-      'borderRadius: 6', 'border-radius: 6px', 'borderRadius: 8', 'borderRadius: 10', 'border-radius: 10px', 'border-radius: 12px',
+      'borderRadius: 8', 'borderRadius: 10', 'border-radius: 10px', 'border-radius: 12px',
       'const next = !current;',
       "typeof binding === 'string' && binding.trim() !== ''",
       't("common.notProvided")',

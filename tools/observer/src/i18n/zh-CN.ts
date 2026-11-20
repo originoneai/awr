@@ -138,6 +138,7 @@ const zhCN = {
     searchCoveragePartial: '只搜索当前已加载的{{types}}，未读全的内容不在结果中',
     searchCoverageNone: '没有可搜索的已读取清单',
     searchCoverageUnavailable: '{{types}}尚未接入搜索',
+    searchImplicitProjectScope: '任务和人来自「{{project}}」；选择别的项目可以搜它的任务',
     perspective: '视角',
     perspectives: {
       me: { segment: '做事的人', title: '我的工作' },

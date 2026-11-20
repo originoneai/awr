@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from '../i18n';
 import { revokeObservationReads } from '../lib/queries';
 import type { SearchItem, SearchSource } from '../lib/search-index';
+import { searchSourcesFromReads } from '../lib/search-sources';
 import type { TeamOverviewModelResponse } from '../lib/types';
 import { DEMO_PROJECTS, renderApp, stubFetch } from '../test-utils';
 import { CraftThemeProvider } from './CraftThemeProvider';
@@ -155,6 +156,37 @@ describe('search dialog behavior', () => {
     expect(coverage?.textContent).toContain('未读全的内容不在结果中');
     expect(coverage?.textContent).toContain('目标、资料、经验尚未接入搜索');
     expect(coverage?.textContent).toContain('搜索清单暂时无法读取');
+  });
+
+  it.each(['zh-CN', 'en-US'])('names the implicit project only for multi-project all-authorized scope in %s', async (language) => {
+    await i18n.changeLanguage(language);
+    const implicit = searchSourcesFromReads({
+      projects: DEMO_PROJECTS,
+      overview: overviewModel(),
+      projectKey: 'demo',
+      allAuthorizedScope: true,
+    });
+    const multi = renderDialog({ sourceList: implicit });
+    await screen.findByRole('dialog');
+    const expected = language === 'en-US'
+      ? 'Tasks and people are from “Team mainline”'
+      : '任务和人来自「Team mainline」';
+    expect(document.querySelector('.sr-coverage')?.textContent).toContain(expected);
+    multi.unmount();
+
+    const oneProject = { ...DEMO_PROJECTS, projects: DEMO_PROJECTS.projects.slice(0, 1) };
+    const single = renderDialog({
+      sourceList: searchSourcesFromReads({ projects: oneProject, overview: overviewModel(), projectKey: 'demo', allAuthorizedScope: true }),
+    });
+    await screen.findByRole('dialog');
+    expect(document.querySelector('.sr-coverage')?.textContent).not.toContain(expected);
+    single.unmount();
+
+    renderDialog({
+      sourceList: searchSourcesFromReads({ projects: DEMO_PROJECTS, overview: overviewModel(), projectKey: 'demo', allAuthorizedScope: false }),
+    });
+    await screen.findByRole('dialog');
+    expect(document.querySelector('.sr-coverage')?.textContent).not.toContain(expected);
   });
 
   it('shows only the six most recently opened current entries for an empty query', async () => {
