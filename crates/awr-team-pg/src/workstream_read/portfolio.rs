@@ -987,29 +987,37 @@ mod tests {
         fold_work(
             &mut counts,
             &json!({"w":"a","s":"1","d":"enabled","r":"claimed","p":"waiting_dependency",
-                "dep":100,"wd":50}),
+                "dep":100,"wd":50,"wdn":1}),
             true,
             false,
         )
         .unwrap();
         fold_work(
             &mut counts,
-            &json!({"w":"b","s":"1","d":"enabled","r":"claimed","p":"implementing","wr":10}),
+            &json!({"w":"b","s":"1","d":"enabled","r":"claimed","p":"implementing","wr":10,"wrn":1}),
             true,
             false,
         )
         .unwrap();
         fold_work(
             &mut counts,
-            &json!({"w":"c","s":"2","d":"enabled","r":"claimed","wd":1}),
+            &json!({"w":"c","s":"2","d":"enabled","r":"claimed","wd":1,"wdn":1}),
             false,
+            false,
+        )
+        .unwrap();
+        // Two open rounds on one visible work: two waits, one work.
+        fold_work(
+            &mut counts,
+            &json!({"w":"d","s":"1","d":"enabled","r":"claimed","wr":5,"wrn":2}),
+            true,
             false,
         )
         .unwrap();
         assert_eq!(counts.decision, 1);
         assert_eq!(counts.dependency, 1);
-        assert_eq!(counts.review, 1);
-        assert_eq!(counts.oldest_open, Some(10));
+        assert_eq!(counts.review, 3);
+        assert_eq!(counts.oldest_open, Some(5));
         assert_eq!(counts.hidden, 1);
     }
 }
