@@ -1,5 +1,6 @@
 import { act, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { demoOverviewModelResponse } from './test-fixtures/overview-model';
 import {
   DEMO_ACTIVITY,
   DEMO_PROJECT_OVERVIEW,
@@ -19,6 +20,8 @@ function revocationFetch(calls: { count: number }, revoked: { value: boolean }) 
       payload = { ok: false, error: { code: 'Unauthenticated', message: 'revoked' } };
     } else if (url.includes('/api/team/projects')) {
       payload = DEMO_PROJECTS;
+    } else if (url.includes('/api/team/overview-model')) {
+      payload = demoOverviewModelResponse();
     } else if (url.includes('/api/team/overview')) {
       payload = DEMO_PROJECT_OVERVIEW;
     } else if (url.includes('/api/team/activity')) {
@@ -51,7 +54,7 @@ afterEach(() => {
 
 describe.each([
   { path: '/projects', restrictedText: /Team mainline/, pageTestId: 'page-projects' },
-  { path: '/workbench?scope=demo', restrictedText: /Build the filter API/, pageTestId: 'page-workbench' },
+  { path: '/workbench?scope=demo', restrictedText: /Synthetic mine-running/, pageTestId: 'workbench-frame' },
   { path: '/projects/demo?tab=overview', restrictedText: /Build the filter API/, pageTestId: 'page-project' },
   { path: '/projects/demo?tab=plan&work=W1&review_round_id=round-1', restrictedText: /Build the filter API/, pageTestId: 'page-project' },
 ])('rendered revocation on $path', ({ path, restrictedText, pageTestId }) => {

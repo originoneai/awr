@@ -209,6 +209,80 @@ static WORK_GROUPS: &[Group] = &[
     },
 ];
 
+// Team help is a nested scope: keep the ordinary Team Clap tree intact while
+// grouping its usable command paths under the Team help route.
+static TEAM_GROUPS: &[Group] = &[
+    Group {
+        name: "navigation",
+        title: "Team navigation",
+        commands: &[
+            (
+                "workstream list",
+                "Discover workstreams visible to the caller",
+            ),
+            ("work next", "Suggest work and current-client sessions"),
+            ("work inbox", "Read one page of coordination items"),
+            ("work list", "List contracts in one workstream"),
+            ("work search", "Search contract titles in one workstream"),
+            ("work prepare", "Read required context for work"),
+            ("work snapshot", "Read context and observations together"),
+            ("work observe", "Read recorded progress for work"),
+        ],
+    },
+    Group {
+        name: "inspection",
+        title: "Team inspection",
+        commands: &[
+            ("capabilities", "Inspect local or service capabilities"),
+            (
+                "session inspect",
+                "Inspect a session and historical checkpoint",
+            ),
+            (
+                "claim inspect",
+                "Inspect a coordination claim without renewing it",
+            ),
+            ("execution inspect", "Inspect a recorded execution"),
+            ("command inspect", "Inspect an original command request"),
+        ],
+    },
+    Group {
+        name: "recovery",
+        title: "Team recovery",
+        commands: &[(
+            "work recovery",
+            "Read current-ownership recovery candidates",
+        )],
+    },
+    Group {
+        name: "submission",
+        title: "Legacy submission",
+        commands: &[("command", "Validate a legacy Team envelope locally")],
+    },
+];
+
+// These are all usable Team command paths, including the legacy command form.
+// Keeping the inventory explicit makes a future visible leaf fail the test until
+// it is assigned to a Team help group.
+#[cfg(test)]
+static TEAM_COMMAND_PATHS: &[&str] = &[
+    "capabilities",
+    "workstream list",
+    "work next",
+    "work inbox",
+    "work list",
+    "work search",
+    "work prepare",
+    "work snapshot",
+    "work observe",
+    "work recovery",
+    "session inspect",
+    "claim inspect",
+    "execution inspect",
+    "command",
+    "command inspect",
+];
+
 fn rows(group: &Group) -> String {
     let width = group
         .commands
@@ -227,24 +301,36 @@ fn rows(group: &Group) -> String {
     text
 }
 
-fn overview(work: bool) -> String {
-    let (scope, groups, heading, usage) = if work {
-        (
-            "awr work",
-            WORK_GROUPS,
-            "Read and manage one work item",
-            "awr work [OPTIONS] <COMMAND>",
-        )
-    } else {
-        (
+#[derive(Clone, Copy)]
+enum HelpScope {
+    Root,
+    Work,
+    Team,
+}
+
+fn overview(scope: HelpScope) -> String {
+    let (scope_name, groups, heading, usage) = match scope {
+        HelpScope::Root => (
             "awr",
             COMMAND_GROUPS,
             "Persistent work state and minimal context for long-running agents",
             "awr [--project <DIR>] [--json] <COMMAND>",
-        )
+        ),
+        HelpScope::Work => (
+            "awr work",
+            WORK_GROUPS,
+            "Read and manage one work item",
+            "awr work [OPTIONS] <COMMAND>",
+        ),
+        HelpScope::Team => (
+            "awr team",
+            TEAM_GROUPS,
+            "Inspect and navigate authoritative Team state",
+            "awr team [OPTIONS] <COMMAND>",
+        ),
     };
     let mut text = format!(
-        "{heading}\n\nUsage: {usage}\n\n{}\nMore: {scope} help <group>\n",
+        "{heading}\n\nUsage: {usage}\n\n{}\nMore: {scope_name} help <group>\n",
         rows(&groups[0])
     );
     let width = groups
@@ -262,42 +348,53 @@ fn overview(work: bool) -> String {
             .join(", ");
         writeln!(text, "  {:width$}  {members}", group.name).unwrap();
     }
-    writeln!(text, "\nAll commands: {scope} help all").unwrap();
+    writeln!(text, "\nAll commands: {scope_name} help all").unwrap();
     text
 }
 
-fn grouped(command: Command, work: bool) -> Command {
-    command
-        .override_help(overview(work))
-        .disable_help_subcommand(true)
-        .subcommand(
-            Command::new("help")
-                .hide(true)
-                .about("Print this message or the help of the given subcommand(s)")
-                .arg(Arg::new("command").num_args(0..).action(ArgAction::Append)),
-        )
+fn grouped(command: Command, scope: HelpScope) -> Command {
+    let command = if matches!(scope, HelpScope::Team) {
+        command
+    } else {
+        command.override_help(overview(scope))
+    };
+    command.disable_help_subcommand(true).subcommand(
+        Command::new("help")
+            .hide(true)
+            .about("Print this message or the help of the given subcommand(s)")
+            .arg(Arg::new("command").num_args(0..).action(ArgAction::Append)),
+    )
 }
 
 pub(crate) fn command() -> Command {
-    grouped(Cli::command(), false).mut_subcommand("work", |command| grouped(command, true))
+    grouped(Cli::command(), HelpScope::Root)
+        .mut_subcommand("work", |command| grouped(command, HelpScope::Work))
+        .mut_subcommand("team", |command| grouped(command, HelpScope::Team))
 }
 
 pub(crate) fn parse_from(args: &[OsString]) -> Result<Cli, clap::Error> {
     if let Ok(matches) = command().try_get_matches_from(args) {
         let request = match matches.subcommand() {
-            Some(("help", help)) => Some((false, help)),
-            Some(("work", work)) => work.subcommand_matches("help").map(|help| (true, help)),
+            Some(("help", help)) => Some((HelpScope::Root, help)),
+            Some(("work", work)) => work
+                .subcommand_matches("help")
+                .map(|help| (HelpScope::Work, help)),
+            Some(("team", team)) => team
+                .subcommand_matches("help")
+                .map(|help| (HelpScope::Team, help)),
             _ => None,
         };
-        if let Some((work, help)) = request {
+        if let Some((scope, help)) = request {
             let program = args.first().map_or(OsStr::new("awr"), OsString::as_os_str);
-            return Err(render_request(work, help, program));
+            return Err(render_request(scope, help, program));
         }
     }
     // Keep clap's inherited help behavior for ordinary commands and detailed help.
     let matches = Cli::command()
-        .override_help(overview(false))
-        .mut_subcommand("work", |command| command.override_help(overview(true)))
+        .override_help(overview(HelpScope::Root))
+        .mut_subcommand("work", |command| {
+            command.override_help(overview(HelpScope::Work))
+        })
         .try_get_matches_from(args)?;
     Cli::from_arg_matches(&matches)
 }
@@ -319,13 +416,20 @@ fn legacy_help(path: &[&str], program: &OsStr) -> clap::Error {
         .unwrap_err()
 }
 
-fn render_request(work: bool, matches: &ArgMatches, program: &OsStr) -> clap::Error {
+fn render_request(scope: HelpScope, matches: &ArgMatches, program: &OsStr) -> clap::Error {
     // Keep the derive command tree intact for legacy lists and detailed help.
     let mut command = Cli::command();
     let mut command_path = Vec::new();
-    if work {
-        command = command.find_subcommand("work").unwrap().clone();
-        command_path.push("work");
+    match scope {
+        HelpScope::Root => {}
+        HelpScope::Work => {
+            command = command.find_subcommand("work").unwrap().clone();
+            command_path.push("work");
+        }
+        HelpScope::Team => {
+            command = command.find_subcommand("team").unwrap().clone();
+            command_path.push("team");
+        }
     }
     let path = matches
         .get_many::<String>("command")
@@ -335,6 +439,7 @@ fn render_request(work: bool, matches: &ArgMatches, program: &OsStr) -> clap::Er
         let groups = match command_path.as_slice() {
             [] => Some(COMMAND_GROUPS),
             ["work"] => Some(WORK_GROUPS),
+            ["team"] => Some(TEAM_GROUPS),
             _ => None,
         };
         if let Some(groups) = groups {
@@ -365,8 +470,9 @@ fn render_request(work: bool, matches: &ArgMatches, program: &OsStr) -> clap::Er
         command_path.push(name.as_str());
     }
     match command_path.as_slice() {
-        [] => display(overview(false)),
-        ["work"] if work => display(overview(true)),
+        [] => display(overview(HelpScope::Root)),
+        ["work"] if matches!(scope, HelpScope::Work) => display(overview(HelpScope::Work)),
+        ["team"] if matches!(scope, HelpScope::Team) => display(overview(HelpScope::Team)),
         _ => legacy_help(&command_path, program),
     }
 }
@@ -418,12 +524,184 @@ mod tests {
         Ok(())
     }
 
+    fn team_path_exists(team: &Command, path: &str) -> bool {
+        let mut command = team.clone();
+        for name in path.split_whitespace() {
+            command.build();
+            let Some(child) = command.find_subcommand(name).cloned() else {
+                return false;
+            };
+            command = child;
+        }
+        true
+    }
+
+    fn team_visible_leaf_paths(team: &Command) -> Vec<String> {
+        fn visit(command: &Command, prefix: &mut Vec<String>, leaves: &mut Vec<String>) {
+            let mut command = command.clone();
+            command.build();
+            for child in command.get_subcommands() {
+                if child.is_hide_set() {
+                    continue;
+                }
+                let mut child = child.clone();
+                child.build();
+                prefix.push(child.get_name().to_owned());
+                let has_visible_child = child.get_subcommands().any(|nested| !nested.is_hide_set());
+                // team command remains a valid legacy leaf while also exposing
+                // the nested team command inspect read.
+                if !has_visible_child || child.get_name() == "command" {
+                    leaves.push(prefix.join(" "));
+                }
+                if has_visible_child {
+                    visit(&child, prefix, leaves);
+                }
+                prefix.pop();
+            }
+        }
+
+        let mut leaves = Vec::new();
+        visit(team, &mut Vec::new(), &mut leaves);
+        leaves.sort();
+        leaves
+    }
+
+    fn validate_team_groups(
+        team: &Command,
+        groups: &[Group],
+        command_paths: &[&str],
+    ) -> Result<(), String> {
+        for group in groups {
+            if team
+                .get_subcommands()
+                .any(|child| !child.is_hide_set() && child.get_name() == group.name)
+            {
+                return Err(format!(
+                    "help group '{}' shadows Team command '{}'",
+                    group.name, group.name
+                ));
+            }
+        }
+
+        let mut expected = command_paths
+            .iter()
+            .map(|path| (*path).to_owned())
+            .collect::<Vec<_>>();
+        expected.sort();
+        let actual = team_visible_leaf_paths(team);
+        if actual != expected {
+            return Err(format!(
+                "Team visible leaf inventory mismatch: expected {expected:?}, found {actual:?}"
+            ));
+        }
+
+        for path in command_paths {
+            if command_paths
+                .iter()
+                .filter(|candidate| *candidate == path)
+                .count()
+                != 1
+            {
+                return Err(format!(
+                    "Team command path '{path}' appears more than once in inventory"
+                ));
+            }
+            if !team_path_exists(team, path) {
+                return Err(format!(
+                    "Team group inventory names unknown command path {path}"
+                ));
+            }
+            let count = groups
+                .iter()
+                .flat_map(|group| group.commands)
+                .filter(|(name, _)| *name == *path)
+                .count();
+            if count != 1 {
+                return Err(format!(
+                    "Team command path '{path}' belongs to {count} groups; expected exactly one"
+                ));
+            }
+        }
+        for group in groups {
+            for (path, description) in group.commands {
+                if !command_paths.contains(path) {
+                    return Err(format!(
+                        "group {} names unknown Team command path {path}",
+                        group.name
+                    ));
+                }
+                if !team_path_exists(team, path) {
+                    return Err(format!(
+                        "group {} names unknown Team command path {path}",
+                        group.name
+                    ));
+                }
+                if description.is_empty() || description.chars().count() > 60 {
+                    return Err(format!(
+                        "description for Team path {path} must contain 1 to 60 characters"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn ac1_every_visible_command_belongs_to_exactly_one_group() {
         let mut command = command();
         command.build();
         validate_groups(&command, COMMAND_GROUPS).unwrap();
         validate_groups(command.find_subcommand("work").unwrap(), WORK_GROUPS).unwrap();
+    }
+
+    #[test]
+    fn ac1_every_team_visible_leaf_belongs_to_exactly_one_group() {
+        let team = command().find_subcommand("team").unwrap().clone();
+        validate_team_groups(&team, TEAM_GROUPS, TEAM_COMMAND_PATHS).unwrap();
+        assert!(overview(HelpScope::Team).len() <= 1280);
+    }
+
+    #[test]
+    fn ac1_ungrouped_new_team_leaf_is_rejected() {
+        let team = command()
+            .find_subcommand("team")
+            .unwrap()
+            .clone()
+            .subcommand(Command::new("ungrouped-command"));
+        let error = validate_team_groups(&team, TEAM_GROUPS, TEAM_COMMAND_PATHS).unwrap_err();
+        assert!(error.contains("ungrouped-command"), "{error}");
+    }
+
+    #[test]
+    fn ac3_team_group_collision_is_rejected_by_name() {
+        let team = command().find_subcommand("team").unwrap().clone();
+        let mut colliding_groups = vec![Group {
+            name: "session",
+            title: "Colliding",
+            commands: &[],
+        }];
+        colliding_groups.extend(TEAM_GROUPS.iter().map(|group| Group {
+            name: group.name,
+            title: group.title,
+            commands: group.commands,
+        }));
+        let error = validate_team_groups(&team, &colliding_groups, TEAM_COMMAND_PATHS).unwrap_err();
+        assert!(
+            error.contains("help group 'session' shadows Team command 'session'"),
+            "{error}"
+        );
+
+        for group in TEAM_GROUPS {
+            let team = team.clone().subcommand(Command::new(group.name));
+            let error = validate_team_groups(&team, TEAM_GROUPS, TEAM_COMMAND_PATHS).unwrap_err();
+            let name = group.name;
+            assert!(
+                error.contains(&format!(
+                    "help group '{name}' shadows Team command '{name}'"
+                )),
+                "{error}"
+            );
+        }
     }
 
     #[test]
@@ -523,7 +801,7 @@ mod tests {
 
     #[test]
     fn group_descriptions_are_at_most_sixty_characters() {
-        for group in COMMAND_GROUPS.iter().chain(WORK_GROUPS) {
+        for group in COMMAND_GROUPS.iter().chain(WORK_GROUPS).chain(TEAM_GROUPS) {
             for (name, description) in group.commands {
                 assert!(description.chars().count() <= 60, "{name}: {description}");
             }

@@ -9,8 +9,9 @@ describe('craft spacing tokens', () => {
     expect(themeConfig.token?.controlHeight).toBe(craftTokens.controlHeight);
     expect(craftTokens.headerHeight).toBeGreaterThanOrEqual(56);
     expect(craftTokens.headerHeight).toBeLessThanOrEqual(64);
-    expect(craftTokens.siderWidth).toBeGreaterThanOrEqual(240);
-    expect(craftTokens.siderWidth).toBeLessThanOrEqual(280);
+    // Prototype .app grid column / .side: exactly 232px (the owner's pixel-parity rule
+    // overrides the earlier 240-280 unslop band).
+    expect(craftTokens.siderWidth).toBe(232);
     expect(craftTokens.contentMaxWidth).toBeGreaterThanOrEqual(1440);
     expect(craftTokens.contentMaxWidth).toBeLessThanOrEqual(1600);
   });

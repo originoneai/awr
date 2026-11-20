@@ -30,6 +30,11 @@ describe('responsive navigation at 860px', () => {
     expect(theme.style.width).toBe('40px');
     expect(theme.style.height).toBe('40px');
     expect(screen.getByTestId('avatar-menu-trigger')).toBeTruthy();
+    const mobileBrand = screen.getByTestId('mobile-navigation').querySelector('.shell-brand-mobile');
+    expect(mobileBrand?.querySelector('[data-testid="brand-mark-color"]')?.getAttribute('src'))
+      .toBe('/awr-logo-color-72.png');
+    expect(mobileBrand?.querySelector('[data-testid="brand-mark-white"]')?.getAttribute('src'))
+      .toBe('/awr-logo-white-72.png');
   });
 
   it('navigates directly on selection and preserves the current project', async () => {

@@ -54,10 +54,43 @@ async function settle(page) {
 }
 
 async function workbenchQueue(page) {
-  await page.locator('.ant-tabs-tab').nth(1).click();
-  await page.getByTestId('workbench-table').waitFor();
-  await page.locator('.ant-table-row').first().click();
-  await page.getByTestId('workbench-detail').waitFor();
+  await page.getByTestId('workbench-frame').waitFor();
+  assert.equal(await page.locator('.obs-kpi').count(), 4, 'workbench has four KPI cells');
+  assert.equal(await page.locator('.obs-workbench-instrument').count(), 1, 'workbench has one verdict instrument');
+  assert.equal(await page.locator('.obs-detail-panel').count(), 1, 'workbench has one detail panel');
+  assert.ok(await page.locator('.obs-chain-node-root').count() <= 1, 'one visible chain has at most one root');
+  if (await page.locator('.obs-chain-node-root').count()) {
+    assert.equal(await page.locator('.obs-chain-node-root .obs-lamp[data-lamp="blocked"]').count(), 1, 'chain root is red');
+  }
+  const geometry = await page.evaluate(() => {
+    const title = getComputedStyle(document.querySelector('.obs-page-title'));
+    const panel = getComputedStyle(document.querySelector('.obs-detail-panel'));
+    const body = getComputedStyle(document.querySelector('.obs-workbench-body'));
+    const rail = document.querySelector('.obs-todo-rail').getBoundingClientRect();
+    return {
+      titleSize: title.fontSize,
+      titleLeading: title.lineHeight,
+      panelRadius: panel.borderTopLeftRadius,
+      bodyColumns: body.gridTemplateColumns.split(' ').length,
+      railWidth: Math.round(rail.width),
+      overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    };
+  });
+  assert.deepEqual([geometry.titleSize, geometry.titleLeading, geometry.panelRadius], ['22px', '28px', '16px']);
+  assert.equal(geometry.overflow, false, 'workbench has no horizontal overflow');
+  if (page.viewportSize().width >= 1240) {
+    assert.equal(geometry.bodyColumns, 2);
+    assert.equal(geometry.railWidth, 348);
+  } else {
+    assert.equal(geometry.bodyColumns, 1);
+  }
+  await page.locator('.obs-kpi').first().click();
+  const detail = await page.getByTestId('workbench-metric-detail').waitFor();
+  const detailCount = Number(await page.getByTestId('workbench-metric-detail').getAttribute('data-count'));
+  assert.equal(await page.locator('#workbench-metric-detail, [data-testid="workbench-metric-detail"]').locator('.obs-row-item').count(), detailCount,
+    'KPI detail rows equal the number');
+  await page.getByRole('button', { name: /返回工作台|Back to workbench/ }).click();
+  await page.getByRole('tab', { name: /我在等|Waiting on others/ }).click();
   await settle(page);
 }
 

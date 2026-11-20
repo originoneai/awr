@@ -1,8 +1,15 @@
+import { readFileSync } from 'node:fs';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from './i18n';
 import { DEMO_OVERVIEW, DEMO_PROJECTS, DEMO_WORK_NEXT, renderApp, stubFetch } from './test-utils';
+import { craftTokens } from './theme';
+
+// Vitest disables CSS imports, so load the real shell stylesheet for computed-display assertions.
+const shellStyles = document.createElement('style');
+shellStyles.textContent = readFileSync('src/global.css', 'utf8');
+document.head.append(shellStyles);
 
 const CURRENT_MEMBER_OVERVIEW = {
   ...DEMO_OVERVIEW,
@@ -83,15 +90,16 @@ function stubShell({ count = 0, partial = false, overview = CURRENT_MEMBER_OVERV
 }
 
 afterEach(async () => {
+  document.documentElement.dataset.theme = 'light';
   await i18n.changeLanguage('zh-CN');
 });
 
 describe('AppShell navigation', () => {
-  it('renders the 240px sidebar with primary and administration groups and bottom theme switch', () => {
+  it('renders the 232px sidebar with primary and administration groups and bottom theme switch', () => {
     stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
     renderApp('/workbench');
     const sider = document.querySelector<HTMLElement>('.shell-sider');
-    expect(sider?.style.width).toBe('240px');
+    expect(sider?.style.width).toBe('232px');
     expect(sider?.querySelector('[data-testid="awr-brand"]')).not.toBeNull();
     for (const label of ['工作台', '项目', '待处理', '经验', '成员与 Agent', '活动与审计', '管理设置']) {
       expect(screen.getByRole('menuitem', { name: new RegExp(label) })).toBeTruthy();
@@ -104,22 +112,39 @@ describe('AppShell navigation', () => {
     expect(document.querySelector('.ant-menu-item-selected')?.classList.contains('ant-menu-item-selected')).toBe(true);
   });
 
-  it('matches the prototype vector brand and navigation geometry', () => {
+  it('matches the owner image brand and prototype navigation geometry', () => {
     stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
     renderApp('/workbench');
     const brand = screen.getByTestId('awr-brand');
-    expect(brand.style.height).toBe('32px');
-    expect(brand.style.padding).toBe('0px 12px');
-    expect(brand.style.marginBottom).toBe('20px');
-    expect(brand.style.gap).toBe('10px');
-    const mark = screen.getByTestId('brand-mark');
-    expect(mark.getAttribute('width')).toBe('22');
-    expect(mark.getAttribute('height')).toBe('22');
-    expect(mark.querySelector('path')?.getAttribute('fill')).toBe('var(--craft-color-accent)');
-    const wordmark = screen.getByTestId('brand-wordmark');
-    expect(wordmark.style.fontSize).toBe('17px');
-    expect(wordmark.style.fontWeight).toBe('600');
-    expect(brand.querySelector('img')).toBeNull();
+    expect(craftTokens.brand).toEqual({
+      rowHeight: 32,
+      markWidth: 24,
+      markHeight: 18.75,
+      gap: 10,
+      paddingInline: 12,
+      marginBottom: 20,
+      wordmarkFontSize: 17,
+      wordmarkFontWeight: 600,
+      wordmarkLineHeight: 20,
+    });
+    // jsdom returns custom-property expressions; Chromium resolves their exact pixel values in e2e.
+    const brandStyles = getComputedStyle(brand);
+    expect(brandStyles.height).toBe('var(--craft-brand-row-height)');
+    expect(brandStyles.marginBottom).toBe('var(--craft-brand-margin-bottom)');
+    expect(brandStyles.gap).toBe('var(--craft-brand-gap)');
+    for (const testId of ['brand-mark-color', 'brand-mark-white']) {
+      const mark = screen.getByTestId<HTMLImageElement>(testId);
+      expect(mark.getAttribute('width')).toBe('24');
+      expect(mark.getAttribute('height')).toBe('18.75');
+      expect(mark.alt).toBe('');
+      expect(mark.getAttribute('aria-hidden')).toBe('true');
+    }
+    expect(brand.querySelector('svg')).toBeNull();
+    expect(brand.querySelectorAll('img')).toHaveLength(2);
+    const wordmarkStyles = getComputedStyle(screen.getByTestId('brand-wordmark'));
+    expect(wordmarkStyles.fontSize).toBe('var(--craft-brand-wordmark-font-size)');
+    expect(wordmarkStyles.fontWeight).toBe('var(--craft-brand-wordmark-font-weight)');
+    expect(wordmarkStyles.lineHeight).toBe('var(--craft-brand-wordmark-line-height)');
     const menu = document.querySelector<HTMLElement>('.shell-nav');
     expect(menu?.style.display).toBe('grid');
     expect(menu?.style.gap).toBe('2px');
@@ -128,6 +153,35 @@ describe('AppShell navigation', () => {
     expect(label?.style.padding).toBe('24px 12px 8px');
     expect(label?.style.fontSize).toBe('12px');
     expect(label?.style.lineHeight).toBe('16px');
+  });
+
+  it('uses CSS alone to show only the color mark in light and only the white mark in dark', () => {
+    stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
+    renderApp('/workbench');
+    const color = screen.getByTestId<HTMLImageElement>('brand-mark-color');
+    const white = screen.getByTestId<HTMLImageElement>('brand-mark-white');
+    document.documentElement.dataset.theme = 'light';
+    expect(getComputedStyle(color).display).toBe('inline-block');
+    expect(getComputedStyle(white).display).toBe('none');
+    document.documentElement.dataset.theme = 'dark';
+    expect(getComputedStyle(color).display).toBe('none');
+    expect(getComputedStyle(white).display).toBe('inline-block');
+
+    const expected = {
+      color: '/awr-logo-color-72.png 1x, /awr-logo-color-144.png 2x, /awr-logo-color-288.png 4x',
+      white: '/awr-logo-white-72.png 1x, /awr-logo-white-144.png 2x, /awr-logo-white-288.png 4x',
+    };
+    for (const [mark, variant] of [[color, 'color'], [white, 'white']] as const) {
+      const src = mark.getAttribute('src') ?? '';
+      const srcset = mark.getAttribute('srcset') ?? '';
+      expect(src).toBe(`/awr-logo-${variant}-72.png`);
+      expect(srcset).toBe(expected[variant]);
+      for (const candidate of [src, ...srcset.split(', ').map((entry) => entry.split(' ')[0])]) {
+        expect(candidate).toMatch(/^\/(?!\/)/);
+        expect(new URL(candidate, window.location.href).origin).toBe(window.location.origin);
+      }
+      expect(`${src} ${srcset}`).not.toMatch(/https?:|data:/i);
+    }
   });
 
   it('uses the shared inbox model count and dot, then opens the inbox from the bell', async () => {

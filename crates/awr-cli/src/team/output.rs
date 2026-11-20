@@ -1,7 +1,7 @@
 use crate::cli_failure::{CliFailure, CliResult, terminal_json};
 use serde_json::Value;
 
-pub(super) const QUERIES: [&str; 9] = [
+pub(super) const QUERIES: [&str; 14] = [
     "capabilities",
     "workstreams.list",
     "work.next",
@@ -11,6 +11,11 @@ pub(super) const QUERIES: [&str; 9] = [
     "work.prepare",
     "work.snapshot",
     "work.observe",
+    "session.inspect",
+    "claim.inspect",
+    "execution.inspect",
+    "command.inspect",
+    "work.recovery",
 ];
 
 /// Check only the boundary needed by this client. Preserve extension fields and
@@ -66,6 +71,33 @@ pub(super) fn validate(op: &str, value: &Value) -> CliResult<()> {
                     && value["data"]["work_id"].is_string()
                     && value["data"]["observed_at_unix_ms"].as_i64().is_some()
                     && value["data"]["execution_authorized"].is_boolean()
+            }
+            "session.inspect" | "work.recovery" => {
+                version
+                    && value["data"].is_object()
+                    && value["data"]["items"].is_array()
+                    && value["data"]["current_contract_hash"].is_string()
+            }
+            "claim.inspect" | "execution.inspect" => {
+                let id = if op == "claim.inspect" {
+                    "claim_id"
+                } else {
+                    "execution_id"
+                };
+                version
+                    && value["data"].is_object()
+                    && value["data"][id].is_string()
+                    && value["data"]["state"].is_string()
+            }
+            "command.inspect" => {
+                version
+                    && value["data"].is_object()
+                    && match value["data"]["state"].as_str() {
+                        Some("committed") => value["data"]["receipt"].is_object(),
+                        Some("unknown") => value["data"]["request_id"].is_string(),
+                        Some(_) => true,
+                        None => false,
+                    }
             }
             _ => false,
         };
@@ -163,6 +195,16 @@ pub(super) fn print(op: &str, remote: &str, value: &Value, json: bool) {
                 );
             } else {
                 println!("Read succeeded; this query does not grant execution authority.");
+            }
+            if op == "command.inspect" && value["data"]["state"] == "unknown" {
+                println!(
+                    "No committed receipt is visible. This does not prove the original command failed or cannot still commit."
+                );
+            }
+            if matches!(op, "session.inspect" | "work.recovery") {
+                println!(
+                    "Checkpoint actions are historical. Use team work prepare to read fresh context before continuing; this query does not resume work."
+                );
             }
             println!("{}", pretty(value));
         }
