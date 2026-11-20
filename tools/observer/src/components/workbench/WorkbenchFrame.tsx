@@ -35,6 +35,7 @@ import { AgentHandback } from './AgentHandback';
 import { ArrowLeftIcon, ArrowRightIcon, BotIcon, CircleCheckIcon } from '../icons/prototype-icons';
 import {
   metricDetailItems,
+  pendingDurationDays,
   reportAge,
   reportDeclaration,
   waitingOnText,
@@ -237,15 +238,42 @@ export function WorkbenchFrame({ model, projectKey, projectName, projectTitles, 
   }
 
   function pendingView(item: PersonPendingItem, index: number): TodoItem {
+    const ownDecision = item.kind === 'wait' && item.wait?.kind === 'decision'
+      && item.task?.owner?.id != null && item.task.owner.id === model.currentPerson?.person.id;
     const kind = item.kind === 'approval'
       ? handbackWords.kind[item.approval?.kind === 'lesson-confirmation' ? 'lesson' : 'plan-approval']
       : item.kind === 'handoff'
         ? handbackWords.kind.assignment
         : item.wait?.kind === 'review'
           ? t('workbench.home.waitKinds.review')
-          : handbackWords.kind.decision;
-    const title = workbenchDisplayText(item.approval?.title ?? item.task?.title, t('workbench.home.unnamedPending'));
-    const ownerName = item.task?.owner?.displayName;
+          : handbackWords.kind[ownDecision ? 'answer' : 'decision'];
+    // A decision card names the question itself; approvals keep their recorded title.
+    const title = workbenchDisplayText(
+      item.approval?.title ?? item.wait?.what ?? item.task?.title,
+      t('workbench.home.unnamedPending'),
+    );
+    const ownerName = workbenchDisplayText(item.task?.owner?.displayName, '');
+    let from = ownerName
+      ? t('workbench.home.pendingFrom', { name: ownerName })
+      : t('workbench.home.pendingFromUnknown');
+    if (item.wait?.kind === 'decision') {
+      if (ownDecision) {
+        const agentName = workbenchAgentName(item.task?.agentName, '');
+        from = agentName
+          ? t('inbox.page.from.ownAgent', { agent: agentName })
+          : t('inbox.page.from.ownTask');
+      } else {
+        from = ownerName
+          ? t('inbox.page.from.othersTask', { owner: ownerName })
+          : t('inbox.page.from.othersTaskUnnamed');
+      }
+    }
+    const days = pendingDurationDays(item, readAtUnixMs);
+    const age = days === null ? undefined : item.kind === 'wait'
+      ? t('workbench.home.pendingAgeDays', { count: days })
+      : days === 0
+        ? t('workbench.home.pendingAgeToday')
+        : t('workbench.home.pendingAgeDaysAgo', { count: days });
     return {
       key: `${item.kind}-${index}`,
       kind,
@@ -254,10 +282,8 @@ export function WorkbenchFrame({ model, projectKey, projectName, projectTitles, 
         item.wait?.what,
         item.wait?.kind === 'review' ? t('workbench.home.waitReviewFallback') : title,
       ),
-      from: ownerName
-        ? t('workbench.home.pendingFrom', { name: workbenchDisplayText(ownerName, t('workbench.home.pendingFromUnknown')) })
-        : t('workbench.home.pendingFromUnknown'),
-      age: item.wait?.durationDays == null ? undefined : t('workbench.home.pendingAgeDays', { count: item.wait.durationDays }),
+      from,
+      age,
       onOpen: () => openPending(item),
     };
   }
@@ -440,10 +466,15 @@ export function WorkbenchFrame({ model, projectKey, projectName, projectTitles, 
   }
 
   const date = readAtUnixMs === undefined ? null : new Date(readAtUnixMs);
-  const subtitle = date === null ? t('workbench.home.periodUnknown') : t('workbench.home.periodMe', {
-    month: i18n.language.startsWith('zh') ? date.getMonth() + 1 : date.toLocaleString('en-US', { month: 'long' }),
-    day: date.getDate(),
-  });
+  const viewerName = workbenchDisplayText(model.currentPerson?.person.displayName, '');
+  const subtitle = date === null ? t('workbench.home.periodUnknown') : t(
+    viewerName ? 'workbench.home.periodMe' : 'workbench.home.periodMeUnnamed',
+    {
+      name: viewerName,
+      month: i18n.language.startsWith('zh') ? date.getMonth() + 1 : date.toLocaleString('en-US', { month: 'long' }),
+      day: date.getDate(),
+    },
+  );
 
   return (
     <div className="obs-workbench" data-testid="workbench-frame" data-state={resolvedState}>
@@ -464,7 +495,13 @@ export function WorkbenchFrame({ model, projectKey, projectName, projectTitles, 
       <section className="obs-workbench-instrument" data-block="instrument" aria-label={t('workbench.home.headingMe')}>
         <div className="obs-workbench-verdict-top" data-health={model.verdict.health}>
           <div className="obs-workbench-verdict">
-            <span className="obs-workbench-health-word" data-health={model.verdict.health} title={t(`display.healthStatus.${model.verdict.health}.meaning`)}>
+            <span
+              className="obs-workbench-health-word"
+              data-health={model.verdict.health}
+              title={model.verdict.source === 'generated' && model.verdict.health === 'risk'
+                ? t('workbench.home.verdictWaitingMeaning')
+                : t(`display.healthStatus.${model.verdict.health}.meaning`)}
+            >
               <StatusLamp lamp={healthLampState(model.verdict.health)} />{model.verdict.healthLabel}
             </span>
             <p className="obs-workbench-sentence">{model.verdict.sentence}</p>
@@ -525,14 +562,14 @@ export function WorkbenchFrame({ model, projectKey, projectName, projectTitles, 
             present={(node) => chainNodeView(activeChain!, node)}
             onOpen={(node) => openChainNode(activeChain!, node)}
             footer={activeChain ? (
-              <>
-                <span>{activeChain.footer.impact.count === null
-                  ? t('workbench.home.chainImpactUnknown')
-                  : t('workbench.home.chainImpact', { count: activeChain.footer.impact.count })}</span>
-                <span>{activeChain.footer.commitments.count === null
-                  ? t('workbench.home.chainCommitmentsUnknown')
-                  : t('workbench.home.chainCommitments', { count: activeChain.footer.commitments.count })}</span>
-              </>
+              <span>{activeChain.root.kind === 'external'
+                ? t('workbench.home.chainOutsideFooter')
+                : activeChain.root.kind === 'decision' && activeChain.root.queue.items.some((wait) =>
+                  wait.waitingOn.some((person) => person.id === model.currentPerson?.person.id))
+                  ? activeChain.footer.impact.count === null
+                    ? t('workbench.home.chainImpactUnknown')
+                    : t('workbench.home.chainImpact', { count: activeChain.footer.impact.count })
+                  : t('workbench.home.chainInternalFooter')}</span>
             ) : undefined}
           />
           <TodoRail
