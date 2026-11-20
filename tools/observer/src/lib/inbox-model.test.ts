@@ -264,4 +264,56 @@ describe('cross-project inbox read model', () => {
     expect(unnamed.where).toBe('在你的任意一个 Agent 里说一句');
     expect(handbackVocabulary('en-US').kind[answer.kind]).toBe('Answer a question');
   });
+
+  it('keeps a blank viewer or recipient id unknown instead of matching blanks', () => {
+    for (const blank of ['', '   ']) {
+      const source = allKindsInput();
+      source.options.views = { me: { personId: blank, projectId: 'project-one' } };
+      const unknown = buildInboxModel({ models: [model(source)], projects });
+      expect(unknown.viewer).toBeNull();
+      expect(unknown.count).toBeNull();
+      expect(unknown.entries).toEqual([]);
+    }
+
+    // A blank recipient id on a pending handoff creates no entry for anybody.
+    const blankRecipient = allKindsInput();
+    if (blankRecipient.handoffs.coverage === 'complete') {
+      blankRecipient.handoffs.items = blankRecipient.handoffs.items.map((handoff) => ({ ...handoff, toPersonId: '   ' }));
+    }
+    const noAssignment = buildInboxModel({ models: [model(blankRecipient)], projects });
+    expect(noAssignment.allEntries.some((entry) => entry.kind === 'assignment')).toBe(false);
+
+    // Contrast: a real viewer id on the same model is identified and the entries appear.
+    const contrast = buildInboxModel({ models: [model(allKindsInput())], projects });
+    expect(contrast.viewer).toEqual({ id: 'person-a', displayName: 'Owner One' });
+    expect(contrast.entries.map((entry) => entry.kind)).toEqual(['lesson', 'answer', 'plan-approval', 'assignment']);
+  });
+
+  it('an incomparable ordering contributes no entries and never identifies the viewer', () => {
+    const outOfOrderInput = input({
+      tasks: complete([baseTask('cross-task', {
+        projectId: 'project-two', ownerPersonId: 'person-b', started: true,
+      })]),
+      decisions: complete([decision('cross-task', {
+        id: 'cross-record', allowedResponderIds: ['person-a'], createdAtUnixMs: NOW - 4 * DAY,
+        question: 'Should the out-of-order project surface its question?',
+      })]),
+    }, 'project-two');
+    const outOfOrder = { ...model(outOfOrderInput, 'project-two'), ordering: 'incomparable' as const };
+
+    // (a) Only the comparable project's entries reach the queue.
+    const result = buildInboxModel({ models: [model(allKindsInput()), outOfOrder], projects });
+    expect(result.entries.map((entry) => entry.kind)).toEqual(['lesson', 'answer', 'plan-approval', 'assignment']);
+    expect(result.allEntries.some((entry) => entry.title === 'Should the out-of-order project surface its question?')).toBe(false);
+
+    // (b) The viewer id lives only in the incomparable reply: the viewer stays unknown.
+    const anonymousInput = allKindsInput();
+    anonymousInput.options.views = {};
+    const unidentified = buildInboxModel({
+      models: [model(anonymousInput), { ...model(outOfOrderInput, 'project-two'), ordering: 'incomparable' as const }],
+      projects,
+    });
+    expect(unidentified.viewer).toBeNull();
+    expect(unidentified.entries).toEqual([]);
+  });
 });
