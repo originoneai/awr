@@ -77,12 +77,16 @@ jobs:
       - name: Pixel-pair skip guard
         run: node --test e2e/pixel-pairs.guard.test.js 2>&1 | tee -a "$RUNNER_TEMP/observer-pixel-specs.log"
       - name: Shell metrics
+        if: ${{ !cancelled() }}
         run: npx playwright test -c e2e/shell-pixel.playwright.config.ts 2>&1 | tee -a "$RUNNER_TEMP/observer-pixel-specs.log"
       - name: Workbench metrics
+        if: ${{ !cancelled() }}
         run: npx playwright test -c playwright.pages.config.ts 2>&1 | tee -a "$RUNNER_TEMP/observer-pixel-specs.log"
       - name: Brand geometry
+        if: ${{ !cancelled() }}
         run: npx playwright test -c e2e/brand-logo.playwright.config.ts 2>&1 | tee -a "$RUNNER_TEMP/observer-pixel-specs.log"
       - name: Demo organization geometry
+        if: ${{ !cancelled() }}
         run: node e2e/demo-organization-check.mjs 2>&1 | tee -a "$RUNNER_TEMP/observer-pixel-specs.log"
       - name: Upload text-only spec output
         if: failure()
