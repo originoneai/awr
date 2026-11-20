@@ -44,9 +44,9 @@ export interface KpiNoteRule {
 
 /** Documentation and tests pin these fact-producing rules beside the verdict sentence table. */
 export const KPI_NOTE_RULES: readonly KpiNoteRule[] = [
-  { id: 'verified-previous', selection: 'previousPeriod.count !== null', sentenceKey: 'previousWeek' },
+  { id: 'verified-previous', selection: 'previousPeriod.count is a number', sentenceKey: 'previousWeek' },
   { id: 'agents-stalled', selection: 'stalledOwned > 0 && all activity known', sentenceKey: 'stalledOther' },
-  { id: 'waiting-oldest', selection: 'every waiting.durationDays !== null', sentenceKey: 'waitingOldest' },
+  { id: 'waiting-oldest', selection: 'every waiting.durationDays is known', sentenceKey: 'waitingOldest' },
   { id: 'pending-oldest', selection: 'every pending duration is known at read time', sentenceKey: 'pendingOldest' },
 ];
 

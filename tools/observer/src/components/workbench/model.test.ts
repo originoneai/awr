@@ -22,7 +22,9 @@ describe('My Work model', () => {
     const derived = deriveOverview(myWorkInput());
     const model = buildMyWorkModel(derived, 'zh-CN');
     expect(model.metrics.map((metric) => metric.label)).toEqual(['本周通过核验', 'Agent 在跑', '我在等', '等你处理']);
-    expect(model.metrics.map((metric) => metric.count)).toEqual([1, 1, 3, 4]);
+    // 我在等 counts 2 since the 063d demo-shapes merge: the self-addressed decision wait
+    // (owner waiting on their own Agent's answer) is pending for the owner, not a wait on others.
+    expect(model.metrics.map((metric) => metric.count)).toEqual([1, 1, 2, 4]);
     expect(model.pending.count).toBe(4);
     expect(derived.views.lead.metrics[3].count).not.toBe(model.pending.count);
     for (const metric of model.metrics) {

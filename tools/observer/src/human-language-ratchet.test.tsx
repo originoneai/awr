@@ -110,8 +110,8 @@ function installRealShapeMock(state: State, moment: RealMoment) {
       // over it so /activity keeps resolving real task titles and registered member names.
       const layRealDirectoryOver = (response: ReturnType<typeof demoOverviewModelResponse>) => {
         const real = realShapedOverviewModel(state);
-        const concat = <T,>(base: T[] | undefined, extra: readonly Record<string, unknown>[]) =>
-          [...(base ?? []), ...(extra as unknown as T[])];
+        const concat = <T,>(base: readonly T[] | undefined, extra: readonly Record<string, unknown>[]) =>
+          [...(base ?? []), ...(extra as unknown as readonly T[])];
         return {
           ...response,
           input: {

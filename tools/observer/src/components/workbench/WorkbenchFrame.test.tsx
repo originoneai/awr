@@ -99,6 +99,50 @@ describe('shared workbench frame and My Work', () => {
     expect(screen.queryByTestId('workbench-metric-detail')).toBeNull();
   });
 
+  it.each(['99', '-1', 'abc'])('clamps chain=%s onto the first chain', (value) => {
+    renderFrame(myWorkInput(), `/workbench?scope=project-one&chain=${value}`);
+    const chainButtons = within(screen.getByRole('group', { name: '链路' })).getAllByRole('button');
+    expect(chainButtons[0].getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it.each(['pending', 'verified'])('shows the tabs when detail=%s names a metric whose total is unknown', (metric) => {
+    const base = myWorkInput();
+    const input = metric === 'pending'
+      ? myWorkInput({ approvals: { coverage: 'unread', reason: 'not-read' } })
+      : myWorkInput({ options: { ...base.options, views: { ...base.options.views!, currentWeek: undefined } } });
+    const { container } = renderFrame(input, `/workbench?scope=project-one&detail=${metric}`);
+    expect(container.querySelector('.obs-detail-tabs')).not.toBeNull();
+    expect(screen.queryByTestId('workbench-metric-detail')).toBeNull();
+  });
+
+  it('prints an unknown KPI total as an em dash in a plain cell and a known zero as a clickable 0', () => {
+    const unread = renderFrame(myWorkInput({ approvals: { coverage: 'unread', reason: 'not-read' } }));
+    const unreadCells = Array.from(unread.container.querySelectorAll('.obs-kpis .obs-kpi'));
+    const pendingCell = unreadCells.find((cell) => cell.textContent?.includes('等你处理'));
+    expect(pendingCell?.textContent).toContain('—');
+    expect(pendingCell?.textContent).not.toContain('0');
+    // a cell with an unknown total is a plain div, not a button
+    expect(pendingCell?.tagName).toBe('DIV');
+    const railCount = unread.container.querySelector('.obs-todo-count');
+    expect(railCount?.textContent).toBe('—');
+    expect(railCount?.getAttribute('data-unknown')).toBe('true');
+    // the rail still lists the confirmed items while the total stays unknown
+    expect(unread.container.querySelectorAll('.obs-todo-card').length).toBeGreaterThan(0);
+    unread.unmount();
+
+    const zero = renderFrame(myWorkInput({
+      approvals: { coverage: 'complete', items: [] },
+      handoffs: { coverage: 'complete', items: [] },
+      decisions: { coverage: 'complete', items: [] },
+      reviewRounds: { coverage: 'complete', items: [] },
+    }));
+    const zeroCells = Array.from(zero.container.querySelectorAll('.obs-kpis .obs-kpi'));
+    const zeroPending = zeroCells.find((cell) => cell.textContent?.includes('等你处理'));
+    expect(zeroPending?.querySelector('.obs-kpi-value')?.textContent).toContain('0');
+    // a known total opens its items, also at zero
+    expect(zeroPending?.tagName).toBe('BUTTON');
+  });
+
   it('encodes a task link whose id contains a space, slash and question mark', async () => {
     const user = userEvent.setup();
     const base = myWorkInput();
@@ -116,10 +160,81 @@ describe('shared workbench frame and My Work', () => {
     expect(screen.getByTestId('location').getAttribute('data-path')).toBe('/tasks/external%20%2F%3F');
   });
 
+  it('encodes the same hostile work id from a table row and a pending card', async () => {
+    const user = userEvent.setup();
+    const base = myWorkInput();
+    const input = {
+      ...base,
+      tasks: {
+        ...base.tasks,
+        items: (base.tasks.items ?? []).map((task: OverviewTask) => task.id === 'mine-running' ? { ...task, id: 'row /?' } : task),
+      },
+      decisions: {
+        ...base.decisions,
+        items: (base.decisions.items ?? []).map((decision) => ({ ...decision, id: 'decision /?' })),
+      },
+    };
+    const { container } = renderFrame(input);
+    const row = Array.from(container.querySelectorAll('tr[data-openable="true"]'))
+      .find((element) => element.textContent?.includes('Synthetic mine-running'));
+    expect(row).toBeTruthy();
+    await user.click(row!);
+    expect(screen.getByTestId('location').getAttribute('data-path')).toBe('/tasks/row%20%2F%3F');
+
+    const decisionCard = Array.from(container.querySelectorAll('.obs-todo-card'))
+      .find((element) => element.textContent?.includes('Synthetic mine-decision'));
+    expect(decisionCard).toBeTruthy();
+    await user.click(decisionCard!);
+    expect(screen.getByTestId('location').getAttribute('data-path')).toBe('/inbox');
+    expect(screen.getByTestId('location').getAttribute('data-search')).toContain('item=decision%20%2F%3F');
+  });
+
+  it('truncates a hostile title in chain nodes and pending cards and renders it as text', () => {
+    const longTitle = `${'外部依赖的长标题 '.repeat(20)}<img src=x onerror=alert(1)>`;
+    const base = myWorkInput();
+    const input = {
+      ...base,
+      tasks: {
+        ...base.tasks,
+        items: (base.tasks.items ?? []).map((task: OverviewTask) => task.id === 'other-review' ? { ...task, title: longTitle } : task),
+      },
+    };
+    const { container } = renderFrame(input);
+    const chainTitles = Array.from(container.querySelectorAll('.obs-chain-title'));
+    expect(chainTitles.length).toBeGreaterThan(0);
+    for (const title of chainTitles) {
+      expect(title.textContent!.length).toBeLessThanOrEqual(120);
+    }
+    expect(container.querySelector('.obs-chain-block img')).toBeNull();
+    const cardTitles = Array.from(container.querySelectorAll('.obs-todo-title'));
+    expect(cardTitles.length).toBeGreaterThan(0);
+    for (const title of cardTitles) {
+      expect(title.textContent!.length).toBeLessThanOrEqual(120);
+    }
+    expect(cardTitles.some((title) => title.textContent?.includes('…'))).toBe(true);
+    expect(container.querySelector('.obs-todo-rail img')).toBeNull();
+    expect(container.textContent).not.toContain(longTitle);
+  });
+
+  it('toggles the basis of a generated verdict in place instead of navigating', async () => {
+    const user = userEvent.setup();
+    renderFrame();
+    await user.click(screen.getByRole('button', { name: '这句话的依据' }));
+    expect(screen.getByTestId('workbench-verdict-basis')).toBeTruthy();
+    expect(screen.getByTestId('workbench-verdict-basis').textContent).toContain('没有一期更新可读');
+    const location = screen.getByTestId('location');
+    // a generated sentence toggles its basis instead of navigating
+    expect(location.getAttribute('data-path')).toBe('/workbench');
+    expect(location.getAttribute('data-search')).toContain('basis=1');
+    await user.click(screen.getByRole('button', { name: '收起依据' }));
+    expect(screen.queryByTestId('workbench-verdict-basis')).toBeNull();
+    expect(screen.getByTestId('location').getAttribute('data-path')).toBe('/workbench');
+  });
+
   it.each([
     ['本周通过核验', 1],
     ['Agent 在跑', 1],
-    ['我在等', 3],
+    ['我在等', 2],
     ['等你处理', 4],
   ])('opens %s into exactly %i detail rows from the same array', async (label, count) => {
     const user = userEvent.setup();

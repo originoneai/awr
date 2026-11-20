@@ -42,9 +42,9 @@ met; incomplete facts leave the note blank.
 
 | Rule | Selection | Sentence key |
 | ---- | --------- | ------------ |
-| `verified-previous` | `previousPeriod.count !== null` | `previousWeek` |
+| `verified-previous` | `previousPeriod.count is a number` | `previousWeek` |
 | `agents-stalled` | `stalledOwned > 0 && all activity known` | `stalledOther` |
-| `waiting-oldest` | `every waiting.durationDays !== null` | `waitingOldest` |
+| `waiting-oldest` | `every waiting.durationDays is known` | `waitingOldest` |
 | `pending-oldest` | `every pending duration is known at read time` | `pendingOldest` |
 
 `stalledOwned` counts the current member's stalled tasks with explicit inactive-Agent facts. Any
