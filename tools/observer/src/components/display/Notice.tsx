@@ -9,13 +9,14 @@ export interface NoticeProps {
   title?: ReactNode;
   extra?: ReactNode;
   tone?: 'info' | 'warning';
+  className?: string;
 }
 
 /** A read-only explanatory strip; it intentionally has no business action slot. */
-export function Notice({ children, title, extra, tone = 'info' }: NoticeProps) {
+export function Notice({ children, title, extra, tone = 'info', className }: NoticeProps) {
   return (
     <Alert
-      className="obs-notice"
+      className={['obs-notice', className].filter(Boolean).join(' ')}
       data-tone={tone}
       type={tone === 'warning' ? 'warning' : 'info'}
       showIcon

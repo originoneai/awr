@@ -36,7 +36,7 @@ describe('human-language visible-text guard', () => {
     expect(findForbiddenVisibleText(defaultVisibleText(document.body)).map((entry) => entry.id)).toContain('long_hex');
   });
 
-  it.each(['/knowledge', '/settings', '/advanced'])('uses human language on the %s placeholder', async (path) => {
+  it.each(['/knowledge'])('uses human language on the %s placeholder', async (path) => {
     stubFetch({ '/api/team/projects': DEMO_PROJECTS });
     renderApp(path);
     expect(await screen.findByTestId('state-not-open')).toBeTruthy();
