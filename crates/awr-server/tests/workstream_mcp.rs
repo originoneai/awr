@@ -1358,7 +1358,7 @@ async fn query_contract_diagnostics_match_http_and_mcp_and_corrected_reads_succe
         }
         assert!(!mcp.to_string().contains("synthetic-private"));
         assert!(mcp.to_string().len() < 900);
-        let read = call(&client, "awr_team_query", corrected.clone(), false).await;
+        let mut read = call(&client, "awr_team_query", corrected.clone(), false).await;
         let response = http()
             .post(format!("{}/one/query", server.url))
             .bearer_auth(A)
@@ -1367,7 +1367,23 @@ async fn query_contract_diagnostics_match_http_and_mcp_and_corrected_reads_succe
             .await
             .unwrap();
         assert_eq!(response.status(), reqwest::StatusCode::OK);
-        let http: Value = response.json().await.unwrap();
+        let mut http: Value = response.json().await.unwrap();
+        // The HTTP and MCP reads are separate transactions; each list item's
+        // execution-liveness as-of time is its own measurement, so zero those
+        // before comparing the payloads.
+        for result in [&mut http, &mut read] {
+            let count = result["data"]["items"]
+                .as_array()
+                .map(|a| a.len())
+                .unwrap_or(0);
+            for index in 0..count {
+                if let Some(time) = result.pointer_mut(&format!(
+                    "/data/items/{index}/summary/execution/as_of_unix_ms"
+                )) {
+                    *time = json!(0);
+                }
+            }
+        }
         assert_eq!(http["data"], read["data"]);
     }
     // A syntactically valid selector does not confer access. Unregistered source
@@ -2470,6 +2486,21 @@ async fn sdk_clients_negotiate_tools_and_isolate_workstreams_on_one_service() {
     );
     assert_eq!(ar["data"]["total"], 2);
     assert!(!ar.to_string().contains("private"));
+    // The execution liveness fact rides the same summary over MCP: the first
+    // readable work has a live session, and no session id appears anywhere.
+    assert_eq!(
+        ar["data"]["items"][0]["summary"]["execution"]["value"]["session_state"],
+        "active"
+    );
+    assert!(
+        ar["data"]["items"][0]["summary"]["execution"]["value"]["last_checkpoint_at_unix_ms"]
+            .is_i64()
+    );
+    assert!(
+        ar["data"]["items"][1]["summary"]["execution"]["reason"] == "no_session"
+            && ar["data"]["items"][1]["summary"]["execution"]["value"].is_null()
+    );
+    assert!(!ar.to_string().contains("session-a"));
     assert_eq!(br["data"]["items"][0]["work_id"], "b-private");
     for work in ["b-private", "does-not-exist"] {
         let r = call(

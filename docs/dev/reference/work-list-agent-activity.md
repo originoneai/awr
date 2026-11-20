@@ -2,9 +2,10 @@
 
 The overview read model uses an explicit session-activity fact to determine whether an Agent is currently running. Report times and audit activity retain their separate meanings.
 
-## Optional summary field
+## Summary field
 
-A `work.list` item with summary version 1 may carry this optional field:
+A `work.list` item with summary version 1 carries this field; consumers must
+still tolerate its absence from older services:
 
 ```json
 {
@@ -33,6 +34,26 @@ When no session exists, the field is:
 }
 ```
 
+## Field reference
+
+| Aspect | Definition |
+| --- | --- |
+| Value shape | `session_state` (`active` or `ended`) plus `last_checkpoint_at_unix_ms` (integer or `null`), or an explicit `no_session` absence. |
+| Selected session | The same session of record as `work.observe`, restricted to the work's current ownership version: a session holding a live claim first, then an active session, then the latest checkpoint, then the newer session id. The ownership join matches scope, work, workstream and `ownership_version`. |
+| Session state | The selected session's `sessions.state`; only `active` reads as `active`. `ended`, `interrupted` and `incomplete` all read as `ended`. |
+| Last checkpoint time | `created_at` of the selected session's latest checkpoint, from the session's `latest_checkpoint_id` pointer. Checkpoint contents stay unread. |
+| As-of time | The read transaction's page timestamp, like the other populated summary fields. |
+| Absence | A work with no session under the current ownership version — including works whose sessions all belong to older ownership versions — reads as `no_session`, with no guessed state. |
+
+## Why the field stays within the read boundary
+
+The summary is already filtered to works the reader may read; this field adds
+only two facts inside that boundary: whether a session is currently live, and
+when it last checkpointed. It carries no session, client, conversation or
+actor identifier, no checkpoint content, and no claim or lease state. Reading
+it grants no execution permission; agent readers' delegation scope is
+unchanged. A hidden work stays absent, with or without this field.
+
 ## Observer adaptation
 
 The bridge maps `active` to `agentActive: true`. It maps `ended` and the explicit `no_session` absence to `agentActive: false`.
@@ -43,4 +64,8 @@ The synthetic full demo emits the field from each task's recorded `agent_active`
 
 ## Service status
 
-The production Team service does not provide this field yet. AWR-PPD-056 owns the server-side implementation. Until then, production overview results retain their existing unknown-Agent-activity behavior.
+The production Team service provides this field in every `work.list` and
+`work.search` summary item (AWR-PPD-056). The existing bounded page query
+carries the liveness fact from its selected session of record; it adds no
+separate page query or per-work queries. See [Team workstream
+service](team-workstream-service.md) for the summary envelope.
