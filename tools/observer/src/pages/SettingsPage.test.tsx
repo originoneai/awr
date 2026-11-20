@@ -1,12 +1,15 @@
 import { readFileSync } from 'node:fs';
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from '../i18n';
 import enUS from '../i18n/en-US';
 import zhCN from '../i18n/zh-CN';
 import { defaultVisibleText, findHumanLanguageViolations } from '../lib/human-language-guard';
 import { revokeObservationReads } from '../lib/queries';
+import { routes } from '../router';
 import { demoOverviewModelResponse } from '../test-fixtures/overview-model';
 import { DEMO_PROJECTS, renderApp } from '../test-utils';
 
@@ -52,6 +55,7 @@ interface SetupOptions {
   overview?: unknown;
   capabilities?: unknown;
   pending?: boolean;
+  overviewGate?: Promise<void>;
   capabilitiesFailure?: { current: boolean };
 }
 
@@ -63,7 +67,10 @@ function setupSettings(options: SetupOptions = {}) {
     if (options.pending && !url.includes('/api/team/projects')) return new Promise<Response>(() => {});
     if (url.includes('/api/team/projects')) return json(options.projects ?? DEMO_PROJECTS);
     if (url.includes('/api/team/directory')) return json(options.directory ?? { ok: true, data: DIRECTORY });
-    if (url.includes('/api/team/overview-model')) return json(options.overview ?? demoOverviewModelResponse());
+    if (url.includes('/api/team/overview-model')) {
+      if (options.overviewGate) await options.overviewGate;
+      return json(options.overview ?? demoOverviewModelResponse());
+    }
     if (url.includes('/api/team/read')) {
       const query = JSON.parse(String(init?.body)).query;
       if (query.op === 'capabilities') {
@@ -286,6 +293,126 @@ describe('settings read failures and revocation', () => {
     const notice = await screen.findByTestId('settings-read-failed');
     await userEvent.setup().click(within(notice).getByRole('button', { name: '重新读取' }));
     expect(screen.queryByRole('button', { name: /派发|认领|批准|复核|回答|合入/ })).toBeNull();
+  });
+});
+
+describe('settings review-round regressions', () => {
+  it('treats a directory-only failure as partial and offers retry', async () => {
+    setupSettings({ directory: { ok: false, error: { code: 'Unavailable', message: 'private directory failure' } } });
+    renderApp('/settings?scope=demo');
+    const notice = await screen.findByTestId('settings-read-partial');
+    expect(screen.getByTestId('page-settings').getAttribute('data-state')).toBe('partial');
+    expect(screen.getByTestId('settings-organization-read-failed')).toBeTruthy();
+    expect(within(notice).getByRole('button', { name: '重新读取' })).toBeTruthy();
+    expect(document.body.textContent).not.toContain('private directory failure');
+  });
+
+  it('treats an unauthenticated directory read as revoked and clears content', async () => {
+    setupSettings({ directory: { ok: false, error: { code: 'Unauthenticated', message: 'revoked synthetic directory' } } });
+    // Isolate the page guard from QueryCache's global session-expiry fallback: both paths
+    // must clear protected content, and this test must fail if the directory check is removed.
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const router = createMemoryRouter(routes, { initialEntries: ['/settings?scope=demo'] });
+    render(<QueryClientProvider client={queryClient}><RouterProvider router={router} /></QueryClientProvider>);
+    expect(await screen.findByTestId('state-forbidden')).toBeTruthy();
+    expect(screen.queryByTestId('page-settings')).toBeNull();
+    expect(document.body.textContent).not.toContain('示例组织');
+    expect(document.body.textContent).not.toContain('revoked synthetic directory');
+  });
+
+  it('keeps the page loading while only the overview model is pending', async () => {
+    setupSettings({ overviewGate: new Promise<void>(() => {}) });
+    renderApp('/settings?scope=demo');
+    expect(await screen.findByTestId('settings-organization-tree')).toBeTruthy();
+    expect(await screen.findByTestId('settings-duty-definitions-missing')).toBeTruthy();
+    expect(screen.getByTestId('page-settings').getAttribute('data-state')).toBe('loading');
+  });
+
+  it('refetches projects capabilities overview model and directory on retry', async () => {
+    const failedRead = { ok: false, error: { code: 'Unavailable', message: 'private directory failure' } };
+    const { calls } = setupSettings({ directory: failedRead });
+    renderApp('/settings?scope=demo');
+    const notice = await screen.findByTestId('settings-read-partial');
+    calls.length = 0;
+    await userEvent.setup().click(within(notice).getByRole('button', { name: '重新读取' }));
+    const count = (path: string) => calls.filter((url) => url.includes(path)).length;
+    await waitFor(() => {
+      expect(count('/api/team/projects')).toBe(1);
+      expect(count('/api/team/read')).toBe(1);
+      expect(count('/api/team/overview-model')).toBe(1);
+      expect(count('/api/team/directory')).toBe(1);
+    });
+  });
+
+  it('reports partial coverage when duty definitions are missing', async () => {
+    setupSettings();
+    renderApp('/settings?scope=demo');
+    expect(await screen.findByTestId('settings-duty-definitions-missing')).toBeTruthy();
+    expect(screen.getByTestId('settings-read-coverage').textContent).toBe(i18n.t('settings.coveragePartial'));
+    expect(screen.getByTestId('settings-read-coverage').textContent).not.toBe(i18n.t('settings.coverageComplete'));
+  });
+
+  it('collects departments that appear only on members', async () => {
+    const memberOnly = { key: 'member-only', name: '成员专属小组' };
+    setupSettings({
+      directory: {
+        ok: true,
+        data: {
+          ...DIRECTORY,
+          departments: [DIRECTORY.departments[0]],
+          members: [{ name: '成员戊', available: true, departments: [memberOnly] }],
+        },
+      },
+    });
+    renderApp('/settings?scope=demo');
+    const organization = await screen.findByTestId('settings-organization-tree');
+    expect(organization.textContent).toContain('成员专属小组 · 1 人');
+  });
+
+  it('marks only organization and department names longer than 80 characters for truncation', async () => {
+    const longOrganization = `${'示例组织'.repeat(20)}长`;
+    const longDepartment = `${'应用小组'.repeat(20)}长`;
+    setupSettings({
+      directory: { ok: true, data: { ...DIRECTORY, organization: longOrganization, departments: [{ key: 'long', name: longDepartment }], members: [] } },
+    });
+    const longView = renderApp('/settings?scope=demo');
+    const longTree = await screen.findByTestId('settings-organization-tree');
+    const longLabels = longTree.querySelectorAll('.settings-org-node-label');
+    expect(longLabels[0].getAttribute('data-truncate')).toBe('true');
+    expect(longLabels[0].textContent).toBe(longOrganization);
+    expect(longLabels[1].getAttribute('data-truncate')).toBe('true');
+    expect(longLabels[1].textContent).toContain(longDepartment);
+    longView.unmount();
+
+    const boundaryOrganization = '示例组织'.repeat(20);
+    const boundaryDepartment = '应用小组'.repeat(20);
+    setupSettings({
+      directory: { ok: true, data: { ...DIRECTORY, organization: boundaryOrganization, departments: [{ key: 'boundary', name: boundaryDepartment }], members: [] } },
+    });
+    renderApp('/settings?scope=demo');
+    const boundaryTree = await screen.findByTestId('settings-organization-tree');
+    const boundaryLabels = boundaryTree.querySelectorAll('.settings-org-node-label');
+    expect(boundaryLabels[0].getAttribute('data-truncate')).toBeNull();
+    expect(boundaryLabels[0].textContent).toBe(boundaryOrganization);
+    expect(boundaryLabels[1].getAttribute('data-truncate')).toBeNull();
+    expect(boundaryLabels[1].textContent).toContain(boundaryDepartment);
+  });
+
+  it('does not render empty role names as duty columns', async () => {
+    const response = capabilities();
+    setupSettings({
+      capabilities: {
+        ...response,
+        result: {
+          ...response.result,
+          business_role_presets: { ...response.result.business_role_presets, roles: ['', 'observer'] },
+        },
+      },
+    });
+    renderApp('/settings?scope=demo');
+    const duty = await screen.findByTestId('settings-duty-table');
+    await waitFor(() => expect([...duty.querySelectorAll('thead th')].map((header) => header.textContent))
+      .toEqual(['', '只读']));
   });
 });
 
