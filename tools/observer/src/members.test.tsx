@@ -294,7 +294,7 @@ describe('members and Agents panorama', () => {
     const model = overviewModel();
     // An unread approvals plane makes every person's pending total unknown (null), which must not read as zero.
     model.input.approvals = { coverage: 'unread', reason: 'not-read' };
-    model.coverage.approvals = { status: 'unread', missing: ['approvals'] };
+    model.coverage.approvals = { status: 'unread', missing: [] };
     setOverviewResponse(model);
     renderApp('/members?scope=demo');
     await loaded();
