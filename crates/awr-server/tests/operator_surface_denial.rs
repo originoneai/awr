@@ -309,6 +309,7 @@ async fn http_and_mcp_clients_cannot_reach_operator_only_surfaces() {
         "awr_team_directory_preview",
         "awr_team_directory_apply",
         "awr_team_directory_outcome",
+        "awr_team_portfolio_overview",
         "awr_team_update_record",
         "awr_team_planning_suggest",
         "awr_team_planning_draft",
