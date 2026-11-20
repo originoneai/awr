@@ -25,7 +25,7 @@ describe('pages whose feature is not open yet', () => {
   it('says the same in English', async () => {
     await act(async () => { await i18n.changeLanguage('en-US'); });
     stubFetch({ '/api/team/projects': DEMO_PROJECTS });
-    renderApp('/settings');
+    renderApp('/knowledge');
     const notOpen = await screen.findByTestId('state-not-open');
     expect(defaultVisibleText(notOpen.parentElement as HTMLElement)).toContain('This feature is not available yet');
   });
