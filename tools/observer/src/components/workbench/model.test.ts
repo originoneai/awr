@@ -52,6 +52,25 @@ describe('recorded report facts joined by task id', () => {
 });
 
 describe('report age and declaration', () => {
+  it('uses minutes through 59 minutes and hours at exactly 60 minutes', () => {
+    expect(reportAge(NOW - 59 * 60_000, NOW)).toEqual({ kind: 'minutes', count: 59 });
+    expect(reportAge(NOW - 60 * 60_000, NOW)).toEqual({ kind: 'hours', count: 1 });
+  });
+
+  it('uses hours through 23 hours 59 minutes and days at exactly 24 hours', () => {
+    expect(reportAge(NOW - (23 * 60 + 59) * 60_000, NOW)).toEqual({ kind: 'hours', count: 23 });
+    expect(reportAge(NOW - DAY_MS, NOW)).toEqual({ kind: 'days', count: 1 });
+  });
+
+  it('treats a report at the read time as just now and one millisecond later as unknown', () => {
+    expect(reportAge(NOW, NOW)).toEqual({ kind: 'justNow', count: 0 });
+    expect(reportAge(NOW + 1, NOW)).toEqual({ kind: 'unknown', count: 0 });
+  });
+
+  it('floors partial hours instead of rounding them up', () => {
+    expect(reportAge(NOW - 119 * 60_000, NOW)).toEqual({ kind: 'hours', count: 1 });
+  });
+
   it('buckets ages to whole units from the fixed now of the read', () => {
     expect(reportAge(NOW - 30_000, NOW)).toEqual({ kind: 'justNow', count: 0 });
     expect(reportAge(NOW - 60_000, NOW)).toEqual({ kind: 'minutes', count: 1 });
@@ -135,6 +154,32 @@ describe('My Work model', () => {
 });
 
 describe('fact-based KPI notes', () => {
+  it('keeps an equal week neutral and marks only upward or downward comparisons', () => {
+    const noteForCounts = (currentCount: number, previousCount: number) => {
+      const base = myWorkInput();
+      const template = base.tasks.items?.find((task) => task.id === 'mine-verified')!;
+      const tasks = (base.tasks.items ?? []).filter((task) => task.id !== 'mine-verified');
+      const reviewRounds = (base.reviewRounds.items ?? []).filter((round) => round.taskId !== 'mine-verified');
+      const addVerified = (id: string, verifiedAtUnixMs: number) => {
+        tasks.push({ ...template, id, verifiedAtUnixMs });
+        reviewRounds.push(reviewRound(id, 'approved', { openedAtUnixMs: verifiedAtUnixMs - 60_000 }));
+      };
+      for (let index = 0; index < currentCount; index += 1) {
+        addVerified(`current-verified-${index}`, NOW - DAY_MS);
+      }
+      for (let index = 0; index < previousCount; index += 1) {
+        addVerified(`previous-verified-${index}`, WEEK_START - DAY_MS);
+      }
+      const input = { ...base, tasks: complete(tasks), reviewRounds: complete(reviewRounds) };
+      return buildMyWorkModel(deriveOverview(input), 'zh-CN', {
+        personId: 'person-a', readAtUnixMs: NOW,
+      }).metrics[0].note;
+    };
+    expect(noteForCounts(1, 1)).toEqual({ text: '上周 1 件' });
+    expect(noteForCounts(2, 1)).toEqual({ text: '上周 1 件', tone: 'good', trend: 'up' });
+    expect(noteForCounts(1, 2)).toEqual({ text: '上周 2 件', tone: 'bad', trend: 'down' });
+  });
+
   it('derives previous, stalled, longest-wait and pending notes from the metric arrays', () => {
     const base = myWorkInput();
     const input = {
