@@ -42,6 +42,11 @@ class DemoReadError extends Error {
 function variantData(variant) {
   if (!DEMO_VARIANTS.has(variant)) throw new Error(`Unknown demo variant: ${variant}`);
   const data = clone(completeOrganization);
+  if (variant === 'canonical') {
+    // Canonical records the viewer's explicit all-projects grant. Visibility counts below
+    // describe coverage; this separate authorization fact is what opens the top perspective.
+    data.viewer.can_view_all_projects = true;
+  }
   if (variant === 'empty') {
     for (const key of ['people', 'projects', 'tasks', 'goals', 'documents', 'updates', 'decisions',
       'project_questions', 'view_roles', 'handoffs', 'planning_candidates', 'activity', 'lessons',
@@ -263,6 +268,37 @@ function canonicalProjectList(data) {
       questions: CANONICAL_TAKEOVER_PROJECT.questions,
     },
   }];
+}
+
+/** Facts for the existing perspective rules, derived from the canonical directory and
+ * recorded viewer scope. No count is inferred from a requested or remembered perspective. */
+function canonicalPerspectiveFacts(data) {
+  const units = new Map(data.organization.departments.map((department) => [department.id, department]));
+  const groupIds = new Set(data.projects.map((project) => project.group_id));
+  const departmentIds = new Set(data.projects.map((project) => project.parent_department_id));
+  const hierarchyKnown = groupIds.size > 0 && departmentIds.size > 0
+    && [...groupIds].every((id) => units.has(id))
+    && [...departmentIds].every((id) => units.has(id))
+    && data.projects.every((project) => units.get(project.group_id)?.parent_id === project.parent_department_id);
+  const viewerId = data.viewer.person_id;
+  const supervisedGroups = new Set(data.projects.filter((project) => project.lead_person_id === viewerId)
+    .map((project) => project.group_id));
+  const memberGroups = new Set(data.projects.filter((project) => project.member_person_ids.includes(viewerId))
+    .map((project) => project.group_id));
+  return {
+    supervisedGroupCount: supervisedGroups.size,
+    memberGroupProjectCount: memberGroups.size,
+    visibleProjectGroupCount: groupIds.size,
+    visibleProjectDepartmentCount: departmentIds.size,
+    canViewAllProjects: typeof data.viewer.can_view_all_projects === 'boolean'
+      ? data.viewer.can_view_all_projects : null,
+    directory: {
+      groupsRegistered: hierarchyKnown ? true : null,
+      departmentsRegistered: hierarchyKnown ? true : null,
+    },
+    // Pending counts remain the composition layer's facts. Unknown counts never open a view.
+    pending: { me: null, lead: null, dept: null, top: null },
+  };
 }
 
 const isoUtcDate = (unixMs) => new Date(unixMs).toISOString().slice(0, 10);
@@ -1772,8 +1808,12 @@ function createDemoOrganization({ variant = 'full',
       return { status: 403, json: { code: 'Forbidden', message: 'access denied' }, setCookie: [] };
     }
     const members = data.people.filter((member) => selected.member_person_ids.includes(member.person_id));
-    const departmentIds = new Set([selected.group_id, selected.parent_department_id,
-      ...members.map((member) => member.group_id)]);
+    // Canonical records the viewer's all-projects scope, so its directory carries the whole
+    // visible hierarchy (every visible project's group and parent department) instead of one
+    // project's slice; every other variant keeps the single-project slice byte for byte.
+    const scopeProjectList = variant === 'canonical' ? data.projects : [selected];
+    const departmentIds = new Set([...scopeProjectList.flatMap((project) => [project.group_id,
+      project.parent_department_id]), ...members.map((member) => member.group_id)]);
     const departments = data.organization.departments.filter((department) => departmentIds.has(department.id));
     return { status: 200, json: { data: {
       project_id: projectId,
@@ -1849,4 +1889,5 @@ function createDemoOrganization({ variant = 'full',
 module.exports = {
   createDemoOrganization, DemoReadError, DEMO_VARIANTS, DEMO_FUTURE_READ_OPS,
   canonicalOverviewInput, demoOverviewAsOf, canonicalProjectList, canonicalPeriodUpdates,
+  canonicalPerspectiveFacts,
 };

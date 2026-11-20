@@ -4,6 +4,9 @@
  "app": "/activity?project=P-001&kind=development",
  "ready": "[data-testid=\"page-activity\"]",
  "protoReady": ".block",
+ "notes": [
+  "Theme button __ay is skipped because the sidebar note's wording is content-driven: the prototype's demo-only notice (概念原型，只用来看…) wraps three lines while the product's one-line notice (示例数据，全部是合成的) leaves the button 32px lower-bounded differently. The note pair below pins the note's own style and inset; its __w/__h are skipped for the same wording reason. The bottom stack (16px sider padding, note, 8px note margin, 36px button) is pinned by the Playwright spec at y 824."
+ ],
  "pairs": [
   ["page title (anchor)", ".head h1", ".obs-page-title", ["TEXT", "__ax", "__ay"], {"noPosition": true}],
   ["sidebar", "#side", ".shell-sider", ["background-color", "border-right-width", "border-right-color", "padding-left", "padding-right", "padding-top", "__ax", "__ay"], {"noPosition": true}],
@@ -20,9 +23,16 @@
   ["nav 2 selected item", "#side nav.nav:nth-of-type(2) button:nth-child(2)", ".shell-sider nav:nth-of-type(2) li.ant-menu-item:nth-child(2)", ["__ax", "__ay", "background-color", "color", "border-top-left-radius", "font-weight"], {"noPosition": true}],
   ["nav 2 selected icon", "#side nav.nav:nth-of-type(2) button:nth-child(2) svg", ".shell-sider nav:nth-of-type(2) li.ant-menu-item:nth-child(2) svg", ["__ax", "__ay", "color"], {"noPosition": true}],
   ["nav 2 selected label", "#side nav.nav:nth-of-type(2) button:nth-child(2) .name", ".shell-sider nav:nth-of-type(2) li.ant-menu-item:nth-child(2) .ant-menu-title-content a span", ["TEXT", "__ax", "__ay"], {"noPosition": true}],
-  ["theme button", "#side .side-foot button", ".shell-theme button", ["__ax", "__ay", "padding-left", "border-top-left-radius", "color"], {"noPosition": true}],
+  ["theme button", "#side .side-foot button", ".shell-theme button", ["__ax", "__ay", "padding-left", "border-top-left-radius", "color"], {"noPosition": true, "skip": ["__ay"]}],
   ["theme icon", "#side .side-foot button svg", ".shell-theme button svg", ["__ax", "__ay"], {"noPosition": true}],
   ["theme label", "#side .side-foot button .lbl", ".shell-theme-label", ["TEXT", "__ax", "__ay"], {"noPosition": true}],
+  ["side note", "#side .side-note", ".shell-demo-note", ["TEXT", "margin-top", "margin-left", "margin-right", "__ax"], {"noPosition": true, "skip": ["__w", "__h"]}],
+  ["data source button", ".top > .tog", ".shell-header .shell-data-source", ["BOX", "background-color", "border-top-color", "box-shadow", "__ax", "__ay"], {"noPosition": true}],
+  ["data source icon", ".top > .tog svg", ".shell-header .shell-data-source svg", ["__ax", "__ay", "__w", "__h", "color", "stroke-width"], {"noPosition": true}],
+  ["data source label", ".top > .tog .lbl", ".shell-header .shell-data-source .shell-data-source-label", ["TEXT", "__ax", "__ay"], {"noPosition": true}],
+  ["perspective caption", ".top .as .cap .short", ".shell-perspective-caption > span", ["TEXT", "__ax", "__ay"], {"noPosition": true}],
+  ["perspective segment", ".top .as .seg", ".shell-perspective-segment", ["column-gap", "padding", "background-color", "border-top-left-radius", "__ay", "__h"], {"noPosition": true}],
+  ["perspective option", ".top .as .seg button:not([aria-pressed=\"true\"])", ".shell-perspective-option[aria-pressed=\"false\"]", ["height", "padding-left", "padding-right", "border-top-left-radius", "TEXT"], {"noPosition": true}],
   ["topbar", ".top", ".shell-header", ["background-color", "border-bottom-width", "border-bottom-color", "padding-left", "padding-right", "__ax", "__ay"], {"noPosition": true}],
   ["crumb building icon", ".top .crumb > svg:first-child", ".shell-header nav.ant-breadcrumb svg:first-of-type", ["__ax", "__ay", "color"], {"noPosition": true}],
   ["crumb current page", ".top .crumb b", ".shell-header nav.ant-breadcrumb li:last-child .ant-breadcrumb-link span", ["TEXT", "__ax", "__ay"], {"noPosition": true}],

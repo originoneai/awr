@@ -8,7 +8,7 @@
 const { mapObservation, createGithubObserver } = require('./team-progress');
 const { projectDirectory } = require('./directory');
 const { createDemoOrganization, DEMO_FUTURE_READ_OPS, canonicalOverviewInput, demoOverviewAsOf,
-  canonicalProjectList, canonicalPeriodUpdates } = require('./demo-organization');
+  canonicalProjectList, canonicalPeriodUpdates, canonicalPerspectiveFacts } = require('./demo-organization');
 const { OBSERVATION_STALE_AFTER_MS, READ_TIMEOUT_MS, OVERVIEW_DEADLINE_MS, compareAuthoritative, resolveCurrency } = require('./observation-contract');
 
 const fs = require('fs');
@@ -2024,6 +2024,27 @@ function createTeamBridge(opts) {
       const cached = cachedOverviewValue(req, 'overview-model', project);
       if (cached) return overviewModelWithCurrency(cached.value, now());
       return sharedOverviewModelComposition(project, req, res, session);
+    },
+
+    'GET /api/team/shell': async () => {
+      // The shell's own fact read: which records this deployment's pages read, the
+      // organization's display name, plus the perspective facts the canonical demo
+      // directory establishes. Live deployments and every other demo variant answer
+      // perspective null; no perspective rule lives here.
+      if (TEAM.live) {
+        return { ok: true, source: 'live', perspective: null, organizationName: null };
+      }
+      if (!TEAM.demoMode) {
+        return { ok: false, error: { code: 'DemoDisabled', message: 'fixtures require demo mode' } };
+      }
+      return {
+        ok: true,
+        source: 'demo',
+        organizationName: TEAM.demoOrganization
+          ? TEAM.demoOrganization.data.organization?.name ?? null : null,
+        perspective: TEAM.demoOrganization && TEAM.demoOrganization.variant === 'canonical'
+          ? canonicalPerspectiveFacts(TEAM.demoOrganization.data) : null,
+      };
     },
 
     'GET /api/team/projects': async (url, _body, req, res) => {

@@ -50,8 +50,7 @@ export function PerspectiveSwitcher({ alignEnd = false }: PerspectiveSwitcherPro
     gap: geometry.gapToCaption,
     minWidth: 0,
     marginLeft: compactViewport ? 0 : alignEnd ? 'auto' : 0,
-  };
-  const segmentStyle: CSSProperties = {
+  };  const segmentStyle: CSSProperties = {
     display: 'inline-flex',
     flex: compactViewport ? '1 1 0' : '0 0 auto',
     gap: geometry.gap,
@@ -82,7 +81,9 @@ export function PerspectiveSwitcher({ alignEnd = false }: PerspectiveSwitcherPro
           whiteSpace: 'nowrap',
         }}
       >
-        {t('shell.perspective')}
+        {/* The inner span keeps the caption's text an inline box, like the prototype's
+            .cap > .short, so the caption rides the body 20px line box without its own. */}
+        <span>{t('shell.perspective')}</span>
       </span>
       <div
         className="shell-perspective-segment"
@@ -107,6 +108,8 @@ export function PerspectiveSwitcher({ alignEnd = false }: PerspectiveSwitcherPro
             fontFamily: 'inherit',
             fontSize: geometry.optionFontSize,
             fontWeight: active ? geometry.selectedFontWeight : geometry.fontWeight,
+            // Prototype .seg button resets onto the body 20px line box.
+            lineHeight: 'var(--craft-leading-body)',
             whiteSpace: 'nowrap',
             transition: `background-color ${craftTokens.motion.feedbackMs}ms ${craftTokens.motion.easing}, color ${craftTokens.motion.feedbackMs}ms ${craftTokens.motion.easing}`,
           };

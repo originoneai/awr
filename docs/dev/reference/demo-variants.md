@@ -61,6 +61,26 @@ corresponding live reads exist and supply their real response shapes.
   that shell read with a scoped empty known model for P-004; unknown directory keys remain
   `Forbidden`. This demo-only shell answer is not a replacement takeover read.
 
+## Canonical directory scope and shell facts
+
+The canonical viewer's recorded scope is all projects (`viewer.can_view_all_projects`),
+so two more reads carry the organization's whole visible hierarchy (AWR-PPO-081). Both
+stay isolated to `canonical`:
+
+- `directory/read` lists every unit the visible projects cover — both departments and all
+  three groups, 研发部/应用小组/平台小组/客户交付部/交付小组 in the fixture's own order —
+  instead of one project's slice. Project membership (`members`,
+  `project_department_ids`) stays scoped to the queried project, exactly as before.
+- `GET /api/team/shell` answers the facts the existing perspective rules consume
+  (`derivePerspectives`, unchanged): zero supervised groups, one member group, three
+  visible groups, two departments, the explicit all-projects authorization and a
+  directory with groups and departments registered. With those facts the four heights
+  open by the rules themselves; no rule is relaxed. Every other variant and every live
+  deployment answers `perspective: null`. Pending counts stay the composition layer's
+  facts (the shell leaves them unknown).
+- The same shell read carries the organization's display name (demo: 示例组织; live:
+  null, and the header falls back to its authorization wording).
+
 Which reads replace them: AWR-PPD-010/011/012 supply the phase-update reads,
 AWR-PPD-052 supplies group display metadata, AWR-PPD-060b supplies the composed
 project-list read including lead metadata, and AWR-RCN-009 supplies takeover results.
