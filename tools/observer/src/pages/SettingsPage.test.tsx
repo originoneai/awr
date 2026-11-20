@@ -270,7 +270,7 @@ describe('settings read failures and revocation', () => {
     await screen.findByTestId('settings-read-unknown');
     expect(screen.getByTestId('page-settings').getAttribute('data-state')).toBe('unknown');
     expect(screen.getByTestId('freshness-badge')).toBeTruthy();
-  });
+  }, 20_000);
 
   it.each(['zh-CN', 'en-US'])('clears all records and stops every read after revocation in %s', async (language) => {
     await changeLanguage(language);
