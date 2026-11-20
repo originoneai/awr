@@ -1,6 +1,7 @@
 import { createBrowserRouter, Navigate, useLocation, type RouteObject } from 'react-router';
 import { AccountPage } from './pages/AccountPage';
 import { ActivityPage } from './pages/ActivityPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { InboxPage } from './pages/InboxPage';
 import { MembersPage } from './pages/MembersPage';
 import { PlaceholderPage, type PlaceholderPageKey } from './pages/PlaceholderPage';
@@ -41,7 +42,7 @@ export const routes: RouteObject[] = [
       { path: 'lessons', element: placeholder('lessons') },
       { path: 'members', element: <MembersPage /> },
       { path: 'activity', element: <ActivityPage /> },
-      { path: 'settings', element: <PlaceholderPage pageKey="settings" /> },
+      { path: 'settings', element: <SettingsPage /> },
       { path: 'takeover', element: placeholder('takeover') },
       { path: 'takeover/:result', element: placeholder('takeover') },
       // Account and Agent connection flows remain available outside the read-only business pages.

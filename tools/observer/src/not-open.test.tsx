@@ -11,8 +11,6 @@ afterEach(async () => {
 describe('pages whose feature is not open yet', () => {
   it.each([
     ['/knowledge', '经验', '/lessons'],
-    ['/settings', '管理设置', '/settings'],
-    ['/advanced', '管理设置', '/settings'],
   ])('%s says once that it is not open, and does not read as an empty read', async (path, title, destination) => {
     stubFetch({ '/api/team/projects': DEMO_PROJECTS });
     const { router } = renderApp(path);
