@@ -4,129 +4,16 @@ const assert = require('node:assert/strict');
 const { after, before, test } = require('node:test');
 const { createServer } = require('vite');
 const { createTeamBridge } = require('../server/team-bridge');
-const { createDemoOrganization, DEMO_FUTURE_READ_OPS } = require('../server/demo-organization');
+const {
+  createDemoOrganization, DEMO_VARIANTS, DEMO_FUTURE_READ_OPS, canonicalOverviewInput,
+} = require('../server/demo-organization');
 const fixture = require('../fixtures/demo-organization.json');
 
 const DAY = 86_400_000;
+const WEEK = 7 * DAY;
 const clone = (value) => structuredClone(value);
 const complete = (items) => ({ coverage: 'complete', items });
 const statusOf = (task) => task.prototype_status;
-
-function canonicalInput(data) {
-  const activity = data.tasks.flatMap((task) => task.timeline.map((entry) => ({
-    id: entry.activity_id,
-    taskId: task.work_id,
-    action: 'session.checkpoint',
-    actorId: `${task.owner_person_id}-agent`,
-    atUnixMs: entry.at_unix_ms,
-  })));
-  return {
-    tasks: complete(data.tasks.map((task) => ({
-      id: task.work_id,
-      title: task.title,
-      ownerPersonId: task.owner_person_id,
-      agentName: task.agent_name,
-      projectId: task.project_id,
-      groupId: task.group_id,
-      goalIds: task.goal_ids,
-      commitments: [
-        { id: `project-${task.project_id}`, title: task.project_id, kind: 'project' },
-        ...task.goal_ids.map((goalId) => ({ id: goalId, title: goalId, kind: 'goal' })),
-        ...(task.week_committed ? [{ id: `${task.project_id}-week-47`, title: 'Week 47 commitment', kind: 'project' }] : []),
-      ],
-      verifiedAtUnixMs: task.verified_at_unix_ms,
-      acceptance: task.acceptance_final ? task.acceptance.map((criterion) => ({
-        evidence: [{ passed: criterion.evidence_state === 'ok', current: true }],
-      })) : [],
-      report: task.report ? {
-        completed: task.report.completed_declaration,
-        reportedAtUnixMs: task.report.reported_at_unix_ms,
-      } : null,
-      submittedResultAtUnixMs: task.submitted_result_at_unix_ms,
-      integrated: task.integrated,
-      started: task.started,
-      agentActive: task.agent_active,
-      externalWait: task.wait?.kind === 'ext' ? {
-        party: task.wait.waiting_on_name,
-        what: task.wait.what,
-        sinceUnixMs: task.wait.started_at_unix_ms,
-      } : null,
-    }))),
-    dependencies: complete(data.tasks.flatMap((task) => task.dependencies.map((dependency) => ({
-      id: dependency.dependency_id,
-      consumerTaskId: task.work_id,
-      providerTaskId: dependency.provider_work_id,
-      satisfied: dependency.satisfied,
-      what: dependency.required_version_label,
-      sinceUnixMs: dependency.since_unix_ms,
-    })))),
-    decisions: complete(data.decisions.map((decision) => ({
-      id: decision.decision_id,
-      taskId: decision.work_id,
-      state: decision.state,
-      current: decision.current,
-      question: decision.question,
-      impact: decision.impact,
-      allowedResponderIds: decision.allowed_responder_person_ids,
-      createdAtUnixMs: decision.created_at_unix_ms,
-    }))),
-    reviewRounds: complete(data.tasks.flatMap((task) => (task.delivery?.rounds || []).map((round) => ({
-      id: round.round_id,
-      taskId: task.work_id,
-      roundIndex: round.round_index,
-      state: round.state,
-      current: round.current,
-      independent: round.independent,
-      authorPersonId: round.author_person_id,
-      reviewerPersonId: round.reviewer_person_id,
-      authorActorId: round.author_actor_id,
-      reviewerActorId: round.reviewer_actor_id,
-      openedAtUnixMs: round.opened_at_unix_ms,
-    })))),
-    handoffs: complete(data.handoffs.map((handoff) => ({
-      id: handoff.handoff_id,
-      taskId: handoff.work_id,
-      kind: handoff.kind,
-      status: handoff.status,
-      pending: handoff.pending,
-      fromPersonId: handoff.from_person_id,
-      toPersonId: handoff.to_person_id,
-      updatedAtUnixMs: handoff.updated_at_unix_ms,
-    }))),
-    // The fixture's approvals are the canonical pending-approval facts the prototype's inbox
-    // holds for 林悦 (the candidate lesson A-002) and 周宁 (the plan breakdown A-004). Each
-    // maps one-to-one onto OverviewApproval; assertFixtureReferences pins every one to its
-    // pending record, its lesson or planning candidate, and its recipient and project.
-    approvals: complete(data.approvals.map((approval) => ({
-      id: approval.id,
-      kind: approval.kind,
-      recipientPersonId: approval.recipientPersonId,
-      projectId: approval.projectId,
-      title: approval.title,
-      sinceUnixMs: approval.sinceUnixMs,
-    }))),
-    members: complete([...data.people, ...data.view_roles].map((member) => ({
-      personId: member.person_id,
-      displayName: member.display_name,
-      groupId: member.group_id,
-    }))),
-    activity: complete(activity),
-    options: {
-      nowUnixMs: data.now_unix_ms,
-      stalledAfterDays: 1,
-      views: {
-        me: { personId: 'M-002', projectId: 'P-001' },
-        lead: { personId: 'M-001', projectId: 'P-001' },
-        department: { personId: 'M-010', projectIds: ['P-001', 'P-002', 'P-003'] },
-        top: { personId: 'M-011', goalIds: ['GOAL-001', 'GOAL-002', 'GOAL-003'] },
-        currentWeek: { startUnixMs: Date.parse('2026-11-16T00:00:00Z'), endUnixMs: Date.parse('2026-11-22T23:59:59.999Z') },
-        previousWeek: { startUnixMs: Date.parse('2026-11-09T00:00:00Z'), endUnixMs: Date.parse('2026-11-15T23:59:59.999Z') },
-        currentMonth: { startUnixMs: Date.parse('2026-11-01T00:00:00Z'), endUnixMs: Date.parse('2026-11-30T23:59:59.999Z') },
-        previousMonth: { startUnixMs: Date.parse('2026-10-01T00:00:00Z'), endUnixMs: Date.parse('2026-10-31T23:59:59.999Z') },
-      },
-    },
-  };
-}
 
 function assertFixtureReferences(data) {
   const taskIds = new Set(data.tasks.map((task) => task.work_id));
@@ -276,7 +163,7 @@ test('opaque keys are separate from every display title', () => {
 });
 
 test('PPO-010 derives the prototype statuses and the revised prototype metric goldens', () => {
-  const result = deriveOverview(canonicalInput(fixture));
+  const result = deriveOverview(canonicalOverviewInput(fixture));
   // The prototype's task states are the reference and the derivation must reproduce them
   // exactly: every task carries its prototype_status, nothing may override it, and each
   // derived status must equal it. This is the check that catches data edits made to move
@@ -370,7 +257,7 @@ test('a planted dependency contradiction fails both the structural and PPO-010 o
   const consumer = mutant.tasks.find((task) => task.work_id === 'T-106');
   consumer.dependencies[0].satisfied = true;
   assert.throws(() => assertFixtureReferences(mutant), /cannot be satisfied by an unverified provider/);
-  const result = deriveOverview(canonicalInput(mutant));
+  const result = deriveOverview(canonicalOverviewInput(mutant));
   assert.notEqual(result.tasks.find((task) => task.id === 'T-106').status,
     consumer.prototype_status,
     'the planted contradiction must change the derived status and fail the status golden');
@@ -385,7 +272,7 @@ test('a planted agent flag that contradicts a prototype_status fails the status 
   const task = mutant.tasks.find((item) => item.work_id === 'T-114');
   task.agent_active = true;
   task.report.completed_declaration = false;
-  const result = deriveOverview(canonicalInput(mutant));
+  const result = deriveOverview(canonicalOverviewInput(mutant));
   assert.equal(result.tasks.find((item) => item.id === 'T-114').status, 'running');
   assert.notEqual(result.tasks.find((item) => item.id === 'T-114').status, task.prototype_status);
   assert.throws(() => assert.deepEqual(
@@ -400,7 +287,7 @@ test('emptying the fixture approvals fails the structural and the pending-metric
   const mutant = clone(fixture);
   mutant.approvals = [];
   assert.throws(() => assertFixtureReferences(mutant), /is mapped into the approvals plane/);
-  const result = deriveOverview(canonicalInput(mutant));
+  const result = deriveOverview(canonicalOverviewInput(mutant));
   assert.equal(result.views.me.metrics[3].count, 2);
   assert.equal(result.views.lead.metrics[3].count, 1);
   assert.throws(() => assert.deepEqual(
@@ -415,7 +302,7 @@ test('an approval addressed to a person outside the organization fails the struc
   const mutant = clone(fixture);
   mutant.approvals[0].recipientPersonId = 'M-999';
   assert.throws(() => assertFixtureReferences(mutant), /has a known recipient/);
-  const result = deriveOverview(canonicalInput(mutant));
+  const result = deriveOverview(canonicalOverviewInput(mutant));
   assert.equal(result.coverage.complete, true);
   assert.equal(result.views.me.metrics[3].count, 2,
     'the derivation alone does not drop the ghost approval from the me queue');
@@ -802,25 +689,176 @@ test('one startup offset shifts every demo timestamp without changing relative t
   assert.ok(checked > 250, 'the check covers the organization and representative replies');
 });
 
-function shiftCanonicalTimes(value, shift) {
-  if (Array.isArray(value)) return value.map((item) => shiftCanonicalTimes(item, shift));
-  if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key,
-    typeof item === 'number' && /UnixMs$/.test(key) ? item + shift : shiftCanonicalTimes(item, shift)]));
+/** Monday-00:00 to Sunday-24:00 calendar week of a moment, in the viewer's own zone. */
+function localWeekBounds(nowUnixMs) {
+  const date = new Date(nowUnixMs);
+  const midnight = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const weekday = (date.getDay() + 6) % 7;
+  const start = midnight - weekday * DAY;
+  return [start, start + WEEK - 1];
 }
 
-test('all four view metric sets are invariant under arbitrary demo clock offsets', () => {
+test('whole-week demo clock offsets keep the week-window numbers stable', () => {
+  // The page computes its "this week" window from the viewer's calendar, so the default
+  // offset rounds to whole weeks: the fixture's Thursday noon stays Thursday noon and its
+  // calendar weeks keep catching the same events. Relative time alone is preserved under
+  // any offset (see the startup-offset test above); only whole weeks keep the week windows.
   const expected = {
-    me: [2, 1, 2, 3], lead: [2, 7, 7, 2], department: [3, 10, 5, 0], top: [3, 12, 5, 0],
+    me: [2, 1, 2, 3], lead: [2, 7, 7, 2], top: [3, 12, 5, 0],
   };
-  const baselineInput = canonicalInput(fixture);
-  for (const shift of [0, 47 * DAY + 1234, -80 * DAY, 400 * DAY]) {
-    const result = deriveOverview(shiftCanonicalTimes(baselineInput, shift));
+  const week0 = deriveOverview(canonicalOverviewInput(
+    createDemoOrganization({ variant: 'full', timestampShiftMs: 0 }).data));
+  const previousWeek = { me: week0.views.me.metrics[0].previousPeriod.count,
+    lead: week0.views.lead.metrics[0].previousPeriod.count };
+  for (const weeks of [0, 1, 3, -2, 26, 400]) {
+    const demo = createDemoOrganization({ variant: 'full', timestampShiftMs: weeks * WEEK });
+    const result = deriveOverview(canonicalOverviewInput(demo.data));
     const counts = Object.fromEntries(Object.entries(result.views).map(([view, summary]) =>
       [view, summary.metrics.map((metric) => metric.count)]));
-    assert.deepEqual(counts, expected, `offset ${shift}`);
+    assert.deepEqual({ me: counts.me, lead: counts.lead, top: counts.top }, expected, `offset ${weeks} weeks`);
+    // Department keeps every scope-and-wait number; only its month metric is calendar-bound
+    // (a month is not a whole number of weeks, so facts slide across month boundaries).
+    assert.deepEqual([counts.department[0], counts.department[2], counts.department[3]], [3, 5, 0],
+      `offset ${weeks} weeks: department scope, cross-group and pending numbers`);
+    assert.equal(result.views.me.metrics[0].previousPeriod.count, previousWeek.me,
+      `offset ${weeks} weeks: me previous week`);
+    assert.equal(result.views.lead.metrics[0].previousPeriod.count, previousWeek.lead,
+      `offset ${weeks} weeks: lead previous week`);
     assert.deepEqual(result.views.me.metrics[2].items.map((wait) => wait.task.id).sort(), ['T-103', 'T-111'],
       'the owner self-answer wait belongs to her Agent, not to the prototype waiting-on-others list');
     assert.ok(result.waits.every((wait) => wait.durationDays >= 0));
+    const [start, end] = localWeekBounds(demo.data.now_unix_ms);
+    const verifiedThisWeek = demo.data.tasks.filter((task) => statusOf(task) === 'verified'
+      && task.verified_at_unix_ms >= start && task.verified_at_unix_ms <= end).length;
+    assert.equal(verifiedThisWeek, 2, `the calendar week of "now" catches the same events after ${weeks} weeks`);
   }
+  // The month metric drifts by design: one week of offset slides T-202's late-October
+  // verification into November. Pinned so the drift stays a documented, reviewed number
+  // instead of an invisible change to the department view's second figure.
+  const drifted = deriveOverview(canonicalOverviewInput(
+    createDemoOrganization({ variant: 'full', timestampShiftMs: WEEK }).data));
+  assert.equal(drifted.views.department.metrics[1].count, 11);
+});
+
+test('the default demo clock offset is a whole number of weeks', () => {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const demo = createDemoOrganization({ variant: 'full' });
+    const shift = demo.data.now_unix_ms - fixture.now_unix_ms;
+    assert.ok(Number.isInteger(shift / WEEK),
+      `the default offset must be whole weeks, got ${shift} ms (${shift / WEEK} weeks)`);
+    assert.equal(new Date(demo.data.now_unix_ms).getUTCDay(), new Date(fixture.now_unix_ms).getUTCDay(),
+      'the fixture "now" keeps its weekday');
+    assert.equal(demo.data.now_unix_ms % DAY, fixture.now_unix_ms % DAY,
+      'the fixture "now" keeps its time of day');
+  }
+  // An explicit offset still wins, including non-whole-week ones for relative-time tests.
+  assert.equal(createDemoOrganization({ variant: 'full', timestampShiftMs: 1234 })
+    .data.now_unix_ms, fixture.now_unix_ms + 1234);
+});
+
+test('a non-whole-week offset can move events across the calendar-week boundary', () => {
+  // Only relative time is guaranteed under an arbitrary offset (the startup-offset test);
+  // a part-week slide drags verified timestamps over the week boundary, which is exactly
+  // why the default rounds to whole weeks. Pinned so a future "smarter" rounding that
+  // drifts by days fails here instead of quietly rescheduling the prototype's weeks.
+  const demo = createDemoOrganization({ variant: 'full', timestampShiftMs: 4 * DAY });
+  const [start, end] = localWeekBounds(demo.data.now_unix_ms);
+  const verifiedThisWeek = demo.data.tasks.filter((task) => statusOf(task) === 'verified'
+    && task.verified_at_unix_ms >= start && task.verified_at_unix_ms <= end).length;
+  assert.equal(verifiedThisWeek, 0,
+    'four days of drift move every "verified this week" event out of the current week');
+});
+
+const PROTOTYPE_METRICS = {
+  me: [2, 1, 2, 3], lead: [2, 7, 7, 2], department: [3, 10, 5, 0], top: [3, 12, 5, 0],
+};
+
+async function canonicalModelFor(project) {
+  const { call } = bridgeForTest({ demoVariant: 'canonical', demoTimestampShiftMs: 0,
+    now: () => fixture.now_unix_ms });
+  const model = await call('GET /api/team/overview-model', `/api/team/overview-model?project=${project}`);
+  assert.equal(model.ok, true, JSON.stringify(model));
+  return model;
+}
+
+test('the canonical variant serves the fully-known overview model for each project', async () => {
+  assert.equal(DEMO_VARIANTS.has('canonical'), true);
+  const tasksByProject = Object.fromEntries(fixture.projects.map((project) => [project.project_id,
+    fixture.tasks.filter((task) => task.project_id === project.project_id).length]));
+  const byId = (items) => new Map(items.map((item) => [item.id, item]));
+  const union = { tasks: [], dependencies: [], decisions: [], reviewRounds: [], handoffs: [],
+    members: [], activity: [], approvals: [] };
+  for (const project of ['P-001', 'P-002', 'P-003']) {
+    const model = await canonicalModelFor(project);
+    assert.equal(model.project, project);
+    // Every plane is complete and honest about the whole project's facts.
+    for (const [plane, detail] of Object.entries(model.coverage)) {
+      assert.deepEqual(detail, { status: 'complete', missing: [] }, `${project} ${plane} coverage`);
+      assert.equal(model.input[plane].coverage, 'complete', `${project} ${plane} slice`);
+    }
+    assert.equal(model.input.tasks.items.length, tasksByProject[project]);
+    assert.deepEqual([...new Set(model.input.tasks.items.map((task) => task.projectId))], [project]);
+    assert.ok(model.input.tasks.items.every((task) => task.externalWait !== undefined
+      && task.verifiedAtUnixMs !== undefined && task.submittedResultAtUnixMs !== undefined
+      && task.commitments !== undefined && task.acceptance !== undefined),
+      `${project}: the facts the live reads cannot supply yet are all present`);
+    assert.deepEqual(model.input.approvals.items.map((approval) => approval.id).sort(),
+      fixture.approvals.filter((approval) => approval.projectId === project)
+        .map((approval) => approval.id).sort(), `${project} approvals stay project-scoped`);
+    // Options mirror the full path's fixed "now" and the viewer's me scope, plus the
+    // calendar periods and stall threshold the canonical clock makes knowable; the
+    // threshold must stay the canonical one or the prototype statuses stop matching.
+    assert.deepEqual(model.input.options, {
+      nowUnixMs: fixture.now_unix_ms,
+      stalledAfterDays: 1,
+      views: {
+        me: { personId: fixture.viewer.person_id, projectId: project },
+        currentWeek: canonicalOverviewInput(fixture).options.views.currentWeek,
+        previousWeek: canonicalOverviewInput(fixture).options.views.previousWeek,
+        currentMonth: canonicalOverviewInput(fixture).options.views.currentMonth,
+        previousMonth: canonicalOverviewInput(fixture).options.views.previousMonth,
+      },
+    });
+    assert.equal(model.freshness.authoritative.status, 'measured');
+    assert.equal(model.freshness.authoritative.at_unix_ms, fixture.now_unix_ms);
+    assert.equal(model.freshness.page_read.at_unix_ms, model.read_at_unix_ms);
+    // Deriving one project's reply leaves every task status known (no "unknown" state,
+    // the honest gap the full variant currently carries) and reproduces the me numbers.
+    const derived = deriveOverview(model.input);
+    assert.ok(derived.tasks.every((task) => task.status !== 'unknown'), `${project} task statuses`);
+    assert.equal(derived.coverage.sections.status.complete, true, `${project} status section`);
+    assert.equal(derived.coverage.sections.waits.complete, true, `${project} waits section`);
+    if (project === 'P-001') {
+      assert.deepEqual(derived.views.me.metrics.map((metric) => metric.count), PROTOTYPE_METRICS.me);
+    }
+    for (const plane of Object.keys(union)) {
+      for (const item of model.input[plane].items) union[plane].push(item);
+    }
+  }
+  // The three project inputs partition the whole canonical input: their union plus the
+  // canonical view scopes reproduces every prototype number exactly.
+  const whole = canonicalOverviewInput(fixture);
+  for (const plane of Object.keys(union)) {
+    assert.deepEqual([...byId(union[plane]).keys()].sort(), [...byId(whole[plane].items).keys()].sort(),
+      `${plane}: the union of the three project inputs is the whole canonical input`);
+    for (const [id, item] of byId(union[plane])) {
+      assert.deepEqual(item, byId(whole[plane].items).get(id), `${plane} ${id} survives project scoping unchanged`);
+    }
+  }
+  const merged = deriveOverview({ ...whole, tasks: whole.tasks,
+    dependencies: whole.dependencies, decisions: whole.decisions,
+    reviewRounds: whole.reviewRounds, handoffs: whole.handoffs,
+    members: whole.members, activity: whole.activity, approvals: whole.approvals });
+  assert.deepEqual(Object.fromEntries(Object.entries(merged.views).map(([view, summary]) =>
+    [view, summary.metrics.map((metric) => metric.count)])), PROTOTYPE_METRICS);
+});
+
+test('the full variant keeps the merged overview-model reply shape byte for byte', async () => {
+  // Pins the #704 reply as merged: zero offset and a fixed clock make every field
+  // deterministic, so any shape drift — a dropped field, a renamed gap reason, a new
+  // default — fails here before it can reach a pixel comparison.
+  const { call } = bridgeForTest({ demoTimestampShiftMs: 0, now: () => fixture.now_unix_ms });
+  const model = await call('GET /api/team/overview-model', '/api/team/overview-model?project=P-001');
+  assert.equal(model.ok, true, JSON.stringify(model));
+  assert.deepEqual(model, require('./fixtures/overview-model-full-demo.json'));
 });

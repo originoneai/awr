@@ -283,7 +283,7 @@ describe('the real-shaped pages show a reporter as written, with long identifier
     const marked = (readdirSync('src', { recursive: true }) as string[])
       .filter((file) => file.endsWith('.tsx') && !file.endsWith('.test.tsx'))
       .filter((file) => readFileSync(`src/${file}`, 'utf8').includes('data-reporter-text'));
-    expect(marked.sort()).toEqual(['components/ProgressReport.tsx', 'components/WorkDetailPanel.tsx', 'pages/ProjectOverview.tsx']);
+    expect(marked.sort()).toEqual(['components/ProgressReport.tsx', 'components/WorkDetailPanel.tsx', 'pages/ProjectOverview.tsx', 'pages/ProjectsPage.tsx']);
   });
 
   it.each(Object.keys(REPORTER_SENTENCES) as Array<keyof typeof REPORTER_SENTENCES>)('%s exempts exactly the reporter\'s sentences', async (page) => {

@@ -1,0 +1,593 @@
+{
+  "ok": true,
+  "project": "P-001",
+  "read_at_unix_ms": 1795089600000,
+  "input": {
+    "tasks": {
+      "coverage": "complete",
+      "items": [
+        {
+          "id": "T-103",
+          "title": "订单页面联调",
+          "projectId": "P-001",
+          "ownerPersonId": "M-002",
+          "report": {
+            "completed": false,
+            "reportedAtUnixMs": 1795088880000
+          },
+          "agentName": "Claude 桌面（林悦的 Agent）",
+          "started": true,
+          "agentActive": true,
+          "integrated": null
+        },
+        {
+          "id": "T-104",
+          "title": "空状态检查",
+          "projectId": "P-001",
+          "ownerPersonId": "M-002",
+          "report": {
+            "completed": false,
+            "reportedAtUnixMs": 1794924000000
+          },
+          "agentName": "Codex（林悦的 Agent）",
+          "started": true,
+          "agentActive": true,
+          "integrated": null
+        },
+        {
+          "id": "T-107",
+          "title": "订单列表分页",
+          "projectId": "P-001",
+          "ownerPersonId": "M-002",
+          "report": {
+            "completed": true,
+            "reportedAtUnixMs": 1794764400000
+          },
+          "agentName": "Claude 桌面（林悦的 Agent）",
+          "started": true,
+          "agentActive": false,
+          "integrated": true
+        },
+        {
+          "id": "T-108",
+          "title": "提交按钮防重复",
+          "projectId": "P-001",
+          "ownerPersonId": "M-002",
+          "report": {
+            "completed": true,
+            "reportedAtUnixMs": 1794844800000
+          },
+          "agentName": "Claude 桌面（林悦的 Agent）",
+          "started": true,
+          "agentActive": false,
+          "integrated": true
+        },
+        {
+          "id": "T-111",
+          "title": "导出功能",
+          "projectId": "P-001",
+          "ownerPersonId": "M-002",
+          "report": null,
+          "started": true,
+          "agentActive": false
+        },
+        {
+          "id": "T-112",
+          "title": "导出按钮的权限判断",
+          "projectId": "P-001",
+          "ownerPersonId": "M-002",
+          "report": null,
+          "started": false,
+          "agentActive": false
+        },
+        {
+          "id": "T-114",
+          "title": "错误提示文案",
+          "projectId": "P-001",
+          "ownerPersonId": "M-002",
+          "report": {
+            "completed": false,
+            "reportedAtUnixMs": 1795022400000
+          },
+          "agentName": "Claude 桌面（林悦的 Agent）",
+          "started": true,
+          "agentActive": false,
+          "integrated": null
+        },
+        {
+          "id": "T-101",
+          "title": "订单查询接口",
+          "projectId": "P-001",
+          "ownerPersonId": "M-003",
+          "report": {
+            "completed": true,
+            "reportedAtUnixMs": 1794669000000
+          },
+          "agentName": "Codex（陈宇的 Agent）",
+          "started": true,
+          "agentActive": false,
+          "integrated": true
+        },
+        {
+          "id": "T-102",
+          "title": "接口第 3 版：提交与错误反馈",
+          "projectId": "P-001",
+          "ownerPersonId": "M-003",
+          "report": {
+            "completed": false,
+            "reportedAtUnixMs": 1794932400000
+          },
+          "agentName": "Codex（陈宇的 Agent）",
+          "started": true,
+          "agentActive": false,
+          "integrated": false
+        },
+        {
+          "id": "T-105",
+          "title": "登录异常处理",
+          "projectId": "P-001",
+          "ownerPersonId": "M-003",
+          "report": {
+            "completed": false,
+            "reportedAtUnixMs": 1794913200000
+          },
+          "agentName": "Codex（陈宇的 Agent）",
+          "started": true,
+          "agentActive": false,
+          "integrated": false
+        },
+        {
+          "id": "T-109",
+          "title": "提交失败的错误码表",
+          "projectId": "P-001",
+          "ownerPersonId": "M-003",
+          "report": {
+            "completed": false,
+            "reportedAtUnixMs": 1794999600000
+          },
+          "agentName": "Codex（陈宇的 Agent）",
+          "started": true,
+          "agentActive": false,
+          "integrated": false
+        },
+        {
+          "id": "T-110",
+          "title": "订单状态机说明",
+          "projectId": "P-001",
+          "ownerPersonId": "M-003",
+          "report": {
+            "completed": false,
+            "reportedAtUnixMs": 1795012200000
+          },
+          "agentName": "Codex（陈宇的 Agent）",
+          "started": true,
+          "agentActive": false,
+          "integrated": false
+        },
+        {
+          "id": "T-106",
+          "title": "业务验收",
+          "projectId": "P-001",
+          "ownerPersonId": "M-004",
+          "report": null,
+          "started": false,
+          "agentActive": false
+        },
+        {
+          "id": "T-113",
+          "title": "压测脚本",
+          "projectId": "P-001",
+          "ownerPersonId": "M-004",
+          "report": {
+            "completed": true,
+            "reportedAtUnixMs": 1794481200000
+          },
+          "agentName": "Claude 桌面（许宁的 Agent）",
+          "started": true,
+          "agentActive": false,
+          "integrated": true
+        }
+      ]
+    },
+    "dependencies": {
+      "coverage": "complete",
+      "items": [
+        {
+          "consumerTaskId": "T-103",
+          "providerTaskId": "T-102",
+          "satisfied": false
+        },
+        {
+          "consumerTaskId": "T-106",
+          "providerTaskId": "T-103",
+          "satisfied": false
+        }
+      ]
+    },
+    "decisions": {
+      "coverage": "complete",
+      "items": [
+        {
+          "id": "Q-005",
+          "taskId": "T-101",
+          "state": "replied",
+          "current": true,
+          "question": "查询接口要不要加缓存层",
+          "impact": "回答后，相关任务才能按这个事实继续。",
+          "allowedResponderIds": [
+            "M-002"
+          ],
+          "createdAtUnixMs": 1794571200000
+        },
+        {
+          "id": "Q-002",
+          "taskId": "T-105",
+          "state": "open",
+          "current": true,
+          "question": "登录异常处理要不要返工",
+          "impact": "不决定的话，这件任务一直停在“复核退回”",
+          "allowedResponderIds": [
+            "M-001"
+          ],
+          "createdAtUnixMs": 1795003200000
+        },
+        {
+          "id": "Q-001",
+          "taskId": "T-104",
+          "state": "open",
+          "current": true,
+          "question": "空状态要不要显示引导文案",
+          "impact": "后面压着 3 件：空状态检查、订单页面联调的收尾、业务验收",
+          "allowedResponderIds": [
+            "M-002"
+          ],
+          "createdAtUnixMs": 1794916800000
+        }
+      ]
+    },
+    "reviewRounds": {
+      "coverage": "complete",
+      "items": [
+        {
+          "taskId": "T-107",
+          "id": "round-t-107-1",
+          "roundIndex": 1,
+          "state": "approved",
+          "current": true,
+          "independent": true,
+          "reviewerPersonId": "M-004",
+          "reviewerActorId": "M-004-agent"
+        },
+        {
+          "taskId": "T-108",
+          "id": "round-t-108-1",
+          "roundIndex": 1,
+          "state": "approved",
+          "current": true,
+          "independent": true,
+          "reviewerPersonId": "M-004",
+          "reviewerActorId": "M-004-agent"
+        },
+        {
+          "taskId": "T-101",
+          "id": "round-t-101-1",
+          "roundIndex": 1,
+          "state": "rejected",
+          "current": false,
+          "independent": true,
+          "reviewerPersonId": "M-004",
+          "reviewerActorId": "M-004-agent"
+        },
+        {
+          "taskId": "T-101",
+          "id": "round-t-101-2",
+          "roundIndex": 2,
+          "state": "approved",
+          "current": true,
+          "independent": true,
+          "reviewerPersonId": "M-004",
+          "reviewerActorId": "M-004-agent"
+        },
+        {
+          "taskId": "T-113",
+          "id": "round-t-113-1",
+          "roundIndex": 1,
+          "state": "approved",
+          "current": true,
+          "independent": true,
+          "reviewerPersonId": "M-001",
+          "reviewerActorId": "M-001-agent"
+        },
+        {
+          "taskId": "T-102",
+          "id": "round-t-102-1",
+          "roundIndex": 1,
+          "state": "open",
+          "current": true,
+          "independent": null,
+          "reviewerPersonId": null,
+          "reviewerActorId": null
+        },
+        {
+          "taskId": "T-105",
+          "id": "round-t-105-1",
+          "roundIndex": 1,
+          "state": "rejected",
+          "current": true,
+          "independent": true,
+          "reviewerPersonId": "M-004",
+          "reviewerActorId": "M-004-agent"
+        },
+        {
+          "taskId": "T-109",
+          "id": "round-t-109-1",
+          "roundIndex": 1,
+          "state": "open",
+          "current": true,
+          "independent": null,
+          "reviewerPersonId": null,
+          "reviewerActorId": null
+        },
+        {
+          "taskId": "T-110",
+          "id": "round-t-110-1",
+          "roundIndex": 1,
+          "state": "open",
+          "current": true,
+          "independent": null,
+          "reviewerPersonId": null,
+          "reviewerActorId": null
+        }
+      ]
+    },
+    "handoffs": {
+      "coverage": "complete",
+      "items": [
+        {
+          "id": "H-001",
+          "taskId": "T-112",
+          "kind": "responsibility",
+          "status": "proposed",
+          "pending": true,
+          "fromPersonId": "M-001",
+          "toPersonId": "M-002",
+          "updatedAtUnixMs": 1795081200000
+        }
+      ]
+    },
+    "members": {
+      "coverage": "complete",
+      "items": [
+        {
+          "personId": "M-001",
+          "displayName": "周宁",
+          "groupId": "G-001",
+          "actorIds": [
+            "M-001",
+            "M-001-agent"
+          ]
+        },
+        {
+          "personId": "M-002",
+          "displayName": "林悦",
+          "groupId": "G-001",
+          "actorIds": [
+            "M-002",
+            "M-002-agent"
+          ]
+        },
+        {
+          "personId": "M-003",
+          "displayName": "陈宇",
+          "groupId": "G-001",
+          "actorIds": [
+            "M-003",
+            "M-003-agent"
+          ]
+        },
+        {
+          "personId": "M-004",
+          "displayName": "许宁",
+          "groupId": "G-002",
+          "actorIds": [
+            "M-004",
+            "M-004-agent"
+          ]
+        }
+      ]
+    },
+    "activity": {
+      "coverage": "complete",
+      "items": [
+        {
+          "id": "EV-001",
+          "taskId": "T-103",
+          "action": "execution.report",
+          "actorId": "M-002-agent",
+          "atUnixMs": 1795088880000
+        },
+        {
+          "id": "EV-002",
+          "taskId": "T-112",
+          "action": "task.assign",
+          "actorId": "M-001-agent",
+          "atUnixMs": 1795081200000
+        },
+        {
+          "id": "EV-003",
+          "taskId": null,
+          "action": "update.record",
+          "actorId": "M-001-agent",
+          "atUnixMs": 1795080600000
+        },
+        {
+          "id": "EV-004",
+          "taskId": null,
+          "action": "planning.propose",
+          "actorId": "M-003-agent",
+          "atUnixMs": 1795079400000
+        },
+        {
+          "id": "EV-005",
+          "taskId": null,
+          "action": "decision.request",
+          "actorId": "M-001-agent",
+          "atUnixMs": 1795015200000
+        },
+        {
+          "id": "EV-006",
+          "taskId": "T-105",
+          "action": "decision.request",
+          "actorId": "M-004-agent",
+          "atUnixMs": 1794996120000
+        },
+        {
+          "id": "EV-007",
+          "taskId": "T-105",
+          "action": "review.decide",
+          "actorId": "M-004-agent",
+          "atUnixMs": 1794996000000
+        },
+        {
+          "id": "EV-008",
+          "taskId": "T-102",
+          "action": "delivery.submit_and_request_review",
+          "actorId": "M-003-agent",
+          "atUnixMs": 1794932400000
+        },
+        {
+          "id": "EV-009",
+          "taskId": "T-104",
+          "action": "decision.request",
+          "actorId": "M-002-agent",
+          "atUnixMs": 1794924000000
+        },
+        {
+          "id": "EV-010",
+          "taskId": "T-108",
+          "action": "review.decide",
+          "actorId": "M-004-agent",
+          "atUnixMs": 1794909000000
+        },
+        {
+          "id": "EV-011",
+          "taskId": "T-103",
+          "action": "task.assign",
+          "actorId": "M-002-agent",
+          "atUnixMs": 1794841200000
+        },
+        {
+          "id": "EV-012",
+          "taskId": "T-107",
+          "action": "review.decide",
+          "actorId": "M-004-agent",
+          "atUnixMs": 1794824400000
+        },
+        {
+          "id": "EV-013",
+          "taskId": "T-101",
+          "action": "review.decide",
+          "actorId": "M-004-agent",
+          "atUnixMs": 1794677400000
+        }
+      ]
+    },
+    "approvals": {
+      "coverage": "complete",
+      "items": [
+        {
+          "id": "A-002",
+          "kind": "lesson-confirmation",
+          "recipientPersonId": "M-002",
+          "projectId": "P-001",
+          "title": "读多写少的查询接口先加缓存层",
+          "sinceUnixMs": 1794571200000
+        },
+        {
+          "id": "A-004",
+          "kind": "plan-approval",
+          "recipientPersonId": "M-001",
+          "projectId": "P-001",
+          "title": "“完善异常恢复”拆成了 4 件事",
+          "sinceUnixMs": 1795082400000
+        }
+      ]
+    },
+    "options": {
+      "nowUnixMs": 1795089600000,
+      "stalledAfterDays": 3,
+      "views": {
+        "me": {
+          "personId": "M-002",
+          "projectId": "P-001"
+        }
+      }
+    }
+  },
+  "coverage": {
+    "tasks": {
+      "status": "complete",
+      "missing": []
+    },
+    "dependencies": {
+      "status": "complete",
+      "missing": []
+    },
+    "decisions": {
+      "status": "complete",
+      "missing": []
+    },
+    "reviewRounds": {
+      "status": "complete",
+      "missing": [],
+      "known_empty": [
+        {
+          "op": "review.rounds",
+          "work_id": "T-112",
+          "workstream_id": "WS-001",
+          "reason": "no_runtime"
+        },
+        {
+          "op": "review.rounds",
+          "work_id": "T-106",
+          "workstream_id": "WS-003",
+          "reason": "no_runtime"
+        }
+      ]
+    },
+    "handoffs": {
+      "status": "complete",
+      "missing": []
+    },
+    "members": {
+      "status": "complete",
+      "missing": []
+    },
+    "activity": {
+      "status": "complete",
+      "missing": []
+    },
+    "approvals": {
+      "status": "complete",
+      "missing": []
+    }
+  },
+  "freshness": {
+    "report_received": {
+      "status": "not_measured"
+    },
+    "authoritative": {
+      "status": "measured",
+      "stale_after_ms": 120000,
+      "age_ms": 0,
+      "project_revision": "47",
+      "source_snapshot_id": "snapshot-P-001-47",
+      "coordinator_epoch": "epoch-P-001-47",
+      "at_unix_ms": 1795089600000
+    },
+    "page_read": {
+      "status": "measured",
+      "at_unix_ms": 1795089600000
+    }
+  }
+}
