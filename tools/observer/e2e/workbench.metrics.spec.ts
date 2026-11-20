@@ -142,6 +142,81 @@ test('heading, verdict band, KPI strip, chain, rail and detail panel match the p
   const panel = await styles(page, '.obs-detail-panel', ['margin-top', 'border-top-width', 'border-top-left-radius']);
   expect(panel).toEqual({ 'margin-top': '24px', 'border-top-width': '1px', 'border-top-left-radius': '16px' });
 
+  // .ptabs { min-height: 48px; border-bottom: 1px solid var(--line) } and its tabs pull up
+  // 1px over the hairline (.ptabs button.tab { height: 48px; margin-bottom: -1px }).
+  const tabsNav = await styles(page, '.obs-detail-tabs .ant-tabs-nav', ['height', 'border-bottom-width', 'border-bottom-color', 'padding-left']);
+  expect(tabsNav.height).toBe('48px');
+  expect(tabsNav['border-bottom-width']).toBe('1px');
+  expect(tabsNav['border-bottom-color']).toBe(await resolvedColor(page, 'var(--craft-color-hairline)'));
+  expect(tabsNav['padding-left']).toBe(phone ? '16px' : '20px');
+  const tabButton = await styles(page, '.obs-detail-tabs .ant-tabs-tab', ['height', 'margin-bottom']);
+  expect(tabButton).toEqual({ height: '48px', 'margin-bottom': '-1px' });
+  // A plain <button> keeps its default centre alignment in the prototype.
+  expect((await styles(page, '.obs-detail-tabs .ant-tabs-tab-btn', ['text-align']))['text-align']).toBe('center');
+
+  // .t { border-collapse: collapse } — rows carry the head's border exactly like the prototype.
+  expect((await styles(page, '.obs-detail-panel table', ['border-collapse']))['border-collapse']).toBe('collapse');
+  // .t td { border-top: 1px; no bottom border } so nothing is drawn under the last row;
+  // the first body row drops its top border exactly like .t tbody tr:first-child td.
+  const firstBodyCell = await styles(page, '.obs-detail-panel .ant-table-tbody tr:first-child td', ['border-top-width', 'border-bottom-width', 'border-bottom-style']);
+  expect(`${firstBodyCell['border-top-width']} ${firstBodyCell['border-bottom-width']} ${firstBodyCell['border-bottom-style']}`).toBe('0px 0px none');
+  const secondBodyCell = await styles(page, '.obs-detail-panel .ant-table-tbody tr:nth-child(2) td', ['border-top-width', 'border-bottom-width']);
+  expect(`${secondBodyCell['border-top-width']} ${secondBodyCell['border-bottom-width']}`).toBe('1px 0px');
+  // .t td.chevc { padding-right: 16px; color: ink-3; text-align: right; line-height: 0 }
+  const arrow = await styles(page, '.obs-detail-panel td.obs-table-arrow-column', ['padding-right', 'color', 'text-align', 'line-height', 'width']);
+  expect(arrow).toEqual({
+    'padding-right': '16px',
+    color: await resolvedColor(page, 'var(--craft-color-muted)'),
+    'text-align': 'right',
+    'line-height': '0px',
+    width: '36px',
+  });
+
+  // .who { gap: 10px } with the agent name in a 32px .ki box; .who .n { font-weight: 500 }.
+  const agentCell = await styles(page, '.obs-detail-panel td:first-child .obs-workbench-agent-name', ['column-gap']);
+  expect(agentCell['column-gap']).toBe('10px');
+  const badge = await styles(page, '.obs-detail-panel .obs-workbench-agent-badge', ['width', 'height', 'border-top-left-radius', 'background-color', 'color']);
+  expect(`${badge.width} ${badge.height} ${badge['border-top-left-radius']}`).toBe('32px 32px 8px');
+  expect(badge['background-color']).toBe(await resolvedColor(page, 'var(--craft-color-raised)'));
+  expect(badge.color).toBe(await resolvedColor(page, 'var(--craft-color-secondary)'));
+  expect((await styles(page, '.obs-detail-panel .obs-workbench-agent-name > span:last-child', ['font-weight']))['font-weight']).toBe('500');
+
+  // .kpi .v and .rail-head .n keep the prototype's proportional digits (no .num class).
+  expect((await styles(page, '.obs-kpi-value', ['font-variant-numeric']))['font-variant-numeric']).toBe('normal');
+  expect((await styles(page, '.obs-todo-count', ['font-variant-numeric']))['font-variant-numeric']).toBe('normal');
+  // .todo .r1 inherits the body's 20px leading.
+  expect((await styles(page, '.obs-todo-first-meta', ['line-height']))['line-height']).toBe('20px');
+  // .where-s { font-size: 12px } even when the span is the keyboard control.
+  expect((await styles(page, '.obs-todo-acts .obs-todo-agent', ['font-size']))['font-size']).toBe('12px');
+  // The count columns the prototype marks .num (tabular digits): the age and behind columns
+  // (the age column itself is one of the small-screen hides in both designs).
+  if (!phone) {
+    expect((await styles(page, '.obs-detail-panel th.obs-table-numeric-column', ['font-variant-numeric']))['font-variant-numeric']).toBe('tabular-nums');
+  }
+
+  // .cn keeps a readable floor and the row scrolls instead of squeezing: the node min-width
+  // token holds, and the row only enters scroll mode when the nodes cannot fit.
+  const nodeMin = await styles(page, '.obs-workbench-body .obs-chain-node', ['min-width']);
+  expect(nodeMin['min-width']).toBe('132px');
+  const chainRow = page.locator('.obs-workbench-body .obs-chain');
+  const overflowState = await chainRow.evaluate((element) => ({
+    flag: element.getAttribute('data-overflow'),
+    fits: element.scrollWidth <= element.clientWidth + 1,
+  }));
+  expect(overflowState.fits).toBe(true);
+  if (overflowState.flag === 'true') {
+    const scrolled = await chainRow.evaluate((element) => getComputedStyle(element).overflowX);
+    expect(scrolled).toBe('auto');
+  } else {
+    expect(await chainRow.evaluate((element) => getComputedStyle(element).overflowX)).toBe('visible');
+  }
+
+  // Prototype dark: the selected segment's shadow declaration mixes "none" into a list and
+  // computes to none (invalid at computed-value time); the ring exists in light mode only.
+  if (testInfo.project.name === 'desktop-dark') {
+    expect((await styles(page, '.obs-workbench-chain-switch button[aria-pressed="true"]', ['box-shadow']))['box-shadow']).toBe('none');
+  }
+
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   expect(await page.locator('body').innerText()).not.toMatch(/\b(?:undefined|null|NaN|protocol_version|workstream_id|contract_hash)\b/);
 });

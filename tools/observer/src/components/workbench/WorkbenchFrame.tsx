@@ -1,5 +1,4 @@
-import { ArrowLeft, ArrowRight, Bot, CheckCircle2 } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useSearchParams } from 'react-router';
 import type {
@@ -33,7 +32,18 @@ import {
   type TodoItem,
 } from '../display';
 import { AgentHandback } from './AgentHandback';
-import { metricDetailItems, waitingOnText, workbenchAgentName, workbenchDisplayText, type MyWorkModel, type WorkbenchMetric } from './model';
+import { ArrowLeftIcon, ArrowRightIcon, BotIcon, CircleCheckIcon } from '../icons/prototype-icons';
+import {
+  metricDetailItems,
+  reportAge,
+  reportDeclaration,
+  waitingOnText,
+  workbenchAgentName,
+  workbenchDisplayText,
+  type MyWorkModel,
+  type ReportDeclaration,
+  type WorkbenchMetric,
+} from './model';
 import './workbench.css';
 
 export type WorkbenchFrameState = 'data' | 'empty' | 'partial' | 'unknown';
@@ -42,6 +52,8 @@ interface WorkbenchFrameProps {
   model: MyWorkModel;
   projectKey: string;
   projectName: string;
+  /** Display names of the projects the viewer can read, keyed by project key. */
+  projectTitles?: Readonly<Record<string, string>>;
   freshness?: TeamFreshness;
   readAtUnixMs?: number;
   state?: WorkbenchFrameState;
@@ -69,7 +81,7 @@ function validChain(value: string | null, count: number): number {
 }
 
 /** The four perspectives reuse this frame; this PR supplies only the My Work configuration. */
-export function WorkbenchFrame({ model, projectKey, projectName, freshness, readAtUnixMs, state }: WorkbenchFrameProps) {
+export function WorkbenchFrame({ model, projectKey, projectName, projectTitles, freshness, readAtUnixMs, state }: WorkbenchFrameProps) {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -83,6 +95,43 @@ export function WorkbenchFrame({ model, projectKey, projectName, freshness, read
   const empty = model.metrics.every((metric) => metric.count === 0) && model.agentTasks.length === 0 && model.chains.length === 0;
   const resolvedState = state ?? (empty ? 'empty' : 'data');
   const scopeQuery = `scope=${encodeURIComponent(projectKey)}`;
+
+  /** What the reporter declared, in the shared vocabulary; the prose stays in the backend. */
+  function reportDeclarationText(declaration: ReportDeclaration): string {
+    if (declaration === 'done') return t('workbench.home.reportDone');
+    if (declaration === 'inProgress') return t('workbench.home.reportInProgress');
+    if (declaration === 'noDeclaration') return t('workbench.home.reportNoDeclaration');
+    return t('workbench.home.reportNotRead');
+  }
+
+  function reportAgeText(age: ReturnType<typeof reportAge>): string {
+    if (age.kind === 'minutes') return t('workbench.home.reportAgeMinutes', { count: age.count });
+    if (age.kind === 'hours') return t('workbench.home.reportAgeHours', { count: age.count });
+    if (age.kind === 'days') return t('workbench.home.reportAgeDays', { count: age.count });
+    if (age.kind === 'justNow') return t('workbench.home.reportAgeJustNow');
+    return t('workbench.home.reportNotRead');
+  }
+
+  /** A commitment's project key, taken from the impact task that carries it — never parsed
+   * from the commitment's own id, which is a record key, not a display name. */
+  const commitmentProjects = useMemo(() => {
+    const map = new Map<string, string>();
+    if (!activeChain) return map;
+    for (const task of activeChain.impact.items) {
+      if (task.projectId == null || task.commitments == null) continue;
+      for (const commitment of task.commitments) {
+        if (commitment.id != null && !map.has(commitment.id)) map.set(commitment.id, task.projectId);
+      }
+    }
+    return map;
+  }, [activeChain]);
+
+  function commitmentTitle(commitment: OverviewCommitment | null): string {
+    if (commitment?.kind === 'goal') return t('workbench.home.commitmentGoalFallback');
+    const projectKeyOfCommitment = commitment?.id != null ? commitmentProjects.get(commitment.id) : undefined;
+    const title = projectKeyOfCommitment != null ? projectTitles?.[projectKeyOfCommitment] : undefined;
+    return workbenchDisplayText(title ?? null, t('workbench.home.commitmentProjectFallback'));
+  }
 
   function updateParams(values: Record<string, string | null>) {
     const next = new URLSearchParams(searchParams);
@@ -168,7 +217,7 @@ export function WorkbenchFrame({ model, projectKey, projectName, freshness, read
     }
     return {
       kicker: t(node.commitment?.kind === 'goal' ? 'display.chain.goalKicker' : 'display.chain.projectKicker'),
-      title: workbenchDisplayText(node.commitment?.title, t('workbench.home.unnamedTask')),
+      title: commitmentTitle(node.commitment),
       open: node.commitment?.id != null,
     };
   }
@@ -242,7 +291,7 @@ export function WorkbenchFrame({ model, projectKey, projectName, freshness, read
     return {
       key: `${wait.kind}-${wait.task.id ?? index}-${index}`,
       cells: [
-        <span className="obs-workbench-wait-people"><span>{owner}</span><DisplayIcon icon={ArrowRight} /><span>{waitingOn}</span></span>,
+        <span className="obs-workbench-wait-people"><span>{owner}</span><DisplayIcon icon={ArrowRightIcon} /><span>{waitingOn}</span></span>,
         what,
         <span className="obs-tag">{t(`workbench.home.waitKinds.${wait.kind}`)}</span>,
         wait.durationDays === null ? t('workbench.home.durationUnknown') : (
@@ -258,19 +307,30 @@ export function WorkbenchFrame({ model, projectKey, projectName, freshness, read
     };
   });
 
-  const agentRows: DataTableRow[] = model.agentTasks.map((task, index) => ({
-    key: task.id ?? `task-${index}`,
-    cells: [
-      task.agentName
-        ? <span className="obs-workbench-agent-name"><DisplayIcon icon={Bot} /><span>{workbenchAgentName(task.agentName, t('workbench.home.noAgent'))}</span></span>
-        : <span className="obs-workbench-dim">{t('workbench.home.noAgent')}</span>,
-      workbenchDisplayText(task.title, t('workbench.home.unnamedTask')),
-      <span className="obs-workbench-dim">{t('workbench.home.reportNotRead')}</span>,
-      <TaskStatusTag status={task.status} live={task.agentActive === true} />,
-      <span className="obs-workbench-dim">{t('workbench.home.timeNotRead')}</span>,
-    ],
-    onOpen: task.id ? () => openTask(task) : undefined,
-  }));
+  const agentRows: DataTableRow[] = model.agentTasks.map((task, index) => {
+    const declaration = reportDeclaration(task.report);
+    const age = reportAge(task.report?.reportedAtUnixMs, readAtUnixMs);
+    return {
+      key: task.id ?? `task-${index}`,
+      cells: [
+        task.agentName
+          ? (
+            <span className="obs-workbench-agent-name">
+              <span className="obs-workbench-agent-badge" aria-hidden="true"><DisplayIcon icon={BotIcon} /></span>
+              <span>{workbenchAgentName(task.agentName, t('workbench.home.noAgent'))}</span>
+            </span>
+          )
+          : <span className="obs-workbench-dim">{t('workbench.home.noAgent')}</span>,
+        workbenchDisplayText(task.title, t('workbench.home.unnamedTask')),
+        declaration === 'unknown'
+          ? <span className="obs-workbench-dim">{reportDeclarationText(declaration)}</span>
+          : reportDeclarationText(declaration),
+        <TaskStatusTag status={task.status} live={task.agentActive === true} />,
+        <span className="obs-workbench-dim">{reportAgeText(age)}</span>,
+      ],
+      onOpen: task.id ? () => openTask(task) : undefined,
+    };
+  });
 
   function metricRow(item: unknown, metric: WorkbenchMetric, index: number) {
     if (metric.id === 'agents' && isAgent(item)) {
@@ -281,7 +341,7 @@ export function WorkbenchFrame({ model, projectKey, projectName, freshness, read
         meta: taskNames.length > 0
           ? t('workbench.home.metricAgentTasks', { tasks: taskNames.join(t('common.listSeparator')) })
           : t('workbench.home.metricNoTasks'),
-        leading: <DisplayIcon icon={Bot} />,
+        leading: <DisplayIcon icon={BotIcon} />,
         onOpen: item.tasks[0]?.id ? () => openTask(item.tasks[0]) : undefined,
       };
     }
@@ -320,7 +380,7 @@ export function WorkbenchFrame({ model, projectKey, projectName, freshness, read
       <section className="obs-detail-panel obs-workbench-metric-detail" data-testid="workbench-metric-detail" data-count={items.length}>
         <div className="obs-workbench-detail-head">
           <button type="button" className="obs-workbench-back" onClick={() => updateParams({ detail: null })}>
-            <DisplayIcon icon={ArrowLeft} />{t('workbench.home.metricDetailBack')}
+            <DisplayIcon icon={ArrowLeftIcon} />{t('workbench.home.metricDetailBack')}
           </button>
           <h2>{detailMetric.label}</h2>
           <span>{detailMetric.count}{detailMetric.unit}</span>
@@ -345,8 +405,8 @@ export function WorkbenchFrame({ model, projectKey, projectName, freshness, read
                   { key: 'agent', title: t('workbench.home.agentColumns.agent'), width: 'var(--craft-workbench-column-agent)' },
                   { key: 'task', title: t('workbench.home.agentColumns.task'), width: '24%' },
                   { key: 'report', title: <span title={t('workbench.home.reportUnreadReason')}>{t('workbench.home.agentColumns.lastReport')}</span> },
-                  { key: 'status', title: t('workbench.home.agentColumns.status'), width: 'var(--craft-workbench-column-status)', hideOnSmall: true },
-                  { key: 'age', title: <span title={t('workbench.home.timeUnreadReason')}>{t('workbench.home.agentColumns.age')}</span>, width: 'var(--craft-workbench-column-age)', align: 'right', hideOnSmall: true },
+                  { key: 'status', title: t('workbench.home.agentColumns.status'), width: 'var(--craft-workbench-column-status)' },
+                  { key: 'age', title: <span title={t('workbench.home.timeUnreadReason')}>{t('workbench.home.agentColumns.age')}</span>, width: 'var(--craft-workbench-column-age)', align: 'right', hideOnSmall: true, numeric: true },
                 ]}
                 rows={agentRows}
                 empty={<EmptyState title={t('workbench.home.noAgent')} />}
@@ -363,7 +423,7 @@ export function WorkbenchFrame({ model, projectKey, projectName, freshness, read
                   { key: 'what', title: t('workbench.home.waitColumns.what') },
                   { key: 'kind', title: t('workbench.home.waitColumns.kind'), width: 'var(--craft-workbench-column-wait-kind)', hideOnSmall: true },
                   { key: 'duration', title: t('workbench.home.waitColumns.duration'), width: 'var(--craft-workbench-column-wait-duration)' },
-                  { key: 'behind', title: t('workbench.home.waitColumns.behind'), width: 'var(--craft-workbench-column-behind)', align: 'right', hideOnSmall: true },
+                  { key: 'behind', title: t('workbench.home.waitColumns.behind'), width: 'var(--craft-workbench-column-behind)', align: 'right', hideOnSmall: true, numeric: true },
                 ]}
                 rows={waitRows}
                 empty={<EmptyState title={t('workbench.home.noWaits')} />}
@@ -426,7 +486,7 @@ export function WorkbenchFrame({ model, projectKey, projectName, freshness, read
               {searchParams.get('basis') === '1' && !model.verdict.updateId
                 ? t('workbench.home.closeBasis')
                 : t('workbench.home.verdictBasis')}
-              <DisplayIcon icon={ArrowRight} />
+              <DisplayIcon icon={ArrowRightIcon} />
             </button>
           </div>
         </div>
@@ -435,7 +495,7 @@ export function WorkbenchFrame({ model, projectKey, projectName, freshness, read
           label: metric.label,
           value: metric.count === null ? '—' : String(metric.count),
           unit: metric.unit || undefined,
-          change: metric.note === null ? undefined : { text: metric.note },
+          change: metric.note === null ? undefined : { text: metric.note.text, tone: metric.note.tone, trend: metric.note.trend },
           emphasized: metric.emphasized,
           onOpen: metric.count === null ? undefined : () => updateParams({ detail: metric.id, tab: null }),
         }))} />
@@ -458,7 +518,7 @@ export function WorkbenchFrame({ model, projectKey, projectName, freshness, read
             )}
             empty={(
               <div className="obs-workbench-calm">
-                <DisplayIcon icon={CheckCircle2} />
+                <DisplayIcon icon={CircleCheckIcon} />
                 <div><strong>{t('workbench.home.emptyChainTitle')}</strong><p>{t('workbench.home.emptyChainDescription')}</p></div>
               </div>
             )}

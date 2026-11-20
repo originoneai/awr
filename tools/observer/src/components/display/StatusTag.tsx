@@ -63,29 +63,34 @@ export function healthLampState(status: HealthStatus): TaskLampState {
 }
 
 /** The prototype's HEALTH words: one rollup grade per project or goal. */
-export function HealthTag({ status }: { status: HealthStatus }) {
+export function HealthTag({ status, label, meaning }: { status: HealthStatus; label?: string; meaning?: string }) {
   const { t } = useTranslation();
   const lamp = healthLampState(status);
   return (
-    <span className="obs-tag" data-tone={status === 'none' ? undefined : status} title={t(`display.healthStatus.${status}.meaning`)}>
+    <span className="obs-tag" data-tone={status === 'none' ? undefined : status} title={meaning ?? t(`display.healthStatus.${status}.meaning`)}>
       <StatusLamp lamp={lamp} />
-      {t(`display.healthStatus.${status}.label`)}
+      {label ?? t(`display.healthStatus.${status}.label`)}
     </span>
   );
 }
 
 /**
  * One of the ten task statuses of the derivation vocabulary (nine plus unknown). The label
- * and the hover sentence come from the shared vocabulary, keyed by the core's union type;
- * no other strings are accepted.
+ * and hover sentence default to the shared vocabulary; a prototype page may supply its exact
+ * localized wording without changing the shared status mapping.
  */
-export function TaskStatusTag({ status, live = false }: { status: DerivedTaskStatus; live?: boolean }) {
+export function TaskStatusTag({ status, live = false, label, meaning }: {
+  status: DerivedTaskStatus;
+  live?: boolean;
+  label?: string;
+  meaning?: string;
+}) {
   const { t } = useTranslation();
   const tone = TASK_TONE[status];
   return (
-    <span className="obs-tag" data-tone={tone} title={t(`display.taskStatus.${status}.meaning`)}>
+    <span className="obs-tag" data-tone={tone} title={meaning ?? t(`display.taskStatus.${status}.meaning`)}>
       <StatusLamp lamp={taskLampState(status)} live={live && status === 'running'} />
-      {t(`display.taskStatus.${status}.label`)}
+      {label ?? t(`display.taskStatus.${status}.label`)}
     </span>
   );
 }

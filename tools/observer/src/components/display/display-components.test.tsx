@@ -1,9 +1,11 @@
 import { App as AntdApp } from 'antd';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { readFileSync } from 'node:fs';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import i18n from '../../i18n';
+import { expectSvgDrawsPrototypeGlyph } from '../icons/expect-prototype-glyph';
 import { TASK_STATUSES } from '../../core/overview/types';
 import { CraftThemeProvider } from '../CraftThemeProvider';
 import { AcceptanceList } from './AcceptanceList';
@@ -224,6 +226,20 @@ describe('RowList', () => {
     expect(screen.getByText('没有资料')).toBeInTheDocument();
     expect(document.querySelector('.obs-row-list')).toBeNull();
   });
+
+  it('draws the openable-row arrow as the prototype chev glyph', () => {
+    // The trailing arrow is the prototype's own chev node list, not any other arrow
+    // (icon-registry task: swapping the glyph here must turn this test red).
+    const rows = JSON.parse(readFileSync('src/test-fixtures/prototype-icons.json', 'utf8')).chev as string[];
+    renderDisplay(<RowList items={[{ key: 'one', title: '接口约定', onOpen: () => {} }]} />);
+    const arrow = document.querySelector('.obs-row-control svg');
+    expect(arrow).not.toBeNull();
+    const nodes = [...arrow!.children].map((child) => {
+      expect(child.tagName.toLowerCase()).toBe('path');
+      return { tag: 'path', d: (child as SVGPathElement).getAttribute('d') };
+    });
+    expect(nodes).toEqual(rows.map((row) => ({ tag: 'path', d: row })));
+  });
 });
 
 describe('DataTable', () => {
@@ -303,6 +319,16 @@ describe('DataTable', () => {
       <CraftThemeProvider><AntdApp><DataTable columns={columns} rows={[]} /></AntdApp></CraftThemeProvider>,
     );
     expect(screen.getByTestId('obs-empty-state')).toBeInTheDocument();
+  });
+
+  it('draws the row arrow as the prototype chev glyph', () => {
+    renderDisplay(
+      <DataTable
+        columns={columns}
+        rows={[{ key: 'open', cells: ['接口约定', '林悦'], onOpen: () => {} }]}
+      />,
+    );
+    expectSvgDrawsPrototypeGlyph(document.querySelector('.obs-table-arrow-column svg'), 'data table row arrow', 'chev');
   });
 });
 
@@ -437,6 +463,22 @@ describe('KpiStrip', () => {
     button.focus();
     await user.keyboard('{Enter}');
     expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it('draws the trend arrows and the hover chevron as the prototype glyphs', () => {
+    renderDisplay(
+      <KpiStrip
+        items={[
+          { key: 'up', label: '本周通过核验', value: '5', change: { text: '上周 3 件', tone: 'good', trend: 'up' }, onOpen: () => {} },
+          { key: 'down', label: '本周退回', value: '2', change: { text: '上周 6 件', tone: 'bad', trend: 'down' } },
+        ]}
+      />,
+    );
+    const cells = document.querySelectorAll('.obs-kpi');
+    expectSvgDrawsPrototypeGlyph(cells[0].querySelector('.obs-kpi-trend svg'), 'kpi rising trend arrow', 'up');
+    expectSvgDrawsPrototypeGlyph(cells[1].querySelector('.obs-kpi-trend svg'), 'kpi falling trend arrow', 'down');
+    expectSvgDrawsPrototypeGlyph(cells[0].querySelector('.obs-kpi-hint svg'), 'kpi hover chevron', 'chev');
+    expect(cells[1].querySelector('.obs-kpi-hint')).toBeNull();
   });
 });
 
@@ -744,6 +786,37 @@ describe('Chain', () => {
     expect(document.querySelector('.obs-chain-you')).toBeNull();
     expect(document.querySelector('.obs-chain-node[data-highlighted]')).toBeNull();
   });
+
+  it.each([
+    { scrollWidth: 500, clientWidth: 300, overflows: true },
+    { scrollWidth: 300, clientWidth: 300, overflows: false },
+    { scrollWidth: 301, clientWidth: 300, overflows: false },
+    { scrollWidth: 302, clientWidth: 300, overflows: true },
+  ])('sets horizontal overflow only beyond the one-pixel tolerance ($scrollWidth/$clientWidth)', ({ scrollWidth, clientWidth, overflows }) => {
+    const scrollWidthDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollWidth');
+    const clientWidthDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+    try {
+      Object.defineProperty(HTMLElement.prototype, 'scrollWidth', { configurable: true, get: () => scrollWidth });
+      Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => clientWidth });
+      vi.stubGlobal('ResizeObserver', class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      });
+      const { container } = renderDisplay(
+        <Chain nodes={nodes} connectors={connectors} present={(node) => present(node.id)} />,
+      );
+      const row = container.querySelector('.obs-chain');
+      if (overflows) expect(row).toHaveAttribute('data-overflow', 'true');
+      else expect(row).not.toHaveAttribute('data-overflow');
+    } finally {
+      if (scrollWidthDescriptor) Object.defineProperty(HTMLElement.prototype, 'scrollWidth', scrollWidthDescriptor);
+      else Reflect.deleteProperty(HTMLElement.prototype, 'scrollWidth');
+      if (clientWidthDescriptor) Object.defineProperty(HTMLElement.prototype, 'clientWidth', clientWidthDescriptor);
+      else Reflect.deleteProperty(HTMLElement.prototype, 'clientWidth');
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe('TodoRail', () => {
@@ -768,6 +841,13 @@ describe('TodoRail', () => {
     expect(screen.getAllByText('第二件', { selector: '.obs-todo-min-title' })).toHaveLength(1);
     expect(screen.queryByText('第四件')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /还有 2 件/ })).toBeInTheDocument();
+  });
+
+  it('draws the first-card terminal, the view arrows and the view-all arrow as the prototype glyphs', () => {
+    renderDisplay(<TodoRail title="等你的事" items={items} onViewAll={() => {}} />);
+    expectSvgDrawsPrototypeGlyph(document.querySelector('.obs-todo-agent svg'), 'todo first card Agent action', 'terminal');
+    expectSvgDrawsPrototypeGlyph(document.querySelector('.obs-todo-view svg'), 'todo first card view arrow', 'arrow');
+    expectSvgDrawsPrototypeGlyph(document.querySelector('.obs-todo-all svg'), 'todo view-all arrow', 'arrow');
   });
 
   it('opens a card, the full list and hides the more line within the limit', async () => {

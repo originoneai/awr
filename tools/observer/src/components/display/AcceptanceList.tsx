@@ -1,6 +1,11 @@
-import { CircleCheck, CircleX, Clock, Circle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { LucideIcon } from 'lucide-react';
+import {
+  CircleCheckIcon,
+  CircleIcon,
+  CircleXIcon,
+  ClockIcon,
+  type LucideIcon,
+} from '../icons/prototype-icons';
 import { DisplayIcon } from './DisplayIcon';
 import { EmptyState } from './EmptyState';
 import './display.css';
@@ -9,10 +14,10 @@ import './display.css';
 export type AcceptanceItemStatus = 'supported' | 'failed' | 'waiting' | 'notStarted';
 
 const STATUS_ICONS: Record<AcceptanceItemStatus, LucideIcon> = {
-  supported: CircleCheck,
-  failed: CircleX,
-  waiting: Clock,
-  notStarted: Circle,
+  supported: CircleCheckIcon,
+  failed: CircleXIcon,
+  waiting: ClockIcon,
+  notStarted: CircleIcon,
 };
 
 export interface AcceptanceItem {

@@ -1,7 +1,7 @@
 import { Alert } from 'antd';
-import { Info, TriangleAlert } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { DisplayIcon } from './DisplayIcon';
+import { InfoIcon, TriangleAlertIcon } from '../icons/prototype-icons';
 import './display.css';
 
 export interface NoticeProps {
@@ -9,17 +9,18 @@ export interface NoticeProps {
   title?: ReactNode;
   extra?: ReactNode;
   tone?: 'info' | 'warning';
+  className?: string;
 }
 
 /** A read-only explanatory strip; it intentionally has no business action slot. */
-export function Notice({ children, title, extra, tone = 'info' }: NoticeProps) {
+export function Notice({ children, title, extra, tone = 'info', className }: NoticeProps) {
   return (
     <Alert
-      className="obs-notice"
+      className={['obs-notice', className].filter(Boolean).join(' ')}
       data-tone={tone}
       type={tone === 'warning' ? 'warning' : 'info'}
       showIcon
-      icon={<DisplayIcon icon={tone === 'warning' ? TriangleAlert : Info} />}
+      icon={<DisplayIcon icon={tone === 'warning' ? TriangleAlertIcon : InfoIcon} />}
       title={(
         <div className="obs-notice-content">
           <div className="obs-notice-body">

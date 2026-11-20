@@ -7,7 +7,8 @@
 
 const { mapObservation, createGithubObserver } = require('./team-progress');
 const { projectDirectory } = require('./directory');
-const { createDemoOrganization, DEMO_FUTURE_READ_OPS, canonicalOverviewInput, demoOverviewAsOf } = require('./demo-organization');
+const { createDemoOrganization, DEMO_FUTURE_READ_OPS, canonicalOverviewInput, demoOverviewAsOf,
+  canonicalProjectList, canonicalPeriodUpdates } = require('./demo-organization');
 const { OBSERVATION_STALE_AFTER_MS, READ_TIMEOUT_MS, OVERVIEW_DEADLINE_MS, compareAuthoritative, resolveCurrency } = require('./observation-contract');
 
 const fs = require('fs');
@@ -1710,10 +1711,17 @@ function createTeamBridge(opts) {
     const readAt = Math.min(session.readAt ?? now(), ...allReads.map((read) => read.readAt ?? now()));
     const measuredTimes = measuredReads.map((read) => read.observed_at_unix_ms);
     const commonAt = common && measuredTimes.every((time) => Number.isFinite(time)) ? Math.min(...measuredTimes) : null;
+    // Demo clock decoupling (the #709 review decision): the demo's as-of timestamps ride
+    // the whole-week fixture clock, which can trail this answer by half a week; the
+    // freshness measurement must instead report the moment this server actually
+    // answered, so the freshness badge reads measured on any day the demo runs. The
+    // derivation clock (options.nowUnixMs) keeps the fixture time; the live path never
+    // takes this branch.
+    const authoritativeAt = demoOrganization ? readAt : commonAt;
     const authoritative = firstFailure ? { status: 'failed', error_code: firstFailure.code }
       : common ? {
-        ...resolveCurrency({ atUnixMs: commonAt, readAtMs: readAt, staleAfterMs: OBSERVATION_STALE_AFTER_MS }),
-        ...common, ...(commonAt !== null ? { at_unix_ms: commonAt } : {}),
+        ...resolveCurrency({ atUnixMs: authoritativeAt, readAtMs: readAt, staleAfterMs: OBSERVATION_STALE_AFTER_MS }),
+        ...common, ...(authoritativeAt !== null ? { at_unix_ms: authoritativeAt } : {}),
       } : { status: 'not_measured', ...(complete && triples.some((triple) => triple) ? { comparison: 'incomparable' } : {}) };
     return {
       value: {
@@ -1773,12 +1781,18 @@ function createTeamBridge(opts) {
       approvals: whole.approvals.items.filter((item) => item.projectId === project),
     };
     const periods = whole.options.views;
+    // The demo clock decoupling (the #709 review decision) applies here too: read times
+    // and every freshness measurement report the moment this server answered, while the
+    // derivation clock below stays on the whole-week fixture time.
     const readAt = session.readAt ?? now();
     const complete = (items) => ({ coverage: 'complete', items });
     return {
       ok: true,
       project,
       read_at_unix_ms: readAt,
+      // The recorded period updates are a demo-only shape until AWR-PPD-012's update
+      // reads exist; the page model reads this slice beside the composed planes.
+      periodUpdates: canonicalPeriodUpdates(demo.data, project),
       input: {
         ...Object.fromEntries(Object.entries(planes).map(([plane, items]) => [plane, complete(items)])),
         options: {
@@ -1800,19 +1814,33 @@ function createTeamBridge(opts) {
       freshness: {
         report_received: { status: 'not_measured' },
         authoritative: {
-          ...resolveCurrency({ atUnixMs: demo.data.now_unix_ms, readAtMs: readAt, staleAfterMs: OBSERVATION_STALE_AFTER_MS }),
+          ...resolveCurrency({ atUnixMs: readAt, readAtMs: readAt, staleAfterMs: OBSERVATION_STALE_AFTER_MS }),
           ...demoOverviewAsOf(project),
-          at_unix_ms: demo.data.now_unix_ms,
+          at_unix_ms: readAt,
         },
         page_read: { status: 'measured', at_unix_ms: readAt },
       },
     };
   }
 
+  /** Demo-only `canonical` variant: the same envelope the composed path produces, around the
+   * fully-known canonical input scoped to one project. Only canonical directory keys are
+   * readable. ProjectsPage skips the takeover entry's overview read, but the existing shell
+   * inbox indicators read every directory key; that shell read receives a scoped empty known
+   * model instead of a spurious authorization failure. The live path never takes this branch. */
+  function canonicalDemoComposed(project, session) {
+    const demo = TEAM.demoOrganization;
+    const directoryKeys = new Set(canonicalProjectList(demo.data).map((entry) => entry.key));
+    if (!directoryKeys.has(project)) {
+      return { authError: { code: 'Forbidden', message: 'access denied' } };
+    }
+    return { value: canonicalDemoOverviewValue(project, session) };
+  }
+
   async function executeOverviewModelComposition(project, req, res, session) {
     const generation = overviewCacheGeneration(req);
     const composed = TEAM.demoOrganization?.variant === 'canonical'
-      ? { value: canonicalDemoOverviewValue(project, session) }
+      ? canonicalDemoComposed(project, session)
       : await composeOverviewModel(project, req, res, session);
     if (composed.authError) {
       clearOverviewCache(req);
@@ -1908,11 +1936,16 @@ function createTeamBridge(opts) {
         const session = teamAuth(req) || TEAM.demoOrganization.session();
         return {
           ok: true,
-          projects: TEAM.demoOrganization.projects().map((project) => ({
-            key: project.key,
-            title: project.title,
-            role: TEAM.demoOrganization.data.viewer.role,
-          })),
+          // The canonical directory adds the facts the project list needs for its
+          // prototype comparison: recorded leads and groups plus the taken-over sample
+          // project. Every other variant keeps the plain three-entry shape.
+          projects: TEAM.demoOrganization.variant === 'canonical'
+            ? canonicalProjectList(TEAM.demoOrganization.data)
+            : TEAM.demoOrganization.projects().map((project) => ({
+              key: project.key,
+              title: project.title,
+              role: TEAM.demoOrganization.data.viewer.role,
+            })),
           session,
           view: 'team',
         };

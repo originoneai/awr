@@ -6,13 +6,14 @@
   "protoReady": ".block table.t",
   "notes": {
     "geometryExclusions": [
-      "The existing application sidebar is 240px while the prototype sidebar is 232px; content and column widths therefore differ by 8px and by the 22% column ratio.",
-      "The current demo read reports incomplete task facts, so its designed unknown-result notice moves later rows vertically; those y offsets are excluded.",
-      "Summary and row heights or widths that depend on different recorded text are excluded. Row count, text and freshness coverage are compared separately in the evidence.",
+      "Probe coordinates are anchored at the page title. This excludes the measured 13px mobile shell-height offset, which is itemised below and remains visible in the whole-page diff.",
+      "Under full, incomplete task facts can add the designed unknown-result notice and move later rows. Canonical has complete facts and no such notice.",
+      "Text wrapping and row heights outside the selector gate are measured separately with screenshots; canonical differences are itemised below rather than hidden.",
       "At 390px the shared DataTable removes the update column while the prototype leaves a display:none column; update-column pairs are omitted and the demo geometry check asserts the visible headers.",
-      "Hidden legend coordinates and the data-dependent owner/group line count carry no visible geometry and are excluded."
+      "Hidden legend coordinates carry no visible geometry and are excluded. Owner/group visibility and row heights are checked with screenshots because text-only selector comparisons cannot detect clipping."
     ],
-    "completion": "The current demo read cannot derive the four completion counts. The page shows its designed unknown state instead of fabricating a bar. CompletionBar itself remains covered by the shared light/dark/mobile component baselines and by count/detail unit tests."
+    "completion": "Full cannot derive the four completion counts and shows its designed unknown state. Canonical supplies complete counts, so the actual bars and their visible counts are included in the prototype comparison.",
+    "canonical": "At 390x1300 the probe compares 558 values: STYLE 0, GEOMETRY 0, six structural-only differences and no missing elements. The raw whole-page difference is 7.13% at tolerance 24. App content starts 13px earlier than the prototype; the risk row is 404px versus 405px and the third row is 225px versus 257px. The zero-width project column combined with ellipsis styling clips the app's project and owner labels although their text matches, unlike the visible prototype labels. The navigation cell starts at x337 in the app versus x361 in the prototype. The app also has a 123px coverage/freshness footer below this 1300px capture. These existing page/shell differences are reported for the page owner and are not changed by AWR-PPO-063f."
   },
   "pairs": [
     ["page title", ".head h1", ".obs-page-title", ["TEXT", "margin-top", "margin-bottom"]],
