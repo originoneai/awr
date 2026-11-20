@@ -61,7 +61,24 @@ Schema 62 adds the current directory and append-only change receipts; the hierar
 
 Observation clients use project-qualified references to drill back to project facts. Product views present organization, department and member names with relationship availability, and read the hierarchy from the parent references in the plan: a leaf department is a group, and a project or member listing a leaf sits under that group. Version tokens, authorization bindings and diagnostic fields belong in the protected service records.
 
-The Observer **Members & Agents** page reads `/v1/web/projects/{project}/directory/read` through its existing HttpOnly browser session and the `/api/team/directory` bridge. The service repeats the same directory authorization on every read. The bridge validates complete project-qualified relationships, then returns organization, department and member display names, availability and the maintenance time. Operational provenance and internal references stay on the service.
+The Observer **Members & Agents** page reads `/v1/web/projects/{project}/directory/read` through its existing HttpOnly browser session and the `/api/team/directory` bridge. The service repeats the same directory authorization on every read. The bridge validates complete project-qualified relationships, including resolvable non-cyclic parent chains at the service's maximum depth of four, before returning this product projection:
+
+| Projection field | Service field | Contract |
+| --- | --- | --- |
+| `configured` | `configured` | Whether this project has a recorded directory. |
+| `organization` | `plan.organization.name` | Display name, or `null` for an unconfigured directory. |
+| `departments[].key` | `plan.departments[].id` selected by `project_department_ids` | Stable department identity within the project directory. |
+| `departments[].name` | `plan.departments[].name` | Display name; names are not identities. |
+| `departments[].parentKey` | `plan.departments[].parent_id` | Parent department key, or `null` when the field is absent or null at the top level. |
+| `updated_at_ms` | `updated_at_ms` | Directory maintenance time. |
+| `members[].personId` | `members[].member_ref.person_id` | Stable person identity in the bound project. |
+| `members[].name` | `members[].display_name` | Display name when available; not an identity. |
+| `members[].available` | `members[].available` | Current relationship availability. |
+| `members[].departments[]` | `members[].department_ids` | Every referenced group, represented by the same `key`, `name` and `parentKey` department objects. |
+
+`members[].personId` and the overview read model's `OverviewMember.personId` use the same project-scoped person-ID space. The Members page joins the two reads by that ID alone within one project; it is the unique key. There is no fallback that guesses identity from a display name, group membership, row order, or any combination of them. Two people with the same display name keep different IDs and separate rows, and one person belonging to multiple groups keeps one ID and one row with every group in `departments`. If a directory person ID has no matching `OverviewMember.personId`, that directory row keeps the existing unverified/unknown fact states and never displays another person's numbers. Person IDs are not merged across projects.
+
+The projection discloses these identities only after the existing authorized directory read. It adds no operation or grant, returns no credential or operational provenance, and does not cache directory replies across sessions or authorization changes. Operational provenance and unrelated internal references stay on the service; an invalid relationship set fails the whole projection instead of exposing a partial result.
 
 Members are shown as recorded in that project's directory. A directory may cover a subset of its people, and an available member record does not establish that an Agent is connected or executing work. The page provides member search, department filtering, name sorting, manual refresh and links to the existing personal connection controls. Each project is read separately, and same-name members retain separate rows. Relationship changes continue through the authorized Agent entries.
 
@@ -77,4 +94,4 @@ cargo test -p awr-server --features pg-tests --test directory_mcp --locked -- --
 
 The PostgreSQL fixtures use their configured loopback test server and create isolated process-owned databases.
 
-The `directory_mcp` test also writes the verbatim `directory.read` replies of the real service entries (agent bearer, browser session, unconfigured, flat and hierarchical states) into the directory named by `AWR_DIRECTORY_SAMPLE_DIR` for evidence capture. Byte-identical copies are committed at `crates/awr-server/tests/samples/` and re-parsed on every run against the live replies, so the recorded shapes cannot drift from what the service produces. Verification against a deployed service remains with AWR-PPD-090.
+The `directory_mcp` test also writes the verbatim `directory.read` replies of the real service entries (agent bearer, browser session, unconfigured, flat, hierarchical, and same-name/multi-group states) into the directory named by `AWR_DIRECTORY_SAMPLE_DIR` for evidence capture. Byte-identical copies are committed at `crates/awr-server/tests/samples/` and re-parsed on every run against the live replies, so the recorded shapes cannot drift from what the service produces. Observer bridge tests use byte-identical copies of the browser replies at `tools/observer/test/fixtures/directory-*.json`, rather than hand-written upstream shapes. Verification against a deployed service remains with AWR-PPD-090.

@@ -107,6 +107,25 @@ describe('WorkbenchPage seven read states in Chinese and English', () => {
     unknown.unmount();
   });
 
+  it.each([
+    [20_000, '刚刚'],
+    [5 * 60_000, '5 分钟前'],
+  ])('reads the generated source age against the clock at render, %i ms after the read', async (afterReadMs, expected) => {
+    const input = myWorkInput();
+    // The reply carries page_read.at_unix_ms equal to read_at_unix_ms, so a reference taken from the reply would
+    // make every page read 刚刚 however old the read is; the reference is the clock at render, like the activity page.
+    stubModel(input);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(input.options.nowUnixMs + afterReadMs);
+      renderWorkbench();
+      expect(await screen.findByTestId('workbench-frame')).toBeTruthy();
+      expect(screen.getByText(`按你名下的任务和 Agent 的报告算出 · ${expected}`)).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each(['zh-CN', 'en-US'] as const)('renders loading and failure in %s', async (language) => {
     await i18n.changeLanguage(language);
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {

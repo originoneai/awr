@@ -230,8 +230,7 @@ describe('complete prototype theme tokens', () => {
     expect(craftCssVariables('light')['--craft-perspective-height']).toBe('28px');
     expect(craftCssVariables('light')['--craft-perspective-selected-shadow'])
       .toBe(`0 0 0 1px ${craftThemes.light.color.hairline}, ${craftThemes.light.shadow.small}`);
-    expect(craftCssVariables('dark')['--craft-perspective-selected-shadow'])
-      .toBe(`0 0 0 1px ${craftThemes.dark.color.hairline}`);
+    expect(craftCssVariables('dark')['--craft-perspective-selected-shadow']).toBe('none');
   });
 
   it.each(['light', 'dark'] as const)('uses the antd %s algorithm with token overrides', (mode) => {

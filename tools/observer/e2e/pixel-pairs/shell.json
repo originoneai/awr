@@ -36,6 +36,7 @@
   ["avatar", ".top .av", "[data-testid=\"current-member-avatar\"]", ["__ax", "__ay", "__w", "__h", "background-color", "color", "border-top-left-radius"], {"noPosition": true}],
   ["avatar initial", ".top .av", "[data-testid=\"current-member-avatar\"]", ["TEXT"], {"noPosition": true}],
   ["content wrapper", ".wrap", ".shell-content", ["padding-top", "padding-left", "padding-right", "__ax", "__ay", "__w"], {"noPosition": true}],
-  ["page header", ".head", ".obs-page-header", ["__ax", "__ay", "padding-top", "__h"], {"noPosition": true}]
+  ["page header", ".head", ".obs-page-header", ["__ax", "__ay", "padding-top", "__h"], {"noPosition": true}],
+  ["perspective selected", ".top .as .seg button[aria-pressed=\"true\"]", ".shell-perspective-option[aria-pressed=\"true\"]", ["box-shadow", "background-color", "color", "font-weight"], {"noPosition": true}]
  ]
 }
