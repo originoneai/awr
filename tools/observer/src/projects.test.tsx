@@ -19,7 +19,7 @@ function input(): OverviewInput {
     reviewRounds: complete,
     handoffs: complete,
     approvals: complete,
-    members: { coverage: 'complete', items: [{ personId: 'person-a', displayName: 'Owner A', actorIds: ['actor-a'] }] },
+    members: { coverage: 'complete', items: [{ personId: 'person-a', displayName: 'Owner A' }] },
     activity: complete,
     options: { nowUnixMs: NOW, stalledAfterDays: 7 },
   };

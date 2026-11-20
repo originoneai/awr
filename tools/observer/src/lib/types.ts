@@ -132,6 +132,17 @@ export interface TeamOverviewModelResponse {
 
 export type TeamIdentity = NonNullable<TeamOverviewResponse['identity']>;
 
+/** AWR-PPD-055: the audit's own identity disclosure. Absent or null fields mean the
+ *  directory-read gate did not disclose them; older replies carry no object at all. */
+export interface TeamActivityIdentity {
+  person_id?: string | null;
+  display_name?: string | null;
+}
+
+export interface TeamActivityClient {
+  display_name?: string | null;
+}
+
 export interface TeamActivityItem {
   action: string;
   actor_id: string;
@@ -141,6 +152,8 @@ export interface TeamActivityItem {
   id: string;
   result: unknown;
   work_id: string | null;
+  actor?: TeamActivityIdentity | null;
+  client?: TeamActivityClient | null;
 }
 
 export interface TeamActivityResponse {

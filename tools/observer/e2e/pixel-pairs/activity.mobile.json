@@ -1,0 +1,35 @@
+{
+  "page": "activity-mobile",
+  "proto": "#p=activity&id=&tab=orders",
+  "app": "/activity?project=P-001&kind=development",
+  "ready": "[data-testid=\"page-activity\"]",
+  "protoReady": ".block",
+  "notes": {
+    "styleComparison": "Every style property is compared, colours included. This file is reviewer-owned: a builder may add pairs, never skip or loosen a style property.",
+    "dataDrivenGeometry": [
+      "seg __w skipped: the segment's width is the sum of its project buttons; the canonical demo directory has one more project (the taken-over sample-cli) than the prototype's three, so the first segment is wider by that button. Both segments scroll horizontally below 860px.",
+      "row/block/table heights and the note's __y skipped: at 390px the two fixed columns (168+232) leave the 做了什么 column zero wide, so every row's height is the wrapped character count of that cell's text. The prototype writes hand-made sentences ('报告了进度', 5 characters) where the app shows the operation vocabulary's word ('报告执行结果', 6 characters); each height difference below is that one extra wrapped line, not a style difference. Desktop compares these same heights with no skip and is zero.",
+      "who __y skipped: follows the first row's height above."
+    ]
+  },
+  "pairs": [
+    ["page title", ".head h1", ".obs-page-title", ["TEXT", "margin-top", "margin-bottom"]],
+    ["page subtitle", ".head .sub", ".obs-page-subtitle", ["TEXT", "margin-left"]],
+    ["page header", ".head", ".obs-page-header", ["BOX", "__h"]],
+    ["filters", ".filters", ".activity-filters", ["BOX", "__h"]],
+    ["seg", ".filters .seg", ".activity-segment", ["BOX", "background-color", "__h"], {"skip": ["__w"]}],
+    ["seg button", ".filters .seg button:not([aria-pressed=\"true\"])", ".activity-segment button[aria-pressed=\"false\"]", ["height", "padding-left", "padding-right", "border-top-left-radius", "TEXT"]],
+    ["seg selected", ".filters .seg button[aria-pressed=\"true\"]", ".activity-segment button[aria-pressed=\"true\"]", ["height", "background-color", "color", "box-shadow", "font-weight"]],
+    ["block", ".block", ".activity-section", ["BOX", "PAINT", "__w"], {"skip": ["__h"]}],
+    ["block head", ".block-head", ".activity-section .ant-card-head", ["BOX", "border-bottom-color", "__h"]],
+    ["block title", ".block-head h2", ".activity-section .ant-card-head-title", ["TEXT", "margin-top"]],
+    ["block count", ".block-head .n", ".activity-section .obs-section-count", ["BOX", "TEXT", "background-color"]],
+    ["table", ".block table.t", ".activity-table .ant-table-content table", ["width", "table-layout", "border-collapse"], {"skip": ["__h"]}],
+    ["table head cell", ".block table.t th", ".activity-table thead th", ["TEXT", "padding-top", "padding-bottom", "padding-left", "border-bottom-color", "__h"]],
+    ["table cell time", ".block table.t tbody td:nth-child(1)", ".activity-table tbody td:nth-child(1)", ["TEXT", "padding-top", "padding-bottom", "padding-left", "border-bottom-color", "vertical-align"], {"skip": ["__h"]}],
+    ["table cell who", ".block table.t tbody td:nth-child(2)", ".activity-table tbody td:nth-child(2)", ["TEXT", "padding-top", "padding-bottom", "padding-left"], {"skip": ["__h"]}],
+    ["table cell what", ".block table.t tbody td:nth-child(3)", ".activity-table tbody td:nth-child(3)", ["TEXT", "padding-top", "padding-left"], {"skip": ["__h"]}],
+    ["who text weight", ".block table.t tbody td:nth-child(2) span[style*=\"font-weight\"]", ".activity-table tbody td:nth-child(2) .activity-actor", ["TEXT"], {"skip": ["__y"]}],
+    ["note", ".pnote", ".activity-pnote", ["BOX", "TEXT", "border-top-color"], {"skip": ["__h", "__y"]}]
+  ]
+}

@@ -176,15 +176,15 @@ const comparison = {
   acceptedBySupervisor: true,
   resolvedReviewDefects: [
     { area: 'Time formatting', fix: 'compactTimeText now provides relative, today, yesterday, current-year and earlier-year labels in the viewer time zone without seconds.' },
-    { area: 'Name resolution', fix: 'Other members resolve only through actorIds and the viewer through options.views.me.personId; no actor/person equality heuristic remains.' },
+    { area: 'Name resolution', fix: 'AWR-PPD-068: names come from the audit record\'s own AWR-PPD-055 disclosure (actor/client display names); the directory actorIds bridge is gone, and an undisclosed record keeps the unregistered-name fallback.' },
   ],
   dataCoverageNotes: [
-    'When actorIds and server-side person/display data are absent, the unregistered-name fallback remains the honest state. This is a coverage note, not a prototype difference.',
+    'Without the directory-read gate the audit discloses no display names, so the unregistered-name fallback stays the honest state. This is a coverage note, not a prototype difference.',
   ],
   differences: [
     { area: 'Section heading', status: 'accepted', difference: 'The prototype-only data-source badge is absent in the product.', reason: 'Owner rule: demonstration source controls and internal operation text do not ship.' },
-    { area: 'Section footer', status: 'accepted', difference: 'Scope and coverage share one quiet line; retention is separate, and earlier-history and freshness controls share a row.', reason: 'The content is retained as required; the compact R6 shape addresses the review.' },
-    { area: 'Mobile table', status: 'accepted', difference: 'The shared DataTable uses 16px outer cell padding below 860px, and ellipsized zero-width action text keeps bounded rows; the prototype uses 20px and wraps that zero-width text into very tall rows.', reason: 'The review accepted compact-table geometry and bounded rows; the prototype wrapping defect is not reproduced.' },
+    { area: 'Section footer', status: 'accepted', difference: 'A completed project-scoped read ends with the prototype\'s one footnote sentence; scope, coverage, retention, partial and freshness notes appear only when the read gives cause.', reason: 'AWR-PPO-068 prototype parity: the quiet lines are disclosures, not standing content.' },
+    { area: 'Mobile table', status: 'accepted', difference: 'Below 860px both sides wrap the zero-width action column; rows differ in height only by the wrapped character count of the action text (the record\'s operation word versus the prototype\'s hand-written sentence).', reason: 'Data-driven height only; the style and padding probes compare equal.' },
     { area: 'Application shell', status: 'accepted', difference: 'The product uses its authorized perspective and has no prototype identity/source demonstration switches.', reason: 'Previously accepted application-shell and read-only product boundaries.' },
     { area: 'Detail interaction', status: 'accepted', difference: 'An event deep link retains the detail panel below the ledger; default comparison screenshots have no selected event.', reason: 'The review explicitly accepted this reconciliation.' },
   ],

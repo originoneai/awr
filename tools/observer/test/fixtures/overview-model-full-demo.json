@@ -361,38 +361,22 @@
         {
           "personId": "M-001",
           "displayName": "周宁",
-          "groupId": "G-001",
-          "actorIds": [
-            "M-001",
-            "M-001-agent"
-          ]
+          "groupId": "G-001"
         },
         {
           "personId": "M-002",
           "displayName": "林悦",
-          "groupId": "G-001",
-          "actorIds": [
-            "M-002",
-            "M-002-agent"
-          ]
+          "groupId": "G-001"
         },
         {
           "personId": "M-003",
           "displayName": "陈宇",
-          "groupId": "G-001",
-          "actorIds": [
-            "M-003",
-            "M-003-agent"
-          ]
+          "groupId": "G-001"
         },
         {
           "personId": "M-004",
           "displayName": "许宁",
-          "groupId": "G-002",
-          "actorIds": [
-            "M-004",
-            "M-004-agent"
-          ]
+          "groupId": "G-002"
         }
       ]
     },

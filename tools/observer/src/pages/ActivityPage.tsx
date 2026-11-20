@@ -161,7 +161,6 @@ export function ActivityPage() {
   const taskById = useMemo(() => new Map(
     (contextData?.input.tasks.items ?? []).flatMap((task) => typeof task.id === 'string' && task.id ? [[task.id, task] as const] : []),
   ), [contextData]);
-  const members = useMemo(() => contextData?.input.members.items ?? [], [contextData]);
   const selectedEvent = folded.uniqueEvents.find((item) => item.id === searchParams.get('event'));
   const nowUnixMs = Date.now();
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -182,21 +181,19 @@ export function ActivityPage() {
     setSearchParams(next);
   }
 
-  function actorName(event: OperationEvent): string {
-    const actorId = event.actor_id;
-    const viewerPersonId = contextData?.input.options.views?.me?.personId;
-    const ownMember = actorId && actorId === identity?.actor_id && viewerPersonId
-      ? members.find((candidate) => candidate.personId === viewerPersonId) : undefined;
-    const member = ownMember ?? members.find((candidate) => (
-      typeof actorId === 'string' && candidate.actorIds?.includes(actorId)
-    ));
-    const name = typeof member?.displayName === 'string' ? member.displayName.trim() : '';
-    return name && name !== member?.personId && readsAsName(name) ? name : t('activity.unregisteredName');
-  }
-
   function actorText(event: OperationEvent): string {
-    const name = actorName(event);
-    return event.client_id ? `${name} · ${t('activity.viaOwnAgent')}` : name;
+    // AWR-PPD-055: the audit record carries its own identity disclosure. The person's
+    // display name is the fact; a machine identifier in that field is never shown as a
+    // name. The client is named only when the record discloses it, and the record's own
+    // client attribution decides who did the doing: an operation attributed to a client
+    // is written "client (name)", a person acting through one "name (via client)".
+    const recordedName = typeof event.actor?.display_name === 'string' ? event.actor.display_name.trim() : '';
+    const name = recordedName && readsAsName(recordedName) ? recordedName : t('activity.unregisteredName');
+    const recordedClient = typeof event.client?.display_name === 'string' ? event.client.display_name.trim() : '';
+    if (!recordedClient || !readsAsName(recordedClient)) return name;
+    return event.client_id
+      ? t('activity.actorByClient', { client: recordedClient, name })
+      : t('activity.actorViaClient', { client: recordedClient, name });
   }
 
   function taskFor(workId: string | null): ResolvedTask | null {
@@ -223,8 +220,8 @@ export function ActivityPage() {
     { value: 'all', label: t('activity.categories.all') },
     ...ACTIVITY_CATEGORIES.map((item) => ({ value: item as string, label: t(`activity.categories.${item}`) })),
   ];
-  const scopeNote = firstPage?.scope === 'project' ? t('activity.scopeProject')
-    : firstPage?.scope === 'self' ? t('activity.scopeSelf') : t('activity.scopeUnknown');
+  const scopeNote = firstPage?.scope === 'self' ? t('activity.scopeSelf')
+    : firstPage?.scope === 'project' || !activity.data ? null : t('activity.scopeUnknown');
   const retentionCount = kind === 'requests' && firstPage?.request_retention === 'oldest_pruned_soft_capacity'
     && typeof firstPage.request_retention_capacity === 'number' ? firstPage.request_retention_capacity : null;
   const foldNotes = Array.from(new Map(
@@ -232,10 +229,16 @@ export function ActivityPage() {
   ).values());
   const taskCoverage = contextData?.coverage.tasks.status ?? contextData?.input.tasks.coverage;
   const memberCoverage = contextData?.coverage.members.status ?? contextData?.input.members.coverage;
-  const coverageText = context.isError ? t('activity.contextFailed')
-    : context.isPending || taskCoverage === 'unread' || memberCoverage === 'unread' ? t('activity.coverageUnread')
+  // The prototype's footnote is one sentence; read problems still get their quiet lines.
+  // A completed, project-scoped read with complete context says nothing more.
+  const coverageNote = context.isError ? t('activity.contextFailed')
+    : !contextData ? null
       : taskCoverage === 'partial' || memberCoverage === 'partial' ? t('activity.coveragePartial')
-        : t('activity.coverageComplete');
+        : taskCoverage !== 'complete' || memberCoverage !== 'complete' ? t('activity.coverageUnread')
+          : null;
+  const FRESHNESS_PLANES = ['report_received', 'authoritative', 'page_read'] as const;
+  const freshnessNeedsNote = contextData != null && FRESHNESS_PLANES
+    .some((plane) => ['stale', 'failed'].includes(contextData.freshness?.[plane]?.status ?? ''));
   const initialLoading = projects.isPending || waitingForActorIdentity || Boolean(project) && activity.isPending;
   const initialFailure = !initialLoading && (projects.isError || activity.isError && !activity.data || actorParam && capabilities.isError);
 
@@ -296,27 +299,31 @@ export function ActivityPage() {
   const footer = (
     <div className="activity-pnote">
       <div data-testid="activity-collection-limits">{t('activity.collectionNote')}</div>
-      <div className="activity-scope-line">
-        <span data-testid="activity-scope">{scopeNote}</span>
-        <span aria-hidden>·</span>
-        <span data-testid="activity-coverage">{coverageText}</span>
-      </div>
+      {scopeNote || coverageNote ? (
+        <div className="activity-scope-line">
+          {scopeNote ? <span data-testid="activity-scope">{scopeNote}</span> : null}
+          {scopeNote && coverageNote ? <span aria-hidden>·</span> : null}
+          {coverageNote ? <span data-testid="activity-coverage">{coverageNote}</span> : null}
+        </div>
+      ) : null}
       {retentionCount != null ? <div className="activity-retention" data-testid="activity-retention">{t('activity.retention', { count: retentionCount })}</div> : null}
       {capabilities.isSuccess && actorParam && !actorFilter && !projectAudit ? <div className="activity-self-filter-note" data-testid="activity-self-filter-note">{t('activity.selfFilterNote')}</div> : null}
       {foldNotes.map((note) => <div className="activity-fold-note" key={note.code} data-testid={`activity-note-${note.code}`}>{note.text}</div>)}
-      <div className="activity-footer-controls">
-        {activity.hasNextPage ? (
-          <Button
-            className="activity-load-earlier"
-            data-testid="activity-load-earlier"
-            loading={activity.isFetchingNextPage}
-            onClick={() => void activity.fetchNextPage()}
-          >
-            {t('activity.loadEarlier')}
-          </Button>
-        ) : null}
-        <div className="activity-freshness"><FreshnessBadge freshness={contextData?.freshness} /></div>
-      </div>
+      {activity.hasNextPage || freshnessNeedsNote ? (
+        <div className="activity-footer-controls">
+          {activity.hasNextPage ? (
+            <Button
+              className="activity-load-earlier"
+              data-testid="activity-load-earlier"
+              loading={activity.isFetchingNextPage}
+              onClick={() => void activity.fetchNextPage()}
+            >
+              {t('activity.loadEarlier')}
+            </Button>
+          ) : null}
+          {freshnessNeedsNote ? <div className="activity-freshness"><FreshnessBadge freshness={contextData?.freshness} /></div> : null}
+        </div>
+      ) : null}
     </div>
   );
 
@@ -327,7 +334,13 @@ export function ActivityPage() {
         <ActivitySegment label={t('activity.project')} value={project} options={projectOptions} onChange={changeProject} testId="activity-project-filter" />
         <ActivitySegment label={t('activity.category')} value={category} options={categoryOptions} onChange={changeCategory} testId="activity-category-filter" />
       </div>
-      <Section title={t('activity.sectionTitle')} count={activity.data ? events.length : undefined} className="activity-section">
+      {/* The prototype's block-head reads [h2][8px][count][auto]; the count sits beside the
+          title, not inside it, so the measured title stays the h2's own box. */}
+      <Section
+        title={t('activity.sectionTitle')}
+        extra={activity.data ? <span className="obs-section-count activity-section-count">{events.length}</span> : undefined}
+        className="activity-section"
+      >
         {initialLoading ? <StateMessage testId="activity-loading">{t('activity.readLoading')}</StateMessage>
           : initialFailure ? (
             <StateMessage testId="activity-read-error">
@@ -342,7 +355,7 @@ export function ActivityPage() {
               {activity.isError && activity.data ? <div className="activity-partial" data-testid="activity-partial"><Notice tone="warning">{t('activity.partialRead')}</Notice></div> : null}
               {events.length === 0 ? <StateMessage testId="activity-empty">{t('activity.empty')}</StateMessage>
                 : <div className="activity-table"><DataTable columns={[
-                  { key: 'time', title: t('activity.time'), width: craftTokens.activity.columnTime },
+                  { key: 'time', title: t('activity.time'), width: craftTokens.activity.columnTime, numeric: true },
                   { key: 'actor', title: t('activity.actor'), width: craftTokens.activity.columnActor },
                   { key: 'action', title: t('activity.action') },
                   { key: 'work', title: t('activity.work'), width: craftTokens.activity.columnTask, hideOnSmall: true },

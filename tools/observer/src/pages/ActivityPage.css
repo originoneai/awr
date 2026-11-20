@@ -36,6 +36,8 @@
   color: var(--craft-color-secondary);
   cursor: pointer;
   font: inherit;
+  /* Prototype .seg button: the body's 20px leading, not antd's button metric (20.43px). */
+  line-height: var(--craft-leading-body);
   font-size: var(--craft-text-small);
   white-space: nowrap;
   transition:
@@ -57,17 +59,16 @@
   line-height: var(--craft-leading-body);
 }
 
-.activity-ellipsis {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
+/* Prototype .t td: cells wrap (overflow-wrap: anywhere on the shared cell), no
+   single-line ellipsis; text nodes are inline and the exact time lives in the title. */
 .activity-time {
   color: var(--craft-color-muted);
-  font-variant-numeric: tabular-nums;
+}
+
+/* Prototype .t td.dim: the whole time cell carries the muted ink, header included. */
+.activity-table td.obs-table-numeric-column,
+.activity-table th.obs-table-numeric-column {
+  color: var(--craft-color-muted);
 }
 
 .activity-actor {
@@ -90,15 +91,26 @@
   text-underline-offset: var(--ant-padding-xxs);
 }
 
-.activity-section.ant-card .ant-card-head-title {
-  font-size: var(--craft-activity-section-title-text);
-  line-height: var(--craft-leading-body);
+/* Prototype .block-head: the title sits at its own content width (h2 measured 70px
+   against antd's flex:1 fill), the count follows at the 8px gap, and the head itself
+   has no radius and no -1px pull on the body's hairline. */
+.activity-section.ant-card .ant-card-head {
+  margin-bottom: 0;
+  border-radius: 0;
 }
 
-.activity-section.ant-card .obs-section-title {
+/* Prototype .block-head: the count follows the h2 at the wrapper's 8px gap (the extra
+   adds no margin of its own) and the head's own font is 14px, so its line box is 20px. */
+.activity-section.ant-card .ant-card-extra {
+  margin-inline-start: 0;
+}
+
+.activity-section.ant-card .ant-card-head-title {
+  flex: 0 0 auto;
+  width: auto;
+  white-space: normal;
   font-size: var(--craft-activity-section-title-text);
   line-height: var(--craft-leading-body);
-  font-weight: var(--ant-font-weight-strong);
 }
 
 .activity-pnote {
