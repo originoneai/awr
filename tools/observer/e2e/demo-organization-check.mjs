@@ -207,12 +207,15 @@ async function recordCanonicalWorkbench(page) {
   assert.deepEqual(model.input.options.views.me, { personId: 'M-002', projectId: 'P-001' });
   assert.equal(model.input.tasks.items.length, 14);
   assert.equal(model.input.approvals.items.length, 2);
-  // The default whole-week clock trails real "now" by up to half a week, so the model's
-  // authoritative age may honestly read stale; it must stay bounded by that rounding.
-  assert.ok(['measured', 'stale'].includes(model.freshness.authoritative.status),
+  // Demo clock decoupling (the #709 review decision): read times and every freshness
+  // measurement report the moment the server answered, so the badge reads measured on
+  // any day the demo runs. The derivation clock stays on the whole-week fixture time
+  // and keeps trailing the answer by at most half a week.
+  assert.equal(model.freshness.authoritative.status, 'measured',
     `canonical authoritative status ${model.freshness.authoritative.status}`);
-  assert.ok(model.freshness.authoritative.age_ms < 3.5 * 24 * 3600 * 1000,
-    `canonical authoritative age ${model.freshness.authoritative.age_ms} exceeds the whole-week rounding`);
+  assert.ok(typeof model.freshness.authoritative.age_ms === 'number'
+    && model.freshness.authoritative.age_ms >= 0 && model.freshness.authoritative.age_ms < 60_000,
+    `canonical authoritative age ${model.freshness.authoritative.age_ms} is not the answer moment's age`);
   assert.ok(Math.abs(model.input.options.nowUnixMs - model.read_at_unix_ms) <= 3.5 * 24 * 3600 * 1000,
     'the canonical "now" stays within half a week of the real read');
   // End-to-end default clock check: the fixture's "now" is a Thursday 12:00 UTC, and the
@@ -228,6 +231,65 @@ async function recordCanonicalWorkbench(page) {
     modelReadAtUnixMs: model.read_at_unix_ms,
     modelNowUnixMs: model.input.options.nowUnixMs,
   });
+}
+
+/* The canonical variant also serves the project-list facts the page needs for its
+   prototype comparison: recorded leads and groups, period updates and the takeover
+   row. These assertions are the page-level oracle — they fail when the demo stops
+   reproducing the prototype's projects table. */
+const canonicalProjectsRecords = [];
+
+async function recordCanonicalProjects(page) {
+  await settle(page);
+  await page.getByTestId('projects-table').waitFor();
+  // innerText flattens the DOM (links, fragments) into one string with incidental
+  // whitespace; both sides are normalised the same way so the glyphs are compared.
+  const flat = (text) => text.replace(/\s+/g, '');
+  const lead = flat(await page.getByTestId('projects-lead').innerText());
+  assert.equal(lead, flat('4 个项目，1 个有风险，1 个没有更新，1 个刚接管'),
+    'the canonical projects lead sentence must equal the prototype');
+  const rows = page.locator('.projects-table tbody tr.ant-table-row');
+  assert.equal(await rows.count(), 4, 'the canonical projects table has the prototype four rows');
+  const statusTexts = [];
+  for (let index = 0; index < 4; index += 1) {
+    statusTexts.push((await rows.nth(index).locator('.obs-tag').innerText()).trim());
+  }
+  assert.deepEqual(statusTexts, ['有风险', '正常', '没有更新', '刚接管'],
+    'the four status labels must equal the prototype');
+  const sentences = [];
+  const updatedTexts = [];
+  for (let index = 0; index < 4; index += 1) {
+    sentences.push((await rows.nth(index).locator('.projects-summary-text').innerText()).trim());
+  }
+  assert.deepEqual(sentences, [
+    '接口第 3 版的复核拖了两天，页面联调在等',
+    '试运行第二周，没有新问题',
+    '上一次更新是 12 天前',
+    '读到 4 条工作线，按验收核验过的是 0 项，有 4 个问题要回答',
+  ], 'the four one-sentence cells must equal the prototype');
+  const wide = (page.viewportSize()?.width ?? 0) >= 1240;
+  if (wide) {
+    for (let index = 0; index < 4; index += 1) {
+      updatedTexts.push((await rows.nth(index).locator('.projects-update-time').innerText()).trim());
+    }
+    assert.deepEqual(updatedTexts, ['今天', '3 天前', '12 天前', '刚刚'],
+      'the four update-column ages must equal the prototype');
+    // 该更新了 belongs to the third row alone.
+    assert.equal(await page.locator('.projects-table .projects-update-note').count(), 1,
+      'exactly one row is flagged 该更新了');
+    assert.equal((await rows.nth(2).locator('.projects-update-note').innerText()).trim(), '该更新了');
+  }
+  // The takeover row links its zero-verified-tasks fact (its completion column stays
+  // visible on small viewports).
+  assert.equal((await rows.nth(3).locator('.projects-no-verified').innerText()).trim(),
+    '接管后还没有按验收核验过的任务');
+  const ownerMeta = [];
+  for (let index = 0; index < 4; index += 1) {
+    ownerMeta.push((await rows.nth(index).locator('.projects-project-meta').innerText()).trim());
+  }
+  assert.deepEqual(ownerMeta, ['周宁 · 应用小组', '吴桐 · 平台小组', '郑岚 · 交付小组', '刚接管'],
+    'the four owner-and-group cells must equal the prototype');
+  canonicalProjectsRecords.push({ lead, statusTexts, sentences, updatedTexts, ownerMeta });
 }
 
 async function firstLoadGeometry(page) {
@@ -833,6 +895,13 @@ try {
             await recordCanonicalWorkbench(page);
             await workbenchQueue(page);
           },
+        }, {
+          name: 'projects-canonical',
+          path: '/projects',
+          action: async (page) => {
+            await settle(page);
+            await recordCanonicalProjects(page);
+          },
         }]
         : variantRoutes[variant];
     for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
@@ -861,10 +930,11 @@ const report = {
   failures,
   documentedKeyLeaks,
   canonicalWorkbenchRecords,
+  canonicalProjectsRecords,
   results,
 };
 await mkdir(evidence, { recursive: true });
 await writeFile(path.join(evidence, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
 console.log(JSON.stringify({ evidence, visited: results.length, failures, documentedKeyLeaks,
-  canonicalWorkbenchRecords }, null, 2));
+  canonicalWorkbenchRecords, canonicalProjectsRecords }, null, 2));
 assert.deepEqual(failures, []);

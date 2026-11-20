@@ -219,6 +219,83 @@ function demoOverviewAsOf(projectId) {
   };
 }
 
+/** Canonical project-directory facts no live read supplies yet: each ordinary project's
+ * recorded lead (a person id the member directory resolves) and, for the prototype's
+ * fourth row, a just-taken-over project with its takeover result facts. Demo-only
+ * shapes: the project-lead metadata, AWR-PPD-052's group read and AWR-RCN-009's
+ * takeover results replace them once those reads exist. */
+const CANONICAL_PROJECT_LEADS = { 'P-001': 'M-001', 'P-002': 'M-005', 'P-003': 'M-007' };
+const CANONICAL_TAKEOVER_PROJECT = {
+  key: 'P-004',
+  title: 'sample-cli',
+  resultId: 'TK-001',
+  workstreams: 4,
+  verifiedTasks: 0,
+  questions: 4,
+  // The prototype's fourth row reads 刚刚: recorded half a minute before the demo clock.
+  recordedBeforeNowMs: 30_000,
+};
+
+/** The canonical project directory: the fixture's ordinary projects with their recorded
+ * lead and group display name, plus the taken-over sample project. Only the `canonical`
+ * variant serves this shape; `full` keeps its three plain entries. */
+function canonicalProjectList(data) {
+  const groupNames = new Map(data.organization.departments.map((department) => [department.id, department.name]));
+  const entries = data.projects.map((project) => ({
+    key: project.key,
+    title: project.title,
+    role: data.viewer.role,
+    leadPersonId: CANONICAL_PROJECT_LEADS[project.project_id] ?? null,
+    groupName: groupNames.get(project.group_id) ?? null,
+    // Recorded non-takeover: the canonical read says so, it does not leave the marker
+    // unspecified (which would keep the page's takeover count honestly unknown).
+    takeover: null,
+  }));
+  return [...entries, {
+    key: CANONICAL_TAKEOVER_PROJECT.key,
+    title: CANONICAL_TAKEOVER_PROJECT.title,
+    role: data.viewer.role,
+    takeover: {
+      resultId: CANONICAL_TAKEOVER_PROJECT.resultId,
+      recordedAtUnixMs: data.now_unix_ms - CANONICAL_TAKEOVER_PROJECT.recordedBeforeNowMs,
+      verifiedTasks: CANONICAL_TAKEOVER_PROJECT.verifiedTasks,
+      workstreams: CANONICAL_TAKEOVER_PROJECT.workstreams,
+      questions: CANONICAL_TAKEOVER_PROJECT.questions,
+    },
+  }];
+}
+
+const isoUtcDate = (unixMs) => new Date(unixMs).toISOString().slice(0, 10);
+
+/** The canonical project period updates: one selected fixture update per project in
+ * the page model's shape. The latest period is current for P-001/P-002 and historical
+ * for P-003. Fixture dates are week-aligned strings that a whole-week clock offset
+ * does not move, so the selected period is re-derived from the demo clock's own week:
+ * it keeps its distance-in-weeks from the fixture's "now" week, whatever the offset.
+ * Demo-only shape: AWR-PPD-010/011/012's update reads replace it once they exist. */
+function canonicalPeriodUpdates(data, projectId) {
+  const currentWeekStart = utcMondayWeek(data.now_unix_ms).startUnixMs;
+  const fixtureWeekStart = utcMondayWeek(completeOrganization.now_unix_ms).startUnixMs;
+  const items = data.updates.filter((update) => update.project_id === projectId)
+    .sort((left, right) => right.starts_on.localeCompare(left.starts_on)
+      || right.recorded_at_unix_ms - left.recorded_at_unix_ms)
+    .slice(0, 1)
+    .map((update) => {
+      const startsOnMs = Date.parse(`${update.starts_on}T00:00:00Z`);
+      const weeksBeforeFixtureNow = Math.round((fixtureWeekStart - startsOnMs) / WEEK);
+      const startsAt = currentWeekStart - weeksBeforeFixtureNow * WEEK;
+      return {
+        id: update.update_id,
+        startsOn: isoUtcDate(startsAt),
+        endsOn: isoUtcDate(startsAt + WEEK - DAY),
+        status: update.status,
+        summary: update.summary,
+        recordedAtUnixMs: update.recorded_at_unix_ms,
+      };
+    });
+  return completeSlice(items);
+}
+
 function createDemoOrganization({ variant = 'full',
   timestampShiftMs = defaultDemoTimestampShiftMs() } = {}) {
   if (!Number.isInteger(timestampShiftMs)) throw new Error('Demo timestamp offset must be an integer');
@@ -1771,5 +1848,5 @@ function createDemoOrganization({ variant = 'full',
 
 module.exports = {
   createDemoOrganization, DemoReadError, DEMO_VARIANTS, DEMO_FUTURE_READ_OPS,
-  canonicalOverviewInput, demoOverviewAsOf,
+  canonicalOverviewInput, demoOverviewAsOf, canonicalProjectList, canonicalPeriodUpdates,
 };
