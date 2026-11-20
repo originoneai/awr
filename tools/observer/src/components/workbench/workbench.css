@@ -188,6 +188,19 @@
   font-weight: var(--ant-font-weight-strong);
 }
 
+/* Prototype dark: the selected segment's box-shadow lists var(--shadow-s), which is "none"
+   there, so the whole declaration is invalid at computed-value time and computes to none.
+   The selection ring only exists in light mode. */
+:root[data-theme="dark"] .obs-workbench-chain-switch button[aria-pressed="true"] {
+  box-shadow: none;
+}
+
+/* Prototype .cn { min-width: 0 } only survives on four-node demo rows; a real row with more
+   nodes scrolls horizontally at this floor instead of squeezing nodes to a character. */
+.obs-workbench-body .obs-chain-node {
+  min-width: var(--craft-workbench-chain-node-min);
+}
+
 .obs-workbench-calm {
   display: flex;
   align-items: flex-start;
@@ -222,7 +235,9 @@
   padding: 0;
   border: 0;
   background: transparent;
-  font: inherit;
+  /* Family only: the size and leading come from the .obs-todo-agent/.obs-todo-view rules,
+     matching the prototype's .where-s 12px; a full font shorthand would reset them. */
+  font-family: var(--craft-font-interface);
   cursor: pointer;
 }
 
@@ -302,7 +317,33 @@
   min-width: 0;
 }
 
-.obs-workbench-agent-name > span,
+/* Prototype .who { gap: 10px } with the agent name in a 32px .ki badge box; .who .n is 500. */
+.obs-workbench-agent-name {
+  gap: calc(var(--ant-padding-xs) + var(--ant-line-width-bold));
+}
+
+.obs-workbench-agent-badge {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: var(--craft-workbench-control-height);
+  height: var(--craft-workbench-control-height);
+  border-radius: var(--craft-radius-control);
+  background: var(--craft-color-raised);
+  color: var(--craft-color-secondary);
+}
+
+.obs-workbench-agent-name > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: var(--ant-font-weight-strong);
+}
+
+.obs-workbench-wait-meter {
+  /* Prototype .meter .num carries the tabular digits of the day count. */
+  font-variant-numeric: tabular-nums;
+}
+
 .obs-workbench-wait-people > span {
   min-width: 0;
   overflow-wrap: anywhere;

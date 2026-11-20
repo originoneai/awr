@@ -197,10 +197,12 @@ test('detail panel matches the prototype panel and ptabs', async ({ page }, test
   // .panel { margin-top: 24px; border: 1px solid var(--line); border-radius: 16px }
   const panel = await readStyles(page, '.obs-detail-panel', ['border-top-width', 'border-top-left-radius', 'margin-top']);
   expect(panel).toEqual({ 'border-top-width': '1px', 'border-top-left-radius': '16px', 'margin-top': '24px' });
-  // .ptabs { gap: 24px; min-height: 48px; padding: 0 20px } (gap 20px / padding 0 16px below 860px)
-  const nav = await readStyles(page, '.obs-detail-tabs .ant-tabs-nav', ['min-height', 'padding-left']);
-  expect(nav['min-height']).toBe('48px');
+  // .ptabs { gap: 24px; height: 48px; padding: 0 20px; border-bottom: 1px solid var(--line) }
+  // (gap 20px / padding 0 16px below 860px)
+  const nav = await readStyles(page, '.obs-detail-tabs .ant-tabs-nav', ['height', 'padding-left', 'border-bottom-width']);
+  expect(nav['height']).toBe('48px');
   expect(nav['padding-left']).toBe(phone ? '16px' : '20px');
+  expect(nav['border-bottom-width']).toBe('1px');
   const navBox = await readBox(page, '.obs-detail-tabs .ant-tabs-nav');
   expect(Math.round(navBox.height)).toBe(48);
   const tabGap = await page.evaluate(() => {

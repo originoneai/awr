@@ -786,6 +786,37 @@ describe('Chain', () => {
     expect(document.querySelector('.obs-chain-you')).toBeNull();
     expect(document.querySelector('.obs-chain-node[data-highlighted]')).toBeNull();
   });
+
+  it.each([
+    { scrollWidth: 500, clientWidth: 300, overflows: true },
+    { scrollWidth: 300, clientWidth: 300, overflows: false },
+    { scrollWidth: 301, clientWidth: 300, overflows: false },
+    { scrollWidth: 302, clientWidth: 300, overflows: true },
+  ])('sets horizontal overflow only beyond the one-pixel tolerance ($scrollWidth/$clientWidth)', ({ scrollWidth, clientWidth, overflows }) => {
+    const scrollWidthDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollWidth');
+    const clientWidthDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+    try {
+      Object.defineProperty(HTMLElement.prototype, 'scrollWidth', { configurable: true, get: () => scrollWidth });
+      Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => clientWidth });
+      vi.stubGlobal('ResizeObserver', class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      });
+      const { container } = renderDisplay(
+        <Chain nodes={nodes} connectors={connectors} present={(node) => present(node.id)} />,
+      );
+      const row = container.querySelector('.obs-chain');
+      if (overflows) expect(row).toHaveAttribute('data-overflow', 'true');
+      else expect(row).not.toHaveAttribute('data-overflow');
+    } finally {
+      if (scrollWidthDescriptor) Object.defineProperty(HTMLElement.prototype, 'scrollWidth', scrollWidthDescriptor);
+      else Reflect.deleteProperty(HTMLElement.prototype, 'scrollWidth');
+      if (clientWidthDescriptor) Object.defineProperty(HTMLElement.prototype, 'clientWidth', clientWidthDescriptor);
+      else Reflect.deleteProperty(HTMLElement.prototype, 'clientWidth');
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe('TodoRail', () => {

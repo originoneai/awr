@@ -13,6 +13,8 @@ export interface DataTableColumn {
   width?: number | string;
   align?: 'left' | 'right' | 'center';
   hideOnSmall?: boolean;
+  /** Prototype tables mark count columns with the .num class (tabular digits). */
+  numeric?: boolean;
 }
 
 export interface DataTableRow {
@@ -48,7 +50,10 @@ export function DataTable({ columns, rows, empty, navigationWidth, stickyNavigat
     title: column.title,
     width: column.width,
     align: column.align,
-    className: column.hideOnSmall ? 'obs-table-optional-column' : undefined,
+    className: [
+      column.hideOnSmall ? 'obs-table-optional-column' : null,
+      column.numeric ? 'obs-table-numeric-column' : null,
+    ].filter(Boolean).join(' ') || undefined,
     render: (_value, row) => row.cells[columns.indexOf(column)] ?? null,
   }));
 

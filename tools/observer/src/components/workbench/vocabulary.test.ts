@@ -30,7 +30,7 @@ describe('workbench vocabulary and verdict rule table', () => {
     const modelCount = Object.keys(flatten(workbenchVocabulary('zh-CN'))).length;
     const count = homeCount + modelCount;
     console.log(`Reviewed workbench sentence pairs: ${count} (home ${homeCount}, model ${modelCount})`);
-    expect(count).toBe(142);
+    expect(count).toBe(151);
     expect(count).toBeGreaterThan(0);
   });
 

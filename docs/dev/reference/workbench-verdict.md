@@ -53,6 +53,10 @@ the longest wait. `pending-oldest` uses wait durations when already derived and 
 for handoffs and approvals from their recorded timestamps against the common read time. Future or
 missing timestamps leave the note blank.
 
+The note can carry the prototype's `.kpi .c` tone: `verified-previous` compares this week's count
+with the previous week's (`good` with an up arrow when higher, `bad` with a down arrow when lower),
+and `agents-stalled` is `warn` whenever it appears. The other two notes stay quiet.
+
 The Chinese templates are:
 
 - `pendingAndWaiting`: `有 {{pending}} 件事等你处理；你名下的 {{waiting}} 件事正在等别人。`

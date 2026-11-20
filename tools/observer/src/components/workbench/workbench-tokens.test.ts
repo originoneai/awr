@@ -23,6 +23,7 @@ describe('workbench named prototype tokens', () => {
       waitDurationColumn: 150,
       waitBarMinWidth: 48,
       behindColumn: 104,
+      chainNodeMinWidth: 132,
     });
     expect(craftThemes.dark.workbench).toEqual(craftThemes.light.workbench);
     const variables = craftCssVariables('light');
@@ -35,6 +36,7 @@ describe('workbench named prototype tokens', () => {
     expect(variables['--craft-workbench-verdict-leading']).toBe('32px');
     expect(variables['--craft-workbench-wait-bar-min']).toBe('48px');
     expect(variables['--craft-workbench-column-agent']).toBe('168px');
+    expect(variables['--craft-workbench-chain-node-min']).toBe('132px');
   });
 
   it('has no second instrument palette and keeps the prototype dark floating shadow', () => {
