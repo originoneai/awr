@@ -21,12 +21,21 @@ function readTable(name) {
   return JSON.parse(readFileSync(path.join(pairDirectory, name), 'utf8'));
 }
 
+function committedTables() {
+  return readdirSync(pairDirectory).filter((name) => name.endsWith('.json')).sort();
+}
+
 test('committed pixel-pair tables never skip style comparisons', () => {
-  const violations = readdirSync(pairDirectory)
-    .filter((name) => name.endsWith('.json'))
-    .sort()
-    .flatMap((name) => forbiddenSkips(readTable(name), name));
+  const violations = committedTables().flatMap((name) => forbiddenSkips(readTable(name), name));
   assert.deepEqual(violations, []);
+});
+
+test('the guard really reads the committed tables and their pairs', () => {
+  const names = committedTables();
+  assert.ok(names.length >= 9, `expected the committed tables, found ${names.join(', ')}`);
+  for (const name of names) {
+    assert.ok((readTable(name).pairs ?? []).length > 0, `${name} has no pairs`);
+  }
 });
 
 test('a colour skip on the page subtitle is rejected without writing a bad fixture', () => {
@@ -37,4 +46,28 @@ test('a colour skip on the page subtitle is rejected without writing a bad fixtu
   assert.deepEqual(forbiddenSkips(synthetic, 'synthetic.json'), [
     { source: 'synthetic.json', pair: 'page subtitle', property: 'color' },
   ]);
+});
+
+test('every style property is rejected on any pair and only the six geometry offsets may be skipped', () => {
+  const styleProperties = [
+    'color', 'font-size', 'font-weight', 'line-height', 'letter-spacing', 'font-family',
+    'background-color', 'border-top-color', 'border-bottom-color', 'border-top-left-radius', 'box-shadow',
+    'padding-top', 'padding-left', 'margin-top', 'margin-bottom', 'stroke-width', 'width', 'height', 'display',
+  ];
+  for (const property of styleProperties) {
+    const table = {
+      pairs: [
+        ['first', '.a', '.b', ['TEXT'], { skip: [property] }],
+        ['middle', '.a', '.b', ['BOX']],
+        ['last', '.a', '.b', ['BOX'], { noPosition: true, skip: [property] }],
+      ],
+    };
+    assert.deepEqual(forbiddenSkips(table, 't.json'), [
+      { source: 't.json', pair: 'first', property },
+      { source: 't.json', pair: 'last', property },
+    ], property);
+  }
+  for (const property of ['__x', '__y', '__w', '__h', '__ax', '__ay']) {
+    assert.deepEqual(forbiddenSkips({ pairs: [['p', '.a', '.b', ['BOX'], { skip: [property] }]] }, 't.json'), [], property);
+  }
 });
