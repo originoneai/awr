@@ -2188,6 +2188,89 @@ async fn current_review(
     }
 }
 
+/// The relationships already recorded for one actor. Conflicting active
+/// bindings never select a person by row order. Display names are exposed only
+/// for an unambiguous, currently active person.
+pub(crate) struct ResolvedPerson {
+    actor_id: String,
+    kind: String,
+    bindings: std::collections::BTreeSet<String>,
+    active_names: std::collections::BTreeMap<String, String>,
+}
+
+impl ResolvedPerson {
+    fn person_id(&self) -> Option<&str> {
+        match self.bindings.len() {
+            0 if self.kind == "human" => Some(&self.actor_id),
+            1 => self.bindings.first().map(String::as_str),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn active_person(&self) -> Option<(&str, &str)> {
+        let person_id = self.person_id()?;
+        let display_name = self.active_names.get(person_id)?;
+        Some((person_id, display_name))
+    }
+}
+
+/// Read-only batch counterpart of `resolve_person_id`. It uses the same actor
+/// kind, active-binding and human fallback rules without creating persons.
+pub(crate) async fn resolve_person_ids(
+    tx: &tokio_postgres::Transaction<'_>,
+    tenant_id: &str,
+    project_id: &str,
+    actor_ids: &[String],
+) -> PgResult<std::collections::BTreeMap<String, ResolvedPerson>> {
+    let mut resolved = std::collections::BTreeMap::new();
+    if actor_ids.is_empty() {
+        return Ok(resolved);
+    }
+    let rows = tx
+        .query(
+            "SELECT a.id,a.kind,b.person_id,p.display_name,p.status
+             FROM awr_team.actors a
+             LEFT JOIN awr_team.person_agent_bindings b
+               ON b.tenant_id=$1 AND b.project_id=$2 AND b.agent_id=a.id AND b.status='active'
+             LEFT JOIN awr_team.persons p
+               ON p.tenant_id=$1 AND p.project_id=$2
+              AND p.id=COALESCE(b.person_id,CASE WHEN a.kind='human' THEN a.id END)
+             WHERE a.tenant_id=$1 AND a.id=ANY($3)
+             ORDER BY a.id,b.id",
+            &[&tenant_id, &project_id, &actor_ids],
+        )
+        .await?;
+    for row in rows {
+        let actor_id: String = row.get(0);
+        let person_id: Option<String> = row.get(2);
+        let display_name: Option<String> = row.get(3);
+        let person_status: Option<String> = row.get(4);
+        let entry = resolved
+            .entry(actor_id.clone())
+            .or_insert_with(|| ResolvedPerson {
+                actor_id,
+                kind: row.get(1),
+                bindings: std::collections::BTreeSet::new(),
+                active_names: std::collections::BTreeMap::new(),
+            });
+        if let Some(person_id) = person_id {
+            entry.bindings.insert(person_id.clone());
+            if person_status.as_deref() == Some("active") {
+                if let Some(display_name) = display_name {
+                    entry.active_names.insert(person_id, display_name);
+                }
+            }
+        } else if entry.kind == "human" && person_status.as_deref() == Some("active") {
+            if let Some(display_name) = display_name {
+                entry
+                    .active_names
+                    .insert(entry.actor_id.clone(), display_name);
+            }
+        }
+    }
+    Ok(resolved)
+}
+
 /// Resolve the responsible person for an actor.
 /// Humans map to a persons row with the same id (created if needed).
 /// Agents require an active person_agent_bindings row — another agent of the
@@ -2198,25 +2281,11 @@ pub(crate) async fn resolve_person_id(
     project_id: &str,
     actor_id: &str,
 ) -> PgResult<String> {
-    let kind: String = tx
-        .query_opt(
-            "SELECT kind FROM awr_team.actors WHERE tenant_id=$1 AND id=$2",
-            &[&tenant_id, &actor_id],
-        )
-        .await?
-        .map(|r| r.get(0))
-        .ok_or(PgError::Forbidden)?;
-    if let Some(row) = tx
-        .query_opt(
-            "SELECT person_id FROM awr_team.person_agent_bindings
-             WHERE tenant_id=$1 AND project_id=$2 AND agent_id=$3 AND status='active'",
-            &[&tenant_id, &project_id, &actor_id],
-        )
-        .await?
-    {
-        return Ok(row.get(0));
-    }
-    if kind == "human" {
+    let actor_ids = [actor_id.to_owned()];
+    let resolved = resolve_person_ids(tx, tenant_id, project_id, &actor_ids).await?;
+    let resolved = resolved.get(actor_id).ok_or(PgError::Forbidden)?;
+    let person_id = resolved.person_id().ok_or(PgError::Forbidden)?.to_owned();
+    if resolved.bindings.is_empty() && resolved.kind == "human" {
         tx.execute(
             "INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status)
              VALUES ($1,$2,$3,$3,'active')
@@ -2224,9 +2293,8 @@ pub(crate) async fn resolve_person_id(
             &[&tenant_id, &project_id, &actor_id],
         )
         .await?;
-        return Ok(actor_id.to_owned());
     }
-    Err(PgError::Forbidden)
+    Ok(person_id)
 }
 
 pub(crate) fn self_review_permitted(completion_policy: &str) -> bool {
