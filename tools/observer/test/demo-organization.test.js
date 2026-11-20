@@ -660,14 +660,14 @@ test('summary.execution maps active, ended and no_session without guessing when 
     'report and checkpoint times are not Agent-activity facts');
 });
 
-test('only the full demo publishes approvals and the demo viewer scope, while member actor ids survive', async () => {
+test('only the full demo publishes approvals and the demo viewer scope, and members carry no actor ids', async () => {
   const model = await overviewModelForTest({ demoTimestampShiftMs: 0, now: () => fixture.now_unix_ms + 9 * DAY });
   assert.deepEqual(model.input.options.nowUnixMs, fixture.now_unix_ms);
   assert.deepEqual(model.input.options.views.me, { personId: fixture.viewer.person_id, projectId: 'P-001' });
   assert.deepEqual(model.input.approvals, complete(fixture.approvals));
   assert.equal(model.coverage.approvals.status, 'complete');
   const member = model.input.members.items.find((item) => item.personId === 'M-002');
-  assert.deepEqual(member.actorIds, ['M-002', 'M-002-agent']);
+  assert.deepEqual(member, { personId: 'M-002', displayName: '林悦', groupId: 'G-001' });
 
   const liveMember = overviewMemberFromDirectory({
     member_ref: { project_id: 'synthetic-project', person_id: 'synthetic-person' },
@@ -676,11 +676,12 @@ test('only the full demo publishes approvals and the demo viewer scope, while me
   assert.deepEqual(liveMember, {
     personId: 'synthetic-person', displayName: 'Synthetic Member', groupId: 'synthetic-department',
   });
-  assert.equal(Object.hasOwn(liveMember, 'actorIds'), false);
+  // Audit attribution no longer travels through the directory: a reply that still sends
+  // actor_ids is ignored rather than copied into the overview member shape.
   assert.deepEqual(overviewMemberFromDirectory({
     member_ref: { project_id: 'P-001', person_id: 'M-002' }, display_name: '林悦',
     department_ids: ['G-001'], actor_ids: ['M-002', 'M-002-agent'],
-  }).actorIds, ['M-002', 'M-002-agent']);
+  }), { personId: 'M-002', displayName: '林悦', groupId: 'G-001' });
 
   for (const variant of ['partial', 'single']) {
     const degraded = await overviewModelForTest({ demoVariant: variant, demoTimestampShiftMs: 0,
@@ -694,7 +695,7 @@ test('only the full demo publishes approvals and the demo viewer scope, while me
   assert.equal(denied.input, undefined, 'restricted composition cannot expose approval facts');
 });
 
-test('demo work.next identity has no person_id and Agent audit records expose their client_id', () => {
+test('demo work.next identity has no person_id and Agent audit records expose their own disclosure', () => {
   const demo = createDemoOrganization({ variant: 'full', timestampShiftMs: 0 });
   const next = demo.query('P-001', { protocol_version: 1, op: 'work.next' });
   assert.equal(Object.hasOwn(next.data.identity, 'person_id'), false);
@@ -705,15 +706,38 @@ test('demo work.next identity has no person_id and Agent audit records expose th
   const audit = ['P-001', 'P-002'].flatMap((project) =>
     demo.query(project, { protocol_version: 1, op: 'audit.development' }).data.items);
   const byId = new Map(audit.map((item) => [item.id, item]));
+  // Every record carries the AWR-PPD-055 disclosure objects, whatever they hold.
+  for (const item of audit) {
+    assert.deepEqual(Object.keys(item.actor).sort(), ['display_name', 'person_id']);
+    assert.deepEqual(Object.keys(item.client), ['display_name']);
+  }
+  // A client-attributed run names the client and resolves the person behind it.
   assert.equal(byId.get('EV-001').client_id, 'M-002-claude');
+  assert.deepEqual(byId.get('EV-001').actor, { person_id: 'M-002', display_name: '林悦' });
+  assert.deepEqual(byId.get('EV-001').client, { display_name: 'Claude 桌面' });
   assert.equal(byId.get('EV-009').client_id, 'M-002-codex');
+  assert.deepEqual(byId.get('EV-009').actor, { person_id: 'M-002', display_name: '林悦' });
+  assert.deepEqual(byId.get('EV-009').client, { display_name: 'Codex' });
   assert.equal(byId.get('EV-014').client_id, 'M-006-codex');
-  for (const item of audit) assert.match(item.client_id, /^M-\d{3}-(?:claude|codex)$/);
+  assert.deepEqual(byId.get('EV-014').actor, { person_id: 'M-006', display_name: '赵衡' });
+  for (const item of audit) {
+    if (item.client_id != null) assert.match(item.client_id, /^M-\d{3}-(?:claude|codex)$/);
+  }
+  // A person acting through a client keeps the client unnamed in the attribution.
+  assert.equal(byId.get('EV-002').client_id, null);
+  assert.deepEqual(byId.get('EV-002').actor, { person_id: 'M-001', display_name: '周宁' });
+  assert.deepEqual(byId.get('EV-002').client, { display_name: 'Claude 桌面' });
+  assert.deepEqual(byId.get('EV-005').client, { display_name: 'Claude 桌面' });
+  // A run with no named client discloses neither a client name nor an attribution.
+  assert.equal(byId.get('EV-006').client_id, null);
+  assert.deepEqual(byId.get('EV-006').actor, { person_id: 'M-004', display_name: '许宁' });
+  assert.deepEqual(byId.get('EV-006').client, { display_name: null });
 
   const humanDemo = createDemoOrganization({ variant: 'full', timestampShiftMs: 0 });
   humanDemo.data.activity[0].actor_id = 'M-002';
   const human = humanDemo.query('P-001', { protocol_version: 1, op: 'audit.development' }).data.items[0];
   assert.equal(human.client_id, null, 'a human actor has no Agent client id');
+  assert.deepEqual(human.actor, { person_id: 'M-002', display_name: '林悦' });
 });
 
 function numericTimes(value, path = 'root', found = []) {

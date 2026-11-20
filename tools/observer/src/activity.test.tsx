@@ -26,12 +26,31 @@ function event(
   workId: string | null = WORK_A,
   actorId = KNOWN_ACTOR,
   offset = 0,
+  identity: { name?: string | null; client?: string | null; clientAttributed?: boolean } = {},
 ): TeamActivityItem {
+  // AWR-PPD-055 reply shape: the audit carries its own actor/client disclosure.
+  const attributed = identity.clientAttributed ?? offset % 2 === 0;
   return {
     id,
     action,
     actor_id: actorId,
-    client_id: offset % 2 === 0 ? `synthetic-client-${offset}` : null,
+    client_id: identity.client != null && attributed ? `synthetic-client-${offset}` : null,
+    actor: { person_id: KNOWN_PERSON, display_name: identity.name === undefined ? 'Alex Example' : identity.name },
+    client: { display_name: identity.client ?? null },
+    created_at_unix_ms: NOW - offset * 60_000,
+    credential_id: null,
+    result: 'committed',
+    work_id: workId,
+  };
+}
+
+/** A pre-#725 reply: no actor/client objects at all, exactly what the live samples hold. */
+function legacyEvent(id: string, action: string, workId: string | null, actorId: string, offset = 0): TeamActivityItem {
+  return {
+    id,
+    action,
+    actor_id: actorId,
+    client_id: null,
     created_at_unix_ms: NOW - offset * 60_000,
     credential_id: null,
     result: 'committed',
@@ -232,39 +251,44 @@ describe('activity prototype structure and product language', () => {
     expect(within(screen.getByRole('group', { name: '类别' })).getByRole('button', { name: '全部' }).getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('translates the viewer through the recorded person view, never leaks missing actor ids, and labels Agent attribution', async () => {
-    expect(KNOWN_ACTOR).not.toBe(KNOWN_PERSON);
-    setupActivity();
+  it('writes the audit\'s own disclosure: client (name) for agent runs, name (via client) for people, and no raw ids', async () => {
+    const items = [
+      event('agent-run', 'execution.report', WORK_A, KNOWN_ACTOR, 0, { name: 'Alex Example', client: 'Synthetic Client', clientAttributed: true }),
+      event('via-client', 'task.assign', WORK_B, KNOWN_ACTOR, 1, { name: 'Alex Example', client: 'Synthetic Client', clientAttributed: false }),
+      event('no-client', 'review.decide', WORK_A, KNOWN_ACTOR, 2, { name: 'Alex Example', client: null }),
+      event('undisclosed', 'decision.request', WORK_B, MISSING_ACTOR, 3, { name: null, client: null }),
+      legacyEvent('legacy', 'update.record', null, MISSING_ACTOR, 4),
+      event('machine-name', 'planning.propose', null, KNOWN_ACTOR, 5, { name: 'observer-host-native-20261031T203834Z', client: null }),
+    ];
+    setupActivity({ development: activityPayload(items) });
     renderApp('/activity?project=demo');
-    await waitFor(() => expect(tableRows()).toHaveLength(8));
-    expect(tableRows()[0].textContent).toContain('Alex Example · 通过自己的 Agent');
-    expect(tableRows()[1].textContent).toContain('未登记姓名');
-    expect(tableRows()[1].textContent).not.toContain(MISSING_ACTOR);
-    expect(document.body.textContent).not.toContain(KNOWN_ACTOR);
+    await waitFor(() => expect(tableRows()).toHaveLength(6));
+    const who = () => tableRows().map((row) => row.querySelector('td:nth-child(2)')?.textContent);
+    expect(who()).toEqual([
+      'Synthetic Client（Alex Example）',
+      'Alex Example（通过 Synthetic Client）',
+      'Alex Example',
+      '未登记姓名',
+      '未登记姓名',
+      '未登记姓名',
+    ]);
+    for (const leaked of [KNOWN_ACTOR, MISSING_ACTOR, 'synthetic-client-0', KNOWN_PERSON]) {
+      expect(document.body.textContent).not.toContain(leaked);
+    }
     expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('page-activity')))).toEqual([]);
   });
 
-  it('resolves other members only through actorIds and never equates an actor id with a person id', async () => {
-    const linkedActor = 'synthetic-actor-linked';
-    const linkedPerson = 'synthetic-person-linked';
-    const personOnlyActor = 'synthetic-person-without-agent-link';
+  it('keeps the client unnamed when only one side of the attribution is disclosed', async () => {
     const items = [
-      event('linked', 'review.decide', WORK_A, linkedActor, 0),
-      event('unlinked', 'review.decide', WORK_B, personOnlyActor, 1),
+      event('client-null-attributed', 'execution.report', WORK_A, KNOWN_ACTOR, 0, { name: 'Alex Example', client: null, clientAttributed: true }),
+      event('client-name-unattributed', 'task.assign', WORK_B, KNOWN_ACTOR, 1, { name: null, client: 'Synthetic Client' }),
     ];
-    setupActivity({
-      development: activityPayload(items),
-      overview: overviewModel({ members: [
-        { personId: linkedPerson, actorIds: [linkedActor], displayName: 'Riley Example' },
-        { personId: personOnlyActor, displayName: 'Wrong Example' },
-      ] }),
-    });
+    setupActivity({ development: activityPayload(items) });
     renderApp('/activity?project=demo');
     await waitFor(() => expect(tableRows()).toHaveLength(2));
-    expect(tableRows()[0].textContent).toContain('Riley Example');
-    expect(tableRows()[1].textContent).toContain('未登记姓名');
-    expect(tableRows()[1].textContent).not.toContain('Wrong Example');
-    expect(document.body.textContent).not.toContain(linkedActor);
+    expect(tableRows()[0].textContent).toContain('Alex Example');
+    expect(tableRows()[0].textContent).not.toContain('Synthetic Client');
+    expect(tableRows()[1].textContent).toContain('未登记姓名（通过 Synthetic Client）');
   });
 
   it('uses task titles, never work keys, and makes only rows with a resolved task navigable', async () => {
@@ -302,14 +326,49 @@ describe('activity prototype structure and product language', () => {
     expect(document.body.textContent).not.toContain(WORK_B);
   });
 
-  it('retains scope and retention on quiet separate lines and keeps coverage beside scope', async () => {
+  it('ends a completed project read with only the prototype\'s footnote sentence', async () => {
     setupActivity();
-    renderApp('/activity?project=demo&kind=requests');
-    await screen.findByTestId('activity-retention');
-    expect(screen.getByTestId('activity-scope').textContent).toBe('当前显示本项目授权范围内的全部记录');
-    expect(screen.getByTestId('activity-retention').textContent).toBe('访问记录最多保留 10000 条，更早的记录会被清理');
+    renderApp('/activity?project=demo');
+    await waitFor(() => expect(tableRows()).toHaveLength(8));
+    const note = screen.getByTestId('activity-collection-limits').parentElement;
+    expect(note).toBe(screen.getByTestId('page-activity').querySelector('.activity-pnote'));
+    expect(note?.childNodes).toHaveLength(1);
+    expect(note?.textContent)
+      .toBe('这里记的是操作，每一条都是某个人通过自己的 Agent 做的。不采集聊天内容，也不采集工具的输入输出。');
+    for (const quiet of ['activity-scope', 'activity-coverage', 'activity-retention', 'activity-self-filter-note', 'activity-load-earlier', 'freshness-badge']) {
+      expect(screen.queryByTestId(quiet)).toBeNull();
+    }
+  });
+
+  it('still discloses a self scope, an unread or partial context and a request retention cap', async () => {
+    const selfScope = activityPayload([], null);
+    (selfScope.data as { scope?: string }).scope = 'self';
+    setupActivity({
+      development: selfScope,
+      requests: activityPayload([event('request', 'audit.requests', null, KNOWN_ACTOR, 0)]),
+      overview: overviewModel({ taskCoverage: 'unread', memberCoverage: 'partial' }),
+    });
+    renderApp('/activity?project=demo');
+    expect(await screen.findByTestId('activity-scope')).toBeTruthy();
+    expect(screen.getByTestId('activity-scope').textContent).toBe('当前只显示你自己的记录');
+    expect(screen.getByTestId('activity-coverage').textContent).toMatch(/没有读全|尚未读取/);
     expect(screen.getByTestId('activity-scope').parentElement).toBe(screen.getByTestId('activity-coverage').parentElement);
+
+    const retentionView = renderApp('/activity?project=demo&kind=requests');
+    expect(await screen.findByTestId('activity-retention')).toBeTruthy();
+    expect(screen.getByTestId('activity-retention').textContent).toBe('访问记录最多保留 10000 条，更早的记录会被清理');
     expect(screen.getByTestId('activity-retention').parentElement).not.toBe(screen.getByTestId('activity-scope').parentElement);
+    retentionView.unmount();
+  });
+
+  it('shows the freshness badge only when a context plane is stale or failed', async () => {
+    const stale = overviewModel();
+    (stale.freshness as { authoritative?: { status: string } }).authoritative = { status: 'stale' };
+    setupActivity({ overview: stale });
+    const view = renderApp('/activity?project=demo');
+    await waitFor(() => expect(tableRows()).toHaveLength(8));
+    expect(screen.getByTestId('freshness-badge')).toBeTruthy();
+    view.unmount();
   });
 
   it('loads earlier records with the section count always equal to visible table rows', async () => {
@@ -318,12 +377,49 @@ describe('activity prototype structure and product language', () => {
     renderApp('/activity?project=demo');
     await waitFor(() => expect(tableRows()).toHaveLength(1));
     expect(sectionCount()).toBe('1');
-    expect(screen.getByTestId('activity-load-earlier').closest('.activity-footer-controls'))
-      .toBe(screen.getByTestId('freshness-badge').closest('.activity-footer-controls'));
+    expect(screen.getByTestId('activity-load-earlier').closest('.activity-footer-controls')).toBeTruthy();
     await userEvent.setup().click(screen.getByTestId('activity-load-earlier'));
     await waitFor(() => expect(tableRows()).toHaveLength(2));
     expect(sectionCount()).toBe(String(tableRows().length));
-    expect(screen.getByTestId('activity-scope').textContent).toBe('当前显示本项目授权范围内的全部记录');
+    expect(screen.queryByTestId('activity-scope')).toBeNull();
+    expect(screen.queryByTestId('freshness-badge')).toBeNull();
+  });
+
+  it('pins the exact time in the cell title to the viewer\'s own timezone', async () => {
+    // 2026-11-20T04:30:05Z: 23:30 the previous day in New York, a different calendar
+    // day from UTC, so a title formatted in any other zone cannot pass by accident.
+    const at = Date.UTC(2026, 10, 20, 4, 30, 5);
+    const realFormat = Intl.DateTimeFormat;
+    // Libraries call Intl.DateTimeFormat both with and without `new`; the wrapper has to
+    // survive both and only lie about the viewer's resolved timezone.
+    const viewerTimeZone = function (this: unknown, ...args: unknown[]) {
+      const instance = new (realFormat as new (...a: unknown[]) => Intl.DateTimeFormat)(...args);
+      return new Proxy(instance, {
+        get(target, property) {
+          if (property === 'resolvedOptions') {
+            return () => ({ ...target.resolvedOptions(), timeZone: 'America/New_York' });
+          }
+          const value = Reflect.get(target, property, target);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+    } as unknown as typeof Intl.DateTimeFormat;
+    vi.stubGlobal('Intl', Object.assign(Object.create(Intl), Intl, { DateTimeFormat: viewerTimeZone }));
+    try {
+      setupActivity({ development: activityPayload([{ ...event('tz', 'execution.report', WORK_A, KNOWN_ACTOR, 0), created_at_unix_ms: at }]) });
+      const view = renderApp('/activity?project=demo');
+      await waitFor(() => expect(tableRows()).toHaveLength(1));
+      const title = tableRows()[0].querySelector('td:first-child .activity-time')?.getAttribute('title');
+      const exact = (timeZone: string) => new realFormat('zh-CN', {
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone,
+      }).format(new Date(at));
+      expect(exact('UTC')).not.toBe(exact('America/New_York'));
+      expect(title).toBe(exact('America/New_York'));
+      view.unmount();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('renders a deep-linked detail without internal fields and explains an unknown result', async () => {
@@ -340,6 +436,57 @@ describe('activity prototype structure and product language', () => {
       expect(defaultVisibleText(detail)).not.toContain(hidden);
     }
     expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
+  });
+
+  it('keeps a machine-shaped client name out of the sentence', async () => {
+    const items = [
+      event('machine-client', 'execution.report', WORK_A, KNOWN_ACTOR, 0, {
+        name: 'Alex Example', client: 'observer-host-native-20261031T203834Z', clientAttributed: true,
+      }),
+    ];
+    setupActivity({ development: activityPayload(items) });
+    renderApp('/activity?project=demo');
+    await waitFor(() => expect(tableRows()).toHaveLength(1));
+    expect(tableRows()[0].querySelector('td:nth-child(2)')?.textContent).toBe('Alex Example');
+  });
+
+  it('words an unread and a partial context differently and ends a self-scope read with that note alone', async () => {
+    const cases: Array<[string, { taskCoverage: string; memberCoverage: string }, string]> = [
+      ['unread tasks', { taskCoverage: 'unread', memberCoverage: 'complete' }, '数据读取情况：任务和成员资料尚未读取；姓名和任务名可能显示为未登记'],
+      ['partial members', { taskCoverage: 'complete', memberCoverage: 'partial' }, '数据读取情况：部分任务或成员资料没有读全；姓名和任务名只按已读取内容翻译'],
+    ];
+    for (const [name, coverage, expected] of cases) {
+      setupActivity({ overview: overviewModel(coverage) });
+      const view = renderApp('/activity?project=demo');
+      await waitFor(() => expect(tableRows()).toHaveLength(8));
+      expect((await screen.findByTestId('activity-coverage')).textContent, name).toBe(expected);
+      view.unmount();
+    }
+    const selfScope = activityPayload([event('self', 'execution.report', WORK_A, KNOWN_ACTOR, 0)], null);
+    (selfScope.data as { scope?: string }).scope = 'self';
+    setupActivity({ development: selfScope });
+    renderApp('/activity?project=demo');
+    // The task title proves the context read has finished, so the absences below are meaningful.
+    await waitFor(() => expect(tableRows()[0]?.textContent).toContain('Synthetic task alpha'));
+    expect(screen.queryByTestId('activity-coverage')).toBeNull();
+    expect(screen.getByTestId('activity-scope').parentElement?.textContent).toBe('当前只显示你自己的记录');
+  });
+
+  it('shows the freshness badge for a failed plane as well as a stale one', async () => {
+    const failed = overviewModel();
+    (failed.freshness as { authoritative?: { status: string } }).authoritative = { status: 'failed' };
+    setupActivity({ overview: failed });
+    renderApp('/activity?project=demo');
+    expect(await screen.findByTestId('freshness-badge')).toBeTruthy();
+  });
+
+  it('gives the time column the numeric style and shows no section count before the read', async () => {
+    setupActivity();
+    renderApp('/activity?project=demo');
+    expect(sectionCount()).toBeUndefined();
+    await waitFor(() => expect(tableRows()).toHaveLength(8));
+    expect(tableRows()[0].querySelector('td:first-child')?.classList.contains('obs-table-numeric-column')).toBe(true);
+    expect(sectionCount()).toBe('8');
   });
 });
 
@@ -360,7 +507,7 @@ describe.each([
     setupActivity({ development: activityPayload([]) });
     const emptyView = renderApp('/activity?project=demo');
     expect((await screen.findByTestId('activity-empty')).textContent).toBe(empty);
-    expect(screen.getByTestId('freshness-badge')).toBeTruthy();
+    expect(screen.queryByTestId('freshness-badge')).toBeNull();
     emptyView.unmount();
 
     const failure = { current: true };

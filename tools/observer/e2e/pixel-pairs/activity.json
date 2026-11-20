@@ -1,0 +1,36 @@
+{
+  "page": "activity",
+  "proto": "#p=activity&id=&tab=orders",
+  "app": "/activity?project=P-001&kind=development",
+  "ready": "[data-testid=\"page-activity\"]",
+  "protoReady": ".block",
+  "notes": {
+    "styleComparison": "Every style property is compared, colours included. This file is reviewer-owned: a builder may add pairs, never skip or loosen a style property.",
+    "dataDrivenGeometry": [
+      "seg __w skipped: the segment's width is the sum of its project buttons; the canonical demo directory has one more project (the taken-over sample-cli) than the prototype's three, so the first segment is wider by that button.",
+      "row and block heights grow with the 做了什么 text: the prototype holds hand-written sentences where the live record carries only the operation word; on the canonical demo both render 13 single-line rows of the same height, so every height and offset compares equal today."
+    ]
+  },
+  "pairs": [
+    ["page title", ".head h1", ".obs-page-title", ["TEXT", "margin-top", "margin-bottom"]],
+    ["page subtitle", ".head .sub", ".obs-page-subtitle", ["TEXT", "margin-left"]],
+    ["page header", ".head", ".obs-page-header", ["BOX", "__h"]],
+    ["filters", ".filters", ".activity-filters", ["BOX", "__h"]],
+    ["seg", ".filters .seg", ".activity-segment", ["BOX", "background-color", "__h"], {"skip": ["__w"]}],
+    ["seg button", ".filters .seg button:not([aria-pressed=\"true\"])", ".activity-segment button[aria-pressed=\"false\"]", ["height", "padding-left", "padding-right", "border-top-left-radius", "TEXT"]],
+    ["seg selected", ".filters .seg button[aria-pressed=\"true\"]", ".activity-segment button[aria-pressed=\"true\"]", ["height", "background-color", "color", "box-shadow", "font-weight"]],
+    ["block", ".block", ".activity-section", ["BOX", "PAINT", "__w"]],
+    ["block head", ".block-head", ".activity-section .ant-card-head", ["BOX", "border-bottom-color", "__h"]],
+    ["block title", ".block-head h2", ".activity-section .ant-card-head-title", ["TEXT", "margin-top"]],
+    ["block count", ".block-head .n", ".activity-section .obs-section-count", ["BOX", "TEXT", "background-color"]],
+    ["table", ".block table.t", ".activity-table .ant-table-content table", ["width", "table-layout", "border-collapse"]],
+    ["table head cell", ".block table.t th", ".activity-table thead th", ["TEXT", "padding-top", "padding-bottom", "padding-left", "border-bottom-color", "__h"]],
+    ["table head cell time", ".block table.t th.dim.num", ".activity-table thead th.obs-table-numeric-column", ["TEXT"]],
+    ["table cell time", ".block table.t tbody td:nth-child(1)", ".activity-table tbody td:nth-child(1)", ["TEXT", "padding-top", "padding-bottom", "padding-left", "border-bottom-color", "vertical-align", "__h"]],
+    ["table cell who", ".block table.t tbody td:nth-child(2)", ".activity-table tbody td:nth-child(2)", ["TEXT", "padding-top", "padding-bottom", "padding-left", "__h"]],
+    ["table cell what", ".block table.t tbody td:nth-child(3)", ".activity-table tbody td:nth-child(3)", ["TEXT", "padding-top", "padding-left", "__h"]],
+    ["table cell task", ".block table.t tbody td:nth-child(4)", ".activity-table tbody td:nth-child(4)", ["TEXT", "padding-top", "padding-left", "__h"]],
+    ["who text weight", ".block table.t tbody td:nth-child(2) span[style*=\"font-weight\"]", ".activity-table tbody td:nth-child(2) .activity-actor", ["TEXT"]],
+    ["note", ".pnote", ".activity-pnote", ["BOX", "TEXT", "border-top-color", "__h"]]
+  ]
+}
