@@ -180,6 +180,15 @@ button.members-detail-row:focus-visible {
   text-decoration: none;
 }
 
+/* The prototype's project and doing cells are inline spans inside the table cell: their text
+   shares one line with the neighbouring cell and wraps within the column. */
+.members-table .members-cell-inline {
+  display: inline;
+  min-width: 0;
+  overflow: visible;
+  white-space: normal;
+}
+
 .members-doing:hover,
 .members-doing:focus-visible,
 .members-project:hover,

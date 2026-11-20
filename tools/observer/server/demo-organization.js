@@ -336,6 +336,34 @@ function canonicalPeriodUpdates(data, projectId) {
   return completeSlice(items);
 }
 
+/** Demo-only organization projection for the canonical Members page. The synthetic fixture
+ * deliberately uses one stable person ID per person across its three projects; real person IDs
+ * remain project-scoped and no live organization directory is inferred from them. Duties and
+ * project memberships are recorded fixture facts, not page-side guesses. */
+function canonicalOrganizationDirectory(data) {
+  const memberIds = new Set(data.people.map((member) => member.person_id));
+  const departments = data.organization.departments.filter((department) =>
+    data.people.some((member) => member.group_id === department.id));
+  const departmentById = new Map(departments.map((department) => [department.id, {
+    key: department.id, name: department.name, parentKey: department.parent_id ?? null,
+  }]));
+  return {
+    configured: true,
+    organization: data.organization.name,
+    departments: [...departmentById.values()],
+    updated_at_ms: data.now_unix_ms,
+    members: data.people.filter((member) => memberIds.has(member.person_id)).map((member) => ({
+      personId: member.person_id,
+      name: member.display_name,
+      available: true,
+      departments: [departmentById.get(member.group_id)],
+      duty: member.role,
+      projects: data.projects.filter((project) => project.member_person_ids.includes(member.person_id))
+        .map((project) => ({ key: project.key, name: project.title })),
+    })),
+  };
+}
+
 function createDemoOrganization({ variant = 'full',
   timestampShiftMs = defaultDemoTimestampShiftMs() } = {}) {
   if (!Number.isInteger(timestampShiftMs)) throw new Error('Demo timestamp offset must be an integer');
@@ -1860,13 +1888,14 @@ function createDemoOrganization({ variant = 'full',
         available: true,
         display_name: member.display_name,
         department_ids: [member.group_id],
+        ...(variant === 'canonical' ? { duty: member.role } : {}),
       })),
     } }, setCookie: [] };
   }
 
   function connections(projectId, body) {
-    const selected = project(projectId);
-    const items = data.people.filter((member) => selected.member_person_ids.includes(member.person_id))
+    const selected = projectId === null && variant === 'canonical' ? null : project(projectId);
+    const items = data.people.filter((member) => selected === null || selected.member_person_ids.includes(member.person_id))
       .flatMap((member) => member.agents.map((agent) => ({
         connection_id: agent.connection_id,
         kind: 'agent',
@@ -1917,5 +1946,5 @@ function createDemoOrganization({ variant = 'full',
 module.exports = {
   createDemoOrganization, DemoReadError, DEMO_VARIANTS, DEMO_FUTURE_READ_OPS,
   canonicalOverviewInput, demoOverviewAsOf, canonicalProjectList, canonicalPeriodUpdates,
-  canonicalPerspectiveFacts,
+  canonicalOrganizationDirectory, canonicalPerspectiveFacts,
 };

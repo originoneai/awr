@@ -8,7 +8,8 @@
 const { mapObservation, createGithubObserver } = require('./team-progress');
 const { projectDirectory } = require('./directory');
 const { createDemoOrganization, DEMO_FUTURE_READ_OPS, canonicalOverviewInput, demoOverviewAsOf,
-  canonicalProjectList, canonicalPeriodUpdates, canonicalPerspectiveFacts } = require('./demo-organization');
+  canonicalProjectList, canonicalPeriodUpdates, canonicalOrganizationDirectory,
+  canonicalPerspectiveFacts } = require('./demo-organization');
 const { OBSERVATION_STALE_AFTER_MS, READ_TIMEOUT_MS, OVERVIEW_DEADLINE_MS, compareAuthoritative, resolveCurrency } = require('./observation-contract');
 
 const fs = require('fs');
@@ -1763,7 +1764,9 @@ function createTeamBridge(opts) {
   function canonicalDemoOverviewValue(project, session) {
     const demo = TEAM.demoOrganization;
     const whole = canonicalOverviewInput(demo.data);
-    const scopedTasks = whole.tasks.items.filter((task) => task.projectId === project);
+    const organization = project === '';
+    const scopedTasks = organization ? whole.tasks.items
+      : whole.tasks.items.filter((task) => task.projectId === project);
     const taskInProject = new Set(scopedTasks.map((task) => task.id));
     const planes = {
       tasks: scopedTasks,
@@ -1771,11 +1774,12 @@ function createTeamBridge(opts) {
       decisions: whole.decisions.items.filter((item) => taskInProject.has(item.taskId)),
       reviewRounds: whole.reviewRounds.items.filter((item) => taskInProject.has(item.taskId)),
       handoffs: whole.handoffs.items.filter((item) => taskInProject.has(item.taskId)),
-      // The member directory spans projects: cross-group waits and the wide-view personas
-      // resolve through it, and every project's reply needs the same whole roster.
+      // The synthetic canonical organization has stable person IDs across its three projects.
+      // Project replies retain the whole roster for cross-group waits and wide-view personas.
       members: whole.members.items,
       activity: whole.activity.items.filter((item) => taskInProject.has(item.taskId)),
-      approvals: whole.approvals.items.filter((item) => item.projectId === project),
+      approvals: organization ? whole.approvals.items
+        : whole.approvals.items.filter((item) => item.projectId === project),
     };
     const periods = whole.options.views;
     // The demo clock decoupling (the #709 review decision) applies here too: read times
@@ -1789,7 +1793,7 @@ function createTeamBridge(opts) {
       read_at_unix_ms: readAt,
       // The recorded period updates are a demo-only shape until AWR-PPD-012's update
       // reads exist; the page model reads this slice beside the composed planes.
-      periodUpdates: canonicalPeriodUpdates(demo.data, project),
+      periodUpdates: organization ? complete([]) : canonicalPeriodUpdates(demo.data, project),
       input: {
         ...Object.fromEntries(Object.entries(planes).map(([plane, items]) => [plane, complete(items)])),
         options: {
@@ -1799,7 +1803,8 @@ function createTeamBridge(opts) {
           // relabel it running and the derived statuses would drift off the prototype's.
           stalledAfterDays: whole.options.stalledAfterDays,
           views: {
-            me: { personId: demo.data.viewer.person_id, projectId: project },
+            me: { personId: demo.data.viewer.person_id,
+              projectId: organization ? whole.options.views.me.projectId : project },
             currentWeek: periods.currentWeek,
             previousWeek: periods.previousWeek,
             currentMonth: periods.currentMonth,
@@ -1812,7 +1817,7 @@ function createTeamBridge(opts) {
         report_received: { status: 'not_measured' },
         authoritative: {
           ...resolveCurrency({ atUnixMs: readAt, readAtMs: readAt, staleAfterMs: OBSERVATION_STALE_AFTER_MS }),
-          ...demoOverviewAsOf(project),
+          ...demoOverviewAsOf(organization ? 'organization' : project),
           at_unix_ms: readAt,
         },
         page_read: { status: 'measured', at_unix_ms: readAt },
@@ -1821,14 +1826,14 @@ function createTeamBridge(opts) {
   }
 
   /** Demo-only `canonical` variant: the same envelope the composed path produces, around the
-   * fully-known canonical input scoped to one project. Only canonical directory keys are
-   * readable. ProjectsPage skips the takeover entry's overview read, but the existing shell
-   * inbox indicators read every directory key; that shell read receives a scoped empty known
-   * model instead of a spurious authorization failure. The live path never takes this branch. */
+   * fully-known canonical input scoped to one project or to the synthetic organization. Only
+   * canonical directory keys are readable. ProjectsPage skips the takeover entry's overview read,
+   * but the existing shell inbox indicators read every directory key; that shell read receives a
+   * scoped empty known model instead of a spurious authorization failure. Live never takes this branch. */
   function canonicalDemoComposed(project, session) {
     const demo = TEAM.demoOrganization;
     const directoryKeys = new Set(canonicalProjectList(demo.data).map((entry) => entry.key));
-    if (!directoryKeys.has(project)) {
+    if (project !== '' && !directoryKeys.has(project)) {
       return { authError: { code: 'Forbidden', message: 'access denied' } };
     }
     return { value: canonicalDemoOverviewValue(project, session) };
@@ -1995,8 +2000,9 @@ function createTeamBridge(opts) {
           freshness: unmeasuredFreshness(now()) };
       }
       const project = url.searchParams.get('project');
-      if (!project || project.length > 128 || [...url.searchParams.keys()].some((key) => key !== 'project')
-        || url.searchParams.getAll('project').length !== 1) {
+      const canonicalOrganization = project === '' && TEAM.demoOrganization?.variant === 'canonical';
+      if ((project === null || project === '' && !canonicalOrganization) || (project?.length ?? 0) > 128
+        || [...url.searchParams.keys()].some((key) => key !== 'project') || url.searchParams.getAll('project').length !== 1) {
         return { ok: false, error: { code: 'InvalidInput', message: 'One bounded project required' },
           freshness: unmeasuredFreshness(now()) };
       }
@@ -2632,11 +2638,16 @@ function createTeamBridge(opts) {
   Object.assign(routes, {
     'POST /api/team/directory': async (_url, body, req, res) => {
       const input = asObject(body);
-      if (!input || typeof input.project !== 'string' || !input.project
-        || Object.keys(input).some((key) => key !== 'project')) {
+      if (!input || Object.keys(input).some((key) => key !== 'project')
+        || Object.hasOwn(input, 'project') && (typeof input.project !== 'string' || !input.project)) {
         return { ok: false, error: { code: 'InvalidInput' } };
       }
       if (!TEAM.live && !TEAM.demoOrganization) return { ok: false, error: { code: 'Unsupported' } };
+      if (!Object.hasOwn(input, 'project')) {
+        // Demo-only: there is no live organization-directory operation to proxy to.
+        if (TEAM.demoOrganization?.variant !== 'canonical') return { ok: false, error: { code: 'Unsupported' } };
+        return { ok: true, data: canonicalOrganizationDirectory(TEAM.demoOrganization.data) };
+      }
       const upstream = await proxyTeam(`/v1/web/projects/${encodeURIComponent(input.project)}/directory/read`, req,
         { protocol_version: 1 }, 'POST');
       if (upstream && [404, 405].includes(upstream.status)) return { ok: false, error: { code: 'Unsupported' } };
@@ -2682,14 +2693,19 @@ function createTeamBridge(opts) {
 
     'POST /api/team/connections/list': async (_url, body, req, res) => {
       const parsed = asObject(body);
-      if (!parsed || typeof parsed.project !== 'string' || !parsed.project
-        || Object.keys(parsed).some((key) => !['project', 'cursor', 'limit'].includes(key))) {
+      if (!parsed || Object.keys(parsed).some((key) => !['project', 'cursor', 'limit'].includes(key))) {
+        return { ok: false, error: { code: 'InvalidInput' } };
+      }
+      const organization = !Object.hasOwn(parsed, 'project');
+      if (!organization && (typeof parsed.project !== 'string' || !parsed.project)) {
         return { ok: false, error: { code: 'InvalidInput' } };
       }
       if (!TEAM.live && !TEAM.demoOrganization) return { ok: false, error: { code: 'Unsupported' } };
+      if (organization && TEAM.demoOrganization?.variant !== 'canonical') return { ok: false, error: { code: 'Unsupported' } };
       const { project, ...page } = parsed;
-      const upstream = await proxyTeam(`/v1/web/projects/${encodeURIComponent(project)}/connections/list`, req,
-        { protocol_version: 1, ...page }, 'POST');
+      const upstream = organization ? TEAM.demoOrganization.connections(null, page)
+        : await proxyTeam(`/v1/web/projects/${encodeURIComponent(project)}/connections/list`, req,
+          { protocol_version: 1, ...page }, 'POST');
       if (!upstream || upstream.status >= 400) return liveError(upstream);
       const data = upstream.json?.data;
       const reference = /^(agent|browser|access)_[a-f0-9]{64}$/;

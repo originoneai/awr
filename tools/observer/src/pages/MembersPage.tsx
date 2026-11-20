@@ -38,11 +38,20 @@ interface Department {
   name: string;
 }
 
+interface DirectoryProject {
+  key: string;
+  name: string;
+}
+
 interface DirectoryMember {
   personId: string;
   name: string | null;
   available: boolean;
   departments: Department[];
+  /** Demo-only recorded duty; absent until the real service supplies one. */
+  duty?: string;
+  /** Demo-only organization projection; project directories leave this absent. */
+  projects?: DirectoryProject[];
 }
 
 interface Directory {
@@ -71,6 +80,8 @@ interface MemberRow {
   name: string;
   available: boolean;
   departments: Department[];
+  duty: string | null;
+  projects: DirectoryProject[] | null;
   personId: string | null;
   summary: PersonSummary | null;
 }
@@ -78,7 +89,7 @@ interface MemberRow {
 type DetailKey = 'members' | 'groups' | 'pending';
 type SortDirection = 'ascending' | 'descending' | null;
 
-const CONNECTIONS_QUERY_KEY = (project: string) => ['team', 'connections', 'members', project] as const;
+const CONNECTIONS_QUERY_KEY = (project: string | null) => ['team', 'connections', 'members', project] as const;
 const DETAIL_KEYS: readonly string[] = ['members', 'groups', 'pending'];
 
 function detailKey(value: string | null): DetailKey | null {
@@ -110,12 +121,26 @@ function pendingKind(item: PersonPendingItem, t: TFunction) {
   }
 }
 
+/** The prototype's members table counts what blocks work for the person: the waits they must
+ * answer, review or chase (app.js queueOf). Inbox-only confirmations and dispatches stay on the
+ * workbench, so this count reads the wait items alone; an unread wait plane still nulls it. */
+function waitPending(summary: PersonSummary | null): { count: number | null; items: PersonPendingItem[] } {
+  if (!summary) return { count: null, items: [] };
+  const items = summary.pending.items.filter((item) => item.kind === 'wait');
+  const unknown = summary.pending.unknownItems
+    .filter((issue) => issue.part !== 'handoffs' && issue.part !== 'approvals');
+  return { count: unknown.length > 0 ? null : items.length, items };
+}
+
+/** The prototype composes the doing cell for a recorded reviewer duty from their review queue. */
+const REVIEWER_DUTY = '复核';
+
 function AgentLamp({ state }: { state: 'active' | 'inactive' | 'unknown' }) {
   return <span className="obs-lamp" data-lamp={state === 'active' ? 'running' : state === 'inactive' ? 'ready' : 'waiting'} data-ring={state === 'active' ? undefined : 'true'} aria-hidden />;
 }
 
 /** The directory owns row membership; the composed read owns only the facts explicitly tied to a person. */
-function ProjectMembers({ project, projects }: { project: string; projects: { data?: { projects: TeamProject[] } } }) {
+function ProjectMembers({ project, projects }: { project: string | null; projects: ProjectsRead }) {
   const { t, i18n } = useTranslation();
   const language = i18n.language;
   const navigate = useNavigate();
@@ -131,7 +156,7 @@ function ProjectMembers({ project, projects }: { project: string; projects: { da
     queryKey: ['team', 'directory', project],
     queryFn: async ({ signal }) => {
       try {
-        return await apiPost<{ data: Directory }>('/api/team/directory', { project }, signal);
+        return await apiPost<{ data: Directory }>('/api/team/directory', project ? { project } : {}, signal);
       } catch (error) {
         if (isAuthError(error)) queryClient.setQueryData(['team', 'directory', project], null);
         throw error;
@@ -146,22 +171,26 @@ function ProjectMembers({ project, projects }: { project: string; projects: { da
     retry: false,
   });
   const denied = isAuthError(directoryQuery.error);
+  // Without a selected project the organization scope exists only where the bridge serves an
+  // organization directory, so the composed and connection reads wait for that reply.
+  const organizationReadable = project !== null || directoryQuery.isSuccess;
   const overview = useQuery({
     ...overviewModelQueryOptions(project, revoked),
-    enabled: !revoked && !denied,
+    enabled: !revoked && !denied && organizationReadable,
     meta: { failureScope: 'object' },
   });
   const connections = useQuery({
     queryKey: CONNECTIONS_QUERY_KEY(project),
     queryFn: async ({ signal }) => {
-      const response = await apiPost<ConnectionsResponse>('/api/team/connections/list', { project, limit: 50 }, signal);
+      const response = await apiPost<ConnectionsResponse>('/api/team/connections/list',
+        project ? { project, limit: 50 } : { limit: 50 }, signal);
       if (!Array.isArray(response.data?.items) || response.data.items.length > 50
         || !(response.data.next_cursor === null || typeof response.data.next_cursor === 'string')) {
         throw new ApiError('InvalidResponse', 'Connection list unavailable');
       }
       return response;
     },
-    enabled: !revoked && !denied && !isAuthError(overview.error),
+    enabled: !revoked && !denied && organizationReadable && !isAuthError(overview.error),
     meta: { failureScope: 'object' },
     gcTime: 0,
     refetchOnMount: 'always',
@@ -170,6 +199,10 @@ function ProjectMembers({ project, projects }: { project: string; projects: { da
     retry: false,
   });
   const accessDenied = revoked || denied || isAuthError(overview.error) || isAuthError(connections.error);
+  // A live service has no organization directory read: the bridge answers Unsupported and the
+  // page keeps the existing per-project entry instead of an organization table.
+  const orgUnsupported = project === null && directoryQuery.isFetchedAfterMount
+    && directoryQuery.error instanceof ApiError && directoryQuery.error.code === 'Unsupported';
 
   useEffect(() => {
     if (!isAuthError(overview.error) && !isAuthError(connections.error)) return;
@@ -180,7 +213,7 @@ function ProjectMembers({ project, projects }: { project: string; projects: { da
   const directory = directoryQuery.isFetchedAfterMount && !isAuthError(directoryQuery.error)
     ? directoryQuery.data?.data : undefined;
   const overviewData: TeamOverviewModelResponse | undefined = !isAuthError(overview.error)
-    && overview.data?.project === project && overview.data.input ? overview.data : undefined;
+    && overview.data?.project === (project ?? '') && overview.data.input ? overview.data : undefined;
   const derived: OverviewDerivation | null = useMemo(() => {
     if (!overviewData) return null;
     try {
@@ -220,7 +253,8 @@ function ProjectMembers({ project, projects }: { project: string; projects: { da
       const rawName = typeof member.name === 'string' ? member.name : null;
       const name = rawName && readsAsName(rawName) ? rawName
         : hasObservationValue(rawName) ? unavailableName : t('members.unnamed', { number: index + 1 });
-      // Directory identity joins only to the same project-scoped ID in the overview membership read.
+      // A project directory joins only its own person-ID space. The organization rows and their
+      // shared synthetic IDs come already composed from the canonical bridge; the page never merges projects.
       const personId = overviewPersonIds.has(member.personId) ? member.personId : null;
       return {
         key: personId ?? `directory-${index}`,
@@ -230,6 +264,8 @@ function ProjectMembers({ project, projects }: { project: string; projects: { da
         name,
         available: member.available,
         departments: member.departments,
+        duty: typeof member.duty === 'string' && member.duty.trim() ? member.duty : null,
+        projects: member.projects ?? null,
         personId,
         summary: personId ? summaries.get(personId) ?? null : null,
       };
@@ -287,19 +323,42 @@ function ProjectMembers({ project, projects }: { project: string; projects: { da
     return result;
   }
 
+  /** The prototype's doing cell (app.js doing): a recorded reviewer reads their review queue;
+   * everyone else reads their first owned task with an agent running, waiting or stalled, then
+   * any other owned task that is still open work. */
   function doingCell(row: MemberRow) {
-    const doing = row.summary?.inProgress.items[0];
+    const reviews = waitPending(row.summary).items.filter((item) => item.wait?.kind === 'review');
+    if (row.duty === REVIEWER_DUTY && reviews.length > 0) {
+      const heading = (reviews[0].task?.title ?? '').split('：')[0];
+      return <span data-testid={`member-doing-${row.rowId}`}>{t('members.doingReviewQueue', { title: heading, count: reviews.length })}</span>;
+    }
+    const owned = row.personId ? derived?.tasks.filter((task) => task.owner?.id === row.personId) ?? [] : [];
+    const doing = owned.find((task) => task.agentName != null && ['running', 'waiting', 'stalled'].includes(task.status))
+      ?? owned.find((task) => !['verified', 'planned', 'unknown'].includes(task.status));
     if (doing) {
       const title = taskTitle(doing, language, t('members.unnamedTask'));
-      return doing.id ? <Link className="members-ellipsis members-doing" data-testid={`member-doing-${row.rowId}`} title={title} to={taskPath(project, doing.id)}>{title}</Link>
-        : <span className="members-ellipsis" data-testid={`member-doing-${row.rowId}`} title={title}>{title}</span>;
+      return doing.id ? <Link className="members-doing members-cell-inline" data-testid={`member-doing-${row.rowId}`} title={title} to={taskPath(project, doing.id)}>{title}</Link>
+        : <span data-testid={`member-doing-${row.rowId}`} title={title}>{title}</span>;
     }
     const knownEmpty = row.summary?.inProgress.count === 0;
     return <span className="members-dim" data-testid={`member-doing-${row.rowId}`}>{t(knownEmpty ? 'members.noDoing' : 'members.doingUnknown')}</span>;
   }
 
+  function projectsCell(row: MemberRow) {
+    if (row.projects) {
+      const title = row.projects.map((entry) => entry.name).join('、');
+      return <span className="members-small members-cell-inline" data-testid={`member-projects-${row.rowId}`} title={title}>
+        {row.projects.map((entry, index) => <span key={entry.key}>
+          {index > 0 ? '、' : ''}<Link className="members-project" to={`/projects/${encodeURIComponent(entry.key)}`}>{entry.name}</Link>
+        </span>)}
+      </span>;
+    }
+    return <Link className="members-small members-cell-inline members-project" data-testid={`member-projects-${row.rowId}`}
+      to={project ? `/projects/${encodeURIComponent(project)}` : '/projects'} title={currentProjectName}>{currentProjectName}</Link>;
+  }
+
   function pendingCell(row: MemberRow) {
-    const count = row.summary?.pending.count;
+    const { count } = waitPending(row.summary);
     if (count == null) {
       return <span className="members-dim members-quiet-count" data-testid={`member-pending-${row.rowId}`} aria-label={t('members.pendingUnknown')}>—</span>;
     }
@@ -311,7 +370,7 @@ function ProjectMembers({ project, projects }: { project: string; projects: { da
 
   const tableRows: DataTableRow[] = visibleRows.map((row) => {
     const agents = agentsFor(row);
-    const pending = row.summary?.pending.count;
+    const pending = waitPending(row.summary).count;
     return {
       key: row.key,
       testId: `member-row-${row.rowId}`,
@@ -326,9 +385,9 @@ function ProjectMembers({ project, projects }: { project: string; projects: { da
           <div className="members-clamp" title={row.departments.map((item) => departmentLabels.get(item.key)).join(' · ')}>
             {row.departments.map((item) => departmentLabels.get(item.key)).join(' · ') || t('members.noDepartment')}
           </div>
-          <div className="members-small">{t(row.available ? 'members.roleMissing' : 'members.unavailableMember')}</div>
+          <div className="members-small">{row.available ? row.duty ?? t('members.roleMissing') : t('members.unavailableMember')}</div>
         </div>,
-        <Link className="members-small members-ellipsis members-project" data-testid={`member-projects-${row.rowId}`} to={`/projects/${encodeURIComponent(project)}`} title={currentProjectName}>{currentProjectName}</Link>,
+        projectsCell(row),
         doingCell(row),
         <div className="members-chips" data-testid={`member-agents-${row.rowId}`}>
           {agents.length ? agents.map((agent, index) => {
@@ -354,6 +413,7 @@ function ProjectMembers({ project, projects }: { project: string; projects: { da
   const selectedDetailKey = detailKey(searchParams.get('detail'));
   const selectedPersonId = searchParams.get('member');
   const selectedPerson = rows.find((row) => row.personId && row.personId === selectedPersonId) ?? null;
+  const selectedPending = selectedDetailKey === 'pending' ? waitPending(selectedPerson?.summary ?? null) : null;
 
   let detail: { title: string; items: PersonPendingItem[] | MemberRow[] | Department[]; content: ReactNode } | null = null;
   if (selectedDetailKey === 'members' && directory) {
@@ -367,13 +427,14 @@ function ProjectMembers({ project, projects }: { project: string; projects: { da
       <button type="button" className="members-detail-row" data-testid="members-detail-row" key={item.key} onClick={() => { setDepartment(item.key); closeDetail(); }}>{departmentLabels.get(item.key)}</button>
     ))}</div> : <div className="members-detail-empty" data-testid="members-detail-empty">{t('members.detailEmpty')}</div>;
     detail = { title: t('members.detailGroups'), items: departments, content };
-  } else if (selectedDetailKey === 'pending' && selectedPerson?.summary?.pending.count != null) {
-    const items = selectedPerson.summary.pending.items;
+  } else if (selectedDetailKey === 'pending' && selectedPerson != null && selectedPending != null && selectedPending.count != null) {
+    const items = selectedPending.items;
     const content = items.length ? <div className="members-detail-list">{items.map((item, index) => {
       const title = item.task ? taskTitle(item.task, language, t('members.unnamedTask'))
         : item.approval?.title?.trim() || t('members.pendingItem');
       const body = <><span className="members-small">{pendingKind(item, t)}</span><span className="members-ellipsis" title={title}>{title}</span></>;
-      const href = item.task?.id ? taskPath(project, item.task.id) : item.kind === 'approval' ? `/inbox?scope=${encodeURIComponent(project)}` : null;
+      const href = item.task?.id ? taskPath(project, item.task.id)
+        : item.kind === 'approval' ? project ? `/inbox?scope=${encodeURIComponent(project)}` : '/inbox' : null;
       return href ? <Link className="members-detail-row" data-testid="members-detail-row" key={`${item.kind}-${index}`} to={href}>{body}</Link>
         : <div className="members-detail-row" data-testid="members-detail-row" key={`${item.kind}-${index}`}>{body}</div>;
     })}</div> : <div className="members-detail-empty" data-testid="members-detail-empty">{t('members.detailEmpty')}</div>;
@@ -414,6 +475,8 @@ function ProjectMembers({ project, projects }: { project: string; projects: { da
     </>;
   }
 
+  if (orgUnsupported) return <ProjectChooser projects={projects} />;
+
   return <>
     <PageHeader title={t('members.title')} subtitle={directory ? t('members.subtitle', { organization, count: rows.length }) : t(accessDenied ? 'members.subtitleUnavailable' : 'members.subtitleLoading')} />
     <p className="members-lead" data-testid="members-summary">
@@ -434,8 +497,8 @@ function ProjectMembers({ project, projects }: { project: string; projects: { da
         {connections.isError ? <div>{t('members.connectionsUnavailable')}</div> : null}
         <FreshnessBadge freshness={overviewData?.freshness} />
         <div className="members-account-links">
-          <Link to={`/account?scope=${encodeURIComponent(project)}`}>{t('members.viewConnections')}</Link>
-          <Link to={`/agent-connect?scope=${encodeURIComponent(project)}`}>{t('members.connectAgent')}</Link>
+          <Link to={project ? `/account?scope=${encodeURIComponent(project)}` : '/account'}>{t('members.viewConnections')}</Link>
+          <Link to={project ? `/agent-connect?scope=${encodeURIComponent(project)}` : '/agent-connect'}>{t('members.connectAgent')}</Link>
         </div>
       </div>
     </Section>
@@ -447,23 +510,41 @@ function ProjectMembers({ project, projects }: { project: string; projects: { da
   </>;
 }
 
+/** The scope entry when no organization directory exists: each project is read separately and
+ * person IDs stay project-scoped. Rendered when no project is selected and the bridge answers
+ * that organization directories are unsupported. */
+function ProjectChooser({ projects }: { projects: ProjectsRead }) {
+  const { t } = useTranslation();
+  const { setProjectKey } = useScope();
+  return <>
+    <PageHeader title={t('members.title')} subtitle={t('members.chooseProject')} />
+    <Section title={t('members.chooseProject')} className="members-project-chooser" padded>
+      {projects.isPending ? <div className="members-state">{t('common.loading')}</div>
+        : projects.isError ? <Notice tone="warning" extra={<Button onClick={() => void projects.refetch()}>{t('members.retry')}</Button>}>{t('members.projectsFailed')}</Notice>
+          : (projects.data?.projects.length ? <div className="members-project-choices">{projects.data.projects.map((project, index) => <div className="members-project-choice" key={project.key}>
+            <span>{projectLabel(project, index + 1)}</span><Button onClick={() => setProjectKey(project.key)}>{t('members.open')}</Button>
+          </div>)}</div> : <div className="members-state">{t('members.noProjects')}</div>)}
+    </Section>
+  </>;
+}
+
+interface ProjectsRead {
+  isPending: boolean;
+  isError: boolean;
+  refetch: () => unknown;
+  data?: { projects: TeamProject[] };
+}
+
 export function MembersPage() {
   const { t } = useTranslation();
   const { revoked } = useRevocation();
-  const { projectKey, setProjectKey } = useScope();
+  const { projectKey } = useScope();
   const projects = useQuery(projectsQueryOptions(revoked));
   const forbidden = revoked || isAuthError(projects.error);
+  // Without a selected project the page asks the bridge for one organization directory first;
+  // ProjectMembers falls back to the per-project chooser when the service has none.
   return <div className="members-page" data-testid="page-members">
     {forbidden ? <><PageHeader title={t('members.title')} subtitle={t('members.subtitleUnavailable')} /><ObservationForbidden /></>
-      : projectKey ? <ProjectMembers key={projectKey} project={projectKey} projects={projects} /> : <>
-        <PageHeader title={t('members.title')} subtitle={t('members.chooseProject')} />
-        <Section title={t('members.chooseProject')} className="members-project-chooser" padded>
-          {projects.isPending ? <div className="members-state">{t('common.loading')}</div>
-            : projects.isError ? <Notice tone="warning" extra={<Button onClick={() => void projects.refetch()}>{t('members.retry')}</Button>}>{t('members.projectsFailed')}</Notice>
-              : (projects.data?.projects.length ? <div className="members-project-choices">{projects.data.projects.map((project, index) => <div className="members-project-choice" key={project.key}>
-                <span>{projectLabel(project, index + 1)}</span><Button onClick={() => setProjectKey(project.key)}>{t('members.open')}</Button>
-              </div>)}</div> : <div className="members-state">{t('members.noProjects')}</div>)}
-        </Section>
-      </>}
+      : <ProjectMembers key={projectKey ?? 'organization'} project={projectKey} projects={projects} />}
   </div>;
 }

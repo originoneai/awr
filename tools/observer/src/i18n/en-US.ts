@@ -15,6 +15,7 @@ const enUS: Messages = {
     sectionTitle: 'Members', name: 'Member', groupRole: 'Group · role', projects: 'Projects',
     doing: 'Currently doing', agentsColumn: 'Agent connections', pending: 'Waiting for them',
     roleMissing: 'Role not registered', noDoing: 'Nothing in progress', doingUnknown: 'Current work unknown',
+    doingReviewQueue: 'Reviewing “{{title}}”, {{count}} items',
     noAgents: 'None', noPending: 'None', pendingCount: '{{count}}', pendingUnknown: 'Number waiting for this member is unknown',
     currentProject: 'Current project', unnamedTask: 'Task name not registered',
     collectionNote: 'Each member connects an Agent with their own credentials. The person remains responsible and the Agent acts for them; assignments, answers and reviews are done by that person through their own Agent.',

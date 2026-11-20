@@ -102,6 +102,15 @@ test('same-name departments keep separate references in every relationship', () 
   assert.notEqual(result.members[0].departments[0].key, result.members[0].departments[1].key);
 });
 
+test('the optional recorded duty is projected only when present and malformed duties fail closed', () => {
+  const source = clone(hierarchy.data);
+  assert.equal(Object.hasOwn(projectDirectory(source).members[0], 'duty'), false);
+  source.members[0].duty = 'Reviewer';
+  assert.equal(projectDirectory(source).members[0].duty, 'Reviewer');
+  source.members[0].duty = 7;
+  assert.equal(projectDirectory(source), null);
+});
+
 test('the bridge forwards only the signed-in read, returns IDs and never caches across authorization changes', async (t) => {
   let status = 200;
   let payload = clone(hierarchy);
@@ -118,6 +127,8 @@ test('the bridge forwards only the signed-in read, returns IDs and never caches 
   const bridge = createTeamBridge({ teamUrl: `http://127.0.0.1:${upstream.address().port}`, port: 0 });
   const call = (body, cookie = 'awr_web_session=synthetic-browser') => bridge.routes['POST /api/team/directory'](null, body,
     { headers: { cookie } }, { getHeader: () => undefined, setHeader: () => {} });
+  assert.equal((await call({})).error.code, 'Unsupported', 'a live service has no organization directory read');
+  assert.equal(calls.length, 0, 'organization fallback never guesses a service endpoint');
   const result = await call({ project: 'reader-project' });
   assert.deepEqual(calls, [{ path: '/v1/web/projects/reader-project/directory/read', cookie: 'awr_web_session=synthetic-browser', body: { protocol_version: 1 } }]);
   assert.deepEqual(result, { ok: true, data: projectDirectory(hierarchy.data) });
