@@ -96,12 +96,14 @@ async function prototypePage(viewport, mode) {
 const ACTUAL_SELECTORS = {
   header: '.obs-page-header', filters: '.activity-filters', segment: '.activity-segment',
   option: '.activity-segment button', section: '.activity-section',
-  sectionHead: '.activity-section .ant-card-head', tableHead: '.activity-table thead th', note: '.activity-pnote',
+  sectionHead: '.activity-section .ant-card-head', sectionTitle: '.activity-section .obs-section-title',
+  tableHead: '.activity-table thead th', taskLink: '.activity-task-link', note: '.activity-pnote',
 };
 const PROTOTYPE_SELECTORS = {
   header: '.wrap > .head', filters: '.wrap > .filters', segment: '.wrap > .filters .seg',
   option: '.wrap > .filters .seg button', section: '.wrap > .block',
-  sectionHead: '.wrap > .block .block-head', tableHead: '.wrap > .block .t th', note: '.wrap > .block .pnote',
+  sectionHead: '.wrap > .block .block-head', sectionTitle: '.wrap > .block .block-head h2',
+  tableHead: '.wrap > .block .t th', taskLink: '.wrap > .block .t tbody td:nth-child(4)', note: '.wrap > .block .pnote',
 };
 
 async function metrics(page, selectors) {
@@ -121,6 +123,7 @@ async function metrics(page, selectors) {
         borderRadius: style.borderRadius,
         fontSize: style.fontSize,
         lineHeight: style.lineHeight,
+        color: style.color,
       };
     };
     return Object.fromEntries(Object.entries(selectors).map(([key, selector]) => [key, read(selector)]));
@@ -163,21 +166,27 @@ const configurations = [
 ];
 
 const comparison = {
-  status: 'Pending supervisor review',
+  status: 'Accepted differences recorded; review defects R1 and R2 resolved',
+  acceptanceBasis: 'Review comment 7028407961',
   structuralOrder: {
     prototype: ['page header', 'project and category filters', 'What happened section'],
     observer: ['page header', 'project and category filters', 'What happened section'],
     difference: 'No main-block order difference in the default data view',
   },
-  acceptedBySupervisor: false,
+  acceptedBySupervisor: true,
+  resolvedReviewDefects: [
+    { area: 'Time formatting', fix: 'compactTimeText now provides relative, today, yesterday, current-year and earlier-year labels in the viewer time zone without seconds.' },
+    { area: 'Name resolution', fix: 'Other members resolve only through actorIds and the viewer through options.views.me.personId; no actor/person equality heuristic remains.' },
+  ],
+  dataCoverageNotes: [
+    'When actorIds and server-side person/display data are absent, the unregistered-name fallback remains the honest state. This is a coverage note, not a prototype difference.',
+  ],
   differences: [
-    { area: 'Section heading', difference: 'The prototype-only data-source badge is absent in the product.', reason: 'Owner rule: demonstration source controls and internal operation text do not ship.' },
-    { area: 'Section footer', difference: 'Scope, read coverage, freshness and optional earlier-history control remain visible below the required collection note.', reason: 'AWR-PPO-057 explicitly retains these existing observation contracts.' },
-    { area: 'Rows and counts', difference: 'The synthetic demo organization returns different operations and times; older timestamps retain the shared full date-time formatter rather than the prototype sample abbreviations.', reason: 'Data-dependent content and the existing observation time contract; operation labels, titles and empty states use the prototype vocabulary.' },
-    { area: 'People and Agents', difference: 'Unlinked actor records say Name not registered and Agent attribution is generic when no Agent name is recorded.', reason: 'The activity reply has identifiers only; the page never guesses a member or Agent name.' },
-    { area: 'Mobile table', difference: 'The shared DataTable uses 16px outer cell padding below 860px, and ellipsized zero-width action text keeps bounded rows; the prototype uses 20px and wraps that zero-width text into very tall rows.', reason: 'Existing compact-table geometry and the requirement to truncate untrusted long text without breaking layout; the prototype wrapping defect is not reproduced.' },
-    { area: 'Application shell', difference: 'The product uses its authorized perspective and has no prototype identity/source demonstration switches.', reason: 'Previously accepted application-shell and read-only product boundaries.' },
-    { area: 'Detail interaction', difference: 'An event deep link retains the detail panel below the ledger; default comparison screenshots have no selected event.', reason: 'Retain the existing detail contract without adding a default block absent from the prototype.' },
+    { area: 'Section heading', status: 'accepted', difference: 'The prototype-only data-source badge is absent in the product.', reason: 'Owner rule: demonstration source controls and internal operation text do not ship.' },
+    { area: 'Section footer', status: 'accepted', difference: 'Scope and coverage share one quiet line; retention is separate, and earlier-history and freshness controls share a row.', reason: 'The content is retained as required; the compact R6 shape addresses the review.' },
+    { area: 'Mobile table', status: 'accepted', difference: 'The shared DataTable uses 16px outer cell padding below 860px, and ellipsized zero-width action text keeps bounded rows; the prototype uses 20px and wraps that zero-width text into very tall rows.', reason: 'The review accepted compact-table geometry and bounded rows; the prototype wrapping defect is not reproduced.' },
+    { area: 'Application shell', status: 'accepted', difference: 'The product uses its authorized perspective and has no prototype identity/source demonstration switches.', reason: 'Previously accepted application-shell and read-only product boundaries.' },
+    { area: 'Detail interaction', status: 'accepted', difference: 'An event deep link retains the detail panel below the ledger; default comparison screenshots have no selected event.', reason: 'The review explicitly accepted this reconciliation.' },
   ],
   configurations: [],
 };
@@ -190,6 +199,7 @@ try {
   browser = await chromium.launch({ headless: true });
   for (const configuration of configurations) {
     const actual = await actualPage(baseUrl, configuration.viewport, configuration.mode);
+    if (configuration.viewport.width > 860) await actual.page.locator('.activity-task-link').first().waitFor({ state: 'attached' });
     const prototype = await prototypePage(configuration.viewport, configuration.mode);
     const actualPath = path.join(evidence, `${configuration.name}-observer.png`);
     const prototypeImagePath = path.join(evidence, `${configuration.name}-prototype.png`);
@@ -201,6 +211,9 @@ try {
     const prototypeMetrics = await metrics(prototype.page, PROTOTYPE_SELECTORS);
     assert.equal(actualMetrics.option?.height, 28);
     assert.equal(actualMetrics.sectionHead?.height, 48);
+    assert.equal(actualMetrics.sectionTitle?.fontSize, '14px');
+    assert.equal(actualMetrics.sectionTitle?.lineHeight, '20px');
+    if (configuration.viewport.width > 860) assert.equal(actualMetrics.taskLink?.color, prototypeMetrics.taskLink?.color);
     assert.equal(actualMetrics.tableHead?.height, 40);
     assert.equal(actualMetrics.note?.fontSize, '12px');
     assert.equal(actualMetrics.note?.lineHeight, '16px');
@@ -255,6 +268,6 @@ try {
 }
 
 await writeFile(path.join(evidence, 'comparison.json'), `${JSON.stringify(comparison, null, 2)}\n`);
-await writeFile(path.join(evidence, 'differences.md'), `# Activity comparison differences\n\nStatus: pending supervisor review.\n\n${comparison.differences.map((item, index) => `${index + 1}. **${item.area}:** ${item.difference} **Reason:** ${item.reason}`).join('\n')}\n`);
+await writeFile(path.join(evidence, 'differences.md'), `# Activity comparison differences\n\nBasis: review comment 7028407961. R1 and R2 are resolved defects, not accepted differences.\n\n## Resolved review defects\n\n${comparison.resolvedReviewDefects.map((item) => `- **${item.area}:** ${item.fix}`).join('\n')}\n\n## Accepted differences\n\n${comparison.differences.map((item, index) => `${index + 1}. **${item.area} (${item.status}):** ${item.difference} **Reason:** ${item.reason}`).join('\n')}\n\n## Data coverage notes\n\n${comparison.dataCoverageNotes.map((item) => `- ${item}`).join('\n')}\n`);
 await writeFile(path.join(evidence, 'live-sample-report.json'), `${JSON.stringify(sampleReport, null, 2)}\n`);
 console.log(JSON.stringify({ evidence, comparisons: comparison.configurations.length, liveSamples: sampleReport.length, failures: sampleReport.flatMap((item) => item.violations) }, null, 2));

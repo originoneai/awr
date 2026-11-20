@@ -48,8 +48,13 @@ function realShapedOverviewModel(state: State) {
   const tasks = state === 'empty' ? [] : overview.works.map((work) => ({ id: work.key, title: work.title }));
   const directory = (overview.members ?? []) as Array<Record<string, unknown>>;
   const members = state === 'empty' ? [] : directory.flatMap((member) => {
-    const personId = member.person_id ?? member.actor_id ?? member.id;
-    return typeof personId === 'string' ? [{ personId, displayName: member.display_name ?? member.name ?? null }] : [];
+    const personId = member.person_id;
+    const actorId = member.actor_id;
+    return typeof personId === 'string' ? [{
+      personId,
+      ...(typeof actorId === 'string' ? { actorIds: [actorId] } : {}),
+      displayName: member.display_name ?? member.name ?? null,
+    }] : [];
   });
   return {
     ok: true,
@@ -58,7 +63,11 @@ function realShapedOverviewModel(state: State) {
     input: {
       tasks: complete(tasks), members: complete(members), dependencies: unread, decisions: unread,
       reviewRounds: unread, handoffs: unread, approvals: unread, activity: unread,
-      options: { nowUnixMs: 1790000000000, stalledAfterDays: 7 },
+      options: {
+        nowUnixMs: 1790000000000,
+        stalledAfterDays: 7,
+        views: { me: { personId: 'synthetic-ratchet-viewer-person', projectId: 'demo' } },
+      },
     },
     coverage: {
       tasks: part('complete'), members: part('complete'), dependencies: part('unread'),

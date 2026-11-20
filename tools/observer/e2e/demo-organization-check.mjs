@@ -187,6 +187,8 @@ async function activityGeometry(page) {
         borderRadius: style.borderRadius,
         fontSize: style.fontSize,
         lineHeight: style.lineHeight,
+        color: style.color,
+        textDecorationLine: style.textDecorationLine,
       };
     };
     return {
@@ -208,11 +210,16 @@ async function activityGeometry(page) {
       }),
       section: read('.activity-section'),
       sectionHead: read('.activity-section .ant-card-head'),
+      sectionTitle: read('.activity-section .obs-section-title'),
       tableHead: read('.activity-table thead th'),
       firstTableHead: read('.activity-table thead th:first-child'),
+      taskLink: read('.activity-task-link'),
       note: read('.activity-pnote'),
       count: document.querySelector('.activity-section .obs-section-count')?.textContent ?? null,
       rows: document.querySelectorAll('.activity-table tbody tr.ant-table-row').length,
+      rowHeights: [...document.querySelectorAll('.activity-table tbody tr.ant-table-row')]
+        .map((row) => row.getBoundingClientRect().height),
+      times: [...document.querySelectorAll('.activity-time')].map((cell) => cell.textContent),
       headers: [...document.querySelectorAll('.activity-table thead th')].map((element) => element.textContent).filter(Boolean),
     };
   });
@@ -243,6 +250,18 @@ function checkActivityGeometry(metric, compact) {
   equal(metric.section?.borderRadius, 16, 'section radius');
   equal(metric.sectionHead?.height, 48, 'section heading height');
   equal(metric.sectionHead?.paddingLeft, 20, 'section heading horizontal padding');
+  equal(metric.sectionTitle?.fontSize, 14, 'section title font size');
+  equal(metric.sectionTitle?.lineHeight, 20, 'section title line height');
+  if (metric.taskLink) {
+    if (metric.taskLink.color !== 'rgb(17, 24, 39)') failures.push(`task link colour: ${metric.taskLink.color}`);
+    if (metric.taskLink.textDecorationLine !== 'none') failures.push(`task link default decoration: ${metric.taskLink.textDecorationLine}`);
+  }
+  if (metric.rowHeights.some((height) => height > 46.01)) {
+    failures.push(`activity rows exceed 46px: ${metric.rowHeights.join(', ')}`);
+  }
+  if (metric.times.some((text) => /\d{2}:\d{2}:\d{2}/.test(text ?? ''))) {
+    failures.push(`seconds remain in compact activity times: ${metric.times.join(', ')}`);
+  }
   if (metric.tableHead) {
     equal(metric.tableHead.height, 40, 'table heading height');
     equal(metric.tableHead.fontSize, 12, 'table heading font size');

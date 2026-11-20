@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Button } from 'antd';
-import { useMemo, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
+import { useMemo, type KeyboardEvent, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 
@@ -14,7 +14,7 @@ import { Section } from '../components/display/Section';
 import { ObservationForbidden } from '../components/states';
 import {
   absoluteTimeText,
-  ageText,
+  compactTimeText,
   describeUnknown,
   foldOperations,
   operationWord,
@@ -33,19 +33,17 @@ import { isAuthError } from '../lib/api';
 import { overviewModelQueryOptions, projectsQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
 import { useScope } from '../lib/scope';
-import type { TeamActivityItem, TeamProject } from '../lib/types';
+import { taskPath } from '../lib/task-path';
+import type { TeamProject } from '../lib/types';
 import { craftTokens } from '../theme';
+import './ActivityPage.css';
 
 type ActivityFilter = ActivityCategory | 'all';
 
 interface ResolvedTask {
-  id: string;
   title: string;
   href: string;
 }
-
-/** Prototype activity(): .t colgroup widths 168px, 232px and 24%. */
-const ACTIVITY_COLUMN_WIDTH = { time: 168, actor: 232, task: '24%' } as const;
 
 function kindOf(value: string | null): ActivityKind {
   return value === 'requests' ? 'requests' : 'development';
@@ -81,7 +79,6 @@ function ActivitySegment({
   onChange: (value: string) => void;
   testId: string;
 }) {
-  const geometry = craftTokens.perspective;
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     let nextIndex: number | null = null;
     if (event.key === 'ArrowRight' || event.key === 'ArrowDown') nextIndex = (index + 1) % options.length;
@@ -94,51 +91,17 @@ function ActivitySegment({
     buttons?.[nextIndex]?.focus();
   };
   return (
-    <div
-      className="activity-segment"
-      data-testid={testId}
-      role="group"
-      aria-label={label}
-      style={{
-        display: 'inline-flex',
-        gap: geometry.gap,
-        minWidth: 0,
-        maxWidth: '100%',
-        padding: geometry.padding,
-        overflowX: 'auto',
-        borderRadius: geometry.containerRadius,
-        background: 'var(--craft-color-raised)',
-        whiteSpace: 'nowrap',
-      }}
-    >
+    <div className="activity-segment" data-testid={testId} role="group" aria-label={label}>
       {options.map((option, index) => {
         const active = option.value === value;
         return (
           <button
             key={option.value}
             type="button"
-            className="shell-perspective-option"
+            className="activity-segment-option shell-perspective-option"
             aria-pressed={active}
             onClick={() => onChange(option.value)}
             onKeyDown={(event) => onKeyDown(event, index)}
-            style={{
-              appearance: 'none',
-              flex: '0 0 auto',
-              height: geometry.optionHeight,
-              margin: 0,
-              padding: `0 ${geometry.optionPaddingInline}px`,
-              border: 0,
-              borderRadius: geometry.optionRadius,
-              background: active ? 'var(--craft-color-surface)' : 'transparent',
-              boxShadow: active ? 'var(--craft-perspective-selected-shadow)' : 'none',
-              color: active ? 'var(--craft-color-ink)' : 'var(--craft-color-secondary)',
-              cursor: 'pointer',
-              fontFamily: 'inherit',
-              fontSize: geometry.optionFontSize,
-              fontWeight: active ? geometry.selectedFontWeight : geometry.fontWeight,
-              whiteSpace: 'nowrap',
-              transition: `background-color ${craftTokens.motion.feedbackMs}ms ${craftTokens.motion.easing}, color ${craftTokens.motion.feedbackMs}ms ${craftTokens.motion.easing}`,
-            }}
           >
             {option.label}
           </button>
@@ -149,30 +112,7 @@ function ActivitySegment({
 }
 
 function StateMessage({ children, testId }: { children: ReactNode; testId: string }) {
-  return (
-    <div
-      className="activity-state"
-      data-testid={testId}
-      style={{
-        padding: 'var(--ant-padding-md)',
-        color: 'var(--craft-color-muted)',
-        fontSize: 'var(--craft-text-small)',
-        lineHeight: 'var(--craft-leading-body)',
-      }}
-    >
-      {children}
-    </div>
-  );
-}
-
-function ellipsisStyle(): CSSProperties {
-  return {
-    display: 'block',
-    minWidth: 0,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-  };
+  return <div className="activity-state" data-testid={testId}>{children}</div>;
 }
 
 /** Prototype activity(): heading, project/category filters, one ledger block and its collection note. */
@@ -243,10 +183,13 @@ export function ActivityPage() {
   }
 
   function actorName(event: OperationEvent): string {
-    const identityRecord = identity as unknown as Record<string, unknown> | undefined;
-    const selfPersonId = event.actor_id === identity?.actor_id && typeof identityRecord?.person_id === 'string'
-      ? identityRecord.person_id : null;
-    const member = members.find((candidate) => candidate.personId === event.actor_id || candidate.personId === selfPersonId);
+    const actorId = event.actor_id;
+    const viewerPersonId = contextData?.input.options.views?.me?.personId;
+    const ownMember = actorId && actorId === identity?.actor_id && viewerPersonId
+      ? members.find((candidate) => candidate.personId === viewerPersonId) : undefined;
+    const member = ownMember ?? members.find((candidate) => (
+      typeof actorId === 'string' && candidate.actorIds?.includes(actorId)
+    ));
     const name = typeof member?.displayName === 'string' ? member.displayName.trim() : '';
     return name && name !== member?.personId && readsAsName(name) ? name : t('activity.unregisteredName');
   }
@@ -264,11 +207,7 @@ export function ActivityPage() {
     const title = recorded
       ? workLabel(recorded, { language, recordedTitle: true, fallback: t('activity.unregisteredTask') }).text
       : t('activity.unregisteredTask');
-    return {
-      id: workId,
-      title,
-      href: `/projects/${encodeURIComponent(project)}?tab=acceptance&work=${encodeURIComponent(workId)}`,
-    };
+    return { title, href: taskPath(project, workId) };
   }
 
   if (revoked || isAuthError(projects.error) || isAuthError(activity.error)
@@ -303,8 +242,10 @@ export function ActivityPage() {
   const tableRows: DataTableRow[] = events.map((event, index) => {
     const task = taskFor(event.work_id);
     const validTime = Number.isFinite(event.created_at_unix_ms);
-    const when = validTime ? ageText(event.created_at_unix_ms, { language, nowUnixMs, timeZone }).text : t('activity.timeNotRecorded');
-    const exact = validTime ? absoluteTimeText(event.created_at_unix_ms, { language }).text : undefined;
+    const when = validTime
+      ? compactTimeText(event.created_at_unix_ms, { language, nowUnixMs, timeZone })
+      : t('activity.timeNotRecorded');
+    const exact = validTime ? absoluteTimeText(event.created_at_unix_ms, { language, timeZone }).text : undefined;
     const actor = actorText(event);
     const action = operationWord(event.action, { language }).text;
     const actionText = event.result === 'unknown' ? `${action} · ${t('activity.unknownResult')}` : action;
@@ -313,12 +254,12 @@ export function ActivityPage() {
       key: event.id || `activity-row-${index}`,
       onOpen: task ? () => navigate(task.href) : undefined,
       cells: [
-        <span style={{ color: 'var(--craft-color-muted)', fontVariantNumeric: 'tabular-nums' }} title={exact}>{when}</span>,
-        <span style={{ ...ellipsisStyle(), fontWeight: 500 }} title={actor}>{actor}</span>,
-        <span style={ellipsisStyle()} title={actionText}>{actionText}</span>,
+        <span className="activity-ellipsis activity-time" title={exact}>{when}</span>,
+        <span className="activity-ellipsis activity-actor" title={actor}>{actor}</span>,
+        <span className="activity-ellipsis activity-action" title={actionText}>{actionText}</span>,
         task ? (
-          <Link to={task.href} style={ellipsisStyle()} title={task.title}>{task.title}</Link>
-        ) : <span style={{ ...ellipsisStyle(), color: 'var(--craft-color-muted)' }}>{workText}</span>,
+          <Link className="activity-ellipsis activity-task-link" to={task.href} title={task.title}>{task.title}</Link>
+        ) : <span className="activity-ellipsis activity-task-empty">{workText}</span>,
       ],
     };
   });
@@ -327,8 +268,10 @@ export function ActivityPage() {
     const task = taskFor(event.work_id);
     const action = operationWord(event.action, { language }).text;
     const validTime = Number.isFinite(event.created_at_unix_ms);
-    const when = validTime ? ageText(event.created_at_unix_ms, { language, nowUnixMs, timeZone }).text : t('activity.timeNotRecorded');
-    const exact = validTime ? absoluteTimeText(event.created_at_unix_ms, { language }).text : undefined;
+    const when = validTime
+      ? compactTimeText(event.created_at_unix_ms, { language, nowUnixMs, timeZone })
+      : t('activity.timeNotRecorded');
+    const exact = validTime ? absoluteTimeText(event.created_at_unix_ms, { language, timeZone }).text : undefined;
     const result = statusWord(event.result, { language, field: 'result' }).text;
     const unknown = describeUnknown({ result: event.result, unknown_means: firstPage?.unknown_means, language });
     return (
@@ -339,63 +282,48 @@ export function ActivityPage() {
           </Notice>
         ) : null}
         <KeyValueTable items={[
-          { key: 'actor', label: t('activity.detailActor'), value: <span data-testid="activity-event-actor">{actorText(event as TeamActivityItem)}</span> },
+          { key: 'actor', label: t('activity.detailActor'), value: <span data-testid="activity-event-actor">{actorText(event)}</span> },
           { key: 'action', label: t('activity.action'), value: <span data-testid="activity-event-action">{action}</span> },
           { key: 'work', label: t('activity.detailWork'), value: <span data-testid="activity-event-work">{event.work_id ? task?.title ?? t('activity.unregisteredTask') : t('activity.wholeProject')}</span> },
           { key: 'result', label: t('activity.detailResult'), value: <span data-testid="activity-event-result">{result}</span> },
           { key: 'time', label: t('activity.detailTime'), value: <span data-testid="activity-event-time" title={exact}>{when}</span> },
         ]} />
-        {task ? <div style={{ padding: '0 var(--ant-padding-md) var(--ant-padding-sm)' }}><Link data-testid="activity-event-outcome-link" to={task.href}>{t('activity.openOutcome')} →</Link></div> : null}
+        {task ? <div className="activity-detail-outcome"><Link data-testid="activity-event-outcome-link" to={task.href}>{t('activity.openOutcome')} →</Link></div> : null}
       </div>
     );
   }
 
   const footer = (
-    <div
-      className="activity-pnote"
-      style={{
-        padding: 'calc(var(--ant-padding-xs) + var(--ant-padding-xxs)) var(--ant-padding-md)',
-        borderTop: '1px solid var(--craft-color-hairline)',
-        color: 'var(--craft-color-muted)',
-        fontSize: 'var(--ant-font-size-sm)',
-        lineHeight: 'var(--craft-leading-tight)',
-        overflowWrap: 'anywhere',
-      }}
-    >
+    <div className="activity-pnote">
       <div data-testid="activity-collection-limits">{t('activity.collectionNote')}</div>
-      <div data-testid="activity-scope" style={{ marginTop: 'var(--ant-padding-xs)' }}>{scopeNote}</div>
-      {retentionCount != null ? <div data-testid="activity-retention" style={{ marginTop: 'var(--ant-padding-xs)' }}>{t('activity.retention', { count: retentionCount })}</div> : null}
-      <div data-testid="activity-coverage" style={{ marginTop: 'var(--ant-padding-xs)' }}>{coverageText}</div>
-      {capabilities.isSuccess && actorParam && !actorFilter && !projectAudit ? <div data-testid="activity-self-filter-note" style={{ marginTop: 'var(--ant-padding-xs)' }}>{t('activity.selfFilterNote')}</div> : null}
-      {foldNotes.map((note) => <div key={note.code} data-testid={`activity-note-${note.code}`} style={{ marginTop: 'var(--ant-padding-xs)' }}>{note.text}</div>)}
-      {activity.hasNextPage ? (
-        <Button
-          data-testid="activity-load-earlier"
-          loading={activity.isFetchingNextPage}
-          onClick={() => void activity.fetchNextPage()}
-          style={{ alignSelf: 'flex-start', marginTop: 'var(--ant-padding-sm)' }}
-        >
-          {t('activity.loadEarlier')}
-        </Button>
-      ) : null}
-      <div style={{ marginTop: 'var(--ant-padding-sm)' }}><FreshnessBadge freshness={contextData?.freshness} /></div>
+      <div className="activity-scope-line">
+        <span data-testid="activity-scope">{scopeNote}</span>
+        <span aria-hidden>·</span>
+        <span data-testid="activity-coverage">{coverageText}</span>
+      </div>
+      {retentionCount != null ? <div className="activity-retention" data-testid="activity-retention">{t('activity.retention', { count: retentionCount })}</div> : null}
+      {capabilities.isSuccess && actorParam && !actorFilter && !projectAudit ? <div className="activity-self-filter-note" data-testid="activity-self-filter-note">{t('activity.selfFilterNote')}</div> : null}
+      {foldNotes.map((note) => <div className="activity-fold-note" key={note.code} data-testid={`activity-note-${note.code}`}>{note.text}</div>)}
+      <div className="activity-footer-controls">
+        {activity.hasNextPage ? (
+          <Button
+            className="activity-load-earlier"
+            data-testid="activity-load-earlier"
+            loading={activity.isFetchingNextPage}
+            onClick={() => void activity.fetchNextPage()}
+          >
+            {t('activity.loadEarlier')}
+          </Button>
+        ) : null}
+        <div className="activity-freshness"><FreshnessBadge freshness={contextData?.freshness} /></div>
+      </div>
     </div>
   );
 
   return (
-    <div style={{ width: '100%', minWidth: 0 }} data-testid="page-activity">
+    <div className="activity-page" data-testid="page-activity">
       <PageHeader title={t('activity.title')} subtitle={t('activity.subtitle')} />
-      <div
-        className="activity-filters"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 'calc(var(--ant-padding-xs) + var(--ant-padding-xxs))',
-          flexWrap: 'wrap',
-          minWidth: 0,
-          marginBottom: 'var(--ant-padding-sm)',
-        }}
-      >
+      <div className="activity-filters">
         <ActivitySegment label={t('activity.project')} value={project} options={projectOptions} onChange={changeProject} testId="activity-project-filter" />
         <ActivitySegment label={t('activity.category')} value={category} options={categoryOptions} onChange={changeCategory} testId="activity-category-filter" />
       </div>
@@ -411,13 +339,13 @@ export function ActivityPage() {
             </StateMessage>
           ) : (
             <>
-              {activity.isError && activity.data ? <div style={{ padding: 'var(--ant-padding-sm) var(--ant-padding-md) 0' }} data-testid="activity-partial"><Notice tone="warning">{t('activity.partialRead')}</Notice></div> : null}
+              {activity.isError && activity.data ? <div className="activity-partial" data-testid="activity-partial"><Notice tone="warning">{t('activity.partialRead')}</Notice></div> : null}
               {events.length === 0 ? <StateMessage testId="activity-empty">{t('activity.empty')}</StateMessage>
                 : <div className="activity-table"><DataTable columns={[
-                  { key: 'time', title: t('activity.time'), width: ACTIVITY_COLUMN_WIDTH.time },
-                  { key: 'actor', title: t('activity.actor'), width: ACTIVITY_COLUMN_WIDTH.actor },
+                  { key: 'time', title: t('activity.time'), width: craftTokens.activity.columnTime },
+                  { key: 'actor', title: t('activity.actor'), width: craftTokens.activity.columnActor },
                   { key: 'action', title: t('activity.action') },
-                  { key: 'work', title: t('activity.work'), width: ACTIVITY_COLUMN_WIDTH.task, hideOnSmall: true },
+                  { key: 'work', title: t('activity.work'), width: craftTokens.activity.columnTask, hideOnSmall: true },
                 ]} rows={tableRows} /></div>}
             </>
           )}

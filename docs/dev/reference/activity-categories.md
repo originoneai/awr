@@ -6,6 +6,8 @@ The seven filters are Delivery, Review, Decision, Assignment, Report, Breakdown 
 
 This is display classification, not a new service fact and not a permission boundary. The registry contains the request operations and committed event names exposed by the current service, including the operations present in the captured live replies. `activity-categories.test.ts` checks every registry row against the runtime filter, rejects duplicate operation names, requires bilingual labels and checks this table.
 
+The service's activity read selects request-audit actions and committed event types in `crates/awr-team-pg/src/workstream_read/activity.rs`; operation declarations and committed events originate in `crates/awr-server/src/service/mcp.rs` and `crates/awr-team-pg/src/workstream_command.rs` with its command modules. When the service adds an operation that is absent from the vocabulary, the page keeps it under All with the generic product label. Add a deliberate bilingual vocabulary and registry entry when its product meaning is known.
+
 | Operation | Category |
 | --- | --- |
 | `access.changed` | All only |

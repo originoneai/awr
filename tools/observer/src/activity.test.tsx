@@ -11,6 +11,7 @@ import { DEMO_PROJECTS, renderApp } from './test-utils';
 
 const NOW = 1_800_000_000_000;
 const KNOWN_ACTOR = 'synthetic-actor-a';
+const KNOWN_PERSON = 'synthetic-person-a';
 const MISSING_ACTOR = 'synthetic-actor-not-in-directory';
 const WORK_A = 'synthetic-work-a';
 const WORK_B = 'synthetic-work-b';
@@ -86,11 +87,15 @@ function overviewModel(overrides: {
         { id: WORK_B, title: 'Synthetic task beta' },
       ]),
       members: slice(memberCoverage, overrides.members ?? [
-        { personId: KNOWN_ACTOR, displayName: 'Alex Example', groupId: 'synthetic-group' },
+        { personId: KNOWN_PERSON, displayName: 'Alex Example', groupId: 'synthetic-group' },
       ]),
       dependencies: slice('unread', []), decisions: slice('unread', []), reviewRounds: slice('unread', []),
       handoffs: slice('unread', []), approvals: slice('unread', []), activity: slice('unread', []),
-      options: { nowUnixMs: NOW, stalledAfterDays: 7 },
+      options: {
+        nowUnixMs: NOW,
+        stalledAfterDays: 7,
+        views: { me: { personId: KNOWN_PERSON, projectId: 'demo' } },
+      },
     },
     coverage: {
       tasks: part(taskCoverage), members: part(memberCoverage), dependencies: part('unread'),
@@ -227,7 +232,8 @@ describe('activity prototype structure and product language', () => {
     expect(within(screen.getByRole('group', { name: '类别' })).getByRole('button', { name: '全部' }).getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('translates known actors, never leaks missing actor ids, and labels Agent attribution', async () => {
+  it('translates the viewer through the recorded person view, never leaks missing actor ids, and labels Agent attribution', async () => {
+    expect(KNOWN_ACTOR).not.toBe(KNOWN_PERSON);
     setupActivity();
     renderApp('/activity?project=demo');
     await waitFor(() => expect(tableRows()).toHaveLength(8));
@@ -236,6 +242,29 @@ describe('activity prototype structure and product language', () => {
     expect(tableRows()[1].textContent).not.toContain(MISSING_ACTOR);
     expect(document.body.textContent).not.toContain(KNOWN_ACTOR);
     expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('page-activity')))).toEqual([]);
+  });
+
+  it('resolves other members only through actorIds and never equates an actor id with a person id', async () => {
+    const linkedActor = 'synthetic-actor-linked';
+    const linkedPerson = 'synthetic-person-linked';
+    const personOnlyActor = 'synthetic-person-without-agent-link';
+    const items = [
+      event('linked', 'review.decide', WORK_A, linkedActor, 0),
+      event('unlinked', 'review.decide', WORK_B, personOnlyActor, 1),
+    ];
+    setupActivity({
+      development: activityPayload(items),
+      overview: overviewModel({ members: [
+        { personId: linkedPerson, actorIds: [linkedActor], displayName: 'Riley Example' },
+        { personId: personOnlyActor, displayName: 'Wrong Example' },
+      ] }),
+    });
+    renderApp('/activity?project=demo');
+    await waitFor(() => expect(tableRows()).toHaveLength(2));
+    expect(tableRows()[0].textContent).toContain('Riley Example');
+    expect(tableRows()[1].textContent).toContain('未登记姓名');
+    expect(tableRows()[1].textContent).not.toContain('Wrong Example');
+    expect(document.body.textContent).not.toContain(linkedActor);
   });
 
   it('uses task titles, never work keys, and makes only rows with a resolved task navigable', async () => {
@@ -247,16 +276,40 @@ describe('activity prototype structure and product language', () => {
     expect(tableRows()[0].dataset.openable).toBe('true');
     expect(tableRows()[5].dataset.openable).not.toBe('true');
     await userEvent.setup().click(tableRows()[0]);
-    expect(rendered.router.state.location.pathname).toBe('/projects/demo');
-    expect(rendered.router.state.location.search).toContain(`work=${WORK_A}`);
+    expect(rendered.router.state.location.pathname).toBe(`/tasks/${WORK_A}`);
+    expect(rendered.router.state.location.search).toBe('?scope=demo');
   });
 
-  it('retains the existing scope and request-retention explanations', async () => {
+  it('uses the unregistered-task fallback but keeps resolvable tasks with empty or key-equal titles navigable', async () => {
+    const items = [
+      event('empty-title', 'review.decide', WORK_A, KNOWN_ACTOR, 0),
+      event('key-title', 'review.decide', WORK_B, KNOWN_ACTOR, 1),
+    ];
+    setupActivity({
+      development: activityPayload(items),
+      overview: overviewModel({ tasks: [{ id: WORK_A, title: '' }, { id: WORK_B, title: WORK_B }] }),
+    });
+    renderApp('/activity?project=demo');
+    await waitFor(() => expect(tableRows()).toHaveLength(2));
+    for (const row of tableRows()) {
+      expect(row.textContent).toContain('未登记任务名');
+      expect(row.dataset.openable).toBe('true');
+    }
+    const links = [...document.querySelectorAll<HTMLAnchorElement>('.activity-task-link')];
+    expect(links.map((link) => link.textContent)).toEqual(['未登记任务名', '未登记任务名']);
+    expect(links[0].getAttribute('href')).toBe(`/tasks/${WORK_A}?scope=demo`);
+    expect(document.body.textContent).not.toContain(WORK_A);
+    expect(document.body.textContent).not.toContain(WORK_B);
+  });
+
+  it('retains scope and retention on quiet separate lines and keeps coverage beside scope', async () => {
     setupActivity();
     renderApp('/activity?project=demo&kind=requests');
     await screen.findByTestId('activity-retention');
     expect(screen.getByTestId('activity-scope').textContent).toBe('当前显示本项目授权范围内的全部记录');
     expect(screen.getByTestId('activity-retention').textContent).toBe('访问记录最多保留 10000 条，更早的记录会被清理');
+    expect(screen.getByTestId('activity-scope').parentElement).toBe(screen.getByTestId('activity-coverage').parentElement);
+    expect(screen.getByTestId('activity-retention').parentElement).not.toBe(screen.getByTestId('activity-scope').parentElement);
   });
 
   it('loads earlier records with the section count always equal to visible table rows', async () => {
@@ -265,6 +318,8 @@ describe('activity prototype structure and product language', () => {
     renderApp('/activity?project=demo');
     await waitFor(() => expect(tableRows()).toHaveLength(1));
     expect(sectionCount()).toBe('1');
+    expect(screen.getByTestId('activity-load-earlier').closest('.activity-footer-controls'))
+      .toBe(screen.getByTestId('freshness-badge').closest('.activity-footer-controls'));
     await userEvent.setup().click(screen.getByTestId('activity-load-earlier'));
     await waitFor(() => expect(tableRows()).toHaveLength(2));
     expect(sectionCount()).toBe(String(tableRows().length));

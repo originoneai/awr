@@ -142,6 +142,8 @@ export interface OverviewMember {
   personId?: string | null;
   displayName?: string | null;
   groupId?: string | null;
+  /** Account and Agent actor ids recorded for this person; absent means no recorded link. */
+  actorIds?: string[];
 }
 
 export const APPROVAL_KINDS = ['plan-approval', 'lesson-confirmation'] as const;
