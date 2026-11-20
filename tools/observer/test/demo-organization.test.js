@@ -1098,6 +1098,8 @@ test('shell source is a bridge fact while every pre-existing variant reply stays
     const bridge = bridgeForTest({ demoVariant: variant, demoTimestampShiftMs: 0, now: () => fixture.now_unix_ms });
     assert.deepEqual(await bridge.call('GET /api/team/shell', '/api/team/shell'),
       { ok: true, source: 'demo', organizationName: '示例组织', perspective: null }, variant);
+    assert.notEqual(bridge.bridge.TEAM.demoOrganization.data.viewer.can_view_all_projects, true,
+      `${variant}: only canonical records the viewer's all-projects grant`);
     const projects = await bridge.call('GET /api/team/projects', '/api/team/projects');
     assert.deepEqual(Object.keys(projects), ['ok', 'projects', 'session', 'view'], `${variant}: no new project-reply fields`);
     assert.equal('perspective' in projects, false, `${variant}: perspective facts use the separate shell read`);
@@ -1118,4 +1120,10 @@ test('shell source is a bridge fact while every pre-existing variant reply stays
   const live = bridgeForTest({ teamUrl: 'http://127.0.0.1:1', demo: false });
   assert.deepEqual(await live.call('GET /api/team/shell', '/api/team/shell'),
     { ok: true, source: 'live', perspective: null, organizationName: null });
+});
+
+test('the shell read is refused when the deployment is neither live nor a demo', async () => {
+  const bridge = bridgeForTest({ demo: false });
+  assert.deepEqual(await bridge.call('GET /api/team/shell', '/api/team/shell'),
+    { ok: false, error: { code: 'DemoDisabled', message: 'fixtures require demo mode' } });
 });

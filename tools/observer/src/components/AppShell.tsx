@@ -423,8 +423,6 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
             {shellSource === 'demo' ? (
               <p className="shell-demo-note" data-testid="shell-demo-note">{t('shell.demoNote')}</p>
             ) : null}
-            {/* Prototype .side-foot .side-note; only the demo variants carry the notice. */}
-
           </div>
         </Sider>
       ) : (

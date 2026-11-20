@@ -50,7 +50,8 @@ export function PerspectiveSwitcher({ alignEnd = false }: PerspectiveSwitcherPro
     gap: geometry.gapToCaption,
     minWidth: 0,
     marginLeft: compactViewport ? 0 : alignEnd ? 'auto' : 0,
-  };  const segmentStyle: CSSProperties = {
+  };
+  const segmentStyle: CSSProperties = {
     display: 'inline-flex',
     flex: compactViewport ? '1 1 0' : '0 0 auto',
     gap: geometry.gap,
