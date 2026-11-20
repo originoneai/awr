@@ -3479,3 +3479,19 @@ async fn team_tools_follow_the_runtime_switch() {
     );
     server.stop().await;
 }
+
+#[tokio::test]
+async fn goal_coverage_is_advertised_and_read_only() {
+    let a = ProjectFixture::new("Write the team guide");
+    let b = ProjectFixture::new("Other project");
+    let mut server = Server::start(&registry(&a, &b)).await;
+    let coverage = ok(server
+        .call(WRITER, "awr_goal_coverage", json!({"project":"alpha"}))
+        .await);
+    let goals = coverage["goals"].as_array().expect("goals array");
+    assert_eq!(goals.len(), 1, "{coverage}");
+    assert_eq!(goals[0]["key"], "GUIDE");
+    assert_eq!(goals[0]["works"].as_array().unwrap().len(), 2);
+    assert_eq!(coverage["uncovered_goal"], json!([]));
+    assert_eq!(coverage["orphan_work"], json!([]));
+}
