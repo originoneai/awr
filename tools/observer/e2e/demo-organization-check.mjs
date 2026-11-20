@@ -159,7 +159,7 @@ const fullRoutes = [
 const variantRoutes = {
   empty: [
     { name: 'projects', path: '/projects' },
-    { name: 'members', path: '/members' },
+    { name: 'members-chooser', path: '/members' },
   ],
   single: [
     { name: 'projects', path: '/projects' },
@@ -584,6 +584,101 @@ function checkProjectsGeometry(metric, compact) {
   return failures;
 }
 
+/* Prototype metric basis: members() .head 24/16 desktop and 16/12 mobile;
+   .lead 20/28 (18/26 mobile) with 20px bottom margin; .block radius 16 and
+   .block-head 48px with 0 20 padding; .t th 40px/12px; .av 28px; .who gap 10;
+   .chip 22px, 12px text, 6px gap/radius and 0 8 padding; .chevc width 36;
+   .pnote 12px 20px and 12px/16px. */
+async function membersGeometry(page) {
+  await page.getByTestId('member-table').waitFor();
+  return page.evaluate(() => {
+    const read = (selector) => {
+      const element = document.querySelector(selector);
+      if (!element) return null;
+      const style = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return {
+        width: rect.width,
+        height: rect.height,
+        paddingTop: style.paddingTop,
+        paddingBottom: style.paddingBottom,
+        paddingLeft: style.paddingLeft,
+        paddingRight: style.paddingRight,
+        marginBottom: style.marginBottom,
+        gap: style.gap,
+        borderRadius: style.borderRadius,
+        fontSize: style.fontSize,
+        lineHeight: style.lineHeight,
+        fontWeight: style.fontWeight,
+      };
+    };
+    return {
+      header: read('.obs-page-header'),
+      lead: read('.members-lead'),
+      section: read('.members-section'),
+      sectionHead: read('.members-section .ant-card-head'),
+      sectionTitle: read('.members-section .obs-section-title'),
+      tableHead: read('.members-table thead th'),
+      firstTableHead: read('.members-table thead th:first-child'),
+      avatar: read('.members-table tbody .members-avatar'),
+      who: read('.members-table tbody .members-who'),
+      chip: read('.members-table tbody .members-chip'),
+      navigation: read('.members-table tbody .obs-table-arrow-column'),
+      note: read('.members-pnote'),
+      borderCollapse: getComputedStyle(document.querySelector('.members-table table')).borderCollapse,
+      fixedArrows: document.querySelectorAll('.members-table .ant-table-cell-fix-end').length,
+      count: document.querySelector('.members-section .obs-section-count')?.textContent ?? null,
+      rows: document.querySelectorAll('.members-table tbody tr.ant-table-row').length,
+      headers: [...document.querySelectorAll('.members-table thead th')].map((element) => element.textContent).filter(Boolean),
+    };
+  });
+}
+
+function checkMembersGeometry(metric, compact) {
+  const failures = [];
+  const number = (value) => typeof value === 'number' ? value : Number.parseFloat(value ?? '');
+  const equal = (actual, expected, label) => {
+    if (Math.abs(number(actual) - expected) > 0.01) failures.push(`${label}: expected ${expected}, got ${actual}`);
+  };
+  equal(metric.header?.paddingTop, compact ? 16 : 24, 'members header top padding');
+  equal(metric.header?.paddingBottom, compact ? 12 : 16, 'members header bottom padding');
+  equal(metric.lead?.fontSize, compact ? 18 : 20, 'members lead font size');
+  equal(metric.lead?.lineHeight, compact ? 26 : 28, 'members lead line height');
+  equal(metric.lead?.fontWeight, 500, 'members lead weight');
+  equal(metric.lead?.marginBottom, 20, 'members lead bottom margin');
+  equal(metric.section?.borderRadius, 16, 'members section radius');
+  equal(metric.sectionHead?.height, 48, 'members section heading height');
+  equal(metric.sectionHead?.paddingLeft, 20, 'members section heading padding');
+  equal(metric.sectionTitle?.fontSize, 14, 'members section title size');
+  equal(metric.sectionTitle?.lineHeight, 20, 'members section title line height');
+  equal(metric.tableHead?.height, 40, 'members table heading height');
+  equal(metric.tableHead?.fontSize, 12, 'members table heading font size');
+  equal(metric.firstTableHead?.paddingLeft, compact ? 16 : 20, 'members first table heading padding');
+  equal(metric.avatar?.width, 28, 'members avatar width');
+  equal(metric.avatar?.height, 28, 'members avatar height');
+  equal(metric.who?.gap, 10, 'members avatar/name gap');
+  if (!compact) {
+    equal(metric.chip?.height, 22, 'members Agent chip height');
+    equal(metric.chip?.fontSize, 12, 'members Agent chip font size');
+    equal(metric.chip?.paddingLeft, 8, 'members Agent chip padding');
+    equal(metric.chip?.gap, 6, 'members Agent chip gap');
+    equal(metric.chip?.borderRadius, 6, 'members Agent chip radius');
+  }
+  equal(metric.navigation?.width, 36, 'members navigation column width');
+  equal(metric.note?.paddingTop, 12, 'members note vertical padding');
+  equal(metric.note?.paddingLeft, 20, 'members note horizontal padding');
+  equal(metric.note?.fontSize, 12, 'members note font size');
+  equal(metric.note?.lineHeight, 16, 'members note line height');
+  equal(metric.count, metric.rows, 'members section count versus visible rows');
+  const expectedHeaders = compact
+    ? ['成员', '小组 · 职责', '现在在做', '等本人处理的']
+    : ['成员', '小组 · 职责', '在哪些项目', '现在在做', 'Agent 连接', '等本人处理的'];
+  if (JSON.stringify(metric.headers) !== JSON.stringify(expectedHeaders)) failures.push(`members table headings differ: ${JSON.stringify(metric.headers)}`);
+  if (metric.borderCollapse !== 'collapse') failures.push(`members table border model: ${metric.borderCollapse}`);
+  if (metric.fixedArrows !== 0) failures.push(`members navigation must scroll with the prototype table, fixed cells: ${metric.fixedArrows}`);
+  return failures;
+}
+
 async function visit(baseUrl, variant, route, viewport) {
   const context = await browser.newContext({
     viewport,
@@ -627,6 +722,7 @@ async function visit(baseUrl, variant, route, viewport) {
     const activityMetric = route.name.startsWith('activity-') ? await activityGeometry(page) : null;
     const inboxMetric = route.name === 'inbox' ? await inboxGeometry(page) : null;
     const projectMetric = route.name === 'projects' ? await projectsGeometry(page) : null;
+    const membersMetric = route.name === 'members' ? await membersGeometry(page) : null;
     const state = await page.evaluate(() => ({
       width: document.documentElement.clientWidth,
       scrollWidth: document.documentElement.scrollWidth,
@@ -660,6 +756,7 @@ async function visit(baseUrl, variant, route, viewport) {
       activityGeometry: activityMetric,
       inboxGeometry: inboxMetric,
       projectsGeometry: projectMetric,
+      membersGeometry: membersMetric,
       pageErrors,
       requestFailures,
       apiErrors,
@@ -683,6 +780,11 @@ async function visit(baseUrl, variant, route, viewport) {
     }
     if (projectMetric) {
       for (const failure of checkProjectsGeometry(projectMetric, viewport.width <= 860)) {
+        failures.push(`${variant} ${route.path} ${viewport.width}: ${failure}`);
+      }
+    }
+    if (membersMetric) {
+      for (const failure of checkMembersGeometry(membersMetric, viewport.width <= 860)) {
         failures.push(`${variant} ${route.path} ${viewport.width}: ${failure}`);
       }
     }
