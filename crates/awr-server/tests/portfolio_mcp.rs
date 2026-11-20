@@ -165,6 +165,67 @@ async fn call(client: &Mcp, args: Value, error: bool) -> Value {
     result.structured_content.unwrap()
 }
 
+fn web_request(
+    server: &str,
+    cookie: Option<&str>,
+    origin: &str,
+    args: Value,
+) -> reqwest::RequestBuilder {
+    let request = web::http()
+        .post(format!("{server}/v1/web/portfolio/overview"))
+        .header("host", "awr.example")
+        .header("origin", origin)
+        .header("x-awr-web", "1")
+        .json(&args);
+    match cookie {
+        Some(cookie) => request.header("cookie", cookie),
+        None => request,
+    }
+}
+
+async fn login_web(server: &str, bearer: &str) -> String {
+    let response = web::http()
+        .post(format!("{server}/v1/web/login"))
+        .header("host", "awr.example")
+        .header("origin", web::ISSUER)
+        .header("x-awr-web", "1")
+        .json(&json!({"bearer":bearer}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    response.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned()
+}
+
+async fn web_read(server: &str, cookie: Option<&str>, origin: &str, args: Value) -> (u16, Value) {
+    let response = web_request(server, cookie, origin, args)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status().as_u16();
+    if status == 200 {
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(response.headers()["access-control-allow-origin"], origin);
+    }
+    (status, response.json().await.unwrap())
+}
+
+/// The two transports share one result function. Only the read clock is
+/// expected to move between two separate calls; every other field, including
+/// the absence of extra fields, must be identical.
+fn assert_same_reply(mcp: &Value, browser: &Value) {
+    assert!(browser["data"]["as_of"]["at_unix_ms"].is_i64());
+    let mut expected = mcp.clone();
+    expected["data"]["as_of"]["at_unix_ms"] = browser["data"]["as_of"]["at_unix_ms"].clone();
+    assert_eq!(browser, &expected);
+}
+
 /// Clone the fixture project with works, waits, completions and a period
 /// update, exactly like the pg-suite scenario: the samples then carry every
 /// field the bridge renders.
@@ -336,12 +397,113 @@ async fn portfolio_tool_replies_match_committed_samples() {
     assert_eq!(base_item["directory"]["group"], Value::Null);
     save_verbatim("portfolio-mcp-member.json", &member);
 
+    let cookie = login_web(&server, A).await;
+    let (status, browser_member) = web_read(
+        &server,
+        Some(&cookie),
+        web::ISSUER,
+        json!({"protocol_version":1}),
+    )
+    .await;
+    assert_eq!(status, 200, "{browser_member}");
+    assert_same_reply(&member, &browser_member);
+    assert_eq!(
+        browser_member["data"]["projects"].as_array().unwrap().len(),
+        2
+    );
+    let browser_text = browser_member.to_string();
+    assert!(!browser_text.contains("other-tenant"));
+    assert!(!browser_text.contains("PRIVATE NEXT ACTION"));
+    for banned in ["secret", "password", "bearer", A, &cookie] {
+        assert!(!browser_text.to_lowercase().contains(&banned.to_lowercase()));
+    }
+    save_verbatim("portfolio-web-member.json", &browser_member);
+
+    // The browser route requires its own live cookie session and allowlisted
+    // Origin; a bearer without the cookie is not an alternate authentication.
+    let (status, unauthenticated) =
+        web_read(&server, None, web::ISSUER, json!({"protocol_version":1})).await;
+    assert_eq!(status, 401);
+    assert_eq!(unauthenticated["code"], "Unauthenticated");
+    assert!(!unauthenticated.to_string().contains(PROJECT));
+    let (status, forbidden_origin) = web_read(
+        &server,
+        Some(&cookie),
+        "https://not-allowed.example",
+        json!({"protocol_version":1}),
+    )
+    .await;
+    assert_eq!(status, 403);
+    assert_eq!(forbidden_origin["code"], "ForbiddenOrigin");
+    assert!(!forbidden_origin.to_string().contains(PROJECT));
+
+    let revoked_cookie = login_web(&server, A).await;
+    let revoked = web::http()
+        .post(format!("{server}/v1/web/session/revoke"))
+        .header("host", "awr.example")
+        .header("origin", web::ISSUER)
+        .header("x-awr-web", "1")
+        .header("cookie", &revoked_cookie)
+        .json(&json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(revoked.status(), 200);
+    let (status, revoked) = web_read(
+        &server,
+        Some(&revoked_cookie),
+        web::ISSUER,
+        json!({"protocol_version":1}),
+    )
+    .await;
+    assert_eq!(status, 401);
+    assert_eq!(revoked["code"], "SessionExpired");
+    assert!(!revoked.to_string().contains(PROJECT));
+
     // A bounded page with a resume cursor.
     let paged = call(&client, json!({"protocol_version":1,"limit":1}), false).await;
     assert_eq!(paged["data"]["projects"].as_array().unwrap().len(), 1);
     assert_eq!(paged["data"]["truncated"], true);
     assert!(paged["data"]["next_cursor"].is_string());
     save_verbatim("portfolio-mcp-paged.json", &paged);
+    let (status, browser_paged) = web_read(
+        &server,
+        Some(&cookie),
+        web::ISSUER,
+        json!({"protocol_version":1,"limit":1}),
+    )
+    .await;
+    assert_eq!(status, 200, "{browser_paged}");
+    assert_same_reply(&paged, &browser_paged);
+    save_verbatim("portfolio-web-paged.json", &browser_paged);
+
+    let cursor = browser_paged["data"]["next_cursor"].as_str().unwrap();
+    let second = call(
+        &client,
+        json!({"protocol_version":1,"limit":1,"cursor":cursor}),
+        false,
+    )
+    .await;
+    let (status, browser_second) = web_read(
+        &server,
+        Some(&cookie),
+        web::ISSUER,
+        json!({"protocol_version":1,"limit":1,"cursor":cursor}),
+    )
+    .await;
+    assert_eq!(status, 200, "{browser_second}");
+    assert_same_reply(&second, &browser_second);
+    assert_eq!(browser_second["data"]["truncated"], false);
+    assert_eq!(browser_second["data"]["next_cursor"], Value::Null);
+    assert_eq!(
+        browser_second["data"]["projects"].as_array().unwrap().len(),
+        1
+    );
+    assert_ne!(
+        browser_second["data"]["projects"][0]["project_id"],
+        browser_paged["data"]["projects"][0]["project_id"]
+    );
+    save_verbatim("portfolio-web-page-2.json", &browser_second);
 
     // Committed samples are re-parsed and compared against the live replies.
     for (name, live) in [
@@ -379,6 +541,16 @@ async fn portfolio_tool_replies_match_committed_samples() {
         true,
     )
     .await;
+    for (args, expected) in [
+        (json!({"protocol_version":2}), 501),
+        (json!({"protocol_version":1,"limit":0}), 400),
+        (json!({"protocol_version":1,"limit":201}), 400),
+        (json!({"protocol_version":1,"actor_id":"forged"}), 403),
+    ] {
+        let (status, error) = web_read(&server, Some(&cookie), web::ISSUER, args).await;
+        assert_eq!(status, expected, "{error}");
+        assert!(!error.to_string().contains(PROJECT));
+    }
     drop(client);
 
     // An Agent reader with one live project-scope read delegation sees the
@@ -407,6 +579,25 @@ async fn portfolio_tool_replies_match_committed_samples() {
         .unwrap();
     assert_eq!(agent_base["read"]["reason"], "no_read_authority");
     save_verbatim("portfolio-mcp-agent.json", &agent_reply);
+    let (status, browser_agent) = web_read(
+        &server,
+        Some(&cookie),
+        web::ISSUER,
+        json!({"protocol_version":1}),
+    )
+    .await;
+    assert_eq!(status, 200, "{browser_agent}");
+    assert_same_reply(&agent_reply, &browser_agent);
+    assert_eq!(
+        browser_agent["data"]["projects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["read"]["reason"] == "no_read_authority")
+            .count(),
+        1
+    );
+    save_verbatim("portfolio-web-agent.json", &browser_agent);
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/samples/portfolio-mcp-agent.json");
     let sample: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
@@ -424,5 +615,24 @@ async fn portfolio_tool_replies_match_committed_samples() {
         assert_eq!(sample_item["read"], live_item["read"]);
     }
     drop(agent_client);
+
+    // A live cookie never preserves access after its underlying credential is
+    // revoked; the portfolio store repeats its own admission on every call.
+    admin
+        .execute(
+            "UPDATE awr_team.credentials SET revoked_at=clock_timestamp() WHERE id='reader-a'",
+            &[],
+        )
+        .await
+        .unwrap();
+    let (status, revoked) = web_read(
+        &server,
+        Some(&cookie),
+        web::ISSUER,
+        json!({"protocol_version":1}),
+    )
+    .await;
+    assert_eq!(status, 403);
+    assert!(!revoked.to_string().contains(PROJECT));
     server_task.abort();
 }

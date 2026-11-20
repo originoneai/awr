@@ -1994,25 +1994,13 @@ impl ServerHandler for Endpoint {
                     super::directory::operate(&self.state, &self.project, &access.bearer, args, operation).await
                 }
                 "awr_team_portfolio_overview" => {
-                    let req: awr_team_pg::PortfolioOverviewRequest =
-                        serde_json::from_value(args)
-                            .map_err(|_| PgError::invalid_command_fields())?;
-                    let registered: Vec<String> = self
-                        .state
-                        .projects
-                        .values()
-                        .filter(|registered| registered.tenant_id == self.project.tenant_id)
-                        .map(|registered| registered.project_id.clone())
-                        .collect();
-                    self.state
-                        .store
-                        .portfolio_overview(
-                            &self.project.tenant_id,
-                            &access.bearer,
-                            &registered,
-                            req,
-                        )
-                        .await
+                    super::portfolio::overview(
+                        &self.state,
+                        &self.project.tenant_id,
+                        &access.bearer,
+                        args,
+                    )
+                    .await
                 }
                 "awr_team_access_inspect" => {
                     let req: super::AccessInspectBody = serde_json::from_value(args)

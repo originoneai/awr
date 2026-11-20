@@ -39,6 +39,11 @@ pub(crate) struct BrowserSession {
     pub id: String,
     pub connection_id: String,
     pub bearer: String,
+    /// Tenant bound at login; never accepted from a browser request body.
+    /// Older encrypted sessions default to an empty value and cannot use the
+    /// tenant-scoped portfolio read until the member logs in again.
+    #[serde(default)]
+    pub tenant_id: String,
     pub created_at_ms: u64,
     pub expires_at_ms: u64,
     pub last_seen_ms: u64,
@@ -200,6 +205,7 @@ mod tests {
                         id: id.clone(),
                         connection_id: public.clone(),
                         bearer: bearer.into(),
+                        tenant_id: "reader-tenant".into(),
                         created_at_ms: 1000,
                         expires_at_ms: u64::MAX / 2,
                         last_seen_ms: 1000,
