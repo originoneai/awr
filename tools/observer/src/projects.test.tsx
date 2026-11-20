@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectListEntry, ProjectListModel } from './components/projects/project-list-model';
 import i18n from './i18n';
+import { queryKeys } from './lib/queries';
 import type { OverviewInput } from './core/overview';
 import { DEMO_OVERVIEW, DEMO_PROJECTS, renderApp, stubFetch } from './test-utils';
 
@@ -62,6 +63,8 @@ function json(payload: unknown) {
 function installFetch(options: {
   projects?: ProjectListEntry[] | { error: string };
   models?: Record<string, ProjectListModel | { error: string }>;
+  /** The shell read's reply; unset keeps the unrouted default (an unpinned deployment). */
+  shell?: unknown;
   hold?: boolean;
   revoked?: boolean;
 } = {}) {
@@ -82,6 +85,7 @@ function installFetch(options: {
         : json({ ok: true, projects, view: 'team' });
     }
     if (url.includes('/api/team/overview')) return json(DEMO_OVERVIEW);
+    if (options.shell !== undefined && url.includes('/api/team/shell')) return json(options.shell);
     return json({ ok: false, error: { code: 'NoRoute', message: 'unexpected synthetic read' } });
   }));
 }
@@ -308,6 +312,29 @@ describe('project list prototype and count details', () => {
     const projectA = await screen.findByRole('link', { name: 'Project Alpha' });
     expect(projectA.closest('tr')?.querySelector('td:nth-child(5)')?.textContent).toBe('2 天前');
     expect(screen.getByRole('link', { name: 'Project Beta' }).closest('tr')?.querySelector('td:nth-child(5)')?.textContent).toBe('今天');
+  });
+
+  it('picks the current period in the deployment\'s pinned display zone, not the viewer\'s', async () => {
+    // The derivation clock is 2026-11-19 04:00 in UTC and still the evening of the 18th in Los
+    // Angeles, so a period that starts on the 19th is current in one zone and not yet begun in the
+    // other. The shell read pins the zone; the viewer's own zone must not decide it.
+    const startsOnThe19th = {
+      ...currentUpdate('ok', 'Period that starts on the 19th'),
+      startsOn: '2026-11-19', endsOn: '2026-11-19', recordedAtUnixMs: NOW - 60 * 60_000,
+    };
+    const rowTextUnder = async (zone: string, expectation: (text: string) => void) => {
+      installFetch({
+        models: { 'project-a': model('project-a', { periodUpdates: { coverage: 'complete', items: [startsOnThe19th] } }) },
+        shell: { ok: true, source: 'demo', organizationName: null, perspective: null, displayTimeZone: zone },
+      });
+      const { queryClient, unmount } = renderApp('/projects');
+      await screen.findByRole('link', { name: 'Project Alpha' });
+      await waitFor(() => expect(queryClient.getQueryState(queryKeys.shell)?.status).toBe('success'));
+      await waitFor(() => expectation(rows()[0]?.textContent ?? ''));
+      unmount();
+    };
+    await rowTextUnder('UTC', (text) => expect(text).toContain('Period that starts on the 19th'));
+    await rowTextUnder('America/Los_Angeles', (text) => expect(text).not.toContain('Period that starts on the 19th'));
   });
 
   it('removes a trailing Chinese full stop from the recorded one-sentence update', async () => {
