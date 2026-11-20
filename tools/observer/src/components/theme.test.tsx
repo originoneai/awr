@@ -147,6 +147,26 @@ describe('complete prototype theme tokens', () => {
     expect(craftCssVariables('light')['--craft-brand-wordmark-line-height']).toBe('20px');
   });
 
+  it('names the prototype shell parts antd has no token for (topbar mix/blur, avatar type)', () => {
+    expect(craftThemes.light.shell).toEqual({
+      topbar: { pageMixPercent: 88, blurPx: 8 },
+      avatar: { size: 28, initialFontSize: 12, initialFontWeight: 500 },
+    });
+    expect(craftThemes.dark.shell).toEqual(craftThemes.light.shell);
+    const variables = craftCssVariables('light');
+    expect(variables['--craft-shell-topbar-page-mix']).toBe('88%');
+    expect(variables['--craft-shell-topbar-blur']).toBe('8px');
+    expect(variables['--craft-shell-avatar-size']).toBe('28px');
+    expect(variables['--craft-shell-avatar-initial-font-size']).toBe('12px');
+    expect(variables['--craft-shell-avatar-initial-font-weight']).toBe('500');
+  });
+
+  it('carries the prototype mono stack, including Menlo', () => {
+    expect(craftThemes.light.font.meta)
+      .toBe('ui-monospace, "SFMono-Regular", "Cascadia Mono", "Roboto Mono", Menlo, monospace');
+    expect(craftThemes.dark.font.meta).toBe(craftThemes.light.font.meta);
+  });
+
   it('maps both themes to the exact supplied categorical series', () => {
     expect(craftThemes.light.chart.series).toEqual(['#2A78D6', '#EB6834', '#1BAF7A', '#EDA100']);
     expect(craftThemes.dark.chart.series).toEqual(['#3987E5', '#D95926', '#199E70', '#C98500']);

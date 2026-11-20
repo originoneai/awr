@@ -104,6 +104,7 @@ test('the shell matches the prototype numbers at 1440x900', async ({ page }, tes
       nav2Item2: box(navItem(2, 2)),
       nav2Item2Icon: box(navItem(2, 2)?.querySelector('svg')),
       nav2Item2Label: box(navItem(2, 2)?.querySelector('.ant-menu-title-content a span')),
+      navIconPaths: [1, 2].flatMap((group) => [...document.querySelectorAll(`.shell-sider nav:nth-of-type(${group}) li.ant-menu-item svg`)].map((svg) => [...svg.children].map((n) => n.tagName === 'circle' ? `circle:${n.getAttribute('cx')},${n.getAttribute('cy')},${n.getAttribute('r')}` : n.getAttribute('d')).join(' | '))),
       themeButton: box(q('.shell-theme button')),
       themeIcon: box(q('.shell-theme button svg')),
       themeLabel: box(q('.shell-theme-label')),
@@ -132,6 +133,10 @@ test('the shell matches the prototype numbers at 1440x900', async ({ page }, tes
       pageTitle: box(q('.obs-page-title')),
       pageTitleStyle: (() => { const s = style(q('.obs-page-title')); return s && { fontSize: s.fontSize, lineHeight: s.lineHeight, fontWeight: s.fontWeight }; })(),
       mutedVar: style(document.documentElement).getPropertyValue('--craft-color-muted').trim(),
+      htmlSmoothing: style(document.documentElement).getPropertyValue('-webkit-font-smoothing'),
+      bodySmoothing: style(document.body).getPropertyValue('-webkit-font-smoothing'),
+      bodyFont: (() => { const s = style(document.body); return { family: s.fontFamily, size: s.fontSize, lineHeight: s.lineHeight, weight: s.fontWeight }; })(),
+      shortcutFamily: style(searchChildren[2])?.fontFamily,
     };
   });
 
@@ -158,6 +163,18 @@ test('the shell matches the prototype numbers at 1440x900', async ({ page }, tes
   expect(metrics.nav2Item2).toMatchObject({ x: 12, y: 304, w: 207, h: 36 });
   expect(metrics.nav2Item2Icon).toMatchObject({ x: 24, y: 314, w: 16, h: 16 });
   expect(metrics.nav2Item2Label).toMatchObject({ x: 50, y: 312, h: 20 });
+  // Prototype ICONS (app.js), in sidebar order: home, folder, inbox, book / users, activity, sliders.
+  // lucide redesigned eight of these glyphs after the prototype's snapshot; the app rebuilds
+  // the prototype path data through lucide's createLucideIcon (src/components/ShellGlyphs.tsx).
+  expect(metrics.navIconPaths).toEqual([
+    'M3 10.5 12 3l9 7.5 | M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5',
+    'M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z',
+    'M22 12h-6l-2 3h-4l-2-3H2 | M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11Z',
+    'M12 7v14 | M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3Z',
+    'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 | circle:9,7,4 | M22 21v-2a4 4 0 0 0-3-3.87 | M16 3.13a4 4 0 0 1 0 7.75',
+    'M22 12h-4l-3 9L9 3l-3 9H2',
+    'M4 6h8 | M16 6h4 | M4 12h2 | M10 12h10 | M4 18h10 | M18 18h2 | circle:14,6,2 | circle:8,12,2 | circle:16,18,2',
+  ]);
 
   // --- Theme button (prototype .side-foot button: full row, 36px, icon x 24, label x 50) ---
   // The prototype's own button sits at y 792 because a prototype-only side note follows;
@@ -203,6 +220,21 @@ test('the shell matches the prototype numbers at 1440x900', async ({ page }, tes
   expect(metrics.searchLabel!.x - (metrics.searchIcon!.x + metrics.searchIcon!.w)).toBe(8);
   expect(metrics.searchShortcut!.x - (metrics.searchLabel!.x + metrics.searchLabel!.w)).toBeCloseTo(8, 1);
   expect(metrics.searchShortcutStyle).toMatchObject({ height: '20px', color: palette.muted, borderColor: palette.hairlineStrong });
+  // Prototype --mono, verbatim (including Menlo) for the shortcut key cap. Chrome's
+  // computed serialization drops the quotes around the unambiguous SFMono-Regular.
+  expect(metrics.shortcutFamily).toBe('ui-monospace, SFMono-Regular, "Cascadia Mono", "Roboto Mono", Menlo, monospace');
+
+  // --- Body type (prototype body: 400 14px/20px var(--font), antialiased) ---
+  expect(metrics.htmlSmoothing).toBe('antialiased');
+  expect(metrics.bodySmoothing).toBe('antialiased');
+  expect(metrics.bodyFont).toEqual({
+    // Chrome's computed serialization renames the bare BlinkMacSystemFont to "system-ui";
+    // both pages compute identically (the probe compares them directly and passes).
+    family: '-apple-system, "system-ui", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif',
+    size: '14px',
+    lineHeight: '20px',
+    weight: '400',
+  });
 
   // --- Bell (prototype .bell 32x32, quiet ink-2; icon('bell', 18)) ---
   expect(metrics.bellButton).toMatchObject({ x: 1332, y: 11.5, w: 32, h: 32 });

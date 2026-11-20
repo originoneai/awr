@@ -11,20 +11,10 @@ import {
   type MenuProps,
 } from 'antd';
 import {
-  Activity,
-  Bell,
-  BookOpen,
-  Building2,
   ChevronDown,
   ChevronRight,
   Folder,
-  LayoutDashboard,
-  Moon,
-  Search,
-  Settings,
-  SquareCheckBig,
   Sun,
-  Users,
   type LucideIcon,
 } from 'lucide-react';
 import { useCallback, type ReactNode } from 'react';
@@ -42,6 +32,18 @@ import type { TeamOverviewResponse } from '../lib/types';
 import { craftTokens } from '../theme';
 import { useCraftTheme } from './CraftThemeProvider';
 import { SearchPanel } from './SearchPanel';
+import {
+  ShellActivityIcon,
+  ShellBellIcon,
+  ShellBuildingIcon,
+  ShellInboxIcon,
+  ShellLessonsIcon,
+  ShellMembersIcon,
+  ShellMoonIcon,
+  ShellSearchIcon,
+  ShellSettingsIcon,
+  ShellWorkbenchIcon,
+} from './ShellGlyphs';
 import { ThemeToggle } from './ThemeToggle';
 import { useCompactViewport, useMediaQuery } from '../lib/viewport';
 
@@ -49,16 +51,16 @@ const { Header, Sider, Content } = Layout;
 const COMPACT_SEARCH_QUERY = '(max-width: 1240px)';
 
 const PRIMARY_NAVIGATION = [
-  { path: '/workbench', icon: LayoutDashboard, label: 'workbench' },
+  { path: '/workbench', icon: ShellWorkbenchIcon, label: 'workbench' },
   { path: '/projects', icon: Folder, label: 'projects' },
-  { path: '/inbox', icon: SquareCheckBig, label: 'inbox' },
-  { path: '/lessons', icon: BookOpen, label: 'lessons' },
+  { path: '/inbox', icon: ShellInboxIcon, label: 'inbox' },
+  { path: '/lessons', icon: ShellLessonsIcon, label: 'lessons' },
 ] as const;
 
 const ADMIN_NAVIGATION = [
-  { path: '/members', icon: Users, label: 'members' },
-  { path: '/activity', icon: Activity, label: 'activity' },
-  { path: '/settings', icon: Settings, label: 'settings' },
+  { path: '/members', icon: ShellMembersIcon, label: 'members' },
+  { path: '/activity', icon: ShellActivityIcon, label: 'activity' },
+  { path: '/settings', icon: ShellSettingsIcon, label: 'settings' },
 ] as const;
 
 const NAVIGATION = [...PRIMARY_NAVIGATION, ...ADMIN_NAVIGATION];
@@ -235,7 +237,7 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
     ? `${pendingCount}${pendingData.truncated || pendingData.next_cursor !== null ? '+' : ''}`
     : null;
   const memberName = currentMemberName(overview.data) ?? t('shell.you');
-  const MobileThemeIcon = mode === 'dark' ? Sun : Moon;
+  const MobileThemeIcon = mode === 'dark' ? Sun : ShellMoonIcon;
   const mobileThemeLabel = t(mode === 'dark' ? 'shell.switchToLight' : 'shell.switchToDark');
   const perspectiveFacts = revoked
     ? unknownPerspectiveFacts()
@@ -295,15 +297,12 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
         <Avatar
           aria-hidden
           data-testid="current-member-avatar"
-          size={28}
-          // Prototype .av: 28px circle, raised fill, secondary ink, 12px/500 initial.
+          className="shell-avatar"
+          size={craftTokens.shell.avatar.size}
+          // antd writes its own inline font size, so the initial's type stays inline too.
           style={{
-            width: 28,
-            height: 28,
-            background: 'var(--craft-color-raised)',
-            color: 'var(--craft-color-secondary)',
-            fontSize: 12,
-            fontWeight: 500,
+            fontSize: craftTokens.shell.avatar.initialFontSize,
+            fontWeight: craftTokens.shell.avatar.initialFontWeight,
           }}
         >
           {nameInitial(memberName)}
@@ -438,9 +437,6 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
             minHeight: 56,
             padding: compactNavigation ? '8px 16px' : '0 32px',
             lineHeight: 'normal',
-            // Prototype .top: translucent page tone over the scrolled content, blurred 8px.
-            background: 'color-mix(in srgb, var(--craft-color-page) 88%, transparent)',
-            backdropFilter: 'blur(8px)',
             borderBottom: `1px solid ${token.colorSplit}`,
           }}
         >
@@ -460,7 +456,7 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
               {
                 title: (
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                    <Building2 size={16} strokeWidth={1.5} aria-hidden />
+                    <ShellBuildingIcon size={16} strokeWidth={1.5} aria-hidden />
                     <Dropdown menu={scopeMenu} trigger={['click']}>
                       <Button
                         type="text"
@@ -510,17 +506,7 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
                 aria-label={t('shell.search')}
                 aria-keyshortcuts="Meta+K Control+K"
                 onClick={(event) => openSearch(event.currentTarget)}
-                icon={<Search size={16} strokeWidth={1.5} aria-hidden />}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  flex: 'none',
-                  width: 200,
-                  height: 32,
-                  marginLeft: 'auto',
-                  padding: '0 8px 0 12px',
-                  textAlign: 'left',
-                }}
+                icon={<ShellSearchIcon size={16} strokeWidth={1.5} aria-hidden />}
               >
                 <span style={{ flex: 1 }}>{t('shell.search')}</span>
                 <span
@@ -551,8 +537,8 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
                     ? t('nav.inbox')
                     : t('shell.pendingNotifications', { count: pendingCount })}
                   onClick={() => navigate(inboxPath)}
-                  icon={<Bell size={18} strokeWidth={1.5} aria-hidden />}
-                  style={{ width: 32, height: 32, padding: 0, color: 'var(--craft-color-secondary)' }}
+                  icon={<ShellBellIcon size={18} strokeWidth={1.5} aria-hidden />}
+                  style={{ width: 32, height: 32, padding: 0 }}
                 />
               </Badge>
               {avatarMenu}

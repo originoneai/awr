@@ -54,7 +54,15 @@ const sharedCraftTokens = {
   },
   font: {
     interface: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif',
-    meta: 'ui-monospace, "SFMono-Regular", "Cascadia Mono", "Roboto Mono", monospace',
+    // Prototype --mono, verbatim (including Menlo).
+    meta: 'ui-monospace, "SFMono-Regular", "Cascadia Mono", "Roboto Mono", Menlo, monospace',
+  },
+  // Prototype shell parts antd has no token for; global.css consumes them as variables.
+  shell: {
+    // Prototype .top: the page tone mixed at 88% and blurred 8px behind the bar.
+    topbar: { pageMixPercent: 88, blurPx: 8 },
+    // Prototype .av: a 28px circle with a 12px/500 initial.
+    avatar: { size: 28, initialFontSize: 12, initialFontWeight: 500 },
   },
   radius: {
     control: 8,
@@ -317,7 +325,7 @@ export function craftCssVariables(mode: CraftThemeMode): Record<string, string> 
   const tokens = craftThemes[mode];
   const {
     color, chart, shadow, radius, motion, font, text, leading, measure,
-    height, gap, width, canvas, perspective, brand, activity,
+    height, gap, width, canvas, perspective, brand, activity, shell,
   } = tokens;
   return {
     '--craft-perspective-option-padding-inline': `${perspective.optionPaddingInline}px`,
@@ -325,6 +333,11 @@ export function craftCssVariables(mode: CraftThemeMode): Record<string, string> 
     '--craft-activity-column-actor': `${activity.columnActor}px`,
     '--craft-activity-column-task': activity.columnTask,
     '--craft-activity-section-title-text': `${activity.sectionTitleText}px`,
+    '--craft-shell-topbar-page-mix': `${shell.topbar.pageMixPercent}%`,
+    '--craft-shell-topbar-blur': `${shell.topbar.blurPx}px`,
+    '--craft-shell-avatar-size': `${shell.avatar.size}px`,
+    '--craft-shell-avatar-initial-font-size': `${shell.avatar.initialFontSize}px`,
+    '--craft-shell-avatar-initial-font-weight': String(shell.avatar.initialFontWeight),
     '--craft-color-page': color.page,
     '--craft-color-side': color.side,
     '--craft-color-surface': color.surface,
