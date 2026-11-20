@@ -116,12 +116,12 @@ describe('cross-project inbox read model', () => {
 
     expect(result.viewer).toEqual({ id: 'person-a', displayName: 'Owner One' });
     expect(result.entries.map((entry) => [entry.kind, entry.title])).toEqual([
-      ['lesson', 'Check the interface version first'],
       ['answer', 'Should the empty state explain the next step?'],
       ['plan-approval', 'Recovery work breakdown'],
       ['assignment', 'Synthetic assignment-task'],
+      ['lesson', 'Check the interface version first'],
     ]);
-    expect(result.entries.map((entry) => entry.durationDays)).toEqual([6, 2, 1, 0]);
+    expect(result.entries.map((entry) => entry.durationDays)).toEqual([2, 1, 0, 6]);
     expect(result.entries.some((entry) => entry.wait?.kind === 'review')).toBe(false);
     expect(result.entries.some((entry) => entry.wait?.kind === 'external')).toBe(false);
     expect(result.entries.some((entry) => entry.wait?.kind === 'dependency')).toBe(false);
@@ -155,8 +155,9 @@ describe('cross-project inbox read model', () => {
     expect(result.entries.filter((entry) => entry.kind === 'plan-approval')).toHaveLength(1);
     expect(result.entries.some((entry) => entry.projectName === 'Notification Service'
       && entry.title === 'Should the second project keep the old channel?')).toBe(true);
-    expect(result.entries[0].durationDays).toBe(6);
-    expect(result.entries.map((entry) => entry.durationDays).slice(0, 3)).toEqual([6, 4, 2]);
+    expect(result.entries[0].durationDays).toBe(4);
+    expect(result.entries.map((entry) => entry.durationDays).slice(0, 3)).toEqual([4, 2, 1]);
+    expect(result.entries.at(-1)!.kind).toBe('lesson');
     expect(result.count).toBe(result.entries.length);
   });
 
@@ -175,7 +176,7 @@ describe('cross-project inbox read model', () => {
     expect(inboxPendingLabel(result)).toBeNull();
 
     const fixed = buildInboxModel({ models: [model(source)], projects });
-    expect(fixed.entries.map((entry) => entry.durationDays)).toEqual([6, 2, 1, 0]);
+    expect(fixed.entries.map((entry) => entry.durationDays)).toEqual([2, 1, 0, 6]);
   });
 
   it('keeps unknown counts unread, known zero as zero, and partial confirmed counts marked with plus', () => {
@@ -287,7 +288,7 @@ describe('cross-project inbox read model', () => {
     // Contrast: a real viewer id on the same model is identified and the entries appear.
     const contrast = buildInboxModel({ models: [model(allKindsInput())], projects });
     expect(contrast.viewer).toEqual({ id: 'person-a', displayName: 'Owner One' });
-    expect(contrast.entries.map((entry) => entry.kind)).toEqual(['lesson', 'answer', 'plan-approval', 'assignment']);
+    expect(contrast.entries.map((entry) => entry.kind)).toEqual(['answer', 'plan-approval', 'assignment', 'lesson']);
   });
 
   it('an incomparable ordering contributes no entries and never identifies the viewer', () => {
@@ -304,7 +305,7 @@ describe('cross-project inbox read model', () => {
 
     // (a) Only the comparable project's entries reach the queue.
     const result = buildInboxModel({ models: [model(allKindsInput()), outOfOrder], projects });
-    expect(result.entries.map((entry) => entry.kind)).toEqual(['lesson', 'answer', 'plan-approval', 'assignment']);
+    expect(result.entries.map((entry) => entry.kind)).toEqual(['answer', 'plan-approval', 'assignment', 'lesson']);
     expect(result.allEntries.some((entry) => entry.title === 'Should the out-of-order project surface its question?')).toBe(false);
 
     // (b) The viewer id lives only in the incomparable reply: the viewer stays unknown.
@@ -376,5 +377,29 @@ describe('cross-project inbox read model', () => {
       expect(answer.basis.find((item) => item.fact.fact === 'reportAge'), `offset ${offset}`)
         .toMatchObject({ tone: stale ? 'bad' : 'info', fact: { stale } });
     }
+  });
+  it('orders waits longest first and every confirmation after them, with unknown ages last in each group', () => {
+    const source = allKindsInput();
+    if (source.approvals.coverage === 'complete') {
+      source.approvals = complete([
+        ...source.approvals.items,
+        approval('lesson-confirmation', 'person-a', {
+          id: 'lesson-unknown-age', projectId: 'project-one', title: 'A lesson whose session date was not recorded', sinceUnixMs: null,
+        }),
+        approval('plan-approval', 'person-a', {
+          id: 'plan-unknown-age', projectId: 'project-one', title: 'A breakdown whose request date was not recorded', sinceUnixMs: null,
+        }),
+      ]);
+    }
+    const result = buildInboxModel({ models: [model(source)], projects });
+    // The six-day lesson is the oldest entry of all, and still comes after every wait.
+    expect(result.entries.map((entry) => [entry.kind, entry.durationDays])).toEqual([
+      ['answer', 2],
+      ['plan-approval', 1],
+      ['assignment', 0],
+      ['plan-approval', null],
+      ['lesson', 6],
+      ['lesson', null],
+    ]);
   });
 });
