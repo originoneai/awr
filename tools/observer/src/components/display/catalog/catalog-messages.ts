@@ -27,6 +27,7 @@ export const catalogMessages = {
       todoRail: { name: '待办卡', description: '首条展开，其余收起，超过三条显示还有几件' },
       acceptanceList: { name: '完成标准清单', description: '逐条标准的有依据、没通过、在等、还没有开始' },
       perspective: { name: '视角切换', description: '只列出当前成员有权查看的高度' },
+      search: { name: '搜索面板', description: '只搜索已经读取且当前有权查看的清单' },
     },
     examples: {
       project: '星桥交付',
@@ -181,6 +182,7 @@ export const catalogMessages = {
       todoRail: { name: 'Pending cards', description: 'The first card expands; the rest collapse' },
       acceptanceList: { name: 'Acceptance list', description: 'Each criterion marked supported, not met, waiting or not started' },
       perspective: { name: 'Perspective switcher', description: 'Lists only the heights the current member can view' },
+      search: { name: 'Search panel', description: 'Searches only loaded lists the current member can view' },
     },
     examples: {
       project: 'Starbridge delivery',
