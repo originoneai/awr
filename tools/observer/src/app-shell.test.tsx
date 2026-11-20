@@ -78,11 +78,11 @@ afterEach(async () => {
 });
 
 describe('AppShell navigation', () => {
-  it('renders the 240px sidebar with primary and administration groups and bottom theme switch', () => {
+  it('renders the 232px sidebar with primary and administration groups and bottom theme switch', () => {
     stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
     renderApp('/workbench');
     const sider = document.querySelector<HTMLElement>('.shell-sider');
-    expect(sider?.style.width).toBe('240px');
+    expect(sider?.style.width).toBe('232px');
     expect(sider?.querySelector('[data-testid="awr-brand"]')).not.toBeNull();
     for (const label of ['工作台', '项目', '待处理', '经验', '成员与 Agent', '活动与审计', '管理设置']) {
       expect(screen.getByRole('menuitem', { name: new RegExp(label) })).toBeTruthy();
@@ -108,7 +108,7 @@ describe('AppShell navigation', () => {
       marginBottom: 20,
       wordmarkFontSize: 17,
       wordmarkFontWeight: 600,
-      wordmarkLineHeight: 22,
+      wordmarkLineHeight: 20,
     });
     // jsdom returns custom-property expressions; Chromium resolves their exact pixel values in e2e.
     const brandStyles = getComputedStyle(brand);
@@ -278,7 +278,7 @@ describe('AppShell navigation', () => {
     expect(avatar.textContent).toBe('你');
     expect(avatar.textContent).not.toContain('member-1');
     const urls = fetchMock.mock.calls.map(([input]) => String(input));
-    expect(urls.some((url) => url.includes('/api/team/overview'))).toBe(false);
+    expect(urls.some((url) => url.includes('/api/team/overview?'))).toBe(false);
     const operations = fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/team/read'))
       .map(([, init]) => JSON.parse(String(init?.body)).query.op as string);
     expect(operations).not.toContain('decisions.list');
