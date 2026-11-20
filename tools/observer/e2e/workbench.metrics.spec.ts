@@ -46,8 +46,9 @@ test('heading, verdict band, KPI strip, chain, rail and detail panel match the p
   // .head h1 { font-size: 22px; line-height: 28px; font-weight: 500 }
   expect(await styles(page, '.obs-page-title', ['font-size', 'line-height', 'font-weight']))
     .toEqual({ 'font-size': '22px', 'line-height': '28px', 'font-weight': '500' });
-  // .head .sub { font-size: 13px }
+  // .head .sub { font-size: 13px }; home() prefixes the period with the viewer's name.
   expect((await styles(page, '.obs-page-subtitle', ['font-size']))['font-size']).toBe('13px');
+  await expect(page.locator('.obs-page-subtitle')).toContainText('林悦 · 今天，');
   // .head { padding: 24px 0 16px } (16px 0 12px below 860px)
   const heading = await styles(page, '.obs-page-header', ['padding-top', 'padding-bottom']);
   expect(`${heading['padding-top']} ${heading['padding-bottom']}`).toBe(phone ? '16px 12px' : '24px 16px');
@@ -229,11 +230,14 @@ test('empty chain uses the flat why.plain surface instead of the dotted canvas',
   expect(plain['background-image']).toBe('none');
 });
 
-test('subtitle uses the browser-local date shown by the read timestamp', async ({ page }, testInfo) => {
+test('subtitle uses the viewer name and browser-local date from the read timestamp', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-new-york');
-  const byline = await page.locator('.obs-workbench-byline').innerText();
-  const match = byline.match(/(\d{4})\/(\d{1,2})\/(\d{1,2})/);
-  expect(match).not.toBeNull();
+  const expected = await page.evaluate(async () => {
+    const response = await fetch('/api/team/overview-model?project=P-001');
+    const body = await response.json() as { read_at_unix_ms: number };
+    const date = new Date(body.read_at_unix_ms);
+    return `${date.getMonth() + 1} 月 ${date.getDate()} 日`;
+  });
   const subtitle = await page.locator('.obs-page-subtitle').innerText();
-  expect(subtitle).toContain(`${Number(match![2])} 月 ${Number(match![3])} 日`);
+  expect(subtitle).toBe(`林悦 · 今天，${expected}`);
 });

@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { deriveOverview } from '../../core/overview';
-import type { OverviewReviewRound, OverviewTask } from '../../core/overview';
+import type { DerivedChain, OverviewReviewRound, OverviewTask, ViewId } from '../../core/overview';
 import { complete, reviewRound, startedTask } from '../../core/overview/__tests__/factories';
 import {
   buildMyWorkModel,
   buildWorkbenchVerdict,
   metricDetailItems,
+  orderWorkbenchChains,
   reportAge,
   reportDeclaration,
   waitingOnText,
@@ -228,6 +229,54 @@ describe('fact-based KPI notes', () => {
   });
 });
 
+describe('My Work chain order', () => {
+  function chain(id: string, impact: number, oldestDays: number, waitingOn: readonly string[]): DerivedChain {
+    return {
+      id,
+      root: {
+        kind: 'decision', person: null, externalParty: null, oldestDays, tone: 'negative',
+        queue: {
+          count: 1, unknownItems: [],
+          items: [{ waitingOn: waitingOn.map((personId) => ({ id: personId, displayName: personId })) }],
+        },
+      },
+      impact: { count: impact, items: [], unknownItems: [] },
+    } as unknown as DerivedChain;
+  }
+
+  it('puts the viewer first, then impact and oldest wait, without mutating the input', () => {
+    const input = [
+      chain('other-large', 9, 9, ['person-b']),
+      chain('mine-small', 2, 8, ['person-a']),
+      chain('mine-large-newer', 5, 2, ['person-a']),
+      chain('mine-large-older', 5, 7, ['person-a']),
+      chain('other-small', 1, 99, ['person-b']),
+    ];
+    const original = input.map((item) => item.id);
+    expect(orderWorkbenchChains(input, 'person-a', 'me').map((item) => item.id)).toEqual([
+      'mine-large-older', 'mine-large-newer', 'mine-small', 'other-large', 'other-small',
+    ]);
+    expect(input.map((item) => item.id)).toEqual(original);
+  });
+
+  it.each<ViewId>(['lead', 'department', 'top'])('keeps the %s perspective in its derived order', (perspective) => {
+    const input = [chain('other', 8, 8, ['person-b']), chain('mine', 1, 1, ['person-a'])];
+    expect(orderWorkbenchChains(input, 'person-a', perspective)).toEqual(input);
+  });
+
+  it('applies the viewer priority in the page model instead of changing core derivation', () => {
+    const input = myWorkInput({
+      reviewRounds: complete([reviewRound('other-review', 'open', { reviewerPersonId: 'person-b' })]),
+    });
+    const derived = deriveOverview(input);
+    expect(derived.chains[0].root.kind).toBe('review');
+    const model = buildMyWorkModel(derived, 'zh-CN', { personId: 'person-a' });
+    expect(model.chains[0].root.kind).toBe('decision');
+    expect(model.chains[0].root.queue.items[0].waitingOn.map((person) => person.id)).toContain('person-a');
+    expect(derived.chains[0].root.kind).toBe('review');
+  });
+});
+
 describe('verdict sources and fixed sentence table', () => {
   it('uses a recorded period update with its health, author and time', () => {
     const derived = deriveOverview(myWorkInput());
@@ -244,24 +293,54 @@ describe('verdict sources and fixed sentence table', () => {
     expect(verdict.updateId).toBe('update-one');
   });
 
-  it('never claims a healthy status when there is no period update', () => {
+  it('uses the prototype waiting word and risk tone when facts are pending for the viewer', () => {
     const derived = deriveOverview(myWorkInput());
     const verdict = buildWorkbenchVerdict(derived.views.me.metrics, null, 'zh-CN', NOW);
-    expect(verdict.health).toBe('none');
-    expect(verdict.healthLabel).toBe('没有更新');
+    expect(verdict.health).toBe('risk');
+    expect(verdict.healthLabel).toBe('等你');
     expect(verdict.healthLabel).not.toBe('正常');
     expect(verdict.source).toBe('generated');
-    expect(verdict.byline).toContain('程序按事实生成');
+    expect(verdict.byline).toBe('按你名下的任务和 Agent 的报告算出 · 刚刚');
     expect(verdict.sentence).toContain('4 件');
   });
 
-  it('uses a fixed unknown sentence when pending and waiting totals are unknown', () => {
+  it('keeps no-update wording and tone when nothing is pending for the viewer', () => {
+    const input = myWorkInput({
+      decisions: complete([]), handoffs: complete([]), approvals: complete([]),
+      reviewRounds: complete([reviewRound('other-review', 'open', { reviewerPersonId: 'person-b' })]),
+    });
+    const derived = deriveOverview(input);
+    expect(derived.views.me.metrics[3].count).toBe(0);
+    const verdict = buildWorkbenchVerdict(derived.views.me.metrics, null, 'zh-CN', NOW);
+    expect(verdict.health).toBe('none');
+    expect(verdict.healthLabel).toBe('没有更新');
+    expect(verdict.byline).toBe('按你名下的任务和 Agent 的报告算出 · 刚刚');
+  });
+
+  it('keeps no-update wording and the fixed unknown sentence when pending is unknown', () => {
     const input = myWorkInput({ approvals: { coverage: 'unread', reason: 'not-read' } });
     const derived = deriveOverview(input);
     const verdict = buildWorkbenchVerdict(derived.views.me.metrics, null, 'en-US', NOW);
     expect(verdict.health).toBe('none');
+    expect(verdict.healthLabel).toBe('No update');
     expect(verdict.sentence).toBe('Some totals are not fully read yet; the confirmed details remain below.');
-    expect(verdict.byline).toContain('Generated from recorded facts');
+    expect(verdict.byline).toBe('Calculated from your tasks and Agent reports · just now');
+  });
+
+  it('uses the prototype source line for every recorded-update perspective', () => {
+    const derived = deriveOverview(myWorkInput());
+    const readAt = new Date(2026, 10, 19, 12, 0).getTime();
+    const update: WorkbenchPeriodUpdate = {
+      id: 'update-one', health: 'risk', sentence: 'A synthetic update.', authorName: 'Project Lead',
+      writtenAtUnixMs: new Date(2026, 10, 19, 9, 30).getTime(),
+    };
+    expect(buildWorkbenchVerdict(derived.views.lead.metrics, update, 'zh-CN', readAt, 'lead').byline)
+      .toBe('你今天 09:30 在自己的 Agent 里写的 · 第 47 周');
+    const earlier = { ...update, writtenAtUnixMs: new Date(2026, 10, 17, 9, 30).getTime() };
+    expect(buildWorkbenchVerdict(derived.views.department.metrics, earlier, 'zh-CN', readAt, 'department').byline)
+      .toBe('你 11 月 17 日在自己的 Agent 里写的 · 汇总时取最差的那个，不取平均');
+    expect(buildWorkbenchVerdict(derived.views.top.metrics, earlier, 'zh-CN', readAt, 'top').byline)
+      .toBe('取自各部门的月更新，取最差的那个 · 11 月 17 日');
   });
 });
 

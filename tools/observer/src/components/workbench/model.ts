@@ -13,6 +13,7 @@ import type {
   PersonSummary,
   ViewMetric,
   ViewMetricKey,
+  ViewId,
 } from '../../core/overview';
 import { truncateCodePoints } from '../../lib/agent-handback';
 import { formatUnixMs } from '../../lib/format';
@@ -69,7 +70,10 @@ interface WorkbenchVocabulary {
   };
   verdict: {
     sentences: Record<VerdictSentenceKey, string>;
-    generatedBy: string; generatedByNoTime: string; updateBy: string; updateAuthorFallback: string;
+    waitingForViewer: string;
+    generatedBy: string; generatedByNoTime: string;
+    updateBy: string; updateByLead: string; updateByDepartment: string; updateByTop: string;
+    updateAuthorFallback: string;
   };
   chains: { answer: string; decision: string; review: string; outside: string; outsideFallback: string };
   waiting: {
@@ -95,8 +99,14 @@ const VOCABULARY: Record<'zh-CN' | 'en-US', WorkbenchVocabulary> = {
         calm: '现在没有等你处理的事，也没有你名下的等待。',
         unknown: '有些数字还没有读全；已确认的明细仍在下面。',
       },
-      generatedBy: '程序按事实生成 · {{time}}', generatedByNoTime: '程序按事实生成',
-      updateBy: '{{name}} 于 {{time}} 写的', updateAuthorFallback: '项目负责人',
+      waitingForViewer: '等你',
+      generatedBy: '按你名下的任务和 Agent 的报告算出 · 刚刚',
+      generatedByNoTime: '按你名下的任务和 Agent 的报告算出 · 刚刚',
+      updateBy: '{{name}} 于 {{time}} 写的',
+      updateByLead: '你今天 {{time}} 在自己的 Agent 里写的 · 第 {{week}} 周',
+      updateByDepartment: '你 {{date}}在自己的 Agent 里写的 · 汇总时取最差的那个，不取平均',
+      updateByTop: '取自各部门的月更新，取最差的那个 · {{date}}',
+      updateAuthorFallback: '项目负责人',
     },
     chains: { answer: '等你回答', decision: '等一个决定', review: '等复核', outside: '等{{party}}', outsideFallback: '项目外的一方' },
     waiting: {
@@ -121,8 +131,14 @@ const VOCABULARY: Record<'zh-CN' | 'en-US', WorkbenchVocabulary> = {
         calm: 'Nothing is waiting for you, and none of your tasks are waiting on others.',
         unknown: 'Some totals are not fully read yet; the confirmed details remain below.',
       },
-      generatedBy: 'Generated from recorded facts · {{time}}', generatedByNoTime: 'Generated from recorded facts',
-      updateBy: 'Written by {{name}} at {{time}}', updateAuthorFallback: 'Project lead',
+      waitingForViewer: 'Waiting for you',
+      generatedBy: 'Calculated from your tasks and Agent reports · just now',
+      generatedByNoTime: 'Calculated from your tasks and Agent reports · just now',
+      updateBy: 'Written by {{name}} at {{time}}',
+      updateByLead: 'You wrote this in your own Agent at {{time}} today · week {{week}}',
+      updateByDepartment: 'You wrote this in your own Agent on {{date}} · the aggregate uses the worst result, not an average',
+      updateByTop: 'Taken from department monthly updates, using the worst result · {{date}}',
+      updateAuthorFallback: 'Project lead',
     },
     chains: { answer: 'Waiting for your answer', decision: 'Waiting for a decision', review: 'Waiting for review', outside: 'Waiting for {{party}}', outsideFallback: 'outside party' },
     waiting: {
@@ -149,11 +165,69 @@ function fill(template: string, values: Record<string, string | number>): string
   return template.replace(/\{\{(\w+)\}\}/g, (_match, key: string) => String(values[key] ?? ''));
 }
 
+function localClockTime(unixMs: number, language: string): string {
+  return new Intl.DateTimeFormat(language.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en-US', {
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).format(unixMs);
+}
+
+function localMonthDay(unixMs: number, language: string): string {
+  const date = new Date(unixMs);
+  if (language.toLowerCase().startsWith('zh')) return `${date.getMonth() + 1} 月 ${date.getDate()} 日`;
+  return new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric' }).format(unixMs);
+}
+
+function sameLocalDay(leftUnixMs: number, rightUnixMs: number): boolean {
+  const left = new Date(leftUnixMs);
+  const right = new Date(rightUnixMs);
+  return left.getFullYear() === right.getFullYear()
+    && left.getMonth() === right.getMonth()
+    && left.getDate() === right.getDate();
+}
+
+/** ISO week number of the viewer-local calendar date, matching the prototype's week label. */
+function localIsoWeek(unixMs: number): number {
+  const local = new Date(unixMs);
+  const date = new Date(Date.UTC(local.getFullYear(), local.getMonth(), local.getDate()));
+  const day = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - day);
+  const yearStart = Date.UTC(date.getUTCFullYear(), 0, 1);
+  return Math.floor((date.getTime() - yearStart) / 86_400_000 / 7) + 1;
+}
+
+function recordedUpdateByline(
+  update: WorkbenchPeriodUpdate,
+  vocabulary: WorkbenchVocabulary,
+  language: string,
+  readAtUnixMs: number | undefined,
+  perspective: ViewId,
+): string {
+  const generic = () => fill(vocabulary.verdict.updateBy, {
+    name: update.authorName?.trim() || vocabulary.verdict.updateAuthorFallback,
+    time: formatUnixMs(update.writtenAtUnixMs, language),
+  });
+  if (!Number.isFinite(update.writtenAtUnixMs)) return generic();
+  if (perspective === 'lead' && readAtUnixMs !== undefined && Number.isFinite(readAtUnixMs)
+    && sameLocalDay(update.writtenAtUnixMs, readAtUnixMs)) {
+    return fill(vocabulary.verdict.updateByLead, {
+      time: localClockTime(update.writtenAtUnixMs, language), week: localIsoWeek(readAtUnixMs),
+    });
+  }
+  if (perspective === 'department') {
+    return fill(vocabulary.verdict.updateByDepartment, { date: localMonthDay(update.writtenAtUnixMs, language) });
+  }
+  if (perspective === 'top') {
+    return fill(vocabulary.verdict.updateByTop, { date: localMonthDay(update.writtenAtUnixMs, language) });
+  }
+  return generic();
+}
+
 export function buildWorkbenchVerdict(
   metrics: OverviewViewSummary['metrics'],
   update: WorkbenchPeriodUpdate | null | undefined,
   language: string,
   readAtUnixMs?: number,
+  perspective: ViewId = 'me',
 ): WorkbenchVerdict {
   const vocabulary = workbenchVocabulary(language);
   if (update && update.sentence.trim()) {
@@ -162,10 +236,7 @@ export function buildWorkbenchVerdict(
       healthLabel: vocabulary.health[update.health],
       sentence: update.sentence,
       source: 'recorded-update',
-      byline: fill(vocabulary.verdict.updateBy, {
-        name: update.authorName?.trim() || vocabulary.verdict.updateAuthorFallback,
-        time: formatUnixMs(update.writtenAtUnixMs, language),
-      }),
+      byline: recordedUpdateByline(update, vocabulary, language, readAtUnixMs, perspective),
       updateId: update.id,
     };
   }
@@ -181,14 +252,15 @@ export function buildWorkbenchVerdict(
   else if (waiting > 0) rule = VERDICT_RULES[3];
   else if (agents !== null && agents > 0) rule = VERDICT_RULES[4];
   else rule = VERDICT_RULES[5];
+  const waitingForViewer = pending !== null && pending > 0;
   return {
-    health: 'none',
-    healthLabel: vocabulary.health.none,
+    health: waitingForViewer ? 'risk' : 'none',
+    healthLabel: waitingForViewer ? vocabulary.verdict.waitingForViewer : vocabulary.health.none,
     sentence: fill(vocabulary.verdict.sentences[rule.sentenceKey], values),
     source: 'generated',
     byline: readAtUnixMs === undefined
       ? vocabulary.verdict.generatedByNoTime
-      : fill(vocabulary.verdict.generatedBy, { time: formatUnixMs(readAtUnixMs, language) }),
+      : vocabulary.verdict.generatedBy,
     updateId: null,
   };
 }
@@ -261,7 +333,7 @@ function elapsedWholeDays(atUnixMs: number | null | undefined, readAtUnixMs: num
   return Math.floor((readAtUnixMs - atUnixMs) / 86_400_000);
 }
 
-function pendingDurationDays(item: PersonPendingItem, readAtUnixMs: number | undefined): number | null {
+export function pendingDurationDays(item: PersonPendingItem, readAtUnixMs: number | undefined): number | null {
   if (item.kind === 'wait') return item.wait?.durationDays ?? null;
   if (item.kind === 'handoff') return elapsedWholeDays(item.handoff?.updatedAtUnixMs, readAtUnixMs);
   return elapsedWholeDays(item.approval?.sinceUnixMs, readAtUnixMs);
@@ -379,6 +451,32 @@ export function reportDeclaration(report: OverviewProgressReport | null): Report
   return 'noDeclaration';
 }
 
+function compareChainFact(left: number | null, right: number | null): number {
+  if (left === null && right === null) return 0;
+  if (left === null) return 1;
+  if (right === null) return -1;
+  return right - left;
+}
+
+/** My Work puts waits addressed to the viewer first; every other perspective keeps core order. */
+export function orderWorkbenchChains(
+  chains: readonly DerivedChain[],
+  personId: string | null,
+  perspective: ViewId = 'me',
+): DerivedChain[] {
+  if (perspective !== 'me') return [...chains];
+  return chains.map((chain, index) => ({
+    chain,
+    index,
+    waitingForViewer: personId !== null && chain.root.queue.items.some((wait) =>
+      wait.waitingOn.some((person) => person.id === personId)),
+  })).sort((left, right) => Number(right.waitingForViewer) - Number(left.waitingForViewer)
+    || compareChainFact(left.chain.impact.count, right.chain.impact.count)
+    || compareChainFact(left.chain.root.oldestDays, right.chain.root.oldestDays)
+    || left.index - right.index)
+    .map(({ chain }) => chain);
+}
+
 export function buildMyWorkModel(
   derived: OverviewDerivation,
   language: string,
@@ -390,10 +488,11 @@ export function buildMyWorkModel(
   const metrics = derived.views.me.metrics.map((item, index) => metric(
     (['verified', 'agents', 'waiting', 'pending'] as const)[index], item, language, currentPerson, options.readAtUnixMs,
   )) as MyWorkModel['metrics'];
-  const chains = options.personId === null ? [] : derived.chains.filter((chain) => (
+  const relevantChains = options.personId === null ? [] : derived.chains.filter((chain) => (
     chain.impact.items.some((task) => task.owner?.id === options.personId)
     || chain.root.queue.items.some((wait) => wait.waitingOn.some((person) => person.id === options.personId))
   ));
+  const chains = orderWorkbenchChains(relevantChains, options.personId, 'me');
   const vocabulary = workbenchVocabulary(language);
   const chainTabs = chains.map((chain) => {
     let label = vocabulary.chains.review;

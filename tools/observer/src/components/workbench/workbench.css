@@ -188,13 +188,6 @@
   font-weight: var(--ant-font-weight-strong);
 }
 
-/* Prototype dark: the selected segment's box-shadow lists var(--shadow-s), which is "none"
-   there, so the whole declaration is invalid at computed-value time and computes to none.
-   The selection ring only exists in light mode. */
-:root[data-theme="dark"] .obs-workbench-chain-switch button[aria-pressed="true"] {
-  box-shadow: none;
-}
-
 /* Prototype .cn { min-width: 0 } only survives on four-node demo rows; a real row with more
    nodes scrolls horizontally at this floor instead of squeezing nodes to a character. */
 .obs-workbench-body .obs-chain-node {

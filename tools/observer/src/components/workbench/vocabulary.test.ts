@@ -30,7 +30,7 @@ describe('workbench vocabulary and verdict rule table', () => {
     const modelCount = Object.keys(flatten(workbenchVocabulary('zh-CN'))).length;
     const count = homeCount + modelCount;
     console.log(`Reviewed workbench sentence pairs: ${count} (home ${homeCount}, model ${modelCount})`);
-    expect(count).toBe(151);
+    expect(count).toBe(161);
     expect(count).toBeGreaterThan(0);
   });
 
@@ -83,6 +83,8 @@ describe('workbench vocabulary and verdict rule table', () => {
   it('proves the table test notices a missing row and a changed sentence key', () => {
     const documentText = readFileSync('../../docs/dev/reference/workbench-verdict.md', 'utf8');
     expect(documentText).toContain('`no-update-health`');
+    expect(documentText).toContain('`generated-waiting-health`');
+    expect(documentText).toContain('`orderWorkbenchChains`');
     expect(documentText).toContain('`generated-pending-and-waiting`');
     expect(VERDICT_RULES.map((rule) => rule.id)).not.toContain('invented-health-rule');
   });

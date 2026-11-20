@@ -5,6 +5,7 @@ import { MemoryRouter, useLocation } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { deriveOverview } from '../../core/overview';
 import type { OverviewTask } from '../../core/overview';
+import { approval, complete, reviewRound } from '../../core/overview/__tests__/factories';
 import i18n from '../../i18n';
 import { PerspectiveProvider } from '../../lib/perspective/PerspectiveProvider';
 import { unknownPerspectiveFacts } from '../../lib/perspective/types';
@@ -65,8 +66,9 @@ describe('shared workbench frame and My Work', () => {
     const blocks = [...page.children].map((child) => child.getAttribute('data-block'));
     expect(blocks).toEqual(['heading', 'freshness', 'instrument', 'detail']);
     expect(screen.getByRole('heading', { level: 1, name: '我的工作' })).toBeTruthy();
-    expect(screen.getByText('没有更新')).toBeTruthy();
-    expect(screen.getByText(/程序按事实生成/)).toBeTruthy();
+    expect(screen.getByText('等你')).toBeTruthy();
+    expect(container.querySelector('.obs-workbench-verdict-top')?.getAttribute('data-health')).toBe('risk');
+    expect(screen.getByText('按你名下的任务和 Agent 的报告算出 · 刚刚')).toBeTruthy();
     expect(screen.getByRole('button', { name: /这句话的依据/ })).toBeTruthy();
     expect(container.querySelectorAll('.obs-kpi')).toHaveLength(4);
     expect(screen.getByRole('heading', { name: '卡在哪' })).toBeTruthy();
@@ -79,6 +81,84 @@ describe('shared workbench frame and My Work', () => {
     expect(container.querySelector('.obs-todo-card:not(.obs-todo-min) .obs-todo-detail')).not.toBeNull();
     expect(container.querySelectorAll('.obs-todo-min')).toHaveLength(2);
     expect(screen.getByRole('button', { name: /还有 1 件/ })).toBeTruthy();
+  });
+
+  it('selects the first viewer-waiting chain by default after applying My Work order', () => {
+    const input = myWorkInput({
+      reviewRounds: complete([reviewRound('other-review', 'open', { reviewerPersonId: 'person-b' })]),
+    });
+    const { container } = renderFrame(input);
+    const buttons = within(screen.getByRole('group', { name: '链路' })).getAllByRole('button');
+    expect(buttons[0].textContent).toBe('等你回答');
+    expect(buttons[0].getAttribute('aria-pressed')).toBe('true');
+    expect(container.querySelector('.obs-chain-node-root .obs-chain-title')?.textContent).toBe('等你回答一个问题');
+  });
+
+  it('uses the question and prototype wording for answer, assignment and lesson cards', () => {
+    const input = myWorkInput({
+      reviewRounds: complete([reviewRound('mine-verified', 'approved')]),
+      approvals: complete([approval('lesson-confirmation', 'person-a', {
+        title: 'Synthetic lesson title', sinceUnixMs: WORKBENCH_NOW - 6 * 86_400_000,
+      })]),
+    });
+    const { container } = renderFrame(input);
+    expect(container.querySelector('.obs-page-subtitle')?.textContent).toBe('Owner One · 今天，11 月 19 日');
+    const cards = Array.from(container.querySelectorAll('.obs-todo-card'));
+    expect(cards).toHaveLength(3);
+    expect(cards.map((card) => card.querySelector('.obs-tag')?.textContent)).toEqual(['回答', '接任务', '确认经验']);
+    expect(cards[0].querySelector('.obs-todo-title')?.textContent).toBe('Which synthetic option should be used?');
+    expect(cards[0].querySelector('.obs-todo-first-meta')?.textContent).toContain('你的 Agent「Agent Two」在问');
+    expect(cards[0].querySelector('.obs-todo-age')?.textContent).toBe('等了 2 天');
+    expect(cards[1].querySelector('.obs-todo-age')?.textContent).toBe('1 天前');
+    expect(cards[2].querySelector('.obs-todo-age')?.textContent).toBe('6 天前');
+  });
+
+  it('uses decision and breakdown wording without replacing the recorded title', () => {
+    const base = myWorkInput({
+      decisions: complete([]), handoffs: complete([]), reviewRounds: complete([]),
+      approvals: complete([approval('plan-approval', 'person-a', { title: 'Synthetic breakdown title' })]),
+    });
+    const plan = renderFrame(base);
+    expect(plan.container.querySelector('.obs-todo-card .obs-tag')?.textContent).toBe('批准拆解');
+    expect(plan.container.querySelector('.obs-todo-title')?.textContent).toBe('Synthetic breakdown title');
+    plan.unmount();
+
+    const withDecision = myWorkInput({ handoffs: complete([]), reviewRounds: complete([]), approvals: complete([]) });
+    const input = {
+      ...withDecision,
+      tasks: complete((withDecision.tasks.items ?? []).map((task) => task.id === 'mine-decision'
+        ? { ...task, ownerPersonId: 'person-c' }
+        : task)),
+    };
+    const decision = renderFrame(input);
+    expect(decision.container.querySelector('.obs-todo-card .obs-tag')?.textContent).toBe('决定');
+    expect(decision.container.querySelector('.obs-todo-title')?.textContent).toBe('Which synthetic option should be used?');
+  });
+
+  it('uses the prototype footer sentence for each My Work chain kind', async () => {
+    const user = userEvent.setup();
+    const { container } = renderFrame();
+    const cases = [
+      ['等你回答', '你回答之后，后面 1 件事可以接着走。'],
+      ['等复核', '这一环不在你手里，小组负责人已经看到了。'],
+      ['等Example Client', '这一环在项目外。谁去催，可以请小组负责人定。'],
+    ];
+    for (const [label, sentence] of cases) {
+      await user.click(screen.getByRole('button', { name: label }));
+      const footer = container.querySelector('.obs-chain-footer')!;
+      expect(footer.textContent).toBe(sentence);
+      expect(footer.children).toHaveLength(1);
+    }
+  });
+
+  it('keeps the no-update verdict when no fact waits for the viewer', () => {
+    const input = myWorkInput({
+      decisions: complete([]), handoffs: complete([]), approvals: complete([]),
+      reviewRounds: complete([reviewRound('other-review', 'open', { reviewerPersonId: 'person-b' })]),
+    });
+    const { container } = renderFrame(input);
+    expect(screen.getByText('没有更新', { selector: '.obs-workbench-health-word' })).toBeTruthy();
+    expect(container.querySelector('.obs-workbench-verdict-top')?.getAttribute('data-health')).toBe('none');
   });
 
   it('marks an empty chain with the flat plain-state attribute', () => {
@@ -190,7 +270,7 @@ describe('shared workbench frame and My Work', () => {
     expect(screen.getByTestId('location').getAttribute('data-path')).toBe('/tasks/row%20%2F%3F');
 
     const decisionCard = Array.from(container.querySelectorAll('.obs-todo-card'))
-      .find((element) => element.textContent?.includes('Synthetic mine-decision'));
+      .find((element) => element.textContent?.includes('Which synthetic option should be used?'));
     expect(decisionCard).toBeTruthy();
     await user.click(decisionCard!);
     expect(screen.getByTestId('location').getAttribute('data-path')).toBe('/inbox');
@@ -484,8 +564,8 @@ describe('English rendering', () => {
     await i18n.changeLanguage('en-US');
     const { container } = renderFrame();
     expect(screen.getByRole('heading', { level: 1, name: 'My work' })).toBeTruthy();
-    expect(screen.getByText('No update')).toBeTruthy();
-    expect(screen.getByText(/Generated from recorded facts/)).toBeTruthy();
+    expect(screen.getByText('Waiting for you', { selector: '.obs-workbench-health-word' })).toBeTruthy();
+    expect(screen.getByText('Calculated from your tasks and Agent reports · just now')).toBeTruthy();
     expect(container.querySelectorAll('.obs-kpi')).toHaveLength(4);
     expect(screen.getByRole('heading', { name: 'Where work is stuck' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Waiting for you' })).toBeTruthy();
