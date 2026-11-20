@@ -101,6 +101,27 @@ const sharedCraftTokens = {
     overlayMs: 200,
     enterMs: 400,
   },
+  // Workbench measurements transcribed from .inst, .word, .say, .inst-body and .btn.
+  workbench: {
+    railWidth: 348,
+    healthHeight: 24,
+    healthLamp: 10,
+    healthPaddingInline: 10,
+    captionText: 12,
+    controlHeight: 32,
+    verdictText: 24,
+    verdictTextCompact: 20,
+    verdictLeading: 32,
+    verdictLeadingCompact: 28,
+    agentLine: 160,
+    agentColumn: 168,
+    statusColumn: 108,
+    ageColumn: 96,
+    waitKindColumn: 136,
+    waitDurationColumn: 150,
+    waitBarMinWidth: 48,
+    behindColumn: 104,
+  },
 } as const;
 
 /** Every visual role has a complete light and dark value; shared geometry uses the same scale. */
@@ -313,9 +334,27 @@ export function craftCssVariables(mode: CraftThemeMode): Record<string, string> 
   const tokens = craftThemes[mode];
   const {
     color, chart, shadow, radius, motion, font, text, leading, measure,
-    height, gap, width, canvas, perspective, brand, activity,
+    height, gap, width, canvas, perspective, workbench, activity, brand,
   } = tokens;
   return {
+    '--craft-workbench-rail-width': `${workbench.railWidth}px`,
+    '--craft-workbench-health-height': `${workbench.healthHeight}px`,
+    '--craft-workbench-health-lamp': `${workbench.healthLamp}px`,
+    '--craft-workbench-health-padding-inline': `${workbench.healthPaddingInline}px`,
+    '--craft-workbench-caption-text': `${workbench.captionText}px`,
+    '--craft-workbench-control-height': `${workbench.controlHeight}px`,
+    '--craft-workbench-verdict-text': `${workbench.verdictText}px`,
+    '--craft-workbench-verdict-text-compact': `${workbench.verdictTextCompact}px`,
+    '--craft-workbench-verdict-leading': `${workbench.verdictLeading}px`,
+    '--craft-workbench-verdict-leading-compact': `${workbench.verdictLeadingCompact}px`,
+    '--craft-measure-agent-line': `${workbench.agentLine}px`,
+    '--craft-workbench-column-agent': `${workbench.agentColumn}px`,
+    '--craft-workbench-column-status': `${workbench.statusColumn}px`,
+    '--craft-workbench-column-age': `${workbench.ageColumn}px`,
+    '--craft-workbench-column-wait-kind': `${workbench.waitKindColumn}px`,
+    '--craft-workbench-column-wait-duration': `${workbench.waitDurationColumn}px`,
+    '--craft-workbench-wait-bar-min': `${workbench.waitBarMinWidth}px`,
+    '--craft-workbench-column-behind': `${workbench.behindColumn}px`,
     '--craft-perspective-option-padding-inline': `${perspective.optionPaddingInline}px`,
     '--craft-activity-column-time': `${activity.columnTime}px`,
     '--craft-activity-column-actor': `${activity.columnActor}px`,
