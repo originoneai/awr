@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from './i18n';
 import { humanText } from './i18n/human-language';
 import { findHumanLanguageViolations } from './lib/human-language-guard';
-import { revokeObservationReads } from './lib/queries';
+import { queryKeys, revokeObservationReads } from './lib/queries';
 import type { TeamOverviewModelResponse } from './lib/types';
 import type { ReadSlice } from './core/overview';
 import { DEMO_PROJECTS, mockViewport, renderApp } from './test-utils';
@@ -377,6 +377,72 @@ describe('members and Agents panorama', () => {
     expect(doing.tagName).not.toBe('A');
     // A developer reads their own running task, and Taylor's own task loses to her review queue.
     expect(screen.getByTestId('member-doing-person-riley')).toHaveTextContent('接口第 3 版：提交与错误反馈');
+  });
+
+  it('keeps the ordinary doing cell for a recorded reviewer who has no review queue', async () => {
+    const { setDirectoryResponse } = setup();
+    setDirectoryResponse({ ok: true, data: { ...DIRECTORY, members: DIRECTORY.members.map((member, index) => ({
+      ...member, ...(index === 0 ? { duty: '复核' } : {}),
+    })) } });
+    renderApp('/members?scope=demo');
+    await loaded();
+    // The task link proves the composed read has arrived; a reviewer with no reviews reads it like anyone else.
+    await waitFor(() => expect(screen.getByTestId('member-doing-person-taylor'))
+      .toHaveAttribute('title', expect.stringContaining('A very long task title')));
+    expect(screen.getByTestId('member-doing-person-taylor').textContent).not.toContain('复核“');
+  });
+
+  it('reads the owned task an Agent is running before an earlier task that is only waiting', async () => {
+    const { setOverviewResponse } = setup();
+    const model = overviewModel();
+    model.input.tasks = { coverage: 'complete', items: [...model.input.tasks.items!,
+      {
+        id: 'waiting-first', title: 'Waiting on an outside party', ownerPersonId: 'person-riley', agentName: null,
+        projectId: 'demo', groupId: 'research', started: true, agentActive: false, acceptance: [],
+        externalWait: { party: 'Outside Example', sinceUnixMs: NOW - 86400000 },
+      },
+      {
+        id: 'agent-second', title: 'Running with an Agent', ownerPersonId: 'person-riley', agentName: 'Codex',
+        projectId: 'demo', groupId: 'research', started: true, agentActive: true, externalWait: null, acceptance: [],
+        report: { completed: false, reportedAtUnixMs: NOW - 1000 },
+      },
+    ] };
+    setOverviewResponse(model);
+    renderApp('/members?scope=demo');
+    await loaded();
+    await waitFor(() => expect(screen.getByTestId('member-doing-person-riley')).toHaveTextContent('Running with an Agent'));
+  });
+
+  it('does not open the pending detail while the wait count is unknown', async () => {
+    const { setOverviewResponse } = setup();
+    const unreadWaits = withTaylorDecisionWaits(overviewModel());
+    unreadWaits.input.decisions = { coverage: 'unread', items: [], reason: 'not-read' };
+    unreadWaits.coverage.decisions = { status: 'unread', missing: [] };
+    setOverviewResponse(unreadWaits);
+    const { queryClient } = renderApp('/members?scope=demo&detail=pending&member=person-taylor');
+    await loaded();
+    // The composed read has finished (answered), so the absence below is meaningful.
+    await waitFor(() => {
+      const state = queryClient.getQueryState(queryKeys.overviewModel('demo'));
+      expect(state?.status).toBe('success');
+      expect(state?.fetchStatus).toBe('idle');
+    });
+    expect(screen.queryByTestId('members-detail')).toBeNull();
+  });
+
+  it('lists an organization member\'s projects with their names as the cell title', async () => {
+    const { setDirectoryResponse, setOverviewResponse } = setup();
+    setDirectoryResponse({ ok: true, data: { ...DIRECTORY, members: DIRECTORY.members.map((member, index) => ({
+      ...member,
+      projects: index === 0 ? [{ key: 'demo', name: 'Team mainline' }, { key: 'docs', name: 'Docs stream' }]
+        : [{ key: 'demo', name: 'Team mainline' }],
+    })) } });
+    const model = overviewModel();
+    model.project = '';
+    setOverviewResponse(model);
+    renderApp('/members');
+    await loaded();
+    expect(screen.getByTestId('member-projects-person-taylor')).toHaveAttribute('title', 'Team mainline、Docs stream');
   });
 
   it('clamps unknown detail parameters and opens person pages by click and keyboard', async () => {

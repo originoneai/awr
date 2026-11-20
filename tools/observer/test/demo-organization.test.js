@@ -488,6 +488,20 @@ test('only the canonical demo serves an organization directory with recorded dut
     'the full variant keeps its directory projection without the canonical-only duty field');
 });
 
+test('the organization connections read is canonical-only and the organization model carries every project\'s approvals', async () => {
+  const full = bridgeForTest({ demoTimestampShiftMs: 0, now: () => fixture.now_unix_ms });
+  assert.equal((await full.call('POST /api/team/connections/list', '/api/team/connections/list', { limit: 50 })).error.code,
+    'Unsupported');
+  const canonical = bridgeForTest({ demoVariant: 'canonical', demoTimestampShiftMs: 0, now: () => fixture.now_unix_ms });
+  const model = await canonical.call('GET /api/team/overview-model', '/api/team/overview-model?project=');
+  assert.equal(model.ok, true, JSON.stringify(model));
+  const whole = canonicalOverviewInput(fixture);
+  assert.ok(whole.approvals.items.length > 0, 'the canonical fixture records approvals');
+  assert.equal(model.input.approvals.items.length, whole.approvals.items.length);
+  assert.deepEqual([...new Set(model.input.approvals.items.map((item) => item.projectId))].sort(),
+    [...new Set(whole.approvals.items.map((item) => item.projectId))].sort());
+});
+
 test('update facts and lesson usage are computed from their detail arrays', async () => {
   const { read } = bridgeForTest();
   const expectedFactCounts = {
