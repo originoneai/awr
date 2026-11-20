@@ -1,5 +1,5 @@
 import { FileText } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { lazy, Suspense, useState, type ReactNode } from 'react';
 import {
   HealthTag,
   TaskStatusTag,
@@ -26,8 +26,12 @@ import { TASK_STATUSES } from '../../../core/overview/types';
 import { PerspectiveProvider } from '../../../lib/perspective/PerspectiveProvider';
 import { PerspectiveSwitcher } from '../../../lib/perspective/PerspectiveSwitcher';
 import type { PerspectiveFacts } from '../../../lib/perspective/types';
-import { useCatalogTranslation } from './catalog-i18n';
+import type { SearchSource } from '../../../lib/search-index';
+import { catalogI18n, useCatalogTranslation } from './catalog-i18n';
 import type { CatalogExampleTextKey } from './catalog-messages';
+
+// Keep Modal and its styles out of every other isolated component example.
+const SearchDialog = lazy(() => import('../../SearchDialog').then((module) => ({ default: module.SearchDialog })));
 
 export const CATALOG_COMPONENTS = [
   'section',
@@ -47,6 +51,7 @@ export const CATALOG_COMPONENTS = [
   'todoRail',
   'acceptanceList',
   'perspective',
+  'search',
 ] as const;
 
 export type CatalogComponent = (typeof CATALOG_COMPONENTS)[number];
@@ -415,6 +420,52 @@ function AcceptanceListExample() {
   );
 }
 
+function SearchExample() {
+  const { t } = useCatalogTranslation();
+  const [open, setOpen] = useState(true);
+  const text = (key: CatalogExampleTextKey) => t(`display.catalog.examples.${key}`);
+  const sourceList: SearchSource[] = [
+    {
+      kind: 'project',
+      coverage: 'complete',
+      items: [{ key: 'catalog-project', kind: 'project', title: text('project'), meta: text('valueOwner'), path: '/projects/catalog' }],
+    },
+    {
+      kind: 'task',
+      coverage: 'complete',
+      items: [
+        { key: 'catalog-task-one', kind: 'task', title: text('tableFirst'), meta: `${text('project')} · ${text('tableOwnerOne')}`, path: '/projects/catalog?tab=plan' },
+        { key: 'catalog-task-two', kind: 'task', title: text('tableSecond'), meta: `${text('project')} · ${text('tableOwnerTwo')}`, path: '/projects/catalog?tab=plan' },
+        { key: 'catalog-task-three', kind: 'task', title: text('tableThird'), meta: `${text('project')} · ${text('tableOwnerThree')}`, path: '/projects/catalog?tab=plan' },
+      ],
+    },
+    {
+      kind: 'person',
+      coverage: 'complete',
+      items: [
+        { key: 'catalog-person-one', kind: 'person', title: text('tableOwnerOne'), meta: `${text('project')} · ${t('shell.searchProjectMember')}`, path: '/members?scope=catalog' },
+        { key: 'catalog-person-two', kind: 'person', title: text('tableOwnerTwo'), meta: `${text('project')} · ${t('shell.searchProjectMember')}`, path: '/members?scope=catalog' },
+      ],
+    },
+    { kind: 'goal', coverage: 'unread', items: [] },
+    { kind: 'document', coverage: 'unread', items: [] },
+    { kind: 'lesson', coverage: 'unread', items: [] },
+  ];
+  return (
+    <>
+      <button type="button" className="obs-catalog-link" onClick={() => setOpen(true)}>{t('shell.search')}</button>
+      <Suspense fallback={null}>
+        <SearchDialog
+          open={open}
+          sources={sourceList}
+          initialQuery={catalogI18n.language === 'en-US' ? 'Starbridge' : '交'}
+          onClose={() => setOpen(false)}
+        />
+      </Suspense>
+    </>
+  );
+}
+
 export function useCatalogExamples(): CatalogExample[] {
   const { t } = useCatalogTranslation();
   const text = (key: CatalogExampleTextKey) => t(`display.catalog.examples.${key}`);
@@ -570,5 +621,6 @@ export function useCatalogExamples(): CatalogExample[] {
         </PerspectiveProvider>
       ),
     },
+    { id: 'search', render: () => <SearchExample /> },
   ];
 }

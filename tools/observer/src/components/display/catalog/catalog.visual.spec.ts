@@ -123,3 +123,18 @@ test('perspective arrow navigation, Enter or Space selection, and visible focus'
   await page.keyboard.press('Space');
   await expect(department).toHaveAttribute('aria-pressed', 'true');
 });
+
+test('search panel open state', async ({ page }) => {
+  await page.goto('/src/components/display/catalog/index.html?component=search');
+  const panel = page.locator('.search-dialog .sr');
+  await panel.waitFor();
+  await page.getByRole('option').first().waitFor();
+  const backgroundBlocked = await page.locator('.obs-catalog-link').click({ trial: true, timeout: 600 })
+    .then(() => false, () => true);
+  expect(backgroundBlocked, 'the modal must make the background inoperable').toBe(true);
+  expect(await page.evaluate(() => document.querySelector('.search-dialog')?.contains(document.activeElement))).toBe(true);
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+  });
+  await expect(panel).toHaveScreenshot('search.png');
+});
