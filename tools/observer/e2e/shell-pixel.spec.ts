@@ -257,3 +257,187 @@ test('the shell matches the prototype numbers at 1440x900', async ({ page }, tes
   // --- Weak ink token restored to the prototype --ink-3 ---
   expect(metrics.mutedVar).toBe(mode === 'light' ? '#6B7487' : '#7A8296');
 });
+
+test('the shell matches the prototype numbers at 390x844', async ({ page }, testInfo) => {
+  const mode = testInfo.project.name === 'desktop-dark' ? 'dark' : 'light';
+  const palette = THEME[mode];
+  const ink = mode === 'light' ? 'rgb(17, 24, 39)' : 'rgb(238, 240, 245)';
+  const side = mode === 'light' ? 'rgb(255, 255, 255)' : 'rgb(7, 8, 13)';
+  const surface = mode === 'light' ? 'rgb(255, 255, 255)' : 'rgb(17, 20, 28)';
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${baseUrl}/activity?project=P-001&kind=development`);
+  await page.locator('[data-testid="page-activity"]').waitFor();
+  await page.evaluate(() => document.fonts.ready);
+  await page.waitForTimeout(300);
+
+  const metrics = await page.evaluate(() => {
+    const q = (selector: string) => document.querySelector(selector);
+    const box = (el: Element | null) => {
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: Math.round(r.left * 100) / 100, y: Math.round(r.top * 100) / 100, w: Math.round(r.width * 100) / 100, h: Math.round(r.height * 100) / 100 };
+    };
+    const style = (el: Element | null) => (el ? getComputedStyle(el) : null);
+    const navigation = q('[data-testid="mobile-navigation"]');
+    const brand = q('.shell-brand-mobile');
+    const mark = [...document.querySelectorAll('.shell-brand-mobile .shell-brand-mark')].find((el) => el.getBoundingClientRect().width > 0) ?? null;
+    const wordmark = q('.shell-brand-wordmark');
+    const selector = q('[data-testid="page-selector"]');
+    const theme = q('[data-testid="mobile-theme-toggle"]');
+    const header = q('.shell-header');
+    const content = q('.shell-content');
+    const pageHeader = q('.obs-page-header');
+    const title = q('.obs-page-title');
+    return {
+      navigation: box(navigation),
+      navigationStyle: (() => { const s = style(navigation); return s && { padding: s.padding, lineHeight: s.lineHeight, background: s.backgroundColor, border: s.borderBottomColor, position: s.position }; })(),
+      brand: box(brand),
+      brandStyle: (() => { const s = style(brand); return s && { padding: s.padding, margin: s.margin, gap: s.columnGap, lineHeight: s.lineHeight }; })(),
+      mark: box(mark),
+      wordmark: box(wordmark),
+      wordmarkStyle: (() => { const s = style(wordmark); return s && { size: s.fontSize, lineHeight: s.lineHeight, weight: s.fontWeight, color: s.color }; })(),
+      selector: box(selector),
+      selectorStyle: (() => { const s = style(selector); return s && { padding: s.padding, size: s.fontSize, lineHeight: s.lineHeight, color: s.color, background: s.backgroundColor, border: s.borderTopColor, radius: s.borderTopLeftRadius }; })(),
+      theme: box(theme),
+      themeStyle: (() => { const s = style(theme); return s && { padding: s.padding, gap: s.columnGap, borderWidth: s.borderTopWidth, lineHeight: s.lineHeight, whiteSpace: s.whiteSpace, textAlign: s.textAlign, color: s.color, background: s.backgroundColor }; })(),
+      themeIcon: box(theme?.querySelector('svg')),
+      themeIconColor: style(theme?.querySelector('svg'))?.color,
+      header: box(header),
+      headerStyle: (() => { const s = style(header); return s && { padding: s.padding, gap: s.columnGap, size: s.fontSize, lineHeight: s.lineHeight, color: s.color, textAlign: s.textAlign, position: s.position, border: s.borderBottomColor, background: s.backgroundColor, backdrop: s.backdropFilter }; })(),
+      scopeStyle: (() => { const s = style(q('.shell-header .shell-scope')); return s && { size: s.fontSize, lineHeight: s.lineHeight, color: s.color, textAlign: s.textAlign }; })(),
+      buildingIcon: box(q('.shell-header nav.ant-breadcrumb svg:first-of-type')),
+      currentCrumb: box(q('.shell-header nav.ant-breadcrumb li:last-child .ant-breadcrumb-link span')),
+      currentCrumbStyle: (() => { const s = style(q('.shell-header nav.ant-breadcrumb li:last-child .ant-breadcrumb-link span')); return s && { size: s.fontSize, lineHeight: s.lineHeight, weight: s.fontWeight, color: s.color }; })(),
+      separator: box(q('.shell-header nav.ant-breadcrumb li.ant-breadcrumb-separator svg')),
+      avatarDisplay: style(q('[data-testid="avatar-menu-trigger"]'))?.display,
+      content: box(content),
+      contentStyle: (() => { const s = style(content); return s && { padding: s.padding, maxWidth: s.maxWidth }; })(),
+      pageHeader: box(pageHeader),
+      pageHeaderPadding: style(pageHeader)?.padding,
+      title: box(title),
+    };
+  });
+
+  // Prototype @media(max-width:860px) .side: static, 12px 16px, 8px gap, 61px resulting height.
+  expect(metrics.navigation).toEqual({ x: 0, y: 0, w: 390, h: 61 });
+  expect(metrics.navigationStyle).toEqual({ padding: '12px 16px', lineHeight: '20px', background: side, border: palette.hairline, position: 'static' });
+
+  // Prototype .brand: 32px row, no mobile inset/margin, 10px gap; mark() is 22x22.
+  expect(metrics.brand).toEqual({ x: 16, y: 14, w: 70.36, h: 32 });
+  expect(metrics.brandStyle).toEqual({ padding: '0px', margin: '0px', gap: '10px', lineHeight: '20px' });
+  expect(metrics.mark).toEqual({ x: 16, y: 19, w: 22, h: 22 });
+
+  // Prototype .brand b: 17px/20px weight 600, beginning at x48 after the 22px mark and 10px gap.
+  expect(metrics.wordmark).toEqual({ x: 48, y: 20, w: 38.36, h: 20 });
+  expect(metrics.wordmarkStyle).toEqual({ size: '17px', lineHeight: '20px', weight: '600', color: ink });
+
+  // Prototype .mobile-pick and select.pick: fluid 32px field, 0 28px 0 12px, 13px with the native normal line height.
+  expect(metrics.selector).toEqual({ x: 94.36, y: 14, w: 235.64, h: 32 });
+  expect(metrics.selectorStyle).toEqual({ padding: '0px 28px 0px 12px', size: '13px', lineHeight: 'normal', color: ink, background: surface, border: palette.hairlineStrong, radius: '8px' });
+
+  // Prototype mobile .side-foot button: 36x36, no border, 20px line, ink-2; icon is 16x16.
+  expect(metrics.theme).toEqual({ x: 338, y: 12, w: 36, h: 36 });
+  expect(metrics.themeStyle).toEqual({ padding: '0px', gap: '10px', borderWidth: '0px', lineHeight: '20px', whiteSpace: 'normal', textAlign: 'left', color: palette.secondary, background: 'rgba(0, 0, 0, 0)' });
+  expect(metrics.themeIcon).toEqual({ x: 348, y: 22, w: 16, h: 16 });
+  expect(metrics.themeIconColor).toBe(palette.secondary);
+
+  // Prototype mobile .top: static, 8px 16px, 8px gap, page 88% + 8px blur, hairline.
+  // Its own color stays --ink for the zero-width border paint; .crumb owns the muted text color.
+  expect(metrics.header).toMatchObject({ x: 0, y: 61, w: 390 });
+  expect(metrics.headerStyle).toMatchObject({ padding: '8px 16px', gap: '8px', size: '13px', lineHeight: '20px', color: ink, textAlign: 'start', position: 'static', border: palette.hairline, backdrop: 'blur(8px)' });
+  const topMatch = /color\(srgb ([\d.]+) ([\d.]+) ([\d.]+) \/ ([\d.]+)\)/.exec(metrics.headerStyle?.background ?? '');
+  expect(topMatch, `mobile topbar background: ${metrics.headerStyle?.background}`).not.toBeNull();
+  expect(Number(topMatch![4])).toBeCloseTo(0.88, 2);
+  for (const [index, channel] of palette.page.entries()) expect(Number(topMatch![index + 1]) * 255).toBeCloseTo(channel, 0);
+
+  // Prototype .crumb: the first text owner is muted 13px/20px; building icon 16px,
+  // separator 14px, and the current page uses ink at weight 500.
+  expect(metrics.scopeStyle).toEqual({ size: '13px', lineHeight: '20px', color: palette.muted, textAlign: 'start' });
+  expect(metrics.buildingIcon).toMatchObject({ x: 16, y: 77, w: 16, h: 16 });
+  expect(metrics.currentCrumb).toMatchObject({ y: 75, h: 20 });
+  expect(metrics.currentCrumbStyle).toEqual({ size: '13px', lineHeight: '20px', weight: '500', color: ink });
+  expect(metrics.separator).toMatchObject({ y: 78, w: 14, h: 14 });
+  // Prototype mobile .top > .av: display none (account data stays in the DOM for existing tests).
+  expect(metrics.avatarDisplay).toBe('none');
+
+  // Prototype mobile .wrap: 0 16px 48px. The absolute y is not shared because the
+  // prototype-only four-identity .as row and its 8px gap add 40px to the second bar.
+  expect(metrics.content).toMatchObject({ x: 0, w: 390 });
+  expect(metrics.contentStyle).toEqual({ padding: '0px 16px 48px', maxWidth: '1480px' });
+  // Prototype mobile .head: 16px 0 12px; title remains 22px/28px.
+  expect(metrics.pageHeader).toMatchObject({ x: 16, w: 358, h: 56 });
+  expect(metrics.pageHeaderPadding).toBe('16px 0px 12px');
+  expect(metrics.title).toMatchObject({ x: 16, w: 110, h: 28 });
+});
+
+test('the shell changes at the same 860px breakpoint on both sides', async ({ page }) => {
+  await page.setViewportSize({ width: 859, height: 844 });
+  await page.goto(`${baseUrl}/activity?project=P-001&kind=development`);
+  await page.locator('[data-testid="page-activity"]').waitFor();
+  const read = () => page.evaluate(() => {
+    const q = (selector: string) => document.querySelector(selector);
+    const box = (el: Element | null) => {
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: r.left, y: r.top, w: r.width, h: r.height };
+    };
+    return {
+      mobileNavigation: box(q('[data-testid="mobile-navigation"]')),
+      selector: box(q('[data-testid="page-selector"]')),
+      mobileTheme: box(q('[data-testid="mobile-theme-toggle"]')),
+      sider: box(q('.shell-sider')),
+      header: box(q('.shell-header')),
+      contentPadding: q('.shell-content') ? getComputedStyle(q('.shell-content')!).padding : null,
+      avatarDisplay: q('[data-testid="avatar-menu-trigger"]') ? getComputedStyle(q('[data-testid="avatar-menu-trigger"]')!).display : null,
+    };
+  });
+
+  // Prototype @media(max-width:860px): at 859 the .side top bar and .mobile-pick replace the sider.
+  const narrow = await read();
+  expect(narrow.mobileNavigation).toEqual({ x: 0, y: 0, w: 859, h: 61 });
+  expect(narrow.selector).toMatchObject({ y: 14, h: 32 });
+  expect(narrow.mobileTheme).toMatchObject({ w: 36, h: 36 });
+  expect(narrow.sider).toBeNull();
+  expect(narrow.header).toMatchObject({ x: 0, y: 61, w: 859 });
+  expect(narrow.contentPadding).toBe('0px 16px 48px');
+  expect(narrow.avatarDisplay).toBe('none');
+
+  // The exact upper boundary remains compact too, pinning the CSS max-width rather than only the JS hook.
+  await page.setViewportSize({ width: 860, height: 844 });
+  const boundary = await read();
+  expect(boundary.mobileNavigation).toEqual({ x: 0, y: 0, w: 860, h: 61 });
+  expect(boundary.mobileTheme).toMatchObject({ w: 36, h: 36 });
+  expect(boundary.contentPadding).toBe('0px 16px 48px');
+  expect(boundary.sider).toBeNull();
+
+  // At 861 the prototype rule no longer applies: 232px sticky sider, 56px desktop top,
+  // no native page selector, visible avatar, and .wrap's 0 32px 64px content inset.
+  await page.setViewportSize({ width: 861, height: 844 });
+  await page.locator('.shell-sider').waitFor();
+  const wide = await read();
+  expect(wide.mobileNavigation).toBeNull();
+  expect(wide.selector).toBeNull();
+  expect(wide.mobileTheme).toBeNull();
+  expect(wide.sider).toEqual({ x: 0, y: 0, w: 232, h: 844 });
+  expect(wide.header).toEqual({ x: 232, y: 0, w: 629, h: 56 });
+  expect(wide.contentPadding).toBe('0px 32px 64px');
+  expect(wide.avatarDisplay).toBe('flex');
+});
+
+test('the native mobile selector and theme button keep keyboard focus order', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${baseUrl}/activity?project=P-001&kind=development`);
+  const selector = page.getByRole('combobox', { name: '页面' });
+  const theme = page.getByTestId('mobile-theme-toggle');
+  await selector.waitFor();
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press('Tab');
+  await expect(selector).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(theme).toBeFocused();
+  await page.keyboard.press('Space');
+  const expected = testInfo.project.name === 'desktop-dark' ? 'light' : 'dark';
+  await expect(page.locator('html')).toHaveAttribute('data-theme', expected);
+  await expect(theme).toBeFocused();
+  // Selection and direct navigation stay covered by shell-responsive.test.tsx's native-select cases.
+});
