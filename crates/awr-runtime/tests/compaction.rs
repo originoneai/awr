@@ -449,6 +449,8 @@ fn uncertain_execution_takes_precedence_over_switch_advice() {
                 command: vec!["fixture-only".into()],
                 cwd: f.root.to_string_lossy().into(),
                 external_reference: None,
+                inputs: Vec::new(),
+                input_binding: awr_core::InputBinding::None,
             },
         )
         .unwrap();
@@ -493,6 +495,8 @@ fn uncertain_execution_takes_precedence_over_switch_advice() {
                 command: vec![],
                 cwd: external.root.to_string_lossy().into(),
                 external_reference: Some("fixture://execution".into()),
+                inputs: Vec::new(),
+                input_binding: awr_core::InputBinding::None,
             },
         )
         .unwrap();
