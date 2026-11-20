@@ -11,7 +11,7 @@ const zhCN = {
     sectionTitle: '成员', name: '成员', groupRole: '小组 · 职责', projects: '在哪些项目',
     doing: '现在在做', agentsColumn: 'Agent 连接', pending: '等本人处理的',
     roleMissing: '职责尚未登记', noDoing: '没有在做的', doingUnknown: '在做情况未知',
-    noAgents: '没有', pendingCount: '{{count}} 件', pendingUnknown: '等本人处理的件数未知',
+    noAgents: '没有', noPending: '没有', pendingCount: '{{count}} 件', pendingUnknown: '等本人处理的件数未知',
     currentProject: '当前项目', unnamedTask: '任务名称尚未登记',
     collectionNote: '每位成员用自己的凭据把 Agent 连进来。人是负责的一方，Agent 是代办；派工、回答、复核都是本人通过自己的 Agent 做的。',
     flatHierarchy: '当前目录没有提供部门上下级记录，部门与小组按平铺显示',
