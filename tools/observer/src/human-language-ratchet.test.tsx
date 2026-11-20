@@ -42,6 +42,44 @@ function json(payload: unknown) {
   return new Response(JSON.stringify(payload), { status: 200, headers: { 'content-type': 'application/json' } });
 }
 
+function realShapedOverviewModel(state: State) {
+  const overview = realShapedOverview();
+  const complete = (items: Array<Record<string, unknown>>) => ({ coverage: 'complete', items });
+  const unread = { coverage: 'unread', items: [] };
+  const part = (status: string) => ({ status, missing: [] });
+  const tasks = state === 'empty' ? [] : overview.works.map((work) => ({ id: work.key, title: work.title }));
+  const directory = (overview.members ?? []) as Array<Record<string, unknown>>;
+  const members = state === 'empty' ? [] : directory.flatMap((member) => {
+    const personId = member.person_id;
+    const actorId = member.actor_id;
+    return typeof personId === 'string' ? [{
+      personId,
+      ...(typeof actorId === 'string' ? { actorIds: [actorId] } : {}),
+      displayName: member.display_name ?? member.name ?? null,
+    }] : [];
+  });
+  return {
+    ok: true,
+    project: 'demo',
+    read_at_unix_ms: 1790000000000,
+    input: {
+      tasks: complete(tasks), members: complete(members), dependencies: unread, decisions: unread,
+      reviewRounds: unread, handoffs: unread, approvals: unread, activity: unread,
+      options: {
+        nowUnixMs: 1790000000000,
+        stalledAfterDays: 7,
+        views: { me: { personId: 'synthetic-ratchet-viewer-person', projectId: 'demo' } },
+      },
+    },
+    coverage: {
+      tasks: part('complete'), members: part('complete'), dependencies: part('unread'),
+      decisions: part('unread'), reviewRounds: part('unread'), handoffs: part('unread'),
+      approvals: part('unread'), activity: part('unread'),
+    },
+    freshness: overview.freshness,
+  };
+}
+
 function installRealShapeMock(state: State, moment: RealMoment) {
   const failure = { ok: false, error: { code: 'ReadTimeout', message: 'synthetic read failure' } };
   const revoked = { ok: false, error: { code: 'Unauthenticated', message: 'revoked' } };
@@ -67,14 +105,30 @@ function installRealShapeMock(state: State, moment: RealMoment) {
       });
     }
     if (url.includes('/api/team/overview-model')) {
+      // The workbench states drive the response (empty input, partial dependencies, incomparable
+      // ordering). The real-shaped works and member directory from the activity page (#703) are laid
+      // over it so /activity keeps resolving real task titles and registered member names.
+      const layRealDirectoryOver = (response: ReturnType<typeof demoOverviewModelResponse>) => {
+        const real = realShapedOverviewModel(state);
+        const concat = <T,>(base: T[] | undefined, extra: readonly Record<string, unknown>[]) =>
+          [...(base ?? []), ...(extra as unknown as T[])];
+        return {
+          ...response,
+          input: {
+            ...response.input,
+            tasks: { ...response.input.tasks, items: concat(response.input.tasks.items, real.input.tasks.items) },
+            members: { ...response.input.members, items: concat(response.input.members.items, real.input.members.items) },
+          },
+        };
+      };
       if (state === 'empty') return json(emptyOverviewModelResponse());
       if (state === 'partial') {
-        return json(demoOverviewModelResponse(myWorkInput({
+        return json(layRealDirectoryOver(demoOverviewModelResponse(myWorkInput({
           dependencies: { coverage: 'partial', reason: 'read-failed', items: [] },
-        })));
+        }))));
       }
-      if (state === 'unknown') return json(demoOverviewModelResponse(myWorkInput(), { ordering: 'incomparable' }));
-      return json(demoOverviewModelResponse());
+      if (state === 'unknown') return json(layRealDirectoryOver(demoOverviewModelResponse(myWorkInput(), { ordering: 'incomparable' })));
+      return json(layRealDirectoryOver(demoOverviewModelResponse()));
     }
     if (url.includes('/api/team/overview')) {
       if (state === 'empty') return json({ ...DEMO_OVERVIEW, works: [], workstreams: [] });

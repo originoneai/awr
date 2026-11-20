@@ -31,6 +31,13 @@ const sharedCraftTokens = {
     fontWeight: 400,
     selectedFontWeight: 500,
   },
+  // Prototype activity(): .t column widths and .block-head h2 typography.
+  activity: {
+    columnTime: 168,
+    columnActor: 232,
+    columnTask: '24%',
+    sectionTitleText: 14,
+  },
   font: {
     interface: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif',
     meta: 'ui-monospace, "SFMono-Regular", "Cascadia Mono", "Roboto Mono", monospace',
@@ -315,7 +322,7 @@ export function craftCssVariables(mode: CraftThemeMode): Record<string, string> 
   const tokens = craftThemes[mode];
   const {
     color, chart, shadow, radius, motion, font, text, leading, measure,
-    height, gap, width, canvas, perspective, workbench,
+    height, gap, width, canvas, perspective, workbench, activity,
   } = tokens;
   return {
     '--craft-workbench-rail-width': `${workbench.railWidth}px`,
@@ -337,6 +344,10 @@ export function craftCssVariables(mode: CraftThemeMode): Record<string, string> 
     '--craft-workbench-wait-bar-min': `${workbench.waitBarMinWidth}px`,
     '--craft-workbench-column-behind': `${workbench.behindColumn}px`,
     '--craft-perspective-option-padding-inline': `${perspective.optionPaddingInline}px`,
+    '--craft-activity-column-time': `${activity.columnTime}px`,
+    '--craft-activity-column-actor': `${activity.columnActor}px`,
+    '--craft-activity-column-task': activity.columnTask,
+    '--craft-activity-section-title-text': `${activity.sectionTitleText}px`,
     '--craft-color-page': color.page,
     '--craft-color-side': color.side,
     '--craft-color-surface': color.surface,

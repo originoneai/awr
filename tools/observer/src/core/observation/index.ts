@@ -1,5 +1,5 @@
 export { rawObservationText, statusWord, describeUnknown, STATUS_FIELDS } from './values';
-export { absoluteTimeText, ageText } from './time';
+export { absoluteTimeText, ageText, compactTimeText } from './time';
 export { foldOperations, operationWord } from './operations';
 export { actionWords, actorAliases, artifactLabel, checkLabel, documentLabel, documentTitle, workLabel } from './labels';
 export { groupWorks } from './groups';
