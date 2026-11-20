@@ -1,0 +1,42 @@
+{
+  "page": "projects",
+  "proto": "#p=projects",
+  "app": "/projects",
+  "ready": "[data-testid=\"projects-table\"]",
+  "protoReady": ".block table.t",
+  "notes": {
+    "geometryExclusions": [
+      "The existing application sidebar is 240px while the prototype sidebar is 232px; content and column widths therefore differ by 8px and by the 22% column ratio.",
+      "The current demo read reports incomplete task facts, so its designed unknown-result notice moves later rows vertically; those y offsets are excluded.",
+      "Summary and row heights or widths that depend on different recorded text are excluded. Row count, text and freshness coverage are compared separately in the evidence.",
+      "At 390px the shared DataTable removes the update column while the prototype leaves a display:none column; update-column pairs are omitted and the demo geometry check asserts the visible headers.",
+      "Hidden legend coordinates and the data-dependent owner/group line count carry no visible geometry and are excluded."
+    ],
+    "completion": "The current demo read cannot derive the four completion counts. The page shows its designed unknown state instead of fabricating a bar. CompletionBar itself remains covered by the shared light/dark/mobile component baselines and by count/detail unit tests."
+  },
+  "pairs": [
+    ["page title", ".head h1", ".obs-page-title", ["TEXT", "margin-top", "margin-bottom"]],
+    ["page subtitle", ".head .sub", ".obs-page-subtitle", ["TEXT", "margin-left"]],
+    ["page header", ".head", ".obs-page-header", ["BOX"], {"skip": ["__w"]}],
+    ["lead", ".lead", ".projects-lead", ["BOX", "TEXT"], {"skip": ["__w"]}],
+    ["lead secondary", ".lead span", ".projects-lead-rest", ["TEXT"], {"skip": ["__w"]}],
+    ["project block", ".block", ".projects-section", ["BOX", "PAINT"], {"skip": ["__h", "__w"]}],
+    ["block head", ".block-head", ".projects-section .ant-card-head", ["BOX", "border-bottom-color"], {"skip": ["__w"]}],
+    ["block title", ".block-head h2", ".projects-section .obs-section-title", ["TEXT", "margin-top", "margin-bottom"]],
+    ["block count", ".block-head .n", ".projects-section .obs-section-count", ["BOX", "TEXT", "background-color"]],
+    ["legend", ".block-head .legend", ".projects-section .obs-legend", ["BOX", "TEXT"], {"skip": ["__x", "__y"]}],
+    ["legend item", ".block-head .legend span", ".projects-section .obs-legend > span", ["BOX", "TEXT"], {"skip": ["__x", "__y"]}],
+    ["legend swatch", ".block-head .legend i", ".projects-section .obs-legend-swatch", ["BOX", "background-color"], {"skip": ["__x", "__y"]}],
+    ["table", ".block table.t", ".projects-table .ant-table-content table", ["width", "table-layout", "border-collapse"], {"skip": ["__h", "__y", "__w"]}],
+    ["table head cell", ".block table.t th", ".projects-table thead th", ["TEXT", "padding-top", "padding-bottom", "padding-left", "border-bottom-color"], {"skip": ["__y", "__w"]}],
+    ["project cell", ".block table.t tbody tr:nth-child(3) td:nth-child(1)", ".projects-table tbody tr:nth-child(3) td:nth-child(1)", ["TEXT", "padding-top", "padding-bottom", "padding-left", "border-bottom-color", "vertical-align"], {"skip": ["__h", "__y", "__w"]}],
+    ["project name", ".block table.t tbody tr:nth-child(3) td:nth-child(1) > div:first-child", ".projects-table tbody tr:nth-child(3) .projects-project-name", ["TEXT"], {"skip": ["__h", "__y", "__w"]}],
+    ["project meta", ".block table.t tbody tr:nth-child(3) td:nth-child(1) .sm", ".projects-table tbody tr:nth-child(3) .projects-project-meta", ["TEXT"], {"skip": ["__h", "__y", "__w"]}],
+    ["status tag", ".block table.t tbody tr:nth-child(3) .tag", ".projects-table tbody tr:nth-child(3) .obs-tag", ["BOX", "TEXT", "background-color"], {"skip": ["__x", "__y"]}],
+    ["status lamp", ".block table.t tbody tr:nth-child(3) .tag .lamp", ".projects-table tbody tr:nth-child(3) .obs-tag .obs-lamp", ["BOX", "background-color", "box-shadow"], {"skip": ["__x", "__y"]}],
+    ["sentence cell", ".block table.t tbody tr:nth-child(3) td:nth-child(3)", ".projects-table tbody tr:nth-child(3) td:nth-child(3)", ["TEXT", "padding-top", "padding-bottom", "padding-left"], {"skip": ["__h", "__y", "__x", "__w"]}],
+    ["completion cell", ".block table.t tbody tr:nth-child(3) td:nth-child(4)", ".projects-table tbody tr:nth-child(3) td:nth-child(4)", ["TEXT", "padding-top", "padding-bottom", "padding-left"], {"skip": ["__h", "__y", "__x"]}],
+    ["arrow cell", ".block table.t tbody tr:nth-child(3) td.chevc", ".projects-table tbody tr:nth-child(3) .obs-table-arrow-column", ["BOX", "TEXT"], {"skip": ["__h", "__y", "__x"]}],
+    ["arrow icon", ".block table.t tbody tr:nth-child(3) td.chevc svg", ".projects-table tbody tr:nth-child(3) .obs-table-arrow-column svg", ["width", "height", "stroke-width", "color", "opacity"], {"skip": ["__x", "__y"]}]
+  ]
+}
