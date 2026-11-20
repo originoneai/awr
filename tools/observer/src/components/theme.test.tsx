@@ -84,7 +84,9 @@ afterEach(() => {
 describe('complete prototype theme tokens', () => {
   it.each(['light', 'dark'] as const)('keeps every text role readable on every %s surface', (mode) => {
     const colors = craftThemes[mode].color;
-    const roles = ['ink', 'secondary', 'muted', 'accent', 'positive', 'negative', 'warning'] as const;
+    // muted is pinned separately: the owner restored the prototype weak ink, which is
+    // deliberately below 4.5 on the page and raised surfaces (see the pin below).
+    const roles = ['ink', 'secondary', 'accent', 'positive', 'negative', 'warning'] as const;
     const surfaces = ['page', 'side', 'surface', 'raised'] as const;
     for (const role of roles) {
       for (const surface of surfaces) {
@@ -92,12 +94,28 @@ describe('complete prototype theme tokens', () => {
           .toBeGreaterThanOrEqual(4.5);
       }
     }
+    // The prototype weak ink stays readable on every side/surface tone in both themes.
+    for (const surface of ['side', 'surface'] as const) {
+      expect(contrast(colors.muted, colors[surface]), `${mode} muted on ${surface}`)
+        .toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it('restores the prototype weak ink exactly, including its below-4.5 pairs', () => {
+    // Prototype --ink-3. The owner voided the earlier higher-contrast substitutes
+    // (#626B7C / #7E869A) in favour of pixel parity with the prototype on 2026-11-19.
+    expect(craftThemes.light.color.muted).toBe('#6B7487');
+    expect(craftThemes.dark.color.muted).toBe('#7A8296');
+    // The prototype's own contrast numbers, asserted tightly so drift either way fails.
+    expect(contrast('#6B7487', craftThemes.light.color.page)).toBeCloseTo(4.30, 1);
+    expect(contrast('#6B7487', craftThemes.light.color.raised)).toBeCloseTo(4.07, 1);
+    expect(contrast('#7A8296', craftThemes.dark.color.raised)).toBeCloseTo(4.33, 1);
   });
 
   it('pins every neutral, accent, semantic, soft-base and line token in both themes', () => {
     expect(craftThemes.light.color).toEqual({
       page: '#F3F5F9', side: '#FFFFFF', surface: '#FFFFFF', raised: '#ECEFF4',
-      ink: '#111827', secondary: '#4B5565', muted: '#626B7C',
+      ink: '#111827', secondary: '#4B5565', muted: '#6B7487',
       hairline: 'rgba(17, 24, 39, 0.08)', hairlineStrong: 'rgba(17, 24, 39, 0.16)',
       accent: '#1D4ED8', onAccent: '#FFFFFF', accentSoft: 'rgba(29, 78, 216, 0.08)',
       canvas: '#EEF1F6',
@@ -107,7 +125,7 @@ describe('complete prototype theme tokens', () => {
     });
     expect(craftThemes.dark.color).toEqual({
       page: '#0B0D14', side: '#07080D', surface: '#11141C', raised: '#1A1E28',
-      ink: '#EEF0F5', secondary: '#A3A9B8', muted: '#7E869A',
+      ink: '#EEF0F5', secondary: '#A3A9B8', muted: '#7A8296',
       hairline: 'rgba(238, 240, 245, 0.08)', hairlineStrong: 'rgba(238, 240, 245, 0.16)',
       accent: '#8AB0FF', onAccent: '#07080D', accentSoft: 'rgba(138, 176, 255, 0.12)',
       canvas: '#07080D',
@@ -120,11 +138,13 @@ describe('complete prototype theme tokens', () => {
     });
   });
 
-  it('retains the approved higher-contrast light muted role and repairs dark muted on raised', () => {
-    expect(craftThemes.light.color.muted).toBe('#626B7C');
-    expect(craftThemes.dark.color.muted).toBe('#7E869A');
-    expect(contrast('#6B7487', craftThemes.light.color.raised)).toBeLessThan(4.5);
-    expect(contrast('#7A8296', craftThemes.dark.color.raised)).toBeLessThan(4.5);
+  it('pins the shell geometry the prototype fixes (side 232, top 56, wrap 1480, brand 20px line)', () => {
+    expect(craftThemes.light.siderWidth).toBe(232);
+    expect(craftThemes.dark.siderWidth).toBe(232);
+    expect(craftThemes.light.headerHeight).toBe(56);
+    expect(craftThemes.light.contentMaxWidth).toBe(1480);
+    expect(craftThemes.light.brand.wordmarkLineHeight).toBe(20);
+    expect(craftCssVariables('light')['--craft-brand-wordmark-line-height']).toBe('20px');
   });
 
   it('maps both themes to the exact supplied categorical series', () => {

@@ -10,8 +10,9 @@ const sharedCraftTokens = {
   },
   navigationRowHeight: 36,
   controlHeight: 36,
-  headerHeight: 64,
-  siderWidth: 240,
+  // Prototype .top height and .app grid column (232px) / .wrap max-width (1480px).
+  headerHeight: 56,
+  siderWidth: 232,
   // Prototype .brand and .brand b; the owner's supplied mark replaces the 22px prototype glyph.
   brand: {
     rowHeight: 32,
@@ -22,11 +23,12 @@ const sharedCraftTokens = {
     marginBottom: 20,
     wordmarkFontSize: 17,
     wordmarkFontWeight: 600,
-    wordmarkLineHeight: 22,
+    // Prototype .brand b inherits the body 20px line-height.
+    wordmarkLineHeight: 20,
   },
   // Smallest touch target the mobile acceptance allows (drawer rows, header entry).
   touchTarget: 40,
-  contentMaxWidth: 1600,
+  contentMaxWidth: 1480,
   // Prototype .as, .seg and .seg button; the caption has its own non-layout breakpoint.
   perspective: {
     captionMaxWidth: 1040,
@@ -114,7 +116,8 @@ export const craftThemes = {
       raised: '#ECEFF4',
       ink: '#111827',
       secondary: '#4B5565',
-      muted: '#626B7C',
+      // Prototype --ink-3 (light). The owner voided the earlier higher-contrast substitute.
+      muted: '#6B7487',
       hairline: 'rgba(17, 24, 39, 0.08)',
       hairlineStrong: 'rgba(17, 24, 39, 0.16)',
       accent: '#1D4ED8',
@@ -152,7 +155,8 @@ export const craftThemes = {
       raised: '#1A1E28',
       ink: '#EEF0F5',
       secondary: '#A3A9B8',
-      muted: '#7E869A',
+      // Prototype --ink-3 (dark).
+      muted: '#7A8296',
       hairline: 'rgba(238, 240, 245, 0.08)',
       hairlineStrong: 'rgba(238, 240, 245, 0.16)',
       accent: '#8AB0FF',

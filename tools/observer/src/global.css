@@ -16,16 +16,23 @@ body {
 
 .shell-theme {
   flex: 0 0 auto;
-  padding: 8px 12px 16px;
+  /* Prototype .side-foot: the row spans the sidebar padding box, no inset of its own. */
+  padding: 0;
 }
 
 .shell-theme-toggle.ant-btn {
   height: 36px;
   justify-content: flex-start;
-  gap: 8px;
+  gap: 10px;
   padding-inline: 12px;
   color: var(--ant-color-text-secondary);
   font-weight: 400;
+  /* Prototype .side-foot button: 20px line box, wrap allowed, flush left. */
+  line-height: 20px;
+  white-space: normal;
+  text-align: left;
+  /* antd's transparent 1px border shifts the icon one pixel in; the prototype row has none. */
+  border: 0;
 }
 
 .shell-theme-toggle.ant-btn:hover {
@@ -90,6 +97,25 @@ html[data-theme="dark"] .shell-brand-mark-white {
   font-weight: 400;
 }
 
+/* Prototype .nav: a plain grid. antd's ::before/::after clear-fix pseudos become zero-height
+   grid rows that shift every item 2px down and stretch the list 4px; drop them. */
+.shell-nav.ant-menu::before,
+.shell-nav.ant-menu::after {
+  display: none;
+}
+
+/* antd 6 renders the icon as a bare svg (no .ant-menu-item-icon wrapper), so the 10px
+   prototype gap comes from the item's own column gap. */
+.shell-nav .ant-menu-item {
+  column-gap: 10px;
+  text-align: left;
+}
+
+/* Prototype .nav button: the label sits on the body 20px line box, not the 36px row. */
+.shell-nav .ant-menu-title-content {
+  line-height: 20px;
+}
+
 .shell-nav .ant-menu-item,
 .shell-header .ant-btn,
 .shell-theme-toggle.ant-btn {
@@ -133,7 +159,7 @@ html[data-theme="dark"] .shell-brand-mark-white {
   align-items: center;
   gap: 12px;
   min-width: 0;
-  padding-inline: 24px;
+  padding-inline: 32px;
 }
 
 /* Prototype .crumb: every level and its chevron share the same vertical centre. */
@@ -149,6 +175,11 @@ html[data-theme="dark"] .shell-brand-mark-white {
 .shell-header .ant-breadcrumb .ant-breadcrumb-separator {
   display: inline-flex;
   align-items: center;
+}
+
+/* Prototype .crumb 13px text on the body 20px line box. */
+.shell-header .ant-breadcrumb {
+  line-height: 20px;
 }
 
 .shell-scope {
@@ -170,22 +201,58 @@ html[data-theme="dark"] .shell-brand-mark-white {
   min-width: 0;
 }
 
-.shell-search {
-  flex: 0 1 240px;
-  width: 240px;
+/* Prototype button.search (with the draft-3 override): 200px flat field, hairline border,
+   weak ink 13px, 8px gaps, no shadow; hover deepens border and ink. */
+.shell-search.ant-btn {
+  flex: none;
+  width: 200px;
   min-width: 0;
+  gap: 8px;
+  color: var(--craft-color-muted);
+  font-size: 13px;
+  line-height: 20px;
+  white-space: normal;
+  text-align: left;
+  border-color: var(--craft-color-hairline);
+  box-shadow: none;
 }
 
+.shell-search.ant-btn:not(:disabled):hover {
+  border-color: var(--craft-color-hairline-strong);
+  color: var(--craft-color-secondary);
+}
+
+/* Prototype .bell: quiet ink-2 glyph; hover raises the surface and the ink. */
+.shell-header .ant-badge button.ant-btn {
+  color: var(--craft-color-secondary);
+}
+
+.shell-header .ant-badge button.ant-btn:not(:disabled):hover {
+  background: var(--craft-color-raised);
+  color: var(--craft-color-ink);
+}
+
+/* Prototype .wrap: no top padding (the page header owns it), 32px sides, 64px bottom. */
 .shell-content {
   min-width: 0;
   width: 100%;
-  max-width: 1600px;
-  margin-inline: auto;
-  padding: 24px;
+  max-width: 1480px;
+  padding: 0 32px 64px;
 }
 
 .shell-avatar-button {
   flex: 0 0 auto;
+  /* antd's transparent button border would pinch the 28px avatar to 26px. */
+  border: 0;
+}
+
+/* Prototype .av prints the initial on the body 20px line box, wrap allowed, default align.
+   antd keeps the glyph centred in its own absolutely placed string; only the typography
+   needs realigning (a forced box width would trip antd's overflow auto-scale). */
+.shell-avatar-button .ant-avatar-string {
+  line-height: 20px;
+  white-space: normal;
+  text-align: start;
 }
 
 @media (max-width: 768px) {

@@ -296,7 +296,15 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
           aria-hidden
           data-testid="current-member-avatar"
           size={28}
-          style={{ background: token.colorFillSecondary, color: token.colorTextSecondary }}
+          // Prototype .av: 28px circle, raised fill, secondary ink, 12px/500 initial.
+          style={{
+            width: 28,
+            height: 28,
+            background: 'var(--craft-color-raised)',
+            color: 'var(--craft-color-secondary)',
+            fontSize: 12,
+            fontWeight: 500,
+          }}
         >
           {nameInitial(memberName)}
         </Avatar>
@@ -430,13 +438,15 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
             minHeight: 56,
             padding: compactNavigation ? '8px 16px' : '0 32px',
             lineHeight: 'normal',
-            background: 'var(--craft-color-page)',
+            // Prototype .top: translucent page tone over the scrolled content, blurred 8px.
+            background: 'color-mix(in srgb, var(--craft-color-page) 88%, transparent)',
+            backdropFilter: 'blur(8px)',
             borderBottom: `1px solid ${token.colorSplit}`,
           }}
         >
           <Breadcrumb
             aria-label={t('shell.breadcrumbs')}
-            separator={<ChevronRight size={16} strokeWidth={1.5} aria-hidden />}
+            separator={<ChevronRight size={14} strokeWidth={1.5} aria-hidden />}
             style={{
               flex: compactNavigation ? '1 1 auto' : '0 1 auto',
               minWidth: 0,
@@ -504,11 +514,11 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  flex: '0 0 200px',
+                  flex: 'none',
                   width: 200,
                   height: 32,
                   marginLeft: 'auto',
-                  paddingInline: 12,
+                  padding: '0 8px 0 12px',
                   textAlign: 'left',
                 }}
               >
@@ -541,8 +551,8 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
                     ? t('nav.inbox')
                     : t('shell.pendingNotifications', { count: pendingCount })}
                   onClick={() => navigate(inboxPath)}
-                  icon={<Bell size={16} strokeWidth={1.5} aria-hidden />}
-                  style={{ width: 32, height: 32, padding: 0 }}
+                  icon={<Bell size={18} strokeWidth={1.5} aria-hidden />}
+                  style={{ width: 32, height: 32, padding: 0, color: 'var(--craft-color-secondary)' }}
                 />
               </Badge>
               {avatarMenu}
