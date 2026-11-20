@@ -26,6 +26,8 @@ mod list;
 mod navigation;
 mod observation;
 mod planning;
+mod portfolio;
+pub use portfolio::{PORTFOLIO_PAGE_MAX, PortfolioOverviewRequest};
 mod retained;
 mod reviews;
 mod sources;

@@ -1,0 +1,97 @@
+{
+  "data": {
+    "as_of": {
+      "at_unix_ms": 1795132963262
+    },
+    "execution_authorized": false,
+    "next_cursor": null,
+    "projects": [
+      {
+        "coordinator_epoch": "epoch-portfolio",
+        "directory": {
+          "departments": [],
+          "group": {
+            "id": "eng",
+            "name": "Engineering"
+          },
+          "registered": true
+        },
+        "latest_update": {
+          "author": {
+            "display_name": "Portfolio Lead",
+            "person_id": "lead-portfolio"
+          },
+          "ends_on": "2026-11-22",
+          "period_key": "2026-W47",
+          "period_kind": "week",
+          "recorded_at_unix_ms": 1795132963235,
+          "starts_on": "2026-11-16",
+          "status": "risk",
+          "update_id": "update-clone"
+        },
+        "project_id": "portfolio-project-001",
+        "project_key": "pf-server",
+        "project_revision": "3",
+        "project_status": "active",
+        "read": {
+          "status": "complete"
+        },
+        "responsible_person": null,
+        "waits": {
+          "decision": 1,
+          "dependency": 1,
+          "oldest_open_unix_ms": 1795132963233,
+          "review": 0
+        },
+        "works": {
+          "completed_without_independent_review": 0,
+          "delivered_unverified": 0,
+          "hidden_work_count": 1,
+          "in_progress": 1,
+          "not_started": 0,
+          "retired": 0,
+          "total": 2,
+          "verified": 1
+        }
+      },
+      {
+        "coordinator_epoch": "epoch-a",
+        "directory": {
+          "departments": null,
+          "group": null,
+          "registered": false
+        },
+        "latest_update": null,
+        "project_id": "reader-project",
+        "project_key": "p",
+        "project_revision": "3",
+        "project_status": "active",
+        "read": {
+          "status": "complete"
+        },
+        "responsible_person": null,
+        "waits": {
+          "decision": 0,
+          "dependency": 0,
+          "oldest_open_unix_ms": null,
+          "review": 0
+        },
+        "works": {
+          "completed_without_independent_review": 0,
+          "delivered_unverified": 0,
+          "hidden_work_count": 1,
+          "in_progress": 0,
+          "not_started": 2,
+          "retired": 0,
+          "total": 2,
+          "verified": 0
+        }
+      }
+    ],
+    "total_projects": 2,
+    "truncated": false
+  },
+  "op": "portfolio.overview",
+  "protocol_version": 1,
+  "selection_basis": "member"
+}

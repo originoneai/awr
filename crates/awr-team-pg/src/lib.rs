@@ -2,6 +2,7 @@
 //! Personal SQLite runtime does not depend on this crate.
 mod agent_authorization;
 mod bootstrap;
+mod completion_independence;
 mod connections;
 mod cross_workstream_adoption;
 mod cross_workstream_exports;
@@ -145,7 +146,9 @@ pub use workstream_auth::{
     command_business_action, map_membership_role, query_business_action, workstream_credential_hash,
 };
 pub use workstream_command::{UpdateRecordRequest, WorkstreamCommand, WorkstreamCommandStore};
-pub use workstream_read::{WorkstreamQuery, WorkstreamReadStore};
+pub use workstream_read::{
+    PORTFOLIO_PAGE_MAX, PortfolioOverviewRequest, WorkstreamQuery, WorkstreamReadStore,
+};
 
 pub const SCHEMA: &str = "awr_team";
 
@@ -162,6 +165,6 @@ mod tests {
     #[test]
     fn schema_contract_is_stable() {
         assert_eq!(SCHEMA, "awr_team");
-        assert_eq!(EXPECTED_SCHEMA_VERSION, 65);
+        assert_eq!(EXPECTED_SCHEMA_VERSION, 66);
     }
 }
