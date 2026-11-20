@@ -148,6 +148,64 @@ describe('project status from a phase update and program facts', () => {
     expect(ordinary.health).not.toBe('info');
     expect(ordinary.showTakeoverCompletion).toBe(false);
   });
+  it('marks an update late only after more than seven whole days', () => {
+    for (const { age, expected } of [{ age: 7, expected: false }, { age: 8, expected: true }, { age: 7.9, expected: false }]) {
+      const result = deriveProjectListItem(entry(), model({
+        periodUpdates: {
+          coverage: 'complete',
+          items: [update({
+            startsOn: '2026-11-02', endsOn: '2026-11-08', recordedAtUnixMs: RECORDED - age * DAY_MS,
+          })],
+        },
+      }), 'UTC');
+      expect(result.late, `update age ${age}`).toBe(expected);
+    }
+  });
+
+  it('chooses the latest overlapping current update independent of input order', () => {
+    const earlier = update({
+      id: 'earlier', startsOn: '2026-11-16', endsOn: '2026-11-22', status: 'ok', summary: 'Earlier healthy summary',
+    });
+    const later = update({
+      id: 'later', startsOn: '2026-11-18', endsOn: '2026-11-24', status: 'risk', summary: 'Later risk summary',
+    });
+    for (const items of [[earlier, later], [later, earlier]]) {
+      const result = deriveProjectListItem(entry(), model({ periodUpdates: { coverage: 'complete', items } }), 'UTC');
+      expect(result.health).toBe('risk');
+      expect(result.summary).toEqual({ kind: 'update', text: 'Later risk summary' });
+      expect(result.updateId).toBe('later');
+    }
+  });
+
+  it('treats a partial phase-update slice as unknown even with a current healthy update', () => {
+    const result = deriveProjectListItem(entry(), model({
+      periodUpdates: { coverage: 'partial', reason: 'read-failed', items: [update({ status: 'ok' })] },
+    }), 'UTC');
+    expect(result.health).toBe('unknown');
+    expect(result.summary.kind).toBe('unknown');
+    expect(result.updatedAtUnixMs).toBeNull();
+  });
+
+  it.each([3, null, undefined])('shows the zero-verification takeover state only for an explicit zero, not %s', (verifiedTasks) => {
+    const result = deriveProjectListItem(entry({
+      takeover: { resultId: 'synthetic-result', verifiedTasks, workstreams: 4, questions: 4 },
+    }), undefined);
+    expect(result.showTakeoverCompletion).toBe(false);
+  });
+
+  it('floors previous update age in whole days', () => {
+    for (const { age, expected } of [{ age: 12.6, expected: 12 }, { age: 0.9, expected: 0 }]) {
+      const result = deriveProjectListItem(entry(), model({
+        periodUpdates: {
+          coverage: 'complete',
+          items: [update({
+            startsOn: '2026-11-02', endsOn: '2026-11-08', recordedAtUnixMs: RECORDED - age * DAY_MS,
+          })],
+        },
+      }), 'UTC');
+      expect(result.summary).toEqual({ kind: 'last-update', days: expected });
+    }
+  });
 });
 
 describe('completion and summary count/detail equality', () => {
@@ -172,6 +230,22 @@ describe('completion and summary count/detail equality', () => {
       expect(details.count).toBe(details.items.length);
     }
     expect(result.completion.all.count).toBe(5);
+  });
+
+  it('counts waiting tasks as in progress alongside running tasks', () => {
+    const waiting = baseTask('waiting', {
+      externalWait: { party: 'Outside Example', what: 'Confirm a synthetic value', sinceUnixMs: NOW - DAY_MS },
+    });
+    const running = startedTask('running', { report: { completed: false, reportedAtUnixMs: NOW } });
+    const input = makeInput({
+      tasks: complete([waiting, running]),
+      activity: complete([{ id: 'activity-running', taskId: 'running', atUnixMs: NOW }]),
+    });
+    const result = deriveProjectListItem(entry(), model({ input }));
+    expect(result.completion.inProgress.count).toBe(2);
+    expect(result.completion.inProgress.count).toBe(result.completion.inProgress.items.length);
+    expect(result.completion.inProgress.items.map((task) => task.id)).toEqual(expect.arrayContaining(['waiting', 'running']));
+    expect(result.completion.counts?.inProgress).toBe(2);
   });
 
   it('keeps unread segment counts unknown instead of displaying zero', () => {

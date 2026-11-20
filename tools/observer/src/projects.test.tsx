@@ -244,6 +244,87 @@ describe('project list prototype and count details', () => {
     const css = readFileSync('src/pages/ProjectsPage.css', 'utf8');
     expect(css).toMatch(/\.projects-ellipsis\s*\{[^}]*-webkit-line-clamp:\s*1;[^}]*white-space:\s*normal;/s);
   });
+  it('highlights only rows whose recorded health is risk', async () => {
+    installFourProjects();
+    renderApp('/projects');
+    await screen.findByRole('link', { name: 'Project Alpha' });
+    for (const [name, highlighted] of [
+      ['Project Alpha', true], ['Project Beta', false], ['Project Gamma', false], ['Project Taken Over', false],
+    ] as const) {
+      expect(screen.getByRole('link', { name }).closest('tr')?.className.includes('obs-table-highlighted-row'), name).toBe(highlighted);
+    }
+  });
+
+  it('does not show the zero-verification takeover link for three, null, or missing accepted counts', async () => {
+    for (const verifiedTasks of [3, null, undefined]) {
+      installFetch({
+        projects: [entry('project-d', 'Project Taken Over', {
+          takeover: { resultId: 'synthetic-result', verifiedTasks, workstreams: 4, questions: 4 },
+        })],
+      });
+      const { unmount } = renderApp('/projects');
+      await screen.findByRole('link', { name: 'Project Taken Over' });
+      expect(screen.queryByRole('link', { name: '接管后还没有按验收核验过的任务' })).toBeNull();
+      expect(screen.getByText('完成度还没有读全')).toBeTruthy();
+      unmount();
+    }
+  });
+
+  it('does not use another project\'s model for a mismatched response', async () => {
+    installFetch({
+      projects: [entry('project-a', 'Project Alpha'), entry('project-b', 'Project Beta')],
+      models: {
+        'project-a': model('project-b', {
+          periodUpdates: { coverage: 'complete', items: [currentUpdate('risk', 'Mismatched project B risk')] },
+        }),
+        'project-b': model('project-b'),
+      },
+    });
+    renderApp('/projects');
+    const projectA = await screen.findByRole('link', { name: 'Project Alpha' });
+    const rowA = projectA.closest('tr');
+    expect(rowA?.textContent).not.toContain('Mismatched project B risk');
+    expect(rowA?.textContent).toContain('结果未知');
+    expect(rowA?.textContent).toContain('完成度还没有读全');
+    expect(screen.getByTestId('projects-summary-risk').textContent).toBe('，— 个有风险');
+    expect(screen.queryByTestId('projects-summary-risk-link')).toBeNull();
+  });
+
+  it('floors update-column elapsed time in whole days', async () => {
+    installFetch({
+      projects: [entry('project-a', 'Project Alpha'), entry('project-b', 'Project Beta')],
+      models: {
+        'project-a': model('project-a', {
+          periodUpdates: { coverage: 'complete', items: [{ ...currentUpdate('ok'), recordedAtUnixMs: NOW - 2.6 * DAY }] },
+        }),
+        'project-b': model('project-b', {
+          periodUpdates: { coverage: 'complete', items: [{ ...currentUpdate('ok'), recordedAtUnixMs: NOW - 0.9 * DAY }] },
+        }),
+      },
+    });
+    renderApp('/projects');
+    const projectA = await screen.findByRole('link', { name: 'Project Alpha' });
+    expect(projectA.closest('tr')?.querySelector('td:nth-child(5)')?.textContent).toBe('2 天前');
+    expect(screen.getByRole('link', { name: 'Project Beta' }).closest('tr')?.querySelector('td:nth-child(5)')?.textContent).toBe('今天');
+  });
+
+  it('removes a trailing Chinese full stop from the recorded one-sentence update', async () => {
+    installFetch({
+      projects: [entry('project-a', 'Project Alpha'), entry('project-b', 'Project Beta')],
+      models: {
+        'project-a': model('project-a', {
+          periodUpdates: { coverage: 'complete', items: [currentUpdate('ok', '本周接口联调完成。')] },
+        }),
+        'project-b': model('project-b', {
+          periodUpdates: { coverage: 'complete', items: [currentUpdate('ok', '本周接口联调完成')] },
+        }),
+      },
+    });
+    renderApp('/projects');
+    const projectA = await screen.findByRole('link', { name: 'Project Alpha' });
+    expect(projectA.closest('tr')?.querySelector('td:nth-child(3)')?.textContent).toBe('本周接口联调完成');
+    expect(screen.getByRole('link', { name: 'Project Beta' }).closest('tr')?.querySelector('td:nth-child(3)')?.textContent).toBe('本周接口联调完成');
+  });
 });
 
 describe('seven designed read states in Chinese and English', () => {
