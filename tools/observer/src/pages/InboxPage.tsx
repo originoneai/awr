@@ -2,19 +2,19 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
 import {
-  ArrowRight,
-  BookOpen,
-  CircleAlert,
-  CircleCheck,
-  CircleHelp,
-  CircleX,
-  Copy,
-  Inbox as InboxIcon,
-  Scale,
-  Split,
-  Terminal,
+  ArrowRightIcon,
+  BookIcon,
+  CircleCheckIcon,
+  CircleHelpIcon,
+  CircleXIcon,
+  CopyIcon,
+  InboxIcon,
+  InfoIcon,
+  ScaleIcon,
+  SplitIcon,
+  TerminalIcon,
   type LucideIcon,
-} from 'lucide-react';
+} from '../components/icons/prototype-icons';
 import { FreshnessBadge } from '../components/FreshnessBadge';
 import { ObservationForbidden } from '../components/states';
 import { buildHandback, copyText } from '../lib/agent-handback';
@@ -31,17 +31,18 @@ import './InboxPage.css';
 
 /** Prototype KIND_ICON (src3/app.js): one icon per pending kind, stroke 1.5, 18px. */
 const KIND_ICONS: Record<InboxKind, LucideIcon> = {
-  answer: CircleHelp,
-  decision: Scale,
-  'plan-approval': Split,
+  answer: CircleHelpIcon,
+  decision: ScaleIcon,
+  'plan-approval': SplitIcon,
   assignment: InboxIcon,
-  lesson: BookOpen,
+  lesson: BookIcon,
 };
 
+/** Prototype EV (src3/app.js): ok okc, bad badc, info dot (the circled "i"). */
 const BASIS_ICONS: Record<InboxBasisItem['tone'], LucideIcon | null> = {
-  ok: CircleCheck,
-  bad: CircleX,
-  info: CircleAlert,
+  ok: CircleCheckIcon,
+  bad: CircleXIcon,
+  info: InfoIcon,
 };
 
 /** Untrusted titles beyond this many code points are clamped instead of wrapping the layout away. */
@@ -307,19 +308,19 @@ export function InboxPage() {
                   {selected.taskId ? (
                     <Link className="inbox-link" data-testid="inbox-task-link" to={inboxTaskPath(selected.taskId)}>
                       {t('inbox.page.relatedTask')}
-                      <ArrowRight size={14} strokeWidth={1.5} aria-hidden />
+                      <ArrowRightIcon size={14} strokeWidth={1.5} aria-hidden />
                     </Link>
                   ) : null}
                   {selected.kind === 'assignment' && selected.fromPerson ? (
                     <Link className="inbox-link" to={`/members/${encodeURIComponent(selected.fromPerson.id)}`}>
                       {t('inbox.page.relatedPerson', { who: selected.fromPerson.displayName ?? t('inbox.page.viewerUnknown') })}
-                      <ArrowRight size={14} strokeWidth={1.5} aria-hidden />
+                      <ArrowRightIcon size={14} strokeWidth={1.5} aria-hidden />
                     </Link>
                   ) : null}
                   {selected.kind === 'lesson' ? (
                     <Link className="inbox-link" to="/lessons">
                       {t('inbox.page.relatedLesson')}
-                      <ArrowRight size={14} strokeWidth={1.5} aria-hidden />
+                      <ArrowRightIcon size={14} strokeWidth={1.5} aria-hidden />
                     </Link>
                   ) : null}
                 </div>
@@ -327,14 +328,14 @@ export function InboxPage() {
               {selected.mine && handback ? (
                 <div className="inbox-where" data-testid="inbox-handback">
                   <div className="inbox-where-head">
-                    <span className="inbox-where-icon" aria-hidden><Terminal size={16} strokeWidth={1.5} /></span>
+                    <span className="inbox-where-icon" aria-hidden><TerminalIcon size={16} strokeWidth={1.5} /></span>
                     {t('inbox.page.handbackTitle')}
                   </div>
                   <p>{handback.where}</p>
                   <div className="inbox-sayline">
                     <span className="inbox-sayline-text" data-testid="inbox-handback-line">{handback.sentence}</span>
                     <button type="button" className="inbox-copy" data-testid="inbox-copy" onClick={() => { void copyLine(); }}>
-                      <Copy size={14} strokeWidth={1.5} aria-hidden />
+                      <CopyIcon size={14} strokeWidth={1.5} aria-hidden />
                       {t('inbox.page.copyLine')}
                     </button>
                   </div>
@@ -348,7 +349,7 @@ export function InboxPage() {
               ) : (
                 <div className="inbox-where" data-testid="inbox-not-mine">
                   <div className="inbox-where-head">
-                    <span className="inbox-where-icon" aria-hidden><CircleAlert size={16} strokeWidth={1.5} /></span>
+                    <span className="inbox-where-icon" aria-hidden><InfoIcon size={16} strokeWidth={1.5} /></span>
                     {t('inbox.page.notMineTitle')}
                   </div>
                   <p>{t('inbox.page.notMineBody', { who: selected.recipient.displayName ?? t('inbox.page.viewerUnknown') })}</p>

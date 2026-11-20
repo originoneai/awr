@@ -3,7 +3,9 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from './i18n';
-import { DEMO_OVERVIEW, DEMO_PROJECTS, DEMO_WORK_NEXT, renderApp, stubFetch } from './test-utils';
+import { DEMO_OVERVIEW, DEMO_PROJECTS, DEMO_WORK_NEXT, mockViewport, renderApp, stubFetch } from './test-utils';
+import { expectSvgDrawsPrototypeGlyph } from './components/icons/expect-prototype-glyph';
+import type { PrototypeIconName } from './components/icons/prototype-icons';
 import { craftTokens } from './theme';
 
 // Vitest disables CSS imports, so load the real shell stylesheet for computed-display assertions.
@@ -322,5 +324,82 @@ describe('AppShell navigation', () => {
     await user.click(inbox);
     expect(router.state.location.pathname).toBe('/inbox');
     expect(router.state.location.search).toBe('?scope=demo');
+  });
+});
+
+/*
+ * Every icon slot of the shell draws its prototype glyph (the registry is the only
+ * source; the expectation is always PROTOTYPE_ICONS[name], never the component's own
+ * import, so a swapped glyph anywhere in the shell turns one of these red).
+ */
+describe('AppShell icons (prototype glyphs)', () => {
+  const PRIMARY_NAV: Array<[string, 'home' | 'folder' | 'inbox' | 'book']> = [
+    ['workbench', 'home'],
+    ['projects', 'folder'],
+    ['inbox', 'inbox'],
+    ['lessons', 'book'],
+  ];
+  const ADMIN_NAV: Array<[string, 'users' | 'activity' | 'sliders']> = [
+    ['members', 'users'],
+    ['activity', 'activity'],
+    ['settings', 'sliders'],
+  ];
+
+  afterEach(() => {
+    window.localStorage.removeItem('awr-observer-theme');
+  });
+
+  it('draws both navigation groups icon by icon from the prototype glyphs', async () => {
+    stubShell();
+    renderApp('/workbench');
+    await screen.findByRole('menuitem', { name: /工作台/ });
+    const groups = document.querySelectorAll('.shell-sider nav');
+    expect(groups).toHaveLength(2);
+    const expectGroup = (group: Element, slots: Array<[string, PrototypeIconName]>) => {
+      const items = group.querySelectorAll('li.ant-menu-item');
+      expect(items).toHaveLength(slots.length);
+      items.forEach((item, index) => {
+        expectSvgDrawsPrototypeGlyph(item.querySelector('svg'), `nav ${slots[index][0]}`, slots[index][1]);
+      });
+    };
+    expectGroup(groups[0], PRIMARY_NAV);
+    expectGroup(groups[1], ADMIN_NAV);
+  });
+
+  it('draws the topbar search, bell, building and breadcrumb separator from the prototype glyphs', async () => {
+    stubShell();
+    renderApp('/projects/demo?tab=plan');
+    await waitFor(() => expect(screen.getByTestId('scope-switcher').textContent).toContain('Team mainline'));
+    expectSvgDrawsPrototypeGlyph(document.querySelector('.shell-header .shell-search svg'), 'topbar search', 'search');
+    expectSvgDrawsPrototypeGlyph(document.querySelector('.shell-header .ant-badge button svg'), 'topbar bell', 'bell');
+    expectSvgDrawsPrototypeGlyph(document.querySelector('.shell-header nav.ant-breadcrumb svg'), 'breadcrumb scope icon', 'building');
+    expectSvgDrawsPrototypeGlyph(document.querySelector('.shell-header li.ant-breadcrumb-separator svg'), 'breadcrumb separator', 'chev');
+  });
+
+  it.each([
+    ['light', 'moon'],
+    ['dark', 'sun'],
+  ] as const)('draws the desktop theme button as the prototype %s glyph in %s mode', async (mode, glyph) => {
+    window.localStorage.setItem('awr-observer-theme', mode);
+    stubShell();
+    renderApp('/workbench');
+    await screen.findByTestId('theme-toggle');
+    expectSvgDrawsPrototypeGlyph(document.querySelector('.shell-theme button svg'), `desktop theme button (${mode})`, glyph);
+  });
+
+  it.each([
+    ['light', 'moon'],
+    ['dark', 'sun'],
+  ] as const)('draws the mobile theme button as the prototype %s glyph in %s mode', async (mode, glyph) => {
+    window.localStorage.setItem('awr-observer-theme', mode);
+    stubShell();
+    const narrow = mockViewport(375);
+    try {
+      renderApp('/workbench');
+      const toggle = await screen.findByTestId('mobile-theme-toggle');
+      expectSvgDrawsPrototypeGlyph(toggle.querySelector('svg'), `mobile theme button (${mode})`, glyph);
+    } finally {
+      narrow.restore();
+    }
   });
 });

@@ -8,7 +8,7 @@
 python3 tests/security/payloads/verify_secrets.py --report .local/secret-boundary-checks.json
 ```
 
-The current `awr-core` secret policy is 11. Component contract `tests/security/payloads/contract.json` 1.12.0 covers 32 conditions: boolean/null literals, integer-zero counts, glosses, public structures/commands, authorization narratives, Bearer prose and smuggled-secret checks. [Content-bound review](content-review.md) can authorize suspected public local-file content.
+The current `awr-core` secret policy is 12. Component contract `tests/security/payloads/contract.json` 1.13.0 covers 32 conditions: boolean/null literals, integer-zero counts, glosses, public structures/commands, authorization narratives, Bearer prose, empty-or-placeholder env expansions, Authorization scheme placeholders, and smuggled-secret checks. [Content-bound review](content-review.md) can authorize suspected public local-file content.
 
 ## How it behaves
 
@@ -39,7 +39,7 @@ A directory source covers every file under it, so a refused document there stops
 
 Basic 候选依据 [RFC 7617 第 2 节](https://www.rfc-editor.org/rfc/rfc7617#section-2) 按标准 Base64 解码，要求用户名与密码之间有冒号，接受省略填充符。
 
-Bearer 普通协议讨论如 `Bearer authentication` 可保留。`Authorization:` 赋值或 Header 实际值按标签规则拒绝。无标签候选至少 32 字符，或至少 8 字符且含数字、编码分隔符或非首字母大小写混合。
+Bearer 普通协议讨论如 `Bearer authentication` 可保留。`Authorization` 字段或 Header 携带明确占位符（如 `Bearer ${env:AWR_ENGINEERING_TOKEN}`、`Bearer ${TOKEN:-}`、`Basic ${BASIC_AUTH}`）时可保留；其余 `Authorization:` 赋值或 Header 实际值按标签规则拒绝。无标签候选至少 32 字符，或至少 8 字符且含数字、编码分隔符或非首字母大小写混合。
 
 结构定义可保留 `{"token":{"type":"string"}}`、`{"authorization":{"type":"http","scheme":"bearer"}}` 及同类 YAML 块/流式和 Markdown 示例。检测完整结构，支持基础类型、属性、引用、约束和认证方案；未知字段保守处理。片段解析上限 16 KiB，超限拒绝。占位值使用明确脱敏形式。
 
@@ -47,7 +47,7 @@ Bearer 普通协议讨论如 `Bearer authentication` 可保留。`Authorization:
 
 完整 TypeScript `interface`、对象 `type` 和 `class` 的纯类型字段声明可保留，例如 `interface Login { password: string; }`。支持行首 export/declare、基础 `string/number/boolean/unknown/never/undefined/null`、数组、这些类型的联合、可选及 readonly 属性。复杂公开定义用结构化 schema。
 
-普通安全讨论、空值及 `[redacted]`、`<redacted>`、`[withheld]`、`***`、`${EXAMPLE_API_KEY}` 等明确占位符可保留。实际值移到秘密管理，来源保留必要引用。
+普通安全讨论、空值及 `[redacted]`、`<redacted>`、`[withheld]`、`***`、`${EXAMPLE_API_KEY}` 等明确占位符可保留，包括 `${VAR:-}` / `${VAR-}` / `${VAR:=}` / `${VAR=}` / `${VAR:+}` / `${VAR+}`（默认值为空、`""`/`''` 或显式占位符，最多两层嵌套）、无提示信息的 `${VAR:?}` / `${VAR?}` 与 `${env:VAR}`。引号包裹的占位符须闭合且后面只接合法结束边界；携带非空 fallback 值、提示文本（如 `${VAR:?msg}`）或拼接后缀的写法继续拒绝。实际值移到秘密管理，来源保留必要引用。
 
 | 字面量与边界 | 规则 |
 | --- | --- |
@@ -95,7 +95,7 @@ dispatch again; use a new operation key for a new run.
 
 对旧数据的输出保护：
 
-- FTS policy is 13. On first read it rebuilds old caches, redacting ASCII token-like glosses previously accepted by policy 11 and preserving integer-zero counts under credential-like labels, short Han-letter boolean glosses, exact literal glosses, boolean/null notes, ordinary auth notes, public configuration, and structure definitions that earlier policies redacted by mistake. Failed source reindexes reread the original content; source-map and adapter-config changes also invalidate the cache. Summaries are shortened only after the full field passes; sensitive summaries become `[redacted]`. When identity, linked work, or source references contain sensitive values, the whole search document stays out of the index. Query parameters are checked as well.
+- FTS policy is 14. On first read it rebuilds old caches, preserving empty-or-placeholder env parameter expansions (`${VAR:-}`, `${VAR:?}`, `${env:VAR}`) and `Authorization: Bearer/Basic <placeholder>` examples while redacting glued quoted suffixes after placeholders. It also keeps prior rebuild rules: redacting ASCII token-like glosses previously accepted by policy 11 and preserving integer-zero counts under credential-like labels, short Han-letter boolean glosses, exact literal glosses, boolean/null notes, ordinary auth notes, public configuration, and structure definitions that earlier policies redacted by mistake. Failed source reindexes reread the original content; source-map and adapter-config changes also invalidate the cache. Summaries are shortened only after the full field passes; sensitive summaries become `[redacted]`. When identity, linked work, or source references contain sensitive values, the whole search document stays out of the index. Query parameters are checked as well.
 - L0、L1、硬规则/关联事实及 delta 检查实际选中的输出。选中的必需事实包含敏感值时返回 `ContextIncomplete`，不返回看似完整的包、哈希或渲染文本。原本不进入 Context 的正文仍然被排除；例如 delta 只使用 checkpoint 的基线和身份，不返回 digest。
 - CLI 的敏感参数在参数解析报错前拒绝，包括 `--` 之后的参数。拒绝仍以退出码 1 和 stderr JSON 返回原有 `RuleViolation` 与通用消息；`details` 保留共享分类器的 `policy_version`、`category`、`next_action`，并给出 `argument_index` 与 `argument_index_basis: zero_based_process_argv`。索引从 0 开始，0 表示可执行文件参数；不回显命中的参数、键、值或片段。环境转储分类的指引说明通过启动 AWR 前的进程环境传递变量。证据、完成输入、分支关闭输入及 Manifest 的结构错误不回显字段内容。CLI 和 MCP 共用安全错误报告；MCP 同时保护结构化结果、文本副本与读取输出。
 

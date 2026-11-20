@@ -11,6 +11,8 @@ import unittest
 from cli_parity import Client, MANIFEST, WORK
 
 SENTINEL = "fixture-value-only-never-real"
+CONTRACT_PATH = Path(__file__).resolve().parents[3] / "tests/security/payloads/contract.json"
+SECRET_POLICY_VERSION = json.loads(CONTRACT_PATH.read_text())["secret_policy_version"]
 TOOLS = ["awr_project_status", "awr_work_ready", "awr_work_get", "awr_search",
          "awr_context_compile", "awr_work_transition", "awr_event_append", "awr_evidence_record"]
 
@@ -33,7 +35,20 @@ class SecretTransports(unittest.TestCase):
             "expected_revision": self.revision(), "event_type": "work.observed", "summary": summary,
             "payload": {"body": "Completed native authorization: 用户确认；原记录保留。"}}})
         self.assertFalse(response["result"].get("isError", False), response)
+        for placeholder_note in [
+            'token: "${CUBEJS_API_TOKEN:-}"  # optional',
+            "Authorization: Bearer ${env:AWR_ENGINEERING_TOKEN}",
+        ]:
+            response = self.client.rpc("tools/call", {"name": "awr_event_append", "arguments": {
+                "expected_revision": self.revision(), "event_type": "work.observed",
+                "summary": placeholder_note,
+                "payload": {"body": placeholder_note}}})
+            self.assertFalse(response["result"].get("isError", False), response)
         for body, category in [
+            ('token: "${CUBEJS_API_TOKEN:-' + SENTINEL + '}"', "labelled_value"),
+            ('export PASSWORD="${VAR:-}"' + SENTINEL, "labelled_value"),
+            ('export PASSWORD=""' + SENTINEL, "labelled_value"),
+            ('Authorization: Bearer ${TOKEN:-' + SENTINEL + '}', "labelled_value"),
             ("FALSE=xKqZmPwRtYvBnLsDfGhJaQ", "environment_dump"),
             ("TRUE=ghpxKqZmPwRtYvBnLsDfGhJaQeUi", "environment_dump"),
             ("FALSE=hunter; TRUE=admin", "environment_dump"),
@@ -65,7 +80,7 @@ class SecretTransports(unittest.TestCase):
             "event_type": "work.observed", "summary": "password: " + SENTINEL})
         self.assertEqual(result["code"], "RuleViolation")
         self.assertEqual(result["details"]["category"], "labelled_value")
-        self.assertEqual(result["details"]["policy_version"], 10)
+        self.assertEqual(result["details"]["policy_version"], SECRET_POLICY_VERSION)
         self.assertIn("outside registered sources", result["details"]["next_action"])
         public_schema = "# Deliver useful analysis\n\ninterface Login { password: string; }\n"
         (self.root / "goal.md").write_text(public_schema)

@@ -1,9 +1,9 @@
-import { ArrowRight, Terminal } from 'lucide-react';
 import { Fragment, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useCompactViewport } from '../../lib/viewport';
 import { DisplayIcon } from './DisplayIcon';
 import { EmptyState } from './EmptyState';
+import { ArrowRightIcon, TerminalIcon } from '../icons/prototype-icons';
 import './display.css';
 
 export interface TodoItem {
@@ -57,7 +57,7 @@ export function TodoRail({
         {onViewAll === undefined ? null : (
           <button type="button" className="obs-todo-all" onClick={onViewAll}>
             {t('display.todo.viewAll')}
-            <DisplayIcon icon={ArrowRight} />
+            <DisplayIcon icon={ArrowRightIcon} />
           </button>
         )}
       </div>
@@ -89,9 +89,9 @@ export function TodoRail({
                         {firstBody}
                         <div className="obs-todo-acts">
                           <button type="button" className="obs-todo-agent obs-todo-agent-control" onClick={onFirstAgent}>
-                            <DisplayIcon icon={Terminal} />{t('display.todo.handleInAgent')}
+                            <DisplayIcon icon={TerminalIcon} />{t('display.todo.handleInAgent')}
                           </button>
-                          <span className="obs-todo-view">{t('display.todo.viewItem')}<DisplayIcon icon={ArrowRight} /></span>
+                          <span className="obs-todo-view">{t('display.todo.viewItem')}<DisplayIcon icon={ArrowRightIcon} /></span>
                         </div>
                       </div>
                     ) : (
@@ -118,9 +118,9 @@ export function TodoRail({
                               onFirstAgent();
                             }}
                           >
-                            <DisplayIcon icon={Terminal} />{t('display.todo.handleInAgent')}
+                            <DisplayIcon icon={TerminalIcon} />{t('display.todo.handleInAgent')}
                           </span>
-                          <span className="obs-todo-view">{t('display.todo.viewItem')}<DisplayIcon icon={ArrowRight} /></span>
+                          <span className="obs-todo-view">{t('display.todo.viewItem')}<DisplayIcon icon={ArrowRightIcon} /></span>
                         </div>
                       </button>
                     )}
@@ -132,8 +132,8 @@ export function TodoRail({
                 <>
                   {firstBody}
                   <div className="obs-todo-acts">
-                    <span className="obs-todo-agent"><DisplayIcon icon={Terminal} />{t('display.todo.handleInAgent')}</span>
-                    <span className="obs-todo-view">{t('display.todo.viewItem')}<DisplayIcon icon={ArrowRight} /></span>
+                    <span className="obs-todo-agent"><DisplayIcon icon={TerminalIcon} />{t('display.todo.handleInAgent')}</span>
+                    <span className="obs-todo-view">{t('display.todo.viewItem')}<DisplayIcon icon={ArrowRightIcon} /></span>
                   </div>
                 </>
               );
@@ -159,7 +159,7 @@ export function TodoRail({
           {remaining > 0 && onViewAll !== undefined ? (
             <button type="button" className="obs-todo-more" onClick={onViewAll}>
               {t('display.todo.more', { remaining })}
-              <DisplayIcon icon={ArrowRight} />
+              <DisplayIcon icon={ArrowRightIcon} />
             </button>
           ) : null}
         </>

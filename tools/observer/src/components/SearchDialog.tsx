@@ -1,6 +1,5 @@
 import { Modal } from 'antd';
 import type { TFunction } from 'i18next';
-import { Search } from 'lucide-react';
 import {
   useEffect,
   useId,
@@ -10,6 +9,7 @@ import {
   type KeyboardEvent,
 } from 'react';
 import { useTranslation } from 'react-i18next';
+import { SearchIcon } from './icons/prototype-icons';
 import { useNavigate } from 'react-router';
 import {
   buildSearchIndex,
@@ -165,7 +165,7 @@ export function SearchDialog({ open, sources, loading = false, onClose, afterClo
       aria-label={t('shell.search')}
     >
       <div className="sr-top">
-        <Search size={16} strokeWidth={1.5} aria-hidden />
+        <SearchIcon size={16} strokeWidth={1.5} aria-hidden />
         <input
           ref={inputRef}
           className="sr-input"

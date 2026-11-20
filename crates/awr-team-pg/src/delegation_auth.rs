@@ -580,6 +580,34 @@ pub(crate) async fn resolve_agent_read_delegation(
     if request.op == "source.content" && actor_requires_explicit_delegation(&auth.actor_kind) {
         return resolve_source_read_delegation(tx, auth, project, request, now_ms).await;
     }
+    if actor_requires_explicit_delegation(&auth.actor_kind)
+        && request.work_id.is_none()
+        && request.supports_session_selection()
+        && crate::workstream_auth::query_business_action(&request.op) == Some(Action::WorkRead)
+        && let Some(session) = request.session_id.as_deref()
+    {
+        // Resolve the real target before a delegation narrows credential access.
+        let target =
+            crate::workstream_read::session_binding(tx, &auth.tenant_id, project, auth, session)
+                .await?;
+        let candidates = effective_delegations(tx, auth, project, Some(session), now_ms).await?;
+        let stream = target.work.workstream_id.to_string();
+        // effective_delegations must prune narrowed parents before excluding
+        // task scopes, which still require an explicit work_id on the request.
+        let chosen = candidates.iter().find(|candidate| {
+            matches!(
+                candidate.grant.scope,
+                awr_core::AuthorizationScope::Project { .. }
+                    | awr_core::AuthorizationScope::Workstream { .. }
+            ) && candidate.actions.contains(&Action::WorkRead)
+                && candidate
+                    .grant
+                    .covers_task(project, &target.work.work_item_id, Some(&stream))
+        });
+        install_delegation(auth, chosen);
+        auth.read_delegations = Some(candidates);
+        return restrict_read_scope(tx, auth, project, request).await;
+    }
     // An edge can need separate grants for its consumer and upstream. Narrowing
     // consumers retains those read grants, with one covering grant per object.
     let dependency_observation = request.session_id.is_none()
