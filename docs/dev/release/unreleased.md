@@ -149,6 +149,20 @@ The Team/Observer changes and standalone library work below remain outside the p
 
 ## Fixed
 
+- Mapped documentation with empty-or-placeholder environment parameter expansions (such as
+  `token: "${CUBEJS_API_TOKEN:-}"`, `${VAR:?}`, and `${env:AWR_ENGINEERING_TOKEN}`) or
+  `Authorization: Bearer`/`Basic` placeholder headers (such as
+  `"Authorization": "Bearer ${env:AWR_ENGINEERING_TOKEN}"`) is no longer rejected as
+  `labelled_value`. Before, `placeholder()` recognized only bare `$VAR` and `${VAR}`, so
+  Docker Compose / POSIX empty-default expansions like `${CUBEJS_API_TOKEN:-}` in a mapped
+  root `README.md` stopped `awr init` (and `ASSIGNMENT` also matched `{CUBEJS_API_TOKEN:` inside
+  the braces). Non-empty fallback defaults (such as `${VAR:-secret}` or `${VAR:-0}`), message-bearing
+  `${VAR:?msg}`, and non-placeholder `Bearer`/`Basic` values remain rejected, and closing
+  delimiters on quoted placeholders now require a valid token boundary so glued suffixes such as
+  `export PASSWORD="${VAR:-}"secret` or `export PASSWORD=""secret` are caught as well.
+  `SECRET_POLICY_VERSION` moves from 11 to 12 and FTS `POLICY_VERSION` moves from 13 to 14 so
+  existing search caches rebuild on first read.
+
 - A command that needs a live claim now says what to do when the claim is no longer live.
   `claim.renew`, `execution.prepare`, `execution.start` and `delivery.candidate.select` still
   refuse it with HTTP 409 `LeaseExpired` and the message `lease expired`, and the body now adds

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{borrow::Cow, cell::OnceCell, sync::LazyLock};
 
-pub const SECRET_POLICY_VERSION: u32 = 11;
+pub const SECRET_POLICY_VERSION: u32 = 12;
 pub const SENSITIVE_CONTENT_WITHHELD: &str = "[sensitive content withheld]";
 const REJECTION: &str =
     "sensitive content is not accepted; remove secret values or use explicit redacted placeholders";
@@ -334,7 +334,10 @@ fn environment_block_entry(
             }
             return None;
         }
-        if has_value(value) && !definition_after_assignment(value) {
+        let value_start = start + trimmed.len() - entry.len() + key.len() + 1;
+        if range_has_value(text, value_start, offset, strings, false)
+            && !definition_after_assignment(value)
+        {
             return Some(start + trimmed.len() - entry.len());
         }
         // A YAML value can start on a more deeply indented following line.
@@ -345,8 +348,12 @@ fn environment_block_entry(
                 let content = next.trim_start();
                 let next_indent = next.len() - content.len();
                 if !content.is_empty() && !content.starts_with('#') {
-                    if next_indent > indent && has_value(content) {
-                        return Some(next_offset + next_indent);
+                    let next_value_start = next_offset + next_indent;
+                    let next_line_end = next_offset + next.len();
+                    if next_indent > indent
+                        && range_has_value(text, next_value_start, next_line_end, strings, false)
+                    {
+                        return Some(next_value_start);
                     }
                     break;
                 }
@@ -403,14 +410,180 @@ fn normalized_chars(text: &str) -> impl Iterator<Item = (usize, char)> + '_ {
     })
 }
 
+const MAX_ENV_NESTING: usize = 2;
+const LITERAL_PLACEHOLDERS: &[&str] = &[
+    "[redacted]",
+    "<redacted>",
+    "[withheld]",
+    "<withheld>",
+    "***",
+];
+
+fn literal_placeholder(text: &str) -> bool {
+    LITERAL_PLACEHOLDERS
+        .iter()
+        .any(|lit| text.eq_ignore_ascii_case(lit))
+}
+
 fn placeholder(text: &str) -> bool {
     let text = text.trim();
-    matches!(
-        text.to_ascii_lowercase().as_str(),
-        "" | "[redacted]" | "<redacted>" | "[withheld]" | "<withheld>" | "***"
-    ) || (text.starts_with("${") && text.ends_with('}') && env_name(&text[2..text.len() - 1]))
-        || (text.starts_with('$') && env_name(&text[1..]))
+    if text.contains(['\n', '\r']) {
+        return false;
+    }
+    text.is_empty() || literal_placeholder(text) || env_placeholder(text, 0)
 }
+
+fn non_empty_placeholder(text: &str) -> bool {
+    let text = text.trim();
+    !text.is_empty()
+        && !text.contains(['\n', '\r'])
+        && (literal_placeholder(text) || env_placeholder(text, 0))
+}
+
+fn env_placeholder(text: &str, depth: usize) -> bool {
+    let Some(rest) = text.strip_prefix('$') else {
+        return false;
+    };
+    let Some(inner) = rest.strip_prefix('{').and_then(|s| s.strip_suffix('}')) else {
+        return env_name(rest);
+    };
+    if depth >= MAX_ENV_NESTING {
+        return false;
+    }
+    if env_name(inner) {
+        return true;
+    }
+    if let Some(name) = inner.strip_prefix("env:") {
+        return env_name(name);
+    }
+    let name_len = inner
+        .bytes()
+        .take_while(|b| b.is_ascii_alphanumeric() || *b == b'_')
+        .count();
+    if name_len == 0 || !env_name(&inner[..name_len]) {
+        return false;
+    }
+    let op_rest = &inner[name_len..];
+    if op_rest == ":?" || op_rest == "?" {
+        return true;
+    }
+    for op in [":-", "-", ":=", "=", ":+", "+"] {
+        if let Some(default) = op_rest.strip_prefix(op) {
+            return default.is_empty()
+                || default == "\"\""
+                || default == "''"
+                || literal_placeholder(default)
+                || env_placeholder(default, depth + 1);
+        }
+    }
+    false
+}
+
+fn extract_braced_env(s: &str) -> Option<&str> {
+    let tail = s.strip_prefix("${")?;
+    let mut depth = 1usize;
+    let mut chars = tail.char_indices().peekable();
+    while let Some((offset, c)) = chars.next() {
+        match c {
+            '\n' | '\r' => return None,
+            '$' if chars.peek().is_some_and(|(_, next)| *next == '{') => {
+                chars.next();
+                depth += 1;
+                if depth > MAX_ENV_NESTING {
+                    return None;
+                }
+            }
+            '{' => return None,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&s[..2 + offset + 1]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn decoded_quoted_scalar(text: &str, quote_start: usize, close: usize) -> Option<String> {
+    if !matches!(text.as_bytes().get(quote_start), Some(b'"' | b'\'')) {
+        return None;
+    }
+    let slice = &text[quote_start..=close];
+    serde_json::from_str::<String>(slice)
+        .or_else(|_| serde_yaml_ng::from_str::<String>(slice))
+        .ok()
+}
+
+fn in_valid_env_placeholder(
+    text: &str,
+    start: usize,
+    end: usize,
+    strings: &OnceCell<Vec<(usize, usize)>>,
+) -> bool {
+    if start == 0 || text.as_bytes()[start - 1] != b'$' || text.as_bytes().get(start) != Some(&b'{')
+    {
+        return false;
+    }
+    let expr_start = start - 1;
+    if extract_braced_env(&text[expr_start..])
+        .is_some_and(|expr| end <= expr_start + expr.len() && env_placeholder(expr, 0))
+    {
+        return true;
+    }
+    if !text[start..].contains('\\') && !text[start..].contains("''") {
+        return false;
+    }
+    strings
+        .get_or_init(|| value_envelopes(text))
+        .iter()
+        .any(|&(env_start, close)| {
+            env_start < expr_start
+                && end <= close
+                && decoded_quoted_scalar(text, env_start, close)
+                    .is_some_and(|d| env_placeholder(&d, 0) || auth_scheme_placeholder(&d))
+        })
+}
+
+fn auth_scheme_placeholder(text: &str) -> bool {
+    let text = text.trim();
+    if text.contains(['\n', '\r']) {
+        return false;
+    }
+    let Some((scheme, rest)) = text.split_once(|c: char| matches!(c, ' ' | '\t')) else {
+        return false;
+    };
+    matches!(scheme.to_ascii_lowercase().as_str(), "bearer" | "basic")
+        && non_empty_placeholder(rest)
+}
+
+fn strip_auth_scheme(rest: &str) -> Option<&str> {
+    let (scheme, tail) = rest.split_once(|c: char| matches!(c, ' ' | '\t'))?;
+    if matches!(scheme.to_ascii_lowercase().as_str(), "bearer" | "basic") {
+        Some(tail.trim_start_matches([' ', '\t']))
+    } else {
+        None
+    }
+}
+
+fn is_authorization_name(lower: &str) -> bool {
+    lower == "authorization"
+        || lower.ends_with("_authorization")
+        || lower.ends_with("-authorization")
+}
+
+fn is_authorization_assignment(matched: &str) -> bool {
+    let stripped = matched
+        .trim_end_matches(|c: char| c.is_whitespace() || matches!(c, ':' | '=' | '"' | '\'' | '`'))
+        .trim_start_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_');
+    is_authorization_name(&stripped.to_ascii_lowercase())
+}
+
+fn is_authorization_key(key: &str) -> bool {
+    is_authorization_name(&normalized(key).to_lowercase())
+}
+
 fn env_name(value: &str) -> bool {
     !value.is_empty()
         && value
@@ -436,7 +609,36 @@ fn public_literal_end(tail: &str) -> bool {
             .strip_prefix('.')
             .is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
 }
-fn has_value(rest: &str) -> bool {
+fn unquoted_placeholder_end(tail: &str) -> bool {
+    public_literal_end(tail) || tail.starts_with(|c: char| matches!(c, '"' | '\'' | '`'))
+}
+fn unquoted_placeholder(rest: &str, require_non_empty: bool) -> bool {
+    if rest.starts_with("${") {
+        let Some(expr) = extract_braced_env(rest) else {
+            return false;
+        };
+        return env_placeholder(expr, 0) && unquoted_placeholder_end(&rest[expr.len()..]);
+    }
+    if let Some(after_dollar) = rest.strip_prefix('$') {
+        let name_len = after_dollar
+            .bytes()
+            .take_while(|b| b.is_ascii_alphanumeric() || *b == b'_')
+            .count();
+        return name_len > 0
+            && env_name(&after_dollar[..name_len])
+            && unquoted_placeholder_end(&after_dollar[name_len..]);
+    }
+    for lit in LITERAL_PLACEHOLDERS {
+        if rest.len() >= lit.len()
+            && rest.is_char_boundary(lit.len())
+            && rest[..lit.len()].eq_ignore_ascii_case(lit)
+        {
+            return unquoted_placeholder_end(&rest[lit.len()..]);
+        }
+    }
+    !require_non_empty && rest.starts_with([',', ';'])
+}
+fn has_value_with_options(rest: &str, allow_auth_scheme: bool) -> bool {
     let rest = rest.trim_start();
     if rest.is_empty() {
         return false;
@@ -457,20 +659,24 @@ fn has_value(rest: &str) -> bool {
     {
         return false;
     }
-    let value = if let Some(quote) = rest
+    if let Some(quote) = rest
         .chars()
         .next()
         .filter(|c| matches!(c, '\'' | '"' | '`'))
     {
         let tail = &rest[quote.len_utf8()..];
-        tail.split(quote).next().unwrap_or(tail)
-    } else {
-        rest.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | '"' | '\'' | '`'))
-            .next()
-            .unwrap_or(rest)
-    };
+        let Some((value, after)) = tail.split_once(quote) else {
+            return true;
+        };
+        let is_placeholder =
+            placeholder(value) || (allow_auth_scheme && auth_scheme_placeholder(value));
+        return !(is_placeholder && public_literal_end(after));
+    }
+    if allow_auth_scheme && let Some(arg_rest) = strip_auth_scheme(rest) {
+        return !unquoted_placeholder(arg_rest, true);
+    }
     // Nonempty strings and numbers remain values, even when a string spells a literal.
-    !placeholder(value)
+    !unquoted_placeholder(rest, false)
 }
 
 // Raw JSON/YAML strings can contain public notes ending in a scalar. Only
@@ -581,21 +787,54 @@ fn value_envelopes(text: &str) -> Vec<(usize, usize)> {
 }
 
 fn assignment_has_value(text: &str, end: usize, strings: &OnceCell<Vec<(usize, usize)>>) -> bool {
-    let rest = &text[end..];
-    if !has_value(rest) {
+    range_has_value(text, end, text.len(), strings, false)
+}
+fn scalar_string_is_placeholder(
+    text: &str,
+    quote_start: usize,
+    close: usize,
+    bound: usize,
+    allow_auth_scheme: bool,
+) -> bool {
+    close < bound
+        && public_literal_end(&text[close + 1..bound])
+        && decoded_quoted_scalar(text, quote_start, close).is_some_and(|decoded| {
+            placeholder(&decoded) || (allow_auth_scheme && auth_scheme_placeholder(&decoded))
+        })
+}
+fn range_has_value(
+    text: &str,
+    start: usize,
+    bound: usize,
+    strings: &OnceCell<Vec<(usize, usize)>>,
+    allow_auth_scheme: bool,
+) -> bool {
+    let rest = &text[start..bound];
+    if !has_value_with_options(rest, allow_auth_scheme) {
         return false;
     }
-    let candidate = rest.trim_start().trim_start_matches('`');
-    if !PUBLIC_LITERALS
-        .iter()
-        .any(|literal| candidate.starts_with(literal))
-    {
+    let trimmed = rest.trim_start();
+    let trimmed_start = start + (rest.len() - trimmed.len());
+    let candidate = trimmed.trim_start_matches('`');
+    let may_close_at_envelope = trimmed.starts_with(['"', '\'', '`', '$', '[', '<', '*'])
+        || (allow_auth_scheme && strip_auth_scheme(trimmed).is_some())
+        || PUBLIC_LITERALS
+            .iter()
+            .any(|literal| candidate.starts_with(literal));
+    if !may_close_at_envelope {
         return true;
     }
-    strings
-        .get_or_init(|| value_envelopes(text))
-        .iter()
-        .all(|(start, close)| !(*start < end && end <= *close) || has_value(&text[end..*close]))
+    let envelopes = strings.get_or_init(|| value_envelopes(text));
+    if envelopes.iter().any(|&(env_start, close)| {
+        env_start == trimmed_start
+            && scalar_string_is_placeholder(text, env_start, close, bound, allow_auth_scheme)
+    }) {
+        return false;
+    }
+    envelopes.iter().all(|(env_start, close)| {
+        !(*env_start < start && start <= *close && *close < bound)
+            || has_value_with_options(&text[start..*close], allow_auth_scheme)
+    })
 }
 
 pub fn sensitive_text_category(text: &str) -> Option<SensitiveCategory> {
@@ -655,7 +894,14 @@ fn sensitive_matches(text: &str, limit: usize) -> Vec<(SensitiveCategory, usize)
     let declarations: Vec<_> = TYPE_DECLARATION.find_iter(text).collect();
     let strings = OnceCell::new();
     for m in ASSIGNMENT.find_iter(text).filter(|m| {
-        assignment_has_value(text, m.end(), &strings)
+        !in_valid_env_placeholder(text, m.start(), m.end(), &strings)
+            && range_has_value(
+                text,
+                m.end(),
+                text.len(),
+                &strings,
+                is_authorization_assignment(m.as_str()),
+            )
             && !definition_after_assignment(&text[m.end()..])
             && !narrative_authorization(text, m.as_str(), m.start(), m.end())
             && !declarations
@@ -987,7 +1233,10 @@ fn yaml_definition(text: &str) -> bool {
         .is_some_and(|v| public_definition(&v))
 }
 fn sensitive_field(key: &str, value: &Value) -> bool {
+    let authorization_placeholder =
+        is_authorization_key(key) && value.as_str().is_some_and(auth_scheme_placeholder);
     (secret_key(key) || (env_key(key) && (value.is_object() || value.is_array())))
+        && !authorization_placeholder
         && has_json_value(value)
         && !public_definition(value)
 }
@@ -2246,6 +2495,214 @@ mod tests {
         assert_eq!(value["proposal_id"], "fixture-id");
         assert!(!value.to_string().contains("fixture-value-only"));
     }
+
+    #[test]
+    fn env_parameter_expansions_with_empty_or_placeholder_defaults_are_public() {
+        let readme_yaml = "Edit `config/domains.yaml`:\n\n```yaml\ncubejs:\n  url: \"http://172.16.70.88:4000\"\n  token: \"${CUBEJS_API_TOKEN:-}\"  # optional\n\nserver:\n  host: \"0.0.0.0\"\n  port: 8080\n```\n";
+        ensure_public_text(readme_yaml).unwrap_or_else(|e| panic!("{readme_yaml}: {e}"));
+        ensure_public_source(readme_yaml.as_bytes(), "README.md").unwrap();
+        assert!(
+            crate::ContentAssessment::scan(readme_yaml.as_bytes(), "README.md")
+                .unwrap()
+                .findings
+                .is_empty()
+        );
+
+        for expr in [
+            "${CUBEJS_API_TOKEN:-}",
+            "${CUBEJS_API_TOKEN-}",
+            "${CUBEJS_API_TOKEN:=}",
+            "${CUBEJS_API_TOKEN=}",
+            "${CUBEJS_API_TOKEN:+}",
+            "${CUBEJS_API_TOKEN+}",
+            "${CUBEJS_API_TOKEN:?}",
+            "${CUBEJS_API_TOKEN?}",
+            "${CUBEJS_API_TOKEN:-\"\"}",
+            "${CUBEJS_API_TOKEN:-''}",
+            "${CUBEJS_API_TOKEN:-[redacted]}",
+            "${CUBEJS_API_TOKEN:-<redacted>}",
+            "${CUBEJS_API_TOKEN:-[withheld]}",
+            "${CUBEJS_API_TOKEN:-***}",
+            "${CUBEJS_API_TOKEN:-${FALLBACK_TOKEN}}",
+            "${CUBEJS_API_TOKEN:-${FALLBACK_TOKEN:-}}",
+            "${CUBEJS_API_TOKEN:-${FALLBACK_TOKEN:-[redacted]}}",
+            "${CUBEJS_API_TOKEN:-$FALLBACK_TOKEN}",
+            "${env:AWR_ENGINEERING_TOKEN}",
+        ] {
+            let yaml_text = if expr.contains('"') {
+                format!("token: '{expr}'\n")
+            } else {
+                format!("token: \"{expr}\"\n")
+            };
+            ensure_public_text(&yaml_text).unwrap_or_else(|e| panic!("{yaml_text}: {e}"));
+            ensure_public_source(yaml_text.as_bytes(), "config.yaml").unwrap();
+            let value = json!({"token": expr});
+            ensure_public_value(&value).unwrap_or_else(|e| panic!("{value}: {e}"));
+            ensure_public_bytes(&serde_json::to_vec(&value).unwrap())
+                .unwrap_or_else(|e| panic!("{value}: {e}"));
+            assert_eq!(redact_sensitive_value(value.clone()), value);
+            let env_line = format!("API_KEY={expr}");
+            ensure_public_text(&env_line).unwrap_or_else(|e| panic!("{env_line}: {e}"));
+        }
+
+        for text in [
+            "export TOKEN=${TOKEN:-}",
+            "environment:\n  CUBEJS_API_TOKEN: \"${CUBEJS_API_TOKEN:-}\"",
+            "# Private prompt\n${PRIVATE_PROMPT:-}\n",
+            "{token: ${CUBEJS_API_TOKEN:-}}",
+            "{token: $API_TOKEN}",
+            "{token: [redacted]}",
+            "Set token=${CUBEJS_API_TOKEN:-}.",
+            "Set token=$API_TOKEN.",
+            "Set token=[redacted].",
+            r#"{"body":"Set token=${CUBEJS_API_TOKEN:-}."}"#,
+            r#"{"body":"Set token=$API_TOKEN."}"#,
+            r#"{"body":"Set token=[redacted]."}"#,
+            "echo \"${CUBEJS_API_TOKEN:-}\"",
+            "{\"body\": \"environment:\\n  PATH: '[redacted]'\"}",
+            "body: \"environment:\n  PATH: '[redacted]'\"",
+            "Use `token: \"${CUBEJS_API_TOKEN:-}\"` in config.",
+            "name = \"API_KEY=${CUBEJS_API_TOKEN:-}\"",
+            "```json\n{\"note\": \"API_KEY=${CUBEJS_API_TOKEN:-}\"}\n```\n",
+        ] {
+            ensure_public_text(text).unwrap_or_else(|e| panic!("{text}: {e}"));
+            ensure_public_bytes(text.as_bytes()).unwrap_or_else(|e| panic!("{text}: {e}"));
+        }
+    }
+
+    #[test]
+    fn authorization_scheme_placeholders_are_public_only_for_authorization() {
+        for text in [
+            "Authorization: Bearer ${env:AWR_ENGINEERING_TOKEN}",
+            "Authorization: \"Bearer ${CUBEJS_API_TOKEN:-}\"",
+            "Authorization: Bearer ${TOKEN}",
+            "Authorization: Bearer $TOKEN",
+            "Authorization: Bearer [redacted]",
+            "Use Authorization: Bearer [redacted].",
+            "Authorization: Basic ${BASIC_AUTH}",
+            "proxy_authorization: \"Bearer ${TOKEN:-}\"",
+            "Use `Authorization: Bearer [redacted]` in header.",
+            r#"{"body":"Authorization: Bearer ${env:AWR_ENGINEERING_TOKEN}."}"#,
+            r#"{"body":"Authorization: Bearer [redacted]."}"#,
+            "curl -H \"Authorization: Bearer ${CUBEJS_API_TOKEN:-}\" https://example.com",
+        ] {
+            ensure_public_text(text).unwrap_or_else(|e| panic!("{text}: {e}"));
+            ensure_public_source(text.as_bytes(), "README.md").unwrap();
+            assert!(
+                crate::ContentAssessment::scan(text.as_bytes(), "README.md")
+                    .unwrap()
+                    .findings
+                    .is_empty(),
+                "{text}"
+            );
+        }
+        let header_json = json!({
+            "headers": {
+                "Authorization": "Bearer ${env:AWR_ENGINEERING_TOKEN}",
+                "proxy-authorization": "Basic ${BASIC_AUTH:-}"
+            },
+            "escaped": {
+                "Authorization": "Bearer ${CUBEJS_API_TOKEN:-\"\"}"
+            }
+        });
+        ensure_public_value(&header_json).unwrap();
+        ensure_public_bytes(&serde_json::to_vec(&header_json).unwrap()).unwrap();
+        assert_eq!(redact_sensitive_value(header_json.clone()), header_json);
+
+        for text in [
+            "Authorization: Bearer ",
+            "Authorization: Bearer \"\"",
+            "Authorization: Bearer word",
+            "Authorization: Bearer authentication",
+            "Authorization: Bearer ${TOKEN:-synthetic-private-value}",
+            "Authorization: \"Bearer ${TOKEN:-} synthetic-private-value\"",
+            "Authorization: Bearer ${TOKEN:-}synthetic-private-value",
+            "body: \"Authorization: Bearer ${TOKEN}.\"synthetic-private-value",
+            "password: \"Bearer ${TOKEN}\"",
+            "token: Bearer ${TOKEN}",
+            "# Private prompt\nBearer ${TOKEN}\n",
+        ] {
+            let error = ensure_public_text(text).unwrap_err().report();
+            assert!(
+                !serde_json::to_string(&error)
+                    .unwrap()
+                    .contains("synthetic-private-value")
+            );
+        }
+        for value in [
+            json!({"password": "Bearer ${TOKEN}"}),
+            json!({"Authorization": "Bearer ${TOKEN:-synthetic-private-value}"}),
+            json!({"Authorization": "Bearer "}),
+        ] {
+            assert!(ensure_public_value(&value).is_err(), "{value}");
+            assert!(
+                !redact_sensitive_value(value)
+                    .to_string()
+                    .contains("synthetic-private-value")
+            );
+        }
+    }
+
+    #[test]
+    fn env_expansion_defaults_and_glued_placeholder_suffixes_stay_rejected() {
+        for text in [
+            "token: \"${CUBEJS_API_TOKEN:-synthetic-private-value}\"",
+            "token: \"${CUBEJS_API_TOKEN-synthetic-private-value}\"",
+            "token: \"${CUBEJS_API_TOKEN:=synthetic-private-value}\"",
+            "token: \"${CUBEJS_API_TOKEN:+synthetic-private-value}\"",
+            "token: \"${CUBEJS_API_TOKEN:?must be set}\"",
+            "token: \"${CUBEJS_API_TOKEN?synthetic-private-value}\"",
+            "token: \"${CUBEJS_API_TOKEN:-0}\"",
+            "token: \"${CUBEJS_API_TOKEN:-false}\"",
+            "token: \"${CUBEJS_API_TOKEN:-null}\"",
+            "token: \"${CUBEJS_API_TOKEN:-\\\"synthetic-private-value\\\"}\"",
+            "token: '${CUBEJS_API_TOKEN:-\"synthetic-private-value\"}'",
+            "token: \"${CUBEJS_API_TOKEN:-${OTHER:-synthetic-private-value}}\"",
+            "token: \"${A:-${B:-${C}}}\"",
+            "token: \"${A:-${B:-${C:-}}}\"",
+            "token: \"${A:-${B:-${C:-[redacted]}}}\"",
+            "token: \"${CUBEJS_API_TOKEN:-   }\"",
+            "token: \"${1INVALID:-}\"",
+            "token: \"${:-}\"",
+            "token: \"${env:}\"",
+            "token: \"${env:1BAD}\"",
+            "token: \"${CUBEJS_API_TOKEN:-}extra\"",
+            "token: $API_TOKEN.synthetic-private-value",
+            "token: [redacted].synthetic-private-value",
+            "echo \"${DB_PASSWORD:-synthetic-private-value}\"",
+            "# Private prompt\n${A:-}\nsynthetic-private-value\n",
+            "# Private prompt\n${A:-} synthetic-private-value }\n",
+            "export PASSWORD=\"${VAR:-}\"synthetic-private-value",
+            "export PASSWORD=\"\"synthetic-private-value",
+            "export PASSWORD=\"[redacted]\"synthetic-private-value",
+            "export PASSWORD=\"${VAR:-}\"'synthetic-private-value'",
+            "export PASSWORD=\"${VAR:-}\"`printf synthetic-private-value`",
+            "password: \"[redacted]",
+            "token: ${CUBEJS_API_TOKEN:-}synthetic-private-value",
+            "body: \"environment:\n  PATH: '[redacted]'synthetic-private-value\"",
+        ] {
+            let err = ensure_public_text(text).unwrap_err();
+            let report = err.report();
+            assert!(
+                !serde_json::to_string(&report)
+                    .unwrap()
+                    .contains("synthetic-private-value")
+            );
+            let src_err = ensure_public_source(text.as_bytes(), "README.md").unwrap_err();
+            assert!(
+                !serde_json::to_string(&src_err.report())
+                    .unwrap()
+                    .contains("synthetic-private-value")
+            );
+        }
+        for value in [
+            json!({"token": "${CUBEJS_API_TOKEN:-synthetic-private-value}"}),
+            json!({"token": "${CUBEJS_API_TOKEN:?msg}"}),
+        ] {
+            assert!(ensure_public_value(&value).is_err(), "{value}");
+            assert!(ensure_public_bytes(&serde_json::to_vec(&value).unwrap()).is_err());
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2428,9 +2885,7 @@ mod tiered_mode_tests {
 
     #[test]
     fn placeholders_and_examples_stay_admitted_in_both_modes() {
-        let placeholder_source =
-            b"work_items:\n- id: W\n  status: ready\n  api_key: ${API_KEY}\n  note: [redacted]\n"
-                .to_vec();
+        let placeholder_source = b"work_items:\n- id: W\n  status: ready\n  api_key: ${API_KEY}\n  token: \"${CUBEJS_API_TOKEN:-}\"\n  authorization: \"Bearer ${env:AWR_ENGINEERING_TOKEN}\"\n  note: [redacted]\n".to_vec();
         for mode in [SecretsMode::Strict, SecretsMode::Warn] {
             set_secrets_mode(mode, None);
             assert!(
