@@ -112,6 +112,14 @@ describe('search source adaptation', () => {
     expect(sources.find((source) => source.kind === 'task')?.coverage).toBe('unread');
   });
 
+  it('treats a reply without composition input as unread instead of throwing', () => {
+    const legacyReply = { ok: true, project: 'demo' } as TeamOverviewModelResponse;
+    const sources = searchSourcesFromReads({ projects, projectKey: 'demo', overview: legacyReply });
+    expect(sources.find((source) => source.kind === 'task')?.coverage).toBe('unread');
+    expect(sources.find((source) => source.kind === 'person')?.coverage).toBe('unread');
+    expect(() => buildSearchIndex(sources)).not.toThrow();
+  });
+
   it('accepts future goal, document and lesson sources without changing the adapter shape', () => {
     const supplemental = (kind: 'goal' | 'document' | 'lesson'): SearchSource => ({
       kind,

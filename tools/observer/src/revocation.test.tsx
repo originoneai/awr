@@ -1,5 +1,6 @@
 import { act, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { demoOverviewModelResponse } from './test-fixtures/overview-model';
 import {
   DEMO_ACTIVITY,
   DEMO_PROJECT_OVERVIEW,
@@ -9,27 +10,6 @@ import {
   demoWorkSnapshot,
   renderApp,
 } from './test-utils';
-
-function overviewModel(project: string) {
-  const complete = { coverage: 'complete', items: [] } as const;
-  return {
-    ok: true,
-    project,
-    read_at_unix_ms: 1761840000000,
-    input: {
-      tasks: complete, dependencies: complete, decisions: complete, reviewRounds: complete,
-      handoffs: complete, approvals: complete, members: complete, activity: complete,
-      options: { nowUnixMs: 1761840000000, stalledAfterDays: 7 },
-    },
-    coverage: Object.fromEntries(['tasks', 'dependencies', 'decisions', 'reviewRounds', 'handoffs', 'approvals', 'members', 'activity']
-      .map((part) => [part, { status: 'complete', missing: [] }])),
-    freshness: {
-      report_received: { status: 'not_measured' },
-      authoritative: { status: 'measured', at_unix_ms: 1761840000000 },
-      page_read: { status: 'measured', at_unix_ms: 1761840000000 },
-    },
-  };
-}
 
 function revocationFetch(calls: { count: number }, revoked: { value: boolean }) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -41,7 +21,7 @@ function revocationFetch(calls: { count: number }, revoked: { value: boolean }) 
     } else if (url.includes('/api/team/projects')) {
       payload = DEMO_PROJECTS;
     } else if (url.includes('/api/team/overview-model')) {
-      payload = overviewModel(new URL(url, 'http://synthetic.invalid').searchParams.get('project') ?? 'demo');
+      payload = demoOverviewModelResponse(undefined, { project: new URL(url, 'http://synthetic.invalid').searchParams.get('project') ?? 'demo' });
     } else if (url.includes('/api/team/overview')) {
       payload = DEMO_PROJECT_OVERVIEW;
     } else if (url.includes('/api/team/activity')) {
@@ -74,7 +54,7 @@ afterEach(() => {
 
 describe.each([
   { path: '/projects', restrictedText: /Team mainline/, pageTestId: 'page-projects' },
-  { path: '/workbench?scope=demo', restrictedText: /Build the filter API/, pageTestId: 'page-workbench' },
+  { path: '/workbench?scope=demo', restrictedText: /Synthetic mine-running/, pageTestId: 'workbench-frame' },
   { path: '/projects/demo?tab=overview', restrictedText: /Build the filter API/, pageTestId: 'page-project' },
   { path: '/projects/demo?tab=plan&work=W1&review_round_id=round-1', restrictedText: /Build the filter API/, pageTestId: 'page-project' },
 ])('rendered revocation on $path', ({ path, restrictedText, pageTestId }) => {

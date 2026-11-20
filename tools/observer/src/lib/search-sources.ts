@@ -122,9 +122,9 @@ export function searchSourcesFromReads({
     ? projectName(selectedProject, selectedPosition >= 0 ? selectedPosition + 1 : 1)
     : i18n.t('shell.currentProject');
   const implicitProjectName = allAuthorizedScope && visibleProjects.length > 1 ? selectedName : undefined;
-  const model = overview && selectedKey && overview.project === selectedKey && overview.input ? overview : undefined;
-  const taskSlice = model?.input.tasks;
-  const memberSlice = model?.input.members;
+  const model = overview && selectedKey && overview.project === selectedKey ? overview : undefined;
+  const taskSlice = model?.input?.tasks;
+  const memberSlice = model?.input?.members;
   const tasks = taskSlice?.coverage === 'unread' ? [] : (taskSlice?.items ?? []);
   const members = memberSlice?.coverage === 'unread' ? [] : (memberSlice?.items ?? []);
   const language = i18n.language;
