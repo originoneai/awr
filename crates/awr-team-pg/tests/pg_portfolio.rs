@@ -1591,28 +1591,50 @@ async fn the_selected_completion_decides_not_the_newest_event() {
         .await
         .unwrap();
     seed_runtime(&admin, &one, "a", "completed", Some("newer-plain")).await;
-    // Project two: a newer selected verified event over an older plain one.
+    // Project two: the selected receipt is the older verified one, and a
+    // newer unselected plain event also exists — newest-event-wins would
+    // misread this work as unverified.
+    seed_completion(
+        &admin,
+        &two,
+        "a",
+        json!({"receipt_id":"older-verified","independence_kind":"team_independent"}),
+        10,
+    )
+    .await;
     admin
         .batch_execute(&format!(
             "INSERT INTO awr_team.completion_receipts(tenant_id,project_id,id,work_id,scope_id,
                 contract_hash,result_digest,dependency_binding_hash,evidence_bundle_hash,
                 policy,approved_by_json,independence_kind,author_actor_id,final_submitter_actor_id)
-             VALUES('{TENANT}','{two}','older-plain','a','main','contract','result','deps','evidence',
+             VALUES('{TENANT}','{two}','newer-plain','a','main','contract','result','deps','evidence',
                 'review','{{}}','ordinary_confirm','agent','agent');
              INSERT INTO awr_team.events(tenant_id,project_id,id,project_revision,event_index,event_type,actor_id,work_id,payload_json)
-             VALUES('{TENANT}','{two}','event-older-plain',10,0,'work.completed','agent','a',
-                '{{\"receipt_id\":\"older-plain\",\"independence_kind\":\"ordinary_confirm\"}}'::jsonb);"
+             VALUES('{TENANT}','{two}','event-newer-plain',11,0,'work.completed','agent','a',
+                '{{\"receipt_id\":\"newer-plain\",\"independence_kind\":\"ordinary_confirm\"}}'::jsonb);"
         ))
         .await
         .unwrap();
-    seed_completion(
-        &admin,
-        &two,
-        "a",
-        json!({"receipt_id":"newer-verified","independence_kind":"team_independent"}),
-        11,
-    )
-    .await;
+    // Project three: the selected receipt has no matching event at all; an
+    // older verified event exists but belongs to another receipt. With no
+    // basis for the selected completion the work stays unverified, and
+    // any-event-wins would misread it.
+    let three = clone_project(&admin, 3).await;
+    admin
+        .batch_execute(&format!(
+            "INSERT INTO awr_team.completion_receipts(tenant_id,project_id,id,work_id,scope_id,
+                contract_hash,result_digest,dependency_binding_hash,evidence_bundle_hash,
+                policy,approved_by_json,independence_kind,author_actor_id,final_submitter_actor_id)
+             VALUES('{TENANT}','{three}','orphan-receipt','a','main','contract','result','deps','evidence',
+                'review','{{}}',NULL,'agent','agent');
+             INSERT INTO awr_team.events(tenant_id,project_id,id,project_revision,event_index,event_type,actor_id,work_id,payload_json)
+             VALUES('{TENANT}','{three}','event-other-receipt',10,0,'work.completed','agent','a',
+                '{{\"receipt_id\":\"other-receipt\",\"independence_kind\":\"team_independent\"}}'::jsonb);
+             INSERT INTO awr_team.work_runtime(tenant_id,project_id,scope_id,work_id,state,work_version,last_fence,selected_completion_id)
+             VALUES('{TENANT}','{three}','main','a','completed',1,0,'orphan-receipt');"
+        ))
+        .await
+        .unwrap();
     let projects = all_projects(&admin).await;
     let result = store
         .portfolio_overview(TENANT, A, &registered(&projects), portfolio(None, None))
@@ -1638,6 +1660,13 @@ async fn the_selected_completion_decides_not_the_newest_event() {
         two_item["works"]["completed_without_independent_review"],
         json!(0)
     );
+    let three_item = by_project_id(&result, &three);
+    assert_eq!(
+        three_item["works"]["completed_without_independent_review"],
+        json!(1),
+        "a selected receipt with no event is recorded, never verified"
+    );
+    assert_eq!(three_item["works"]["verified"], json!(0));
 }
 
 /// An Agent's outstanding cursor expires when its delegation scope changes,
@@ -1727,13 +1756,20 @@ async fn an_agent_cursor_expires_when_its_delegation_scope_changes() {
         )
         .await
         .unwrap();
-    // Revoke the only read delegation: the admitted scope changed, so the
-    // outstanding cursor must expire even though no grant version moved.
+    // Reshape the only read delegation from stream scope to task scope and
+    // back off the stream: the admitted streams, tasks and (through the
+    // early denial) grant facts all move, and the outstanding cursor must
+    // expire on that alone — no grant version moved.
     admin
         .execute(
-            "UPDATE awr_team.agent_authorizations SET body_json=jsonb_set(body_json,'{status}','\"revoked\"')
+            "UPDATE awr_team.agent_authorizations SET body_json=jsonb_set(jsonb_set(body_json,'{scope}',
+                $3::jsonb),'{status}','\"revoked\"')
              WHERE tenant_id=$1 AND project_id=$2",
-            &[&TENANT, &one],
+            &[
+                &TENANT,
+                &one,
+                &json!({"kind":"task","project_id":one.clone(),"work_item_id":"a"}),
+            ],
         )
         .await
         .unwrap();
@@ -1860,10 +1896,41 @@ async fn batched_admission_matches_the_entry_probe_across_states() {
     for (index, (name, sql)) in human_states.iter().enumerate() {
         let project = clone_project(&admin, index + 1).await;
         admin
-            .batch_execute(&sql.replace("{project}", &project))
+            .batch_execute(
+                &sql.replace("{TENANT}", TENANT)
+                    .replace("{project}", &project),
+            )
             .await
             .unwrap();
         scenarios.push(((*name).to_owned(), project));
+    }
+    // Compare the human states while the actor is still human: the batched
+    // admission and the entry probe must agree on every project.
+    {
+        let all = all_projects(&admin).await;
+        let result = store
+            .portfolio_overview(TENANT, A, &registered(&all), portfolio(None, None))
+            .await
+            .unwrap();
+        let mut mismatches = Vec::new();
+        for (name, project) in &scenarios {
+            let entry_ok = store
+                .authorize_project_entry(TENANT, project, A)
+                .await
+                .is_ok();
+            let item = by_project_id(&result, project);
+            let complete = item["read"]["status"] == "complete";
+            if entry_ok != complete {
+                mismatches.push(format!(
+                    "{name}: entry passes={entry_ok}, portfolio={}",
+                    item["read"]
+                ));
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "human states diverged: {mismatches:#?}"
+        );
     }
     // Agent states: one cloned project per delegation shape.
     admin
@@ -1872,6 +1939,7 @@ async fn batched_admission_matches_the_entry_probe_across_states() {
         ))
         .await
         .unwrap();
+    let mut agent_scenarios: Vec<(String, String)> = Vec::new();
     let agent_states = [
         "agent_project_scope",
         "agent_workstream_1",
@@ -2104,7 +2172,7 @@ async fn batched_admission_matches_the_entry_probe_across_states() {
             }
             other => panic!("unknown scenario {other}"),
         }
-        scenarios.push(((*name).to_owned(), project));
+        agent_scenarios.push(((*name).to_owned(), project));
     }
     let all = all_projects(&admin).await;
     let result = store
@@ -2112,7 +2180,7 @@ async fn batched_admission_matches_the_entry_probe_across_states() {
         .await
         .unwrap();
     let mut mismatches = Vec::new();
-    for (name, project) in &scenarios {
+    for (name, project) in &agent_scenarios {
         let entry_ok = store
             .authorize_project_entry(TENANT, project, A)
             .await
@@ -2131,6 +2199,9 @@ async fn batched_admission_matches_the_entry_probe_across_states() {
         "admission diverged from the entry probe: {mismatches:#?}"
     );
     // Spot checks on the states the entry and the portfolio must both refuse.
+    // The human states keep their human meaning only before the actor turned
+    // into an Agent, so re-probe them through the human-phase assertions
+    // above; these names come from both phases.
     for refused in [
         "agent_task_b_private_ungranted",
         "agent_expired_in_body",
@@ -2146,6 +2217,7 @@ async fn batched_admission_matches_the_entry_probe_across_states() {
     ] {
         let project = &scenarios
             .iter()
+            .chain(agent_scenarios.iter())
             .find(|(name, _)| name == refused)
             .unwrap()
             .1;
