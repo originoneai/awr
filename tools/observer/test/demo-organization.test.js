@@ -887,6 +887,169 @@ test('the canonical variant serves the fully-known overview model for each proje
     [view, summary.metrics.map((metric) => metric.count)])), PROTOTYPE_METRICS);
 });
 
+test('the canonical project directory serves the prototype four rows with lead, group and takeover facts', async () => {
+  const canonical = bridgeForTest({ demoVariant: 'canonical', demoTimestampShiftMs: 0,
+    now: () => fixture.now_unix_ms });
+  const reply = await canonical.call('GET /api/team/projects', '/api/team/projects');
+  assert.equal(reply.ok, true);
+  assert.equal(reply.view, 'team');
+  assert.deepEqual(reply.projects.map((project) => project.key), ['P-001', 'P-002', 'P-003', 'P-004']);
+  const byKey = new Map(reply.projects.map((project) => [project.key, project]));
+  // The three ordinary rows carry the recorded lead (resolvable through that project's
+  // own overview model member directory) and the group's display name, exactly the
+  // prototype's 周宁/吴桐/郑岚 and their groups.
+  const leads = { 'P-001': '周宁', 'P-002': '吴桐', 'P-003': '郑岚' };
+  const groups = { 'P-001': '应用小组', 'P-002': '平台小组', 'P-003': '交付小组' };
+  for (const key of ['P-001', 'P-002', 'P-003']) {
+    const entry = byKey.get(key);
+    assert.equal(entry.title, fixture.projects.find((project) => project.key === key).title, key);
+    assert.equal(entry.takeover, null, `${key} is a recorded non-takeover project`);
+    assert.ok(fixture.projects.find((project) => project.key === key).member_person_ids
+      .includes(entry.leadPersonId), `${key}'s lead belongs to the project`);
+    assert.equal(entry.groupName, groups[key], `${key}'s group display name`);
+    const model = await canonical.call('GET /api/team/overview-model', `/api/team/overview-model?project=${key}`);
+    const member = model.input.members.items.find((item) => item.personId === entry.leadPersonId);
+    assert.equal(member.displayName, leads[key], `${key}'s lead display name`);
+  }
+  // The fourth row is the prototype's taken-over sample-cli with its deterministic
+  // takeover facts; its recorded moment is the demo clock half a minute back, which is
+  // what makes the page's update column read 刚刚.
+  const takeover = byKey.get('P-004');
+  assert.equal(takeover.title, 'sample-cli');
+  assert.deepEqual(takeover.takeover, {
+    resultId: 'TK-001',
+    recordedAtUnixMs: fixture.now_unix_ms - 30_000,
+    verifiedTasks: 0,
+    workstreams: 4,
+    questions: 4,
+  });
+  // ProjectsPage does not query the takeover model. The existing shell's inbox indicators
+  // do query every directory key, so canonical gives that independent caller a scoped empty
+  // known model rather than an authorization failure; keys outside the directory stay denied.
+  const takeoverModel = await canonical.call('GET /api/team/overview-model',
+    '/api/team/overview-model?project=P-004');
+  assert.equal(takeoverModel.ok, true);
+  assert.deepEqual(takeoverModel.input.tasks, { coverage: 'complete', items: [] });
+  assert.deepEqual(takeoverModel.periodUpdates, { coverage: 'complete', items: [] });
+  const unknownModel = await canonical.call('GET /api/team/overview-model',
+    '/api/team/overview-model?project=P-999');
+  assert.equal(unknownModel.ok, false);
+  assert.equal(unknownModel.error.code, 'Forbidden');
+  assert.equal(unknownModel.input, undefined, 'a denied composition exposes no facts');
+  // The full variant keeps its plain three-entry directory byte for byte.
+  const full = bridgeForTest({ demoTimestampShiftMs: 0, now: () => fixture.now_unix_ms });
+  const fullReply = await full.call('GET /api/team/projects', '/api/team/projects');
+  assert.deepEqual(fullReply.projects, fixture.projects.map((project) => ({
+    key: project.key, title: project.title, role: fixture.viewer.role,
+  })));
+});
+
+test('the canonical period updates keep the prototype weeks and ages on the demo clock', async () => {
+  const bridge = bridgeForTest({ demoVariant: 'canonical', demoTimestampShiftMs: 0,
+    now: () => fixture.now_unix_ms });
+  const updatesByProject = {};
+  const selectedUpdateIds = { 'P-001': ['U-001'], 'P-002': ['U-004'], 'P-003': ['U-007'] };
+  for (const key of ['P-001', 'P-002', 'P-003']) {
+    const model = await bridge.call('GET /api/team/overview-model', `/api/team/overview-model?project=${key}`);
+    assert.equal(model.periodUpdates.coverage, 'complete', `${key} period-update coverage`);
+    assert.deepEqual(model.periodUpdates.items.map((item) => item.id), selectedUpdateIds[key],
+      `${key} serves exactly its selected current or earlier update`);
+    for (const item of model.periodUpdates.items) {
+      const source = fixture.updates.find((update) => update.update_id === item.id);
+      assert.deepEqual({ id: item.id, status: item.status, summary: item.summary,
+        recordedAtUnixMs: item.recordedAtUnixMs }, {
+        id: source.update_id, status: source.status, summary: source.summary,
+        recordedAtUnixMs: source.recorded_at_unix_ms,
+      }, `${item.id} keeps its recorded sentence, status and time`);
+      assert.match(item.startsOn, /^\d{4}-\d{2}-\d{2}$/, `${item.id} startsOn is an ISO date`);
+      assert.equal(item.endsOn > item.startsOn, true, `${item.id} spans a week`);
+    }
+    updatesByProject[key] = model.periodUpdates.items;
+  }
+  // Week 47 covers the fixture's "today"; the current updates are recorded the same
+  // day (P-001) and exactly three days back (P-002), matching the prototype's 今天 and
+  // 3 天前.
+  const monday = (unixMs) => {
+    const date = new Date(unixMs);
+    const day = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+    return day - (date.getUTCDay() + 6) % 7 * DAY;
+  };
+  const iso = (unixMs) => new Date(unixMs).toISOString().slice(0, 10);
+  const today = iso(fixture.now_unix_ms);
+  const currentMonday = monday(fixture.now_unix_ms);
+  const orders = updatesByProject['P-001'].find((item) => item.id === 'U-001');
+  assert.deepEqual([orders.startsOn, orders.endsOn],
+    [iso(currentMonday), iso(currentMonday + WEEK - DAY)]);
+  assert.equal(orders.startsOn <= today && today <= orders.endsOn, true, 'U-001 covers today');
+  assert.equal(orders.status, 'risk');
+  assert.equal(fixture.now_unix_ms - orders.recordedAtUnixMs < DAY, true, 'U-001 was recorded today');
+  const notify = updatesByProject['P-002'].find((item) => item.id === 'U-004');
+  assert.equal(notify.status, 'ok');
+  assert.equal(notify.startsOn <= today && today <= notify.endsOn, true, 'U-004 covers today');
+  assert.equal(fixture.now_unix_ms - notify.recordedAtUnixMs, 3 * DAY, 'U-004 was recorded three days back');
+  // P-003 has no current-period update: its newest record is a full two weeks old, its
+  // period ends before the current week, and the age is exactly the prototype's 12 days.
+  const stale = updatesByProject['P-003'];
+  assert.equal(stale.some((item) => item.startsOn <= today && today <= item.endsOn), false,
+    'no P-003 update covers today');
+  const latest = [...stale].sort((left, right) => right.endsOn.localeCompare(left.endsOn))[0];
+  assert.equal(latest.id, 'U-007');
+  assert.equal(latest.endsOn < today, true, 'U-007 ends before the current week');
+  assert.equal(fixture.now_unix_ms - latest.recordedAtUnixMs, 12 * DAY,
+    'U-007 was recorded exactly twelve days back');
+  // Whole-week offsets move the derived periods with the clock: five weeks on, the
+  // current update still covers the shifted "today" and the stale record keeps its
+  // two-week distance. Absolute dates are never hardcoded on the server.
+  const shift = 5 * WEEK;
+  const shifted = bridgeForTest({ demoVariant: 'canonical', demoTimestampShiftMs: shift,
+    now: () => fixture.now_unix_ms + shift });
+  const shiftedModel = await shifted.call('GET /api/team/overview-model', '/api/team/overview-model?project=P-001');
+  const shiftedCurrent = shiftedModel.periodUpdates.items.find((item) => item.id === 'U-001');
+  const shiftedMonday = monday(fixture.now_unix_ms + shift);
+  const shiftedToday = iso(fixture.now_unix_ms + shift);
+  assert.deepEqual([shiftedCurrent.startsOn, shiftedCurrent.endsOn],
+    [iso(shiftedMonday), iso(shiftedMonday + WEEK - DAY)]);
+  assert.equal(shiftedCurrent.startsOn <= shiftedToday && shiftedToday <= shiftedCurrent.endsOn, true,
+    'U-001 still covers the shifted today');
+  const shiftedStaleModel = await shifted.call('GET /api/team/overview-model',
+    '/api/team/overview-model?project=P-003');
+  assert.equal(shiftedStaleModel.periodUpdates.items[0].id, 'U-007');
+  assert.equal(shiftedStaleModel.periodUpdates.items[0].startsOn, iso(shiftedMonday - 2 * WEEK),
+    'the selected earlier period keeps its week distance');
+  // The full variant's reply carries no period-update slice at all; the snapshot test
+  // below pins that byte for byte, this keeps the intent readable.
+  const full = bridgeForTest({ demoTimestampShiftMs: 0, now: () => fixture.now_unix_ms });
+  const fullModel = await full.call('GET /api/team/overview-model', '/api/team/overview-model?project=P-001');
+  assert.equal('periodUpdates' in fullModel, false);
+});
+
+test('demo freshness reports the answer moment while the derivation clock stays on the fixture week', async () => {
+  // The #709 review decision: input.options.nowUnixMs keeps the whole-week fixture
+  // clock (so week windows and relative ages match the prototype), while the reply's
+  // read time and every freshness measurement report the moment this server answered.
+  // With zero offset the fixture clock is days away from the real present, so a
+  // fixture-clock freshness reading would fail these windows.
+  for (const variant of ['full', 'canonical']) {
+    const before = Date.now();
+    const bridge = bridgeForTest({ demoVariant: variant, demoTimestampShiftMs: 0 });
+    const model = await bridge.call('GET /api/team/overview-model', '/api/team/overview-model?project=P-001');
+    const after = Date.now();
+    assert.equal(model.ok, true, JSON.stringify(model));
+    assert.equal(model.input.options.nowUnixMs, fixture.now_unix_ms,
+      `${variant}: the derivation clock stays on the fixture time`);
+    assert.ok(model.read_at_unix_ms >= before - 1000 && model.read_at_unix_ms <= after + 1000,
+      `${variant}: read_at_unix_ms ${model.read_at_unix_ms} is outside the call window [${before}, ${after}]`);
+    assert.equal(model.freshness.page_read.status, 'measured', `${variant} page_read`);
+    assert.equal(model.freshness.page_read.at_unix_ms, model.read_at_unix_ms, `${variant} page_read time`);
+    assert.equal(model.freshness.authoritative.status, 'measured', `${variant} authoritative status`);
+    assert.equal(model.freshness.authoritative.at_unix_ms, model.read_at_unix_ms,
+      `${variant} authoritative measurement time`);
+    const age = model.freshness.authoritative.age_ms;
+    assert.ok(typeof age === 'number' && age >= 0 && age < 60_000,
+      `${variant}: authoritative age ${age} is not the answer moment's age`);
+  }
+});
+
 test('the full variant keeps the merged overview-model reply shape byte for byte', async () => {
   // Pins the #704 reply as merged: zero offset and a fixed clock make every field
   // deterministic, so any shape drift — a dropped field, a renamed gap reason, a new
