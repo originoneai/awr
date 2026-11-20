@@ -267,7 +267,14 @@ export function deriveViews(
   // decider is waited on for other people's tasks too, not only for tasks they own.
   const meProjectTaskIds = new Set(meProject.tasks.map((task) => task.id).filter((value): value is string => value != null));
   const meProjectIds = meScope?.projectId == null ? null : new Set([meScope.projectId]);
-  const meWaiting = filterWaitsToTasks(base.waits, meTaskIds);
+  const meWaiting = filterWaitsToTasks(base.waits, meTaskIds).filter((wait) => {
+    // The prototype's waiterOf assigns a self-addressed wait to the owner's Agent when one is
+    // named. Such a wait is pending for the owner, not something the owner is waiting on others for.
+    const ownerId = wait.task.owner?.id;
+    const selfAddressed = ownerId != null && wait.waitingOn.length === 1
+      && samePerson(wait.waitingOn[0].id, ownerId);
+    return !(selfAddressed && Boolean(wait.task.agentName));
+  });
   const me: OverviewViewSummary = { metrics: [
     wide(meVerified),
     wide(metric('agents-running', [...agentByName.values()], agentIssues)),

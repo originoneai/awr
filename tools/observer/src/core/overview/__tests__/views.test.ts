@@ -112,7 +112,9 @@ describe('four prototype views', () => {
     expectKnown(me[0].previousPeriod!, 1);
     expectKnown(me[1], 1);
     expect((me[1].items[0] as { tasks: DerivedTask[] }).tasks).toHaveLength(2);
-    expectKnown(me[2], 3);
+    expectKnown(me[2], 2);
+    expect(me[2].items.map((item) => (item as { task: { id: string } }).task.id).sort())
+      .toEqual(['cross-review', 'outside']);
     expectKnown(me[3], 1);
 
     const lead = result.views.lead.metrics;

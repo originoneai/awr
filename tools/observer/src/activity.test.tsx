@@ -1,518 +1,431 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { act, screen, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from './i18n';
-import { formatUnixMs } from './lib/format';
 import { defaultVisibleText, findForbiddenVisibleText } from './lib/human-language-guard';
 import { revokeObservationReads } from './lib/queries';
+import type { TeamActivityItem } from './lib/types';
 import { DEMO_PROJECTS, renderApp } from './test-utils';
 
-const SELF_ACTOR = 'observer-host-native-20261031T203834Z-6427d37b0df9-aadc36';
+const NOW = 1_800_000_000_000;
+const KNOWN_ACTOR = 'synthetic-actor-a';
+const KNOWN_PERSON = 'synthetic-person-a';
+const MISSING_ACTOR = 'synthetic-actor-not-in-directory';
+const WORK_A = 'synthetic-work-a';
+const WORK_B = 'synthetic-work-b';
 
-// Live replies: observer-activity-*.json and service-audit-*.json.
-// Project-scope fixtures are derived from service source shape and run-09 rows,
-// not a live reply. Their _note stays out of the rendered page and Git history.
-function fixture(name: string) {
+function liveFixture(name: string) {
   return JSON.parse(readFileSync(resolve(`src/test-fixtures/activity/${name}`), 'utf8'));
 }
 
-type ActivityPayload = {
-  data: {
-    items: Array<Record<string, unknown>>;
-    next_cursor?: unknown;
-    scope?: string;
-    [key: string]: unknown;
+function event(
+  id: string,
+  action: string,
+  workId: string | null = WORK_A,
+  actorId = KNOWN_ACTOR,
+  offset = 0,
+): TeamActivityItem {
+  return {
+    id,
+    action,
+    actor_id: actorId,
+    client_id: offset % 2 === 0 ? `synthetic-client-${offset}` : null,
+    created_at_unix_ms: NOW - offset * 60_000,
+    credential_id: null,
+    result: 'committed',
+    work_id: workId,
   };
-  ok?: boolean;
-};
+}
+
+const CATEGORY_EVENTS = [
+  event('delivery', 'delivery.submit_and_request_review', WORK_A, KNOWN_ACTOR, 0),
+  event('review', 'review.decide', WORK_B, MISSING_ACTOR, 1),
+  event('decision', 'decision.request', WORK_A, KNOWN_ACTOR, 2),
+  event('assignment', 'task.assign', WORK_B, KNOWN_ACTOR, 3),
+  event('report', 'execution.report', WORK_A, KNOWN_ACTOR, 4),
+  event('breakdown', 'planning.propose', null, KNOWN_ACTOR, 5),
+  event('update', 'update.record', null, KNOWN_ACTOR, 6),
+  event('other', 'access.changed', null, MISSING_ACTOR, 7),
+];
+
+function activityPayload(items: TeamActivityItem[] = CATEGORY_EVENTS, nextCursor: unknown = null) {
+  return {
+    ok: true,
+    data: {
+      items,
+      next_cursor: nextCursor,
+      development_source: 'committed_events_with_operation_attribution; historical client may be unavailable',
+      chat_text_collected: false,
+      tool_io_collected: false,
+      request_retention: 'oldest_pruned_soft_capacity',
+      request_retention_capacity: 10000,
+      scope: 'project',
+      unknown_means: 'completion_not_recorded; inspect business request before retrying',
+    },
+  };
+}
+
+function overviewModel(overrides: {
+  taskCoverage?: string;
+  memberCoverage?: string;
+  tasks?: Array<Record<string, unknown>>;
+  members?: Array<Record<string, unknown>>;
+} = {}) {
+  const taskCoverage = overrides.taskCoverage ?? 'complete';
+  const memberCoverage = overrides.memberCoverage ?? 'complete';
+  const slice = (coverage: string, items: Array<Record<string, unknown>>) => ({ coverage, items });
+  const part = (status: string) => ({ status, missing: status === 'complete' ? [] : [{ op: 'project context', reason: status }] });
+  return {
+    ok: true,
+    project: 'demo',
+    read_at_unix_ms: NOW,
+    input: {
+      tasks: slice(taskCoverage, overrides.tasks ?? [
+        { id: WORK_A, title: 'Synthetic task alpha' },
+        { id: WORK_B, title: 'Synthetic task beta' },
+      ]),
+      members: slice(memberCoverage, overrides.members ?? [
+        { personId: KNOWN_PERSON, displayName: 'Alex Example', groupId: 'synthetic-group' },
+      ]),
+      dependencies: slice('unread', []), decisions: slice('unread', []), reviewRounds: slice('unread', []),
+      handoffs: slice('unread', []), approvals: slice('unread', []), activity: slice('unread', []),
+      options: {
+        nowUnixMs: NOW,
+        stalledAfterDays: 7,
+        views: { me: { personId: KNOWN_PERSON, projectId: 'demo' } },
+      },
+    },
+    coverage: {
+      tasks: part(taskCoverage), members: part(memberCoverage), dependencies: part('unread'),
+      decisions: part('unread'), reviewRounds: part('unread'), handoffs: part('unread'),
+      approvals: part('unread'), activity: part('unread'),
+    },
+    freshness: {
+      report_received: { status: 'not_measured' },
+      authoritative: { status: 'not_measured' },
+      page_read: { status: 'measured', at_unix_ms: NOW },
+    },
+  };
+}
 
 type SetupOptions = {
-  projectAudit?: boolean;
-  development?: ActivityPayload;
-  requests?: ActivityPayload;
-  developmentPages?: ActivityPayload[];
-  requestsPages?: ActivityPayload[];
-  capabilitiesGate?: Promise<void>;
-  capabilitiesError?: { code: string; message: string; recover?: { value: boolean } };
+  development?: unknown;
+  requests?: unknown;
+  developmentPages?: unknown[];
+  activityGate?: Promise<void>;
+  activityFailure?: { current: boolean };
+  overview?: unknown;
+  overviewFailure?: { current: boolean };
+  secondPageFailure?: boolean;
 };
 
-function setupActivity({
-  projectAudit = false,
-  development = fixture('observer-activity-development.json'),
-  requests = fixture('observer-activity-requests.json'),
-  developmentPages,
-  requestsPages,
-  capabilitiesGate,
-  capabilitiesError,
-}: SetupOptions = {}) {
+function setupActivity(options: SetupOptions = {}) {
   const calls: Array<{ url: string; params: URLSearchParams }> = [];
-  const capabilityCalls: string[] = [];
-  const devPages = developmentPages ?? [development];
-  const requestPages = requestsPages ?? [requests];
+  const developmentPages = options.developmentPages ?? [options.development ?? activityPayload()];
+  const requestPages = [options.requests ?? activityPayload([event('request', 'audit.requests', null, KNOWN_ACTOR, 0)])];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    if (url.includes('/api/team/projects')) return json(DEMO_PROJECTS);
+    if (url.includes('/api/team/overview-model')) {
+      if (options.overviewFailure?.current) return json({ ok: false, error: { code: 'Unavailable', message: 'synthetic failure' } });
+      return json(options.overview ?? overviewModel());
+    }
     if (url.includes('/api/team/activity')) {
+      if (options.activityGate) await options.activityGate;
+      if (options.activityFailure?.current) return json({ ok: false, error: { code: 'Unavailable', message: 'synthetic failure' } });
       const parsed = new URL(url, 'http://localhost');
       const params = parsed.searchParams;
       calls.push({ url, params });
       const kind = params.get('kind');
-      const pages = kind === 'requests' ? requestPages : devPages;
+      const pages = kind === 'requests' ? requestPages : developmentPages;
       const cursor = params.get('cursor');
-      const index = cursor ? pages.findIndex((page) => page.data.next_cursor === cursor) + 1 : 0;
-      const page = pages[index] ?? { data: { items: [], next_cursor: null, scope: pages[0].data.scope } };
-      const items = page.data.items.filter((item) => (
+      if (cursor && options.secondPageFailure) return json({ ok: false, error: { code: 'Unavailable', message: 'synthetic page failure' } });
+      const index = cursor ? pages.findIndex((page) => (page as { data: { next_cursor?: unknown } }).data.next_cursor === cursor) + 1 : 0;
+      const page = pages[index] ?? activityPayload([]);
+      const typedPage = page as { data: { items: TeamActivityItem[]; [key: string]: unknown } };
+      const items = typedPage.data.items.filter((item) => (
         (!params.get('work_id') || item.work_id === params.get('work_id'))
         && (!params.get('member_actor_id') || item.actor_id === params.get('member_actor_id'))
       ));
-      return json({ ok: true, data: { ...page.data, items } });
+      return json({ ...typedPage, data: { ...typedPage.data, items } });
     }
-    if (url.includes('/api/team/projects')) return json(DEMO_PROJECTS);
     if (url.includes('/api/team/read')) {
       const query = JSON.parse(String(init?.body)).query;
       if (query.op === 'capabilities') {
-        capabilityCalls.push(url);
-        if (capabilitiesGate) await capabilitiesGate;
-        if (capabilitiesError && !capabilitiesError.recover?.value) {
-          const { code, message } = capabilitiesError;
-          return json({ ok: false, error: { code, message } });
-        }
         return json({
           ok: true,
           result: {
-            protocol: 'awr-team-workstream', protocol_version: 1,
-            identity: { actor_id: SELF_ACTOR, client_id: 'observer-client', role: 'reader', business_roles: ['observer'], can_read_project_audit: projectAudit },
+            identity: {
+              actor_id: KNOWN_ACTOR,
+              client_id: 'synthetic-current-client',
+              role: 'reader',
+              business_roles: ['observer'],
+              can_read_project_audit: true,
+            },
           },
         });
       }
     }
-    return json({ ok: false, error: { code: 'NoRoute', message: url } });
+    return json({ ok: false, error: { code: 'NoRoute', message: 'Unexpected synthetic route' } });
   });
   vi.stubGlobal('fetch', fetchMock);
-  return { calls, capabilityCalls };
+  return { calls, fetchMock };
 }
 
 function json(payload: unknown) {
   return new Response(JSON.stringify(payload), { status: 200, headers: { 'content-type': 'application/json' } });
 }
 
-function pagedDevelopment(items: Array<Record<string, unknown>>, nextCursor: unknown): ActivityPayload {
-  const base = fixture('derived-audit-development-project-scope-run09.json');
-  return { data: { ...base.data, items, next_cursor: nextCursor } };
+function tableRows() {
+  return [...document.querySelectorAll('.activity-table .ant-table-tbody > tr.ant-table-row')] as HTMLTableRowElement[];
+}
+
+function sectionCount() {
+  return document.querySelector('.activity-section .obs-section-count')?.textContent;
+}
+
+async function changeLanguage(language: string) {
+  await i18n.changeLanguage(language);
 }
 
 afterEach(async () => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
   await i18n.changeLanguage('zh-CN');
 });
 
-describe('object activity page (AWR-OBS-006 PR-A)', () => {
-  it('reads the selected project scope when entering from another project page', async () => {
-    const { calls } = setupActivity();
-    renderApp('/activity?scope=docs');
-    await screen.findByTestId('activity-row');
-    expect(calls.length).toBeGreaterThan(0);
-    expect(calls.every((call) => call.params.get('project') === 'docs')).toBe(true);
-  });
-  it.each([undefined, SELF_ACTOR])('renders flat capabilities with actor filter %s', async (actor) => {
-    const { calls } = setupActivity();
-    renderApp(`/activity?project=demo${actor ? `&actor=${actor}` : ''}`);
-    expect(await screen.findByTestId('page-activity')).toBeTruthy();
-    expect(await screen.findByTestId('activity-row')).toBeTruthy();
-    expect(calls[0].params.get('member_actor_id')).toBe(actor ?? null);
+describe('activity prototype structure and product language', () => {
+  it('renders the exact header, two segmented controls, four columns and all seven categories', async () => {
+    setupActivity();
+    renderApp('/activity?project=demo');
+    expect(await screen.findByRole('heading', { name: '活动与审计', level: 1 })).toBeTruthy();
+    expect(screen.getByText('谁在什么时候做了什么')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '发生过什么', level: 2 })).toBeTruthy();
+    await waitFor(() => expect(tableRows()).toHaveLength(8));
+    expect(within(screen.getByRole('group', { name: '项目' })).getAllByRole('button').map((button) => button.textContent))
+      .toEqual(['Team mainline', 'Docs stream']);
+    expect(within(screen.getByRole('group', { name: '类别' })).getAllByRole('button').map((button) => button.textContent))
+      .toEqual(['全部', '交付', '复核', '决定', '派工', '报告', '拆解', '更新']);
+    const headers = [...document.querySelectorAll('.activity-table thead th')].map((header) => header.textContent).filter(Boolean);
+    expect(headers).toEqual(['什么时候', '谁', '做了什么', '哪件任务']);
+    expect(tableRows()).toHaveLength(8);
+    expect(sectionCount()).toBe('8');
+    expect(screen.getByTestId('activity-collection-limits').textContent)
+      .toBe('这里记的是操作，每一条都是某个人通过自己的 Agent 做的。不采集聊天内容，也不采集工具的输入输出。');
+
+    await userEvent.setup().click(within(screen.getByRole('group', { name: '类别' })).getByRole('button', { name: '交付' }));
+    expect(tableRows()).toHaveLength(1);
+    expect(sectionCount()).toBe('1');
+    expect(tableRows()[0].textContent).toContain('提交成果并请求复核');
+    expect(tableRows()[0].textContent).not.toContain('复核决定');
   });
 
-  it('serves development and requests as separate bounded kinds and explains the records in plain words', async () => {
+  it('changes projects through the URL and starts a fresh activity read', async () => {
     const { calls } = setupActivity();
+    renderApp('/activity?project=demo&category=delivery');
+    await waitFor(() => expect(tableRows()).toHaveLength(1));
+    await userEvent.setup().click(within(screen.getByRole('group', { name: '项目' })).getByRole('button', { name: 'Docs stream' }));
+    await waitFor(() => expect(calls.at(-1)?.params.get('project')).toBe('docs'));
+    expect(calls.at(-1)?.params.get('cursor')).toBeNull();
+    expect(within(screen.getByRole('group', { name: '类别' })).getByRole('button', { name: '全部' }).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('translates the viewer through the recorded person view, never leaks missing actor ids, and labels Agent attribution', async () => {
+    expect(KNOWN_ACTOR).not.toBe(KNOWN_PERSON);
+    setupActivity();
     renderApp('/activity?project=demo');
-    expect(await screen.findByTestId('page-activity')).toBeTruthy();
-    expect((await screen.findAllByText('变更授权')).length).toBeGreaterThan(0);
-    expect(calls.filter((call) => call.params.get('kind') === 'development')).toHaveLength(1);
-    expect(calls.filter((call) => call.params.get('kind') === 'requests')).toHaveLength(0);
-    expect(screen.getByTestId('activity-scope').textContent).toBe('当前只显示你自己的记录');
-    expect(screen.getByTestId('activity-collection-limits').textContent).toBe('这里不包含聊天文字，也不包含工具的输入输出');
-    expect(screen.queryByTestId('activity-retention')).toBeNull();
+    await waitFor(() => expect(tableRows()).toHaveLength(8));
+    expect(tableRows()[0].textContent).toContain('Alex Example · 通过自己的 Agent');
+    expect(tableRows()[1].textContent).toContain('未登记姓名');
+    expect(tableRows()[1].textContent).not.toContain(MISSING_ACTOR);
+    expect(document.body.textContent).not.toContain(KNOWN_ACTOR);
     expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('page-activity')))).toEqual([]);
-
-    const user = userEvent.setup();
-    await user.click(screen.getByRole('tab', { name: '访问记录' }));
-    expect((await screen.findAllByText('读取访问记录')).length).toBeGreaterThan(0);
-    expect(calls.filter((call) => call.params.get('kind') === 'requests')).toHaveLength(1);
-    expect(screen.getByTestId('activity-retention').textContent).toBe('访问记录最多保留 10000 条，更早的记录会被清理');
-    expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('page-activity')))).toEqual([]);
-    expect(calls.filter((call) => ['audit.history', 'audit.export', 'audit.count'].includes(call.params.get('kind') ?? ''))).toHaveLength(0);
   });
 
-  it.each([
-    ['zh-CN', '已提交', '显示范围未提供', '未提供'],
-    ['en-US', 'Committed', 'The scope of these records was not provided', 'Not provided'],
-  ])('uses shared status and missing-value vocabulary in %s', async (language, status, scopeMissing, _missing) => {
-    const base = fixture('observer-activity-development.json');
-    setupActivity({
-      development: {
-        data: {
-          ...base.data,
-          scope: null,
-          request_retention: null,
-          development_source: null,
-          unknown_means: null,
-          chat_text_collected: null,
-          tool_io_collected: null,
-        },
-      },
-    });
-    await i18n.changeLanguage(language);
-    renderApp('/activity?project=demo');
-    const row = await screen.findByTestId('activity-row');
-    expect(row.textContent).toContain(status);
-    expect(screen.getByTestId('activity-scope').textContent).toBe(scopeMissing);
-    // Nothing is claimed about chat text, tool input or retention when the service did not say.
-    expect(screen.queryByTestId('activity-collection-limits')).toBeNull();
-    expect(screen.queryByTestId('activity-retention')).toBeNull();
-    const user = userEvent.setup();
-    await user.click(row);
-    expect(screen.getByTestId('activity-event-result').textContent).toBe(status);
-
-    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-    for (const label of ['scope', 'request_retention', 'development_source', 'chat_text_collected', 'tool_io_collected', 'unknown_means']) {
-      expect(screen.queryByTestId(`technical-detail-${label}`)).toBeNull();
-    }
-  });
-
-  it('loads older keyset pages without duplicates and keeps limit at or below 100', async () => {
-    const all = fixture('derived-audit-development-project-scope-all-run09.json').data.items as Array<Record<string, unknown>>;
-    const pages = [
-      pagedDevelopment(all.slice(0, 50), 'cursor-1'),
-      pagedDevelopment(all, 'cursor-2'),
-      pagedDevelopment(all.slice(150), null),
-    ];
-    const { calls } = setupActivity({ projectAudit: true, developmentPages: pages });
-    renderApp('/activity?project=demo&limit=100');
-    expect((await screen.findAllByTestId('activity-row')).length).toBe(50);
-    const user = userEvent.setup();
-    await user.click(screen.getByTestId('activity-load-earlier'));
-    expect((await screen.findAllByTestId('activity-row')).length).toBe(212);
-    // The second page repeats the first fifty rows: each audit id is counted once and the repeat is said in plain words.
-    expect(screen.getByTestId('activity-note-duplicate-id').textContent).toBe('发现重复记录，原始事件已全部保留');
-    expect(screen.getByTestId('activity-count').textContent).toBe('已显示 212 条记录');
-    await user.click(screen.getByTestId('activity-load-earlier'));
-    expect((await screen.findAllByTestId('activity-row')).length).toBe(212);
-    const cursors = calls.map((call) => call.params.get('cursor'));
-    expect(cursors).toEqual([null, 'cursor-1', 'cursor-2']);
-    expect(calls.every((call) => Number(call.params.get('limit')) <= 100)).toBe(true);
-  });
-
-  it('falls back to 50 for an invalid limit and clamps larger limits to 100', async () => {
-    const { calls } = setupActivity();
-    renderApp('/activity?project=demo&limit=abc');
-    await screen.findByTestId('page-activity');
-    expect(calls[0].params.get('limit')).toBe('50');
-    const { calls: largeCalls } = setupActivity();
-    renderApp('/activity?project=demo&limit=1000');
-    await screen.findByTestId('page-activity');
-    expect(largeCalls[0].params.get('limit')).toBe('100');
-  });
-
-  it('links non-null work ids to the exact outcome and never creates a null-work link', async () => {
-    setupActivity({ projectAudit: true, development: fixture('derived-audit-development-project-scope-run09.json') });
-    renderApp('/activity?project=demo');
-    const link = (await screen.findAllByTestId('activity-work-link-issue-filter-page'))[0];
-    expect(link.getAttribute('href')).toBe('/projects/demo?tab=acceptance&work=issue-filter-page');
-  });
-
-  it('uses work_id for the server-side work filter', async () => {
-    const { calls } = setupActivity({ projectAudit: true, development: fixture('derived-audit-development-project-scope-run09.json') });
-    renderApp('/activity?project=demo&work=issue-filter-api');
-    await screen.findByTestId('page-activity');
-    expect(calls[0].params.get('work_id')).toBe('issue-filter-api');
-    expect(screen.queryByTestId('activity-work-link-issue-filter-page')).toBeNull();
-  });
-
-  it('does not link a null work_id', async () => {
-    setupActivity();
-    renderApp('/activity?project=demo');
-    expect(await screen.findByTestId('activity-work-empty-01M69TZWWAF2FWZ0D1NHX1NJ0A')).toBeTruthy();
-    expect(screen.queryByRole('link', { name: 'issue-filter-api' })).toBeNull();
-  });
-
-  it('allows self actor filtering but ignores another actor in self scope', async () => {
-    const { calls: ownCalls } = setupActivity();
-    renderApp(`/activity?project=demo&actor=${SELF_ACTOR}`);
-    await screen.findByTestId('page-activity');
-    expect(ownCalls.some((call) => call.params.get('member_actor_id') === SELF_ACTOR)).toBe(true);
-    expect(screen.queryByTestId('activity-self-filter-note')).toBeNull();
-
-    const { calls: otherCalls } = setupActivity();
-    renderApp('/activity?project=demo&actor=OTHER');
-    await screen.findByTestId('page-activity');
-    expect(otherCalls.every((call) => call.params.get('member_actor_id') === null)).toBe(true);
-  });
-
-  it('waits for identity before filtering a project-audit actor deep link', async () => {
-    const actor = 'manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa';
-    let releaseCapabilities!: () => void;
-    const capabilitiesGate = new Promise<void>((resolve) => { releaseCapabilities = resolve; });
-    const { calls } = setupActivity({
-      projectAudit: true,
-      development: fixture('derived-audit-development-project-scope-run09.json'),
-      capabilitiesGate,
-    });
-    renderApp(`/activity?project=demo&actor=${actor}`);
-    await act(async () => { await Promise.resolve(); });
-    expect(screen.queryByTestId('activity-self-filter-note')).toBeNull();
-    expect(calls).toHaveLength(0);
-
-    await act(async () => {
-      releaseCapabilities();
-      await capabilitiesGate;
-    });
-    expect(await screen.findByTestId('page-activity')).toBeTruthy();
-    expect(calls).toHaveLength(1);
-    expect(calls[0].params.get('member_actor_id')).toBe(actor);
-    expect(screen.queryByTestId('activity-self-filter-note')).toBeNull();
-  });
-
-  it('shows a useful identity failure and retries without an unfiltered read', async () => {
-    const actor = 'manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa';
-    const recovery = { value: false };
-    const { calls } = setupActivity({
-      projectAudit: true,
-      development: fixture('derived-audit-development-project-scope-run09.json'),
-      capabilitiesError: { code: 'ReadTimeout', message: 'slow', recover: recovery },
-    });
-    renderApp(`/activity?project=demo&actor=${actor}`);
-    const failure = await screen.findByTestId('activity-identity-error');
-    expect(failure.textContent).toContain('身份信息暂时读取不到，请重试');
-    expect(failure.textContent).not.toContain('CapabilitiesReadError');
-    expect(failure.textContent).not.toContain('ReadTimeout');
-    expect(calls).toHaveLength(0);
-
-    const user = userEvent.setup();
-    recovery.value = true;
-    await user.click(screen.getByTestId('activity-identity-retry'));
-    expect(await screen.findByTestId('page-activity')).toBeTruthy();
-    expect(calls).toHaveLength(1);
-    expect(calls[0].params.get('member_actor_id')).toBe(actor);
-  });
-
-  it('uses member_actor_id for an authorized project-scope actor filter', async () => {
-    const actor = 'manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa';
-    const { calls } = setupActivity({ projectAudit: true, development: fixture('derived-audit-development-project-scope-run09.json') });
-    renderApp(`/activity?project=demo&actor=${actor}`);
-    await screen.findByTestId('page-activity');
-    expect(calls.some((call) => call.params.get('member_actor_id') === actor)).toBe(true);
-  });
-
-  it('selects one audit row by event id, shows it in plain words and never treats it as a business request id', async () => {
-    const { calls } = setupActivity();
-    const event = '01M6A0PZ0CB6PZ6X8JQ4TSFQWN';
-    const { router } = renderApp('/activity?project=demo&kind=requests');
-    const user = userEvent.setup();
-    await user.click((await screen.findAllByTestId('activity-row'))[0]);
-    expect(router.state.location.search).toContain(`event=${event}`);
-    const detail = await screen.findByTestId('activity-event-detail');
-    expect(detail.textContent).toContain('你');
-    expect(detail.textContent).toContain('读取访问记录');
-    expect(detail.textContent).toContain('未知');
-    for (const hidden of [event, SELF_ACTOR, 'audit.requests']) expect(defaultVisibleText(detail)).not.toContain(hidden);
-    expect(findForbiddenVisibleText(defaultVisibleText(detail))).toEqual([]);
-
-    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-    expect(screen.queryByTestId("activity-event-id")).toBeNull();
-    expect(screen.queryByTestId("activity-event-actor-id")).toBeNull();
-    expect(screen.queryByTestId("technical-detail-action")).toBeNull();
-    expect(screen.queryByTestId('activity-event-not-request')).toBeNull();
-    expect(router.state.location.search).toContain(`event=${event}`);
-    expect(calls.some((call) => call.url.includes('command.inspect'))).toBe(false);
-  });
-
-  it('explains unknown results without protocol text or execution controls', async () => {
-    const { calls } = setupActivity();
-    const event = '01M6A0PZ0CB6PZ6X8JQ4TSFQWN';
-    renderApp(`/activity?project=demo&kind=requests&event=${event}`);
-    const alert = await screen.findByTestId('activity-unknown-result');
-    expect(alert.textContent).toBe('还没有完成记录；请先核对原业务请求，再决定是否重试');
-    expect(alert.textContent).not.toContain('completion_not_recorded');
-    expect(screen.queryByRole('button', { name: /重试|对账|Retry|Reconcile/i })).toBeNull();
-
-    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-    expect(screen.queryByTestId("technical-detail-unknown_means")).toBeNull();
-    expect(calls.some((call) => call.url.includes('command.inspect'))).toBe(false);
-  });
-
-  it('filters access changes only within the loaded development records and says so', async () => {
-    const all = fixture('derived-audit-development-project-scope-all-run09.json').data.items as Array<Record<string, unknown>>;
-    const { calls } = setupActivity({ projectAudit: true, development: pagedDevelopment(all, null) });
-    renderApp('/activity?project=demo');
-    const user = userEvent.setup();
-    const accessTab = await screen.findByText('授权变更');
-    await user.click(accessTab);
-    expect((await screen.findByTestId('activity-access-note')).textContent).toBe('这里只列出已加载的开发记录里的授权变更，不是完整的授权历史');
-    expect((await screen.findAllByText('变更授权')).length).toBeGreaterThan(0);
-    expect(screen.queryByText('结束工作')).toBeNull();
-    expect(calls.filter((call) => call.params.get('kind') === 'requests')).toHaveLength(0);
-    expect(calls.some((call) => ['audit.history', 'audit.export', 'audit.count'].includes(call.params.get('kind') ?? ''))).toBe(false);
-  });
-
-  it('keeps polling a single loaded activity page', async () => {
-    const { calls } = setupActivity();
-    renderApp('/activity?project=demo');
-    await screen.findByTestId('activity-row');
-    const initialCalls = calls.length;
-    await new Promise((resolve) => setTimeout(resolve, 6500));
-    expect(calls.length).toBeGreaterThan(initialCalls);
-  }, 10000);
-
-  it('stops polling activity pages and capabilities after the second page is loaded', async () => {
-    const all = fixture('derived-audit-development-project-scope-all-run09.json').data.items as Array<Record<string, unknown>>;
-    const pages = [
-      pagedDevelopment(all.slice(0, 50), 'cursor-1'),
-      pagedDevelopment(all, 'cursor-2'),
-      pagedDevelopment(all.slice(150), null),
-    ];
-    const { calls, capabilityCalls } = setupActivity({ projectAudit: true, developmentPages: pages });
-    renderApp('/activity?project=demo&limit=100');
-    expect((await screen.findAllByTestId('activity-row')).length).toBe(50);
-    const user = userEvent.setup();
-    await user.click(screen.getByTestId('activity-load-earlier'));
-    expect((await screen.findAllByTestId('activity-row')).length).toBe(212);
-    const activityCount = calls.length;
-    const capabilityCount = capabilityCalls.length;
-    await new Promise((resolve) => setTimeout(resolve, 6000));
-    expect(calls.length).toBe(activityCount);
-    expect(capabilityCalls.length).toBe(capabilityCount);
-  }, 10000);
-
-  it('labels a null work_id as no work, not not measured', async () => {
-    setupActivity();
-    renderApp('/activity?project=demo');
-    const empty = await screen.findByTestId('activity-work-empty-01M69TZWWAF2FWZ0D1NHX1NJ0A');
-    expect(empty.textContent).toBe('无关联工作');
-    expect(empty.textContent).not.toBe('未测量');
-  });
-
-  it('encodes work ids that need URL encoding in outcome links', async () => {
-    const base = fixture('observer-activity-development.json');
-    const development = { data: { ...base.data, items: [{ ...base.data.items[0], work_id: 'work/id ?' }] } };
-    setupActivity({ development });
-    renderApp('/activity?project=demo');
-    const link = await screen.findByTestId('activity-work-link-work/id ?');
-    expect(link.getAttribute('href')).toBe('/projects/demo?tab=acceptance&work=work%2Fid%20%3F');
-  });
-
-  it('shows the unknown alert only for result unknown', async () => {
-    setupActivity();
-    renderApp('/activity?project=demo&kind=requests&event=01M6A0PZ04TGSJR97FA2E0QGHD');
-    expect(await screen.findByTestId('activity-event-detail')).toBeTruthy();
-    expect(screen.queryByTestId('activity-unknown-result')).toBeNull();
-  });
-
-  it('does not show load earlier without a next cursor', async () => {
-    setupActivity();
-    renderApp('/activity?project=demo');
-    await screen.findByTestId('activity-row');
-    expect(screen.queryByTestId('activity-load-earlier')).toBeNull();
-  });
-
-  it('formats table times with the shared formatter rather than raw milliseconds', async () => {
-    const timestamp = 1793479144330;
-    setupActivity();
-    renderApp('/activity?project=demo');
-    const row = await screen.findByTestId('activity-row');
-    expect(row.textContent).toContain(formatUnixMs(timestamp, 'zh-CN'));
-    expect(row.textContent).not.toContain(String(timestamp));
-  });
-
-  it('treats an empty next_cursor as no more pages', async () => {
-    const base = fixture('observer-activity-development.json');
-    setupActivity({ development: { data: { ...base.data, next_cursor: '' } } });
-    renderApp('/activity?project=demo');
-    await screen.findByTestId('activity-row');
-    expect(screen.queryByTestId('activity-load-earlier')).toBeNull();
-  });
-
-  it('explains when a self-scope actor filter is ignored', async () => {
-    setupActivity();
-    renderApp('/activity?project=demo&actor=OTHER');
-    expect((await screen.findByTestId('activity-self-filter-note')).textContent).toContain('仅能查看本人活动，已忽略筛选');
-  });
-
-  it('shows operators as numbered stand-ins and never as raw identifiers', async () => {
-    const all = fixture('derived-audit-development-project-scope-all-run09.json').data.items as Array<Record<string, unknown>>;
-    setupActivity({ projectAudit: true, development: pagedDevelopment(all.slice(0, 60), null) });
-    renderApp('/activity?project=demo');
-    const rows = await screen.findAllByTestId('activity-row');
-    expect(rows.length).toBe(60);
-    const text = rows.map((row) => row.textContent ?? '').join(' ');
-    expect(text).toMatch(/操作者 1/);
-    expect(text).not.toContain('manager-agent-native');
-    expect(text).not.toContain('-ee9ddb44e6e7-');
-    expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('page-activity')))).toEqual([]);
-    expect(screen.getByTestId('activity-operators-note').textContent).toContain('编号用于区分当前记录中的参与者');
-  });
-
-  it('names work readably and retains opaque identifiers only in navigation', async () => {
-    const base = fixture('observer-activity-development.json');
-    const opaque = '01M6A0PZ0CB6PZ6X8JQ4TSFQWN';
-    const development = { data: { ...base.data, items: [
-      { ...base.data.items[0], id: 'named-row', work_id: 'issue-filter-api' },
-      { ...base.data.items[0], id: 'opaque-row', work_id: opaque, created_at_unix_ms: base.data.items[0].created_at_unix_ms - 1 },
-    ] } };
-    setupActivity({ development });
-    renderApp('/activity?project=demo&event=opaque-row');
-    expect((await screen.findByTestId('activity-work-link-issue-filter-api')).textContent).toBe('issue-filter-api');
-    const opaqueLink = screen.getByTestId(`activity-work-link-${opaque}`);
-    expect(opaqueLink.textContent).toBe('某项工作');
-    expect(opaqueLink.getAttribute('href')).toBe(`/projects/demo?tab=acceptance&work=${opaque}`);
-    const detail = screen.getByTestId('activity-event-detail');
-    expect(defaultVisibleText(detail)).not.toContain(opaque);
-
-    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-    expect(screen.queryByTestId("technical-detail-work_id")).toBeNull();
-  });
-
-  it('groups an unlisted operation under a neutral product label', async () => {
-    const base = fixture('observer-activity-development.json');
+  it('resolves other members only through actorIds and never equates an actor id with a person id', async () => {
+    const linkedActor = 'synthetic-actor-linked';
+    const linkedPerson = 'synthetic-person-linked';
+    const personOnlyActor = 'synthetic-person-without-agent-link';
     const items = [
-      { ...base.data.items[0], id: 'odd-1', action: 'invalid.query' },
-      { ...base.data.items[0], id: 'odd-2', action: 'another.unlisted', created_at_unix_ms: base.data.items[0].created_at_unix_ms - 1 },
+      event('linked', 'review.decide', WORK_A, linkedActor, 0),
+      event('unlinked', 'review.decide', WORK_B, personOnlyActor, 1),
     ];
-    setupActivity({ development: { data: { ...base.data, items } } });
-    renderApp('/activity?project=demo&event=odd-1');
-    const rows = await screen.findAllByTestId('activity-row');
-    expect(rows.map((row) => row.textContent)).toEqual([expect.stringContaining('其他操作'), expect.stringContaining('其他操作')]);
-    expect(screen.getAllByTestId('activity-note-unmapped-action')).toHaveLength(1);
-    expect(screen.getByTestId('activity-note-unmapped-action').textContent).toBe('未收录的操作已归为其他操作');
-    for (const row of rows) expect(row.textContent).not.toMatch(/invalid\.query|another\.unlisted/);
+    setupActivity({
+      development: activityPayload(items),
+      overview: overviewModel({ members: [
+        { personId: linkedPerson, actorIds: [linkedActor], displayName: 'Riley Example' },
+        { personId: personOnlyActor, displayName: 'Wrong Example' },
+      ] }),
+    });
+    renderApp('/activity?project=demo');
+    await waitFor(() => expect(tableRows()).toHaveLength(2));
+    expect(tableRows()[0].textContent).toContain('Riley Example');
+    expect(tableRows()[1].textContent).toContain('未登记姓名');
+    expect(tableRows()[1].textContent).not.toContain('Wrong Example');
+    expect(document.body.textContent).not.toContain(linkedActor);
+  });
 
+  it('uses task titles, never work keys, and makes only rows with a resolved task navigable', async () => {
+    setupActivity();
+    const rendered = renderApp('/activity?project=demo');
+    await waitFor(() => expect(tableRows()).toHaveLength(8));
+    expect(tableRows()[0].textContent).toContain('Synthetic task alpha');
+    expect(document.body.textContent).not.toContain(WORK_A);
+    expect(tableRows()[0].dataset.openable).toBe('true');
+    expect(tableRows()[5].dataset.openable).not.toBe('true');
+    await userEvent.setup().click(tableRows()[0]);
+    expect(rendered.router.state.location.pathname).toBe(`/tasks/${WORK_A}`);
+    expect(rendered.router.state.location.search).toBe('?scope=demo');
+  });
+
+  it('uses the unregistered-task fallback but keeps resolvable tasks with empty or key-equal titles navigable', async () => {
+    const items = [
+      event('empty-title', 'review.decide', WORK_A, KNOWN_ACTOR, 0),
+      event('key-title', 'review.decide', WORK_B, KNOWN_ACTOR, 1),
+    ];
+    setupActivity({
+      development: activityPayload(items),
+      overview: overviewModel({ tasks: [{ id: WORK_A, title: '' }, { id: WORK_B, title: WORK_B }] }),
+    });
+    renderApp('/activity?project=demo');
+    await waitFor(() => expect(tableRows()).toHaveLength(2));
+    for (const row of tableRows()) {
+      expect(row.textContent).toContain('未登记任务名');
+      expect(row.dataset.openable).toBe('true');
+    }
+    const links = [...document.querySelectorAll<HTMLAnchorElement>('.activity-task-link')];
+    expect(links.map((link) => link.textContent)).toEqual(['未登记任务名', '未登记任务名']);
+    expect(links[0].getAttribute('href')).toBe(`/tasks/${WORK_A}?scope=demo`);
+    expect(document.body.textContent).not.toContain(WORK_A);
+    expect(document.body.textContent).not.toContain(WORK_B);
+  });
+
+  it('retains scope and retention on quiet separate lines and keeps coverage beside scope', async () => {
+    setupActivity();
+    renderApp('/activity?project=demo&kind=requests');
+    await screen.findByTestId('activity-retention');
+    expect(screen.getByTestId('activity-scope').textContent).toBe('当前显示本项目授权范围内的全部记录');
+    expect(screen.getByTestId('activity-retention').textContent).toBe('访问记录最多保留 10000 条，更早的记录会被清理');
+    expect(screen.getByTestId('activity-scope').parentElement).toBe(screen.getByTestId('activity-coverage').parentElement);
+    expect(screen.getByTestId('activity-retention').parentElement).not.toBe(screen.getByTestId('activity-scope').parentElement);
+  });
+
+  it('loads earlier records with the section count always equal to visible table rows', async () => {
+    const older = event('older', 'execution.report', WORK_B, KNOWN_ACTOR, 20);
+    setupActivity({ developmentPages: [activityPayload([CATEGORY_EVENTS[0]], 'synthetic-next-page'), activityPayload([older])] });
+    renderApp('/activity?project=demo');
+    await waitFor(() => expect(tableRows()).toHaveLength(1));
+    expect(sectionCount()).toBe('1');
+    expect(screen.getByTestId('activity-load-earlier').closest('.activity-footer-controls'))
+      .toBe(screen.getByTestId('freshness-badge').closest('.activity-footer-controls'));
+    await userEvent.setup().click(screen.getByTestId('activity-load-earlier'));
+    await waitFor(() => expect(tableRows()).toHaveLength(2));
+    expect(sectionCount()).toBe(String(tableRows().length));
+    expect(screen.getByTestId('activity-scope').textContent).toBe('当前显示本项目授权范围内的全部记录');
+  });
+
+  it('renders a deep-linked detail without internal fields and explains an unknown result', async () => {
+    const unknown = { ...event('unknown', 'audit.requests', null, KNOWN_ACTOR, 0), result: 'unknown' };
+    setupActivity({ requests: activityPayload([unknown]) });
+    renderApp('/activity?project=demo&kind=requests&event=unknown');
+    const detail = await screen.findByTestId('activity-event-detail');
+    expect(detail.textContent).toContain('Alex Example');
+    expect(detail.textContent).toContain('读取访问记录');
+    expect(detail.textContent).toContain('结果未知');
+    expect(screen.getByTestId('activity-unknown-result').textContent)
+      .toBe('还没有完成记录；请先核对原业务请求，再决定是否重试');
+    for (const hidden of ['unknown_means', 'actor_id', 'client_id', 'credential_id', 'audit.requests', unknown.id]) {
+      expect(defaultVisibleText(detail)).not.toContain(hidden);
+    }
     expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-    expect(screen.queryByTestId("technical-detail-action")).toBeNull();
+  });
+});
+
+describe.each([
+  { language: 'zh-CN', loading: '正在读取活动记录', empty: '这个类别下没有记录。', failed: '活动记录暂时读取不到', partial: '部分活动记录暂时读取不到', forbidden: '暂时无法查看', unknown: '结果未知' },
+  { language: 'en-US', loading: 'Loading activity', empty: 'No records in this category.', failed: 'Activity cannot be loaded', partial: 'Some activity could not be loaded', forbidden: 'Access unavailable', unknown: 'Result unknown' },
+])('activity read states in $language', ({ language, loading, empty, failed, partial, forbidden, unknown }) => {
+  it('keeps data, loading, empty and failed reads inside the designed page', async () => {
+    await changeLanguage(language);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    setupActivity({ activityGate: gate });
+    const pending = renderApp('/activity?project=demo');
+    expect((await screen.findByTestId('activity-loading')).textContent).toContain(loading);
+    pending.unmount();
+    await act(async () => { release(); await gate; });
+
+    setupActivity({ development: activityPayload([]) });
+    const emptyView = renderApp('/activity?project=demo');
+    expect((await screen.findByTestId('activity-empty')).textContent).toBe(empty);
+    expect(screen.getByTestId('freshness-badge')).toBeTruthy();
+    emptyView.unmount();
+
+    const failure = { current: true };
+    setupActivity({ activityFailure: failure });
+    const failedView = renderApp('/activity?project=demo');
+    expect((await screen.findByTestId('activity-read-error')).textContent).toContain(failed);
+    expect(screen.getByTestId('activity-read-error').textContent).not.toContain('Unavailable');
+    failure.current = false;
+    failedView.unmount();
+
+    setupActivity({ development: activityPayload([{ ...CATEGORY_EVENTS[0], result: 'unknown' }]) });
+    renderApp('/activity?project=demo&event=delivery');
+    expect((await screen.findByTestId('activity-unknown-result')).textContent.length).toBeGreaterThan(0);
+    expect(screen.getAllByText(unknown).length).toBeGreaterThan(0);
   });
 
-  it('shows a readable "all" entry in each filter when nothing is filtered, and the chosen work when one is', async () => {
-    setupActivity({ projectAudit: true, development: fixture('derived-audit-development-project-scope-run09.json') });
-    const { unmount } = renderApp('/activity?project=demo');
-    await screen.findAllByTestId('activity-row');
-    expect(within(screen.getByTestId('activity-work-filter')).getByText('全部工作')).toBeTruthy();
-    expect(within(screen.getByTestId('activity-actor-filter')).getByText('全部操作者')).toBeTruthy();
-    unmount();
-    setupActivity({ projectAudit: true, development: fixture('derived-audit-development-project-scope-run09.json') });
-    renderApp('/activity?project=demo&work=issue-filter-page');
-    await screen.findAllByTestId('activity-row');
-    expect(within(screen.getByTestId('activity-work-filter')).getByText('issue-filter-page')).toBeTruthy();
-    expect(within(screen.getByTestId('activity-work-filter')).queryByText('全部工作')).toBeNull();
+  it('retains confirmed rows on partial failure and explains partial or unread context coverage', async () => {
+    await changeLanguage(language);
+    setupActivity({
+      developmentPages: [activityPayload([CATEGORY_EVENTS[0]], 'synthetic-next-page'), activityPayload([CATEGORY_EVENTS[1]])],
+      secondPageFailure: true,
+      overview: overviewModel({ taskCoverage: 'unread', memberCoverage: 'partial' }),
+    });
+    renderApp('/activity?project=demo');
+    await waitFor(() => expect(tableRows()).toHaveLength(1));
+    expect(screen.getByTestId('activity-coverage').textContent).toMatch(language === 'zh-CN' ? /尚未读取|没有读全/ : /not been read|incomplete/i);
+    await userEvent.setup().click(screen.getByTestId('activity-load-earlier'));
+    expect((await screen.findByTestId('activity-partial')).textContent).toContain(partial);
+    expect(tableRows()).toHaveLength(1);
+    expect(sectionCount()).toBe('1');
   });
 
-  it('clears activity details and silences reads after revocation', async () => {
+  it('clears rows and stops activity polling immediately after revocation', async () => {
+    await changeLanguage(language);
     const { calls } = setupActivity();
     const { queryClient } = renderApp('/activity?project=demo');
-    await screen.findByTestId('activity-row');
+    await waitFor(() => expect(tableRows()).toHaveLength(8));
     act(() => revokeObservationReads(queryClient));
-    expect(await screen.findByTestId('state-forbidden')).toBeTruthy();
-    expect(screen.queryByTestId('activity-row')).toBeNull();
+    expect((await screen.findByTestId('state-forbidden')).textContent).toContain(forbidden);
+    expect(tableRows()).toHaveLength(0);
     const settled = calls.length;
-    await new Promise((resolve) => setTimeout(resolve, 6500));
+    await new Promise((resolve) => setTimeout(resolve, 5_300));
     expect(calls.length).toBe(settled);
-  }, 10000);
+  }, 10_000);
+});
+
+describe('verbatim live activity replies', () => {
+  it.each(['zh-CN', 'en-US'])('renders development and request replies without raw fields or empty-value artifacts in %s', async (language) => {
+    await changeLanguage(language);
+    for (const [kind, fixture] of [
+      ['development', 'observer-activity-development.json'],
+      ['requests', 'observer-activity-requests.json'],
+    ] as const) {
+      const payload = liveFixture(fixture);
+      setupActivity(kind === 'development' ? { development: payload } : { requests: payload });
+      const view = renderApp(`/activity?project=demo&kind=${kind}`);
+      await screen.findByTestId('page-activity');
+      await waitFor(() => expect(document.querySelector('.activity-loading')).toBeNull());
+      const text = defaultVisibleText(screen.getByTestId('page-activity'));
+      expect(text).not.toMatch(/\b(?:undefined|null|NaN)\b/);
+      for (const raw of ['actor_id', 'client_id', 'credential_id', 'work_id', 'created_at_unix_ms', 'unknown_means', 'development_source']) {
+        expect(text).not.toContain(raw);
+      }
+      expect(findForbiddenVisibleText(text)).toEqual([]);
+      view.unmount();
+    }
+  });
 });

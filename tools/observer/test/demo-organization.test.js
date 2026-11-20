@@ -317,7 +317,7 @@ test('PPO-010 derives the prototype statuses and the revised prototype metric go
 
   const metrics = Object.fromEntries(Object.entries(result.views).map(([view, summary]) =>
     [view, summary.metrics.map((metric) => ({ count: metric.count, details: metric.items.length }))]));
-  assert.deepEqual(metrics.me, [{ count: 2, details: 2 }, { count: 1, details: 1 }, { count: 3, details: 3 }, { count: 3, details: 3 }]);
+  assert.deepEqual(metrics.me, [{ count: 2, details: 2 }, { count: 1, details: 1 }, { count: 2, details: 2 }, { count: 3, details: 3 }]);
   assert.deepEqual(metrics.lead, [{ count: 2, details: 2 }, { count: 7, details: 7 }, { count: 7, details: 7 }, { count: 2, details: 2 }]);
   assert.deepEqual(metrics.department, [{ count: 3, details: 3 }, { count: 10, details: 10 }, { count: 5, details: 5 }, { count: 0, details: 0 }]);
   assert.deepEqual(metrics.top, [{ count: 3, details: 3 }, { count: 12, details: 12 }, { count: 5, details: 5 }, { count: 0, details: 0 }]);
@@ -330,17 +330,18 @@ test('PPO-010 derives the prototype statuses and the revised prototype metric go
 
   // Prototype comparison: the me and lead rows now match the prototype exactly — the
   // running-Agent metric counts a waiting task whose Agent is explicitly active (T-103,
-  // not the stalled T-104 or the inactive waiting T-111), and the approvals plane fills
-  // the pending queues. Department and top still differ on the prototype's primary-wait
+  // not the stalled T-104 or the inactive waiting T-111), and T-104's self-addressed decision
+  // belongs to Codex under waiterOf rather than to 林悦's waiting-on-others list. The approvals
+  // plane fills the pending queues. Department and top still differ on the prototype's primary-wait
   // projection (the third number) and its project-level questions, which have no input
   // plane yet (the fourth number).
   assert.deepEqual({
-    me: { prototype: [2, 1, 3, 3], derived: metrics.me.map((metric) => metric.count) },
+    me: { prototype: [2, 1, 2, 3], derived: metrics.me.map((metric) => metric.count) },
     lead: { prototype: [2, 7, 7, 2], derived: metrics.lead.map((metric) => metric.count) },
     department: { prototype: [3, 10, 2, 1], derived: metrics.department.map((metric) => metric.count) },
     top: { prototype: [3, 12, 2, 1], derived: metrics.top.map((metric) => metric.count) },
   }, {
-    me: { prototype: [2, 1, 3, 3], derived: [2, 1, 3, 3] },
+    me: { prototype: [2, 1, 2, 3], derived: [2, 1, 2, 3] },
     lead: { prototype: [2, 7, 7, 2], derived: [2, 7, 7, 2] },
     department: { prototype: [3, 10, 2, 1], derived: [3, 10, 5, 0] },
     top: { prototype: [3, 12, 2, 1], derived: [3, 12, 5, 0] },
@@ -607,4 +608,219 @@ test('the organization demo never issues business receipts and future ops stay o
   assert.equal(future.ok, false);
   assert.equal(future.error.code, 'Unsupported');
   assert.throws(() => createDemoOrganization({ variant: 'unknown' }), /Unknown demo variant/);
+});
+
+const { overviewTaskFromList, overviewMemberFromDirectory } = require('../server/team-bridge');
+
+// Verbatim value shapes from crates/awr-team-pg/src/workstream_read/list.rs:108-110.
+// The integration states come from the delivery_integration_intents check constraint.
+// live-samples/ has no work.list summary, so these constants deliberately follow Rust.
+const RUST_CONFIRMED_OUTCOME = {
+  summary: '加了缓存层之后压测达标，已经通过复核。',
+  completed: ['加缓存层和失效策略', '压测达标'],
+  integration: {
+    id: 'integration-round-t-101-2', state: 'confirmed', reviewed_execution_id: 'execution-t-101-2',
+    current_binding: true, target_changed: false,
+  },
+};
+const RUST_PREPARED_OUTCOME = {
+  summary: '第 3 版已提交复核，补上了超时重发的处理。',
+  completed: ['补重复提交的判断', '补错误码对照表'],
+  integration: {
+    id: 'integration-round-t-102-1', state: 'prepared', reviewed_execution_id: 'execution-t-102-1',
+    current_binding: true, target_changed: false,
+  },
+};
+const RUST_NO_DELIVERY_OUTCOME = {
+  summary: '列表分页已接通，正在补错误提示。提交流程在等接口第 3 版。',
+  completed: ['列表分页接通'],
+  integration: null,
+};
+
+function allDemoWorkItems(demo) {
+  return demo.data.projects.flatMap((project) => project.workstreams.flatMap((stream) =>
+    demo.query(project.project_id, {
+      protocol_version: 1, op: 'work.list', workstream_id: stream.id,
+    }).data.items));
+}
+
+async function overviewModelForTest(options = {}, project = 'P-001') {
+  const { call } = bridgeForTest(options);
+  const model = await call('GET /api/team/overview-model', `/api/team/overview-model?project=${project}`);
+  assert.equal(model.ok, true, JSON.stringify(model));
+  return model;
+}
+
+test('demo work.list uses the Rust outcome shapes and every available task fact survives the adapter', () => {
+  const demo = createDemoOrganization({ variant: 'full', timestampShiftMs: 0 });
+  const items = allDemoWorkItems(demo);
+  const byId = new Map(items.map((item) => [item.work_id, item]));
+  assert.equal(items.length, fixture.tasks.length);
+  assert.deepEqual(byId.get('T-101').summary.outcome.value, RUST_CONFIRMED_OUTCOME);
+  assert.deepEqual(byId.get('T-102').summary.outcome.value, RUST_PREPARED_OUTCOME);
+  assert.deepEqual(byId.get('T-103').summary.outcome.value, RUST_NO_DELIVERY_OUTCOME);
+
+  const adapted = items.map((item) => overviewTaskFromList(item, item.work_id.startsWith('T-1') ? 'P-001'
+    : item.work_id.startsWith('T-2') ? 'P-002' : 'P-003', item.workstream_id));
+  const adaptedById = new Map(adapted.map((task) => [task.id, task]));
+  for (const source of fixture.tasks) {
+    const task = adaptedById.get(source.work_id);
+    assert.equal(task.started, source.started, `${source.work_id} started`);
+    if (source.report) {
+      assert.equal(task.agentName, source.report.reporter, `${source.work_id} Agent name`);
+      assert.notEqual(task.integrated, undefined, `${source.work_id} integration fact`);
+    }
+  }
+  assert.equal(adapted.filter((task) => task.integrated === true).length,
+    fixture.tasks.filter((task) => statusOf(task) === 'verified').length,
+    'the integrated tasks are exactly the prototype-verified tasks');
+  assert.equal(adaptedById.get('T-101').integrated, true);
+  assert.equal(adaptedById.get('T-102').integrated, false);
+  assert.equal(adaptedById.get('T-103').integrated, null);
+});
+
+test('summary.execution maps active, ended and no_session without guessing when the field is absent', () => {
+  const demo = createDemoOrganization({ variant: 'full', timestampShiftMs: 0 });
+  const byId = new Map(allDemoWorkItems(demo).map((item) => [item.work_id, item]));
+  const active = byId.get('T-103');
+  assert.deepEqual(active.summary.execution, {
+    value: { session_state: 'active', last_checkpoint_at_unix_ms: 1795088880000 },
+    as_of_unix_ms: fixture.now_unix_ms,
+    reason: null,
+  });
+  assert.equal(overviewTaskFromList(active, 'P-001', 'WS-001').agentActive, true);
+  assert.equal(overviewTaskFromList(byId.get('T-101'), 'P-001', 'WS-002').agentActive, false);
+  assert.deepEqual(byId.get('T-106').summary.execution, {
+    value: null, as_of_unix_ms: null, reason: 'no_session',
+  });
+  assert.equal(overviewTaskFromList(byId.get('T-106'), 'P-001', 'WS-003').agentActive, false);
+
+  const noExecution = clone(active);
+  delete noExecution.summary.execution;
+  const unknown = overviewTaskFromList(noExecution, 'P-001', 'WS-001');
+  assert.equal(Object.hasOwn(unknown, 'agentActive'), false,
+    'report and checkpoint times are not Agent-activity facts');
+});
+
+test('only the full demo publishes approvals and the demo viewer scope, while member actor ids survive', async () => {
+  const model = await overviewModelForTest({ demoTimestampShiftMs: 0, now: () => fixture.now_unix_ms + 9 * DAY });
+  assert.deepEqual(model.input.options.nowUnixMs, fixture.now_unix_ms);
+  assert.deepEqual(model.input.options.views.me, { personId: fixture.viewer.person_id, projectId: 'P-001' });
+  assert.deepEqual(model.input.approvals, complete(fixture.approvals));
+  assert.equal(model.coverage.approvals.status, 'complete');
+  const member = model.input.members.items.find((item) => item.personId === 'M-002');
+  assert.deepEqual(member.actorIds, ['M-002', 'M-002-agent']);
+
+  const liveMember = overviewMemberFromDirectory({
+    member_ref: { project_id: 'synthetic-project', person_id: 'synthetic-person' },
+    display_name: 'Synthetic Member', department_ids: ['synthetic-department'],
+  });
+  assert.deepEqual(liveMember, {
+    personId: 'synthetic-person', displayName: 'Synthetic Member', groupId: 'synthetic-department',
+  });
+  assert.equal(Object.hasOwn(liveMember, 'actorIds'), false);
+  assert.deepEqual(overviewMemberFromDirectory({
+    member_ref: { project_id: 'P-001', person_id: 'M-002' }, display_name: '林悦',
+    department_ids: ['G-001'], actor_ids: ['M-002', 'M-002-agent'],
+  }).actorIds, ['M-002', 'M-002-agent']);
+
+  for (const variant of ['partial', 'single']) {
+    const degraded = await overviewModelForTest({ demoVariant: variant, demoTimestampShiftMs: 0,
+      now: () => fixture.now_unix_ms });
+    assert.deepEqual(degraded.input.approvals, { coverage: 'unread', reason: 'not-read' }, variant);
+  }
+  const restricted = bridgeForTest({ demoVariant: 'restricted', demoTimestampShiftMs: 0,
+    now: () => fixture.now_unix_ms });
+  const denied = await restricted.call('GET /api/team/overview-model', '/api/team/overview-model?project=P-002');
+  assert.equal(denied.error.code, 'Forbidden');
+  assert.equal(denied.input, undefined, 'restricted composition cannot expose approval facts');
+});
+
+test('demo work.next identity has no person_id and Agent audit records expose their client_id', () => {
+  const demo = createDemoOrganization({ variant: 'full', timestampShiftMs: 0 });
+  const next = demo.query('P-001', { protocol_version: 1, op: 'work.next' });
+  assert.equal(Object.hasOwn(next.data.identity, 'person_id'), false);
+  assert.equal(next.data.identity.actor_id, fixture.viewer.actor_id);
+  assert.equal(next.data.identity.client_id, fixture.viewer.client_id);
+  assert.deepEqual(next.data.identity.business_roles, fixture.viewer.business_roles);
+
+  const audit = ['P-001', 'P-002'].flatMap((project) =>
+    demo.query(project, { protocol_version: 1, op: 'audit.development' }).data.items);
+  const byId = new Map(audit.map((item) => [item.id, item]));
+  assert.equal(byId.get('EV-001').client_id, 'M-002-claude');
+  assert.equal(byId.get('EV-009').client_id, 'M-002-codex');
+  assert.equal(byId.get('EV-014').client_id, 'M-006-codex');
+  for (const item of audit) assert.match(item.client_id, /^M-\d{3}-(?:claude|codex)$/);
+
+  const humanDemo = createDemoOrganization({ variant: 'full', timestampShiftMs: 0 });
+  humanDemo.data.activity[0].actor_id = 'M-002';
+  const human = humanDemo.query('P-001', { protocol_version: 1, op: 'audit.development' }).data.items[0];
+  assert.equal(human.client_id, null, 'a human actor has no Agent client id');
+});
+
+function numericTimes(value, path = 'root', found = []) {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => numericTimes(item, `${path}[${index}]`, found));
+  } else if (value && typeof value === 'object') {
+    for (const [key, item] of Object.entries(value)) {
+      if (typeof item === 'number' && /(?:_ms|_unix_ms|UnixMs)$/.test(key)) found.push([`${path}.${key}`, item]);
+      else numericTimes(item, `${path}.${key}`, found);
+    }
+  }
+  return found;
+}
+
+function demoTimedReplies(demo) {
+  return [
+    demo.data,
+    demo.query('P-001', { protocol_version: 1, op: 'work.list', workstream_id: 'WS-001' }),
+    demo.query('P-001', { protocol_version: 1, op: 'work.next' }),
+    demo.query('P-001', { protocol_version: 1, op: 'audit.development' }),
+    demo.directory('P-001').json,
+    demo.connections('P-001', {}).json,
+    demo.session(),
+  ];
+}
+
+test('one startup offset shifts every demo timestamp without changing relative time', () => {
+  const shift = 47 * DAY + 1234;
+  const baseline = createDemoOrganization({ variant: 'full', timestampShiftMs: 0 });
+  const shifted = createDemoOrganization({ variant: 'full', timestampShiftMs: shift });
+  assert.equal(shifted.data.now_unix_ms, fixture.now_unix_ms + shift);
+  const beforeReplies = demoTimedReplies(baseline);
+  const afterReplies = demoTimedReplies(shifted);
+  let checked = 0;
+  for (let index = 0; index < beforeReplies.length; index += 1) {
+    const before = numericTimes(beforeReplies[index]);
+    const after = numericTimes(afterReplies[index]);
+    assert.deepEqual(after.map(([path]) => path), before.map(([path]) => path));
+    for (let time = 0; time < before.length; time += 1) {
+      assert.equal(after[time][1], before[time][1] + shift, `${after[time][0]} reply ${index}`);
+      checked += 1;
+    }
+  }
+  assert.ok(checked > 250, 'the check covers the organization and representative replies');
+});
+
+function shiftCanonicalTimes(value, shift) {
+  if (Array.isArray(value)) return value.map((item) => shiftCanonicalTimes(item, shift));
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key,
+    typeof item === 'number' && /UnixMs$/.test(key) ? item + shift : shiftCanonicalTimes(item, shift)]));
+}
+
+test('all four view metric sets are invariant under arbitrary demo clock offsets', () => {
+  const expected = {
+    me: [2, 1, 2, 3], lead: [2, 7, 7, 2], department: [3, 10, 5, 0], top: [3, 12, 5, 0],
+  };
+  const baselineInput = canonicalInput(fixture);
+  for (const shift of [0, 47 * DAY + 1234, -80 * DAY, 400 * DAY]) {
+    const result = deriveOverview(shiftCanonicalTimes(baselineInput, shift));
+    const counts = Object.fromEntries(Object.entries(result.views).map(([view, summary]) =>
+      [view, summary.metrics.map((metric) => metric.count)]));
+    assert.deepEqual(counts, expected, `offset ${shift}`);
+    assert.deepEqual(result.views.me.metrics[2].items.map((wait) => wait.task.id).sort(), ['T-103', 'T-111'],
+      'the owner self-answer wait belongs to her Agent, not to the prototype waiting-on-others list');
+    assert.ok(result.waits.every((wait) => wait.durationDays >= 0));
+  }
 });

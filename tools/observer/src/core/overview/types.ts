@@ -142,6 +142,8 @@ export interface OverviewMember {
   personId?: string | null;
   displayName?: string | null;
   groupId?: string | null;
+  /** Human and Agent actor ids for audit attribution; absent when the directory has no such source. */
+  actorIds?: string[];
 }
 
 export const APPROVAL_KINDS = ['plan-approval', 'lesson-confirmation'] as const;
