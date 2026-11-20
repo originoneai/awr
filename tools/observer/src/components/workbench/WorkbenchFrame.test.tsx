@@ -29,6 +29,8 @@ function renderFrame(
   const model = buildMyWorkModel(deriveOverview(input), i18n.language, {
     personId: input.options.views?.me?.personId ?? null,
     latestPeriodUpdate,
+    readAtUnixMs: WORKBENCH_NOW,
+    inputTasks: input.tasks.items,
   });
   return render(
     <QueryClientProvider client={queryClient}>
@@ -36,7 +38,13 @@ function renderFrame(
         <RevocationProvider>
           <MemoryRouter initialEntries={[initialEntry]}>
             <PerspectiveProvider facts={unknownPerspectiveFacts()}>
-              <WorkbenchFrame model={model} projectKey="project-one" projectName="Synthetic Project" />
+              <WorkbenchFrame
+                model={model}
+                projectKey="project-one"
+                projectName="Synthetic Project"
+                projectTitles={{ 'project-one': 'Synthetic Project' }}
+                readAtUnixMs={WORKBENCH_NOW}
+              />
               <LocationProbe />
             </PerspectiveProvider>
           </MemoryRouter>
@@ -334,23 +342,45 @@ describe('shared workbench frame and My Work', () => {
     expect(taskCell.querySelector('img, script, iframe, object')).toBeNull();
   });
 
-  it('removes the recorded owner suffix from an Agent display name', () => {
+  it('reads the recorded report fact into the latest-report and age columns', () => {
     const base = myWorkInput();
     const input = {
       ...base,
       tasks: {
         ...base.tasks,
         items: (base.tasks.items ?? []).map((task: OverviewTask) => task.id === 'mine-running'
-          ? { ...task, agentName: 'Claude 桌面（林悦的 Agent）' }
+          ? { ...task, agentName: 'Claude 桌面（林悦的 Agent）', report: { completed: true, reportedAtUnixMs: WORKBENCH_NOW - 60_000 } }
           : task),
       },
     };
     const { container } = renderFrame(input);
     const agentCell = container.querySelector('.obs-data-table tbody tr td:first-child')!;
     expect(agentCell.textContent).toBe('Claude 桌面');
-    expect(container.querySelector('thead th:nth-child(3) span')?.getAttribute('title')).toBe('报告正文尚未读取');
-    expect(container.querySelector('thead th:nth-child(5) span')?.getAttribute('title')).toBe('报告时间尚未读取');
-    expect(container.querySelector('tbody tr td:nth-child(3)')?.textContent).toBe('—');
+    // The unread-reason tooltips only explain the em dashes; a recorded report prints its
+    // completion declaration, and the age column counts from the read's fixed "now".
+    expect(container.querySelector('thead th:nth-child(3) span')?.getAttribute('title')).toBe('报告还没有读到');
+    expect(container.querySelector('thead th:nth-child(5) span')?.getAttribute('title')).toBe('报告时间还没有读到');
+    expect(container.querySelector('tbody tr td:nth-child(3)')?.textContent).toBe('报告说做完了');
+    expect(container.querySelector('tbody tr td:nth-child(5)')?.textContent).toBe('1 分钟前');
+    const twoDays = container.querySelectorAll('.obs-data-table tbody tr')[1] as HTMLElement;
+    expect(within(twoDays).getAllByText('报告说还在做').length).toBeGreaterThan(0);
+    expect(within(twoDays).getByText('2 天前')).toBeTruthy();
+    const withoutReport = container.querySelectorAll('.obs-data-table tbody tr')[2] as HTMLElement;
+    expect(within(withoutReport).getAllByText('—')).toHaveLength(2);
+  });
+
+  it('never prints a report that is newer than the read it belongs to', () => {
+    const base = myWorkInput();
+    const input = {
+      ...base,
+      tasks: {
+        ...base.tasks,
+        items: (base.tasks.items ?? []).map((task: OverviewTask) => task.id === 'mine-running'
+          ? { ...task, report: { completed: false, reportedAtUnixMs: WORKBENCH_NOW + 60_000 } }
+          : task),
+      },
+    };
+    const { container } = renderFrame(input);
     expect(container.querySelector('tbody tr td:nth-child(5)')?.textContent).toBe('—');
   });
 
@@ -380,6 +410,59 @@ describe('shared workbench frame and My Work', () => {
     expect(screen.getByTestId('location').getAttribute('data-path')).toMatch(/^\/tasks\//);
   });
 
+  it('names commitment nodes from the projects read and neutral goal wording, never raw keys', async () => {
+    const user = userEvent.setup();
+    const { container } = renderFrame();
+    const titles: string[] = [];
+    const buttons = within(screen.getByRole('group', { name: '链路' })).getAllByRole('button');
+    for (const button of buttons) {
+      await user.click(button);
+      container.querySelectorAll('.obs-chain-node[data-node-kind="commitment"]').forEach((node) => {
+        titles.push(node.querySelector('.obs-chain-title')?.textContent ?? '');
+      });
+    }
+    expect(titles).toContain('Synthetic Project');
+    expect(titles).toContain('目标（还没有名称）');
+    expect(titles).not.toContain('project-one');
+    expect(titles).not.toContain('goal-one');
+    expect(titles).not.toContain('Week 47 commitment');
+    expect(container.textContent).not.toMatch(/\bgoal-one\b/);
+  });
+
+  it('falls back to neutral project wording when the projects read carries no name', async () => {
+    const user = userEvent.setup();
+    const queryClient = createAppQueryClient({ retry: false });
+    const input = myWorkInput();
+    const model = buildMyWorkModel(deriveOverview(input), i18n.language, {
+      personId: 'person-a',
+      readAtUnixMs: WORKBENCH_NOW,
+      inputTasks: input.tasks.items,
+    });
+    const { container } = render(
+      <QueryClientProvider client={queryClient}>
+        <CraftThemeProvider>
+          <RevocationProvider>
+            <MemoryRouter initialEntries={['/workbench?scope=project-one']}>
+              <PerspectiveProvider facts={unknownPerspectiveFacts()}>
+                <WorkbenchFrame model={model} projectKey="project-one" projectName="Synthetic Project" />
+              </PerspectiveProvider>
+            </MemoryRouter>
+          </RevocationProvider>
+        </CraftThemeProvider>
+      </QueryClientProvider>,
+    );
+    const titles: string[] = [];
+    const buttons = within(screen.getByRole('group', { name: '链路' })).getAllByRole('button');
+    for (const button of buttons) {
+      await user.click(button);
+      container.querySelectorAll('.obs-chain-node[data-node-kind="commitment"]').forEach((node) => {
+        titles.push(node.querySelector('.obs-chain-title')?.textContent ?? '');
+      });
+    }
+    expect(titles).toContain('项目（还没有名称）');
+    expect(titles).not.toContain('project-one');
+  });
+
   it('renders a recorded period update with author, time, health and evidence navigation', async () => {
     const user = userEvent.setup();
     const update: WorkbenchPeriodUpdate = {
@@ -406,6 +489,9 @@ describe('English rendering', () => {
     expect(container.querySelectorAll('.obs-kpi')).toHaveLength(4);
     expect(screen.getByRole('heading', { name: 'Where work is stuck' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Waiting for you' })).toBeTruthy();
+    expect(container.textContent).toContain('Report says the work is ongoing');
+    expect(container.textContent).toContain('1 min ago');
+    expect(container.textContent).toContain('Synthetic Project');
     expect(document.body.textContent).not.toMatch(/\b(?:undefined|null|NaN)\b/);
   });
 });

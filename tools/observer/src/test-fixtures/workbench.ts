@@ -22,14 +22,19 @@ export function myWorkInput(overrides: Partial<OverviewInput> = {}): OverviewInp
   const mineDecision = baseTask('mine-decision', {
     ownerPersonId: 'person-a', agentName: 'Agent Two',
     report: { completed: false, reportedAtUnixMs: WORKBENCH_NOW - 2 * DAY },
+    commitments: [
+      { id: 'project-one', title: 'project-one', kind: 'project' },
+      { id: 'goal-one', title: 'goal-one', kind: 'goal' },
+    ],
   });
   const mineExternal = baseTask('mine-external', {
-    ownerPersonId: 'person-a', agentName: null,
+    ownerPersonId: 'person-a', agentName: null, report: null,
     externalWait: { party: 'Example Client', what: 'Confirm export fields', sinceUnixMs: WORKBENCH_NOW - 5 * DAY },
   });
   const review = startedTask('other-review', {
     ownerPersonId: 'person-c', agentName: 'Agent Three', agentActive: false,
     submittedResultAtUnixMs: WORKBENCH_NOW - DAY,
+    commitments: [{ id: 'project-one-week-47', title: 'Week 47 commitment', kind: 'project' }],
   });
   const mineDependent = startedTask('mine-dependent', {
     ownerPersonId: 'person-a', agentName: 'Agent One', agentActive: true,
