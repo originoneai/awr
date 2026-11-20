@@ -17,6 +17,7 @@ import {
 } from '../core/overview/__tests__/factories';
 import {
   buildInboxModel,
+  inboxCalendarDays,
   inboxPendingLabel,
   inboxTaskPath,
   resolveInboxSelection,
@@ -115,12 +116,12 @@ describe('cross-project inbox read model', () => {
 
     expect(result.viewer).toEqual({ id: 'person-a', displayName: 'Owner One' });
     expect(result.entries.map((entry) => [entry.kind, entry.title])).toEqual([
-      ['lesson', 'Check the interface version first'],
       ['answer', 'Should the empty state explain the next step?'],
       ['plan-approval', 'Recovery work breakdown'],
       ['assignment', 'Synthetic assignment-task'],
+      ['lesson', 'Check the interface version first'],
     ]);
-    expect(result.entries.map((entry) => entry.durationDays)).toEqual([6, 2, 1, 0]);
+    expect(result.entries.map((entry) => entry.durationDays)).toEqual([2, 1, 0, 6]);
     expect(result.entries.some((entry) => entry.wait?.kind === 'review')).toBe(false);
     expect(result.entries.some((entry) => entry.wait?.kind === 'external')).toBe(false);
     expect(result.entries.some((entry) => entry.wait?.kind === 'dependency')).toBe(false);
@@ -154,8 +155,9 @@ describe('cross-project inbox read model', () => {
     expect(result.entries.filter((entry) => entry.kind === 'plan-approval')).toHaveLength(1);
     expect(result.entries.some((entry) => entry.projectName === 'Notification Service'
       && entry.title === 'Should the second project keep the old channel?')).toBe(true);
-    expect(result.entries[0].durationDays).toBe(6);
-    expect(result.entries.map((entry) => entry.durationDays).slice(0, 3)).toEqual([6, 4, 2]);
+    expect(result.entries[0].durationDays).toBe(4);
+    expect(result.entries.map((entry) => entry.durationDays).slice(0, 3)).toEqual([4, 2, 1]);
+    expect(result.entries.at(-1)!.kind).toBe('lesson');
     expect(result.count).toBe(result.entries.length);
   });
 
@@ -174,7 +176,7 @@ describe('cross-project inbox read model', () => {
     expect(inboxPendingLabel(result)).toBeNull();
 
     const fixed = buildInboxModel({ models: [model(source)], projects });
-    expect(fixed.entries.map((entry) => entry.durationDays)).toEqual([6, 2, 1, 0]);
+    expect(fixed.entries.map((entry) => entry.durationDays)).toEqual([2, 1, 0, 6]);
   });
 
   it('keeps unknown counts unread, known zero as zero, and partial confirmed counts marked with plus', () => {
@@ -286,7 +288,7 @@ describe('cross-project inbox read model', () => {
     // Contrast: a real viewer id on the same model is identified and the entries appear.
     const contrast = buildInboxModel({ models: [model(allKindsInput())], projects });
     expect(contrast.viewer).toEqual({ id: 'person-a', displayName: 'Owner One' });
-    expect(contrast.entries.map((entry) => entry.kind)).toEqual(['lesson', 'answer', 'plan-approval', 'assignment']);
+    expect(contrast.entries.map((entry) => entry.kind)).toEqual(['answer', 'plan-approval', 'assignment', 'lesson']);
   });
 
   it('an incomparable ordering contributes no entries and never identifies the viewer', () => {
@@ -303,7 +305,7 @@ describe('cross-project inbox read model', () => {
 
     // (a) Only the comparable project's entries reach the queue.
     const result = buildInboxModel({ models: [model(allKindsInput()), outOfOrder], projects });
-    expect(result.entries.map((entry) => entry.kind)).toEqual(['lesson', 'answer', 'plan-approval', 'assignment']);
+    expect(result.entries.map((entry) => entry.kind)).toEqual(['answer', 'plan-approval', 'assignment', 'lesson']);
     expect(result.allEntries.some((entry) => entry.title === 'Should the out-of-order project surface its question?')).toBe(false);
 
     // (b) The viewer id lives only in the incomparable reply: the viewer stays unknown.
@@ -315,5 +317,89 @@ describe('cross-project inbox read model', () => {
     });
     expect(unidentified.viewer).toBeNull();
     expect(unidentified.entries).toEqual([]);
+  });
+
+  it('uses one calendar-date rule for the prototype answer, lesson, report and assignment ages', () => {
+    const now = Date.parse('2026-11-19T12:00:00.000Z');
+    expect(inboxCalendarDays(Date.parse('2026-11-17T12:00:00.000Z'), now, 'UTC')).toBe(2);
+    expect(inboxCalendarDays(Date.parse('2026-11-13T12:00:00.000Z'), now, 'UTC')).toBe(6);
+    // This is the prototype's 46-hour report interval: two dates, not two completed 24-hour periods.
+    expect(inboxCalendarDays(Date.parse('2026-11-17T14:00:00.000Z'), now, 'UTC')).toBe(2);
+    expect(inboxCalendarDays(Date.parse('2026-11-19T09:40:00.000Z'), now, 'UTC')).toBe(0);
+    // Calendar arithmetic, rather than dividing by 24 hours, also handles a daylight-saving transition.
+    expect(inboxCalendarDays(Date.parse('2026-11-01T01:30:00.000Z'), Date.parse('2026-11-02T00:30:00.000Z'), 'America/New_York')).toBe(1);
+    expect(inboxCalendarDays(now + 1, now, 'UTC')).toBeNull();
+    expect(inboxCalendarDays(null, now, 'UTC')).toBeNull();
+    expect(inboxCalendarDays(now, Number.NaN, 'UTC')).toBeNull();
+  });
+
+  it('carries the report timestamp, optional description and render-clock offset without deriving a second fact', () => {
+    const sourceInput = allKindsInput();
+    if (sourceInput.decisions.coverage === 'complete') {
+      Object.assign(sourceInput.decisions.items.find((item) => item.id === 'answer-record')!, {
+        description: 'A separately recorded focus description',
+      });
+    }
+    const source = model(sourceInput);
+    source.read_at_unix_ms = NOW + 60_000;
+    const result = buildInboxModel({ models: [source], projects });
+    const answer = result.entries.find((entry) => entry.kind === 'answer')!;
+    expect(answer.description).toBe('A separately recorded focus description');
+    expect(answer.clockOffsetUnixMs).toBe(-60_000);
+    expect(answer.basis).toContainEqual({
+      tone: 'info',
+      fact: { fact: 'reportAge', atUnixMs: NOW - DAY / 24, stale: false },
+    });
+    expect(result.entries.filter((entry) => entry.kind !== 'answer').every((entry) => entry.description === null)).toBe(true);
+  });
+  it('measures calendar dates in the viewer zone and at the edges of the clock', () => {
+    const now = Date.parse('2026-11-18T00:30:00.000Z');
+    const at = Date.parse('2026-11-17T23:30:00.000Z');
+    // One hour apart: two dates in UTC, one date in Tokyo.
+    expect(inboxCalendarDays(at, now, 'UTC')).toBe(1);
+    expect(inboxCalendarDays(at, now, 'Asia/Tokyo')).toBe(0);
+    // The same moment is today; the epoch is a valid moment; a negative one and an unknown zone are not.
+    expect(inboxCalendarDays(now, now, 'UTC')).toBe(0);
+    expect(inboxCalendarDays(0, Date.parse('1970-01-02T00:00:00.000Z'), 'UTC')).toBe(1);
+    expect(inboxCalendarDays(-1, now, 'UTC')).toBeNull();
+    expect(inboxCalendarDays(at, now, 'Not/AZone')).toBeNull();
+  });
+
+  it('calls a report stale exactly at the stalled bound and fresh one millisecond inside it', () => {
+    for (const [offset, stale] of [[0, true], [1, false]] as const) {
+      const sourceInput = allKindsInput();
+      const task = sourceInput.tasks.coverage === 'complete'
+        ? sourceInput.tasks.items.find((item) => item.id === 'answer-task')
+        : undefined;
+      task!.report = { completed: false, reportedAtUnixMs: NOW - 3 * DAY + offset };
+      const answer = buildInboxModel({ models: [model(sourceInput)], projects }).entries
+        .find((entry) => entry.kind === 'answer')!;
+      expect(answer.basis.find((item) => item.fact.fact === 'reportAge'), `offset ${offset}`)
+        .toMatchObject({ tone: stale ? 'bad' : 'info', fact: { stale } });
+    }
+  });
+  it('orders waits longest first and every confirmation after them, with unknown ages last in each group', () => {
+    const source = allKindsInput();
+    if (source.approvals.coverage === 'complete') {
+      source.approvals = complete([
+        ...source.approvals.items,
+        approval('lesson-confirmation', 'person-a', {
+          id: 'lesson-unknown-age', projectId: 'project-one', title: 'A lesson whose session date was not recorded', sinceUnixMs: null,
+        }),
+        approval('plan-approval', 'person-a', {
+          id: 'plan-unknown-age', projectId: 'project-one', title: 'A breakdown whose request date was not recorded', sinceUnixMs: null,
+        }),
+      ]);
+    }
+    const result = buildInboxModel({ models: [model(source)], projects });
+    // The six-day lesson is the oldest entry of all, and still comes after every wait.
+    expect(result.entries.map((entry) => [entry.kind, entry.durationDays])).toEqual([
+      ['answer', 2],
+      ['plan-approval', 1],
+      ['assignment', 0],
+      ['plan-approval', null],
+      ['lesson', 6],
+      ['lesson', null],
+    ]);
   });
 });

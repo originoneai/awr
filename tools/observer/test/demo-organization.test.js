@@ -888,6 +888,15 @@ test('the canonical variant serves the fully-known overview model for each proje
     assert.equal(derived.coverage.sections.waits.complete, true, `${project} waits section`);
     if (project === 'P-001') {
       assert.deepEqual(derived.views.me.metrics.map((metric) => metric.count), PROTOTYPE_METRICS.me);
+      const question = model.input.decisions.items.find((item) => item.id === 'Q-001');
+      const pending = fixture.pending.find((item) => item.pending_id === 'A-001');
+      assert.equal(question.question, '空状态要不要显示引导文案');
+      assert.equal(question.description, pending.description);
+      assert.match(question.description, /订单列表为空时/);
+      // The report fact stays at the prototype's Nov 17 14:00; the page's calendar-day
+      // rule turns its 47-hour interval into the prototype's two-day report age.
+      assert.equal(model.input.tasks.items.find((task) => task.id === 'T-104').report.reportedAtUnixMs,
+        Date.parse('2026-11-17T14:00:00.000Z'));
     }
     for (const plane of Object.keys(union)) {
       for (const item of model.input[plane].items) union[plane].push(item);
