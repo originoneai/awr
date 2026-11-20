@@ -2,7 +2,7 @@ import { Copy, Terminal } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { PersonPendingItem } from '../../core/overview';
-import { buildHandback, copyText, handbackVocabulary } from '../../lib/agent-handback';
+import { buildHandback, copyText } from '../../lib/agent-handback';
 import type { HandbackKind } from '../../lib/agent-handback';
 import { DisplayIcon } from '../display';
 import './workbench.css';
@@ -61,7 +61,6 @@ export function AgentHandback({ item, projectName }: { item: PersonPendingItem; 
         </div>
       )}
       <div className="obs-agent-handback-note">{t('workbench.home.handbackReadOnly')}</div>
-      <span className="obs-agent-handback-kind" aria-hidden="true">{handbackVocabulary(i18n.language).kind[handbackKind(item)]}</span>
     </section>
   );
 }

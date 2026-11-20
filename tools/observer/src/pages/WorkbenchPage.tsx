@@ -4,7 +4,6 @@ import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { deriveOverview } from '../core/overview';
-import type { OverviewMember } from '../core/overview';
 import { EmptyState, Notice, PageHeader } from '../components/display';
 import { ObservationForbidden } from '../components/states';
 import { FreshnessBadge } from '../components/FreshnessBadge';
@@ -16,32 +15,14 @@ import {
 } from '../components/workbench/model';
 import { isAuthError } from '../lib/api';
 import { usePerspective } from '../lib/perspective/PerspectiveProvider';
-import {
-  overviewModelQueryOptions,
-  projectsQueryOptions,
-  workNextQueryOptions,
-} from '../lib/queries';
+import { overviewModelQueryOptions, projectsQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
 import { useScope } from '../lib/scope';
-import type { TeamOverviewModelResponse, TeamReadResponse, WorkNextData } from '../lib/types';
+import type { TeamOverviewModelResponse } from '../lib/types';
 
 interface WorkbenchOverviewResponse extends TeamOverviewModelResponse {
   /** Reserved for AWR-PPD-012. No period-update read is issued by this page. */
   latestPeriodUpdate?: WorkbenchPeriodUpdate | null;
-}
-
-function memberIdentity(
-  response: TeamReadResponse<WorkNextData> | undefined,
-  members: readonly OverviewMember[],
-): string | null {
-  const identity = response?.result.data.identity as unknown as Record<string, unknown> | undefined;
-  if (!identity) return null;
-  const explicit = identity.person_id;
-  const candidate = typeof explicit === 'string'
-    ? explicit
-    : typeof identity.actor_id === 'string' ? identity.actor_id : null;
-  if (!candidate) return null;
-  return members.some((member) => member.personId === candidate) ? candidate : null;
 }
 
 function StatePage({ children, testId, freshness }: {
@@ -77,16 +58,7 @@ export function WorkbenchPage() {
   });
   const modelResponse = modelQuery.data as WorkbenchOverviewResponse | undefined;
   const modelInput = modelResponse?.input;
-  const suppliedPerson = modelInput?.options?.views?.me?.personId ?? null;
-  const identityQuery = useQuery({
-    ...workNextQueryOptions(effectiveProject, revoked),
-    // The existing member read supplies identity only. All page facts still come from the model.
-    enabled: Boolean(effectiveProject && modelInput && !suppliedPerson) && !revoked,
-  });
-  const personId = suppliedPerson ?? memberIdentity(
-    identityQuery.data,
-    modelInput?.members.coverage === 'unread' ? [] : modelInput?.members.items ?? [],
-  );
+  const personId = modelInput?.options?.views?.me?.personId ?? null;
 
   const derived = useMemo(() => {
     if (!modelInput?.options || !effectiveProject) return null;
@@ -97,7 +69,7 @@ export function WorkbenchPage() {
     return deriveOverview(input);
   }, [effectiveProject, modelInput, personId]);
 
-  if (revoked || invalidScope || isAuthError(projects.error) || isAuthError(modelQuery.error) || isAuthError(identityQuery.error)) {
+  if (revoked || invalidScope || isAuthError(projects.error) || isAuthError(modelQuery.error)) {
     return <ObservationForbidden />;
   }
   if (selected !== 'me') {

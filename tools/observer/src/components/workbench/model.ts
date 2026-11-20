@@ -34,6 +34,22 @@ export const VERDICT_RULES: readonly VerdictRule[] = [
   { id: 'generated-calm', selection: 'true', sentenceKey: 'calm' },
 ];
 
+export type KpiNoteSentenceKey = 'previousWeek' | 'stalledOther' | 'waitingOldest' | 'pendingOldest';
+
+export interface KpiNoteRule {
+  id: string;
+  selection: string;
+  sentenceKey: KpiNoteSentenceKey;
+}
+
+/** Documentation and tests pin these fact-producing rules beside the verdict sentence table. */
+export const KPI_NOTE_RULES: readonly KpiNoteRule[] = [
+  { id: 'verified-previous', selection: 'previousPeriod.count !== null', sentenceKey: 'previousWeek' },
+  { id: 'agents-stalled', selection: 'stalledOwned > 0 && all activity known', sentenceKey: 'stalledOther' },
+  { id: 'waiting-oldest', selection: 'every waiting.durationDays !== null', sentenceKey: 'waitingOldest' },
+  { id: 'pending-oldest', selection: 'every pending duration is known at read time', sentenceKey: 'pendingOldest' },
+];
+
 export interface WorkbenchPeriodUpdate {
   id: string | null;
   health: HealthStatus;
@@ -47,7 +63,7 @@ interface WorkbenchVocabulary {
   units: { tasks: string; agents: string };
   metrics: {
     verified: string; agents: string; waiting: string; pending: string;
-    previousWeek: string; previousUnknown: string; agentsNote: string; waitingNote: string; pendingNote: string;
+    previousWeek: string; stalledOther: string; waitingOldest: string; pendingOldest: string;
   };
   verdict: {
     sentences: Record<VerdictSentenceKey, string>;
@@ -65,8 +81,8 @@ const VOCABULARY: Record<'zh-CN' | 'en-US', WorkbenchVocabulary> = {
     units: { tasks: '件', agents: '个' },
     metrics: {
       verified: '本周通过核验', agents: 'Agent 在跑', waiting: '我在等', pending: '等你处理',
-      previousWeek: '上周 {{count}} 件', previousUnknown: '上周数量还没有读全',
-      agentsNote: '正在推进你名下的工作', waitingNote: '按影响和等待时长排列', pendingNote: '在你的 Agent 里处理',
+      previousWeek: '上周 {{count}} 件', stalledOther: '另有 {{count}} 个停着',
+      waitingOldest: '最久 {{days}} 天，等{{party}}', pendingOldest: '最久 {{days}} 天',
     },
     verdict: {
       sentences: {
@@ -91,8 +107,8 @@ const VOCABULARY: Record<'zh-CN' | 'en-US', WorkbenchVocabulary> = {
     units: { tasks: '', agents: '' },
     metrics: {
       verified: 'Verified this week', agents: 'Agents running', waiting: 'Waiting on others', pending: 'Waiting for you',
-      previousWeek: '{{count}} last week', previousUnknown: 'Last week is not fully read',
-      agentsNote: 'Moving your work forward', waitingNote: 'Ordered by impact and waiting time', pendingNote: 'Handled in your own Agent',
+      previousWeek: '{{count}} last week', stalledOther: 'Also stopped: {{count}}',
+      waitingOldest: 'Oldest {{days}} days, waiting for {{party}}', pendingOldest: 'Oldest {{days}} days',
     },
     verdict: {
       sentences: {
@@ -182,7 +198,7 @@ export interface WorkbenchMetric {
   key: ViewMetricKey;
   label: string;
   unit: string;
-  note: string;
+  note: string | null;
   count: number | null;
   emphasized: boolean;
   details: ViewMetric<unknown>;
@@ -217,10 +233,64 @@ export function metricDetailItems(metric: WorkbenchMetric): unknown[] {
   return metric.details.items;
 }
 
+function isDerivedWait(value: unknown): value is DerivedWait {
+  return Boolean(value && typeof value === 'object' && 'kind' in value && 'task' in value && 'behind' in value);
+}
+
+function isPersonPendingItem(value: unknown): value is PersonPendingItem {
+  return Boolean(value && typeof value === 'object' && 'kind' in value && 'task' in value && 'wait' in value && 'handoff' in value && 'approval' in value);
+}
+
+function elapsedWholeDays(atUnixMs: number | null | undefined, readAtUnixMs: number | undefined): number | null {
+  if (typeof atUnixMs !== 'number' || !Number.isFinite(atUnixMs) || atUnixMs < 0 || readAtUnixMs === undefined || atUnixMs > readAtUnixMs) return null;
+  return Math.floor((readAtUnixMs - atUnixMs) / 86_400_000);
+}
+
+function pendingDurationDays(item: PersonPendingItem, readAtUnixMs: number | undefined): number | null {
+  if (item.kind === 'wait') return item.wait?.durationDays ?? null;
+  if (item.kind === 'handoff') return elapsedWholeDays(item.handoff?.updatedAtUnixMs, readAtUnixMs);
+  return elapsedWholeDays(item.approval?.sinceUnixMs, readAtUnixMs);
+}
+
+function metricNote(
+  id: MyMetricId,
+  details: ViewMetric<unknown>,
+  language: string,
+  currentPerson: PersonSummary | null,
+  readAtUnixMs: number | undefined,
+): string | null {
+  const vocabulary = workbenchVocabulary(language);
+  if (id === 'verified') {
+    return typeof details.previousPeriod?.count === 'number'
+      ? fill(vocabulary.metrics.previousWeek, { count: details.previousPeriod.count })
+      : null;
+  }
+  if (id === 'agents') {
+    if (!currentPerson) return null;
+    const stalled = currentPerson.inProgress.items.filter((task) => task.status === 'stalled');
+    if (stalled.some((task) => task.agentActive === null)) return null;
+    const count = stalled.filter((task) => task.agentActive === false).length;
+    return count > 0 ? fill(vocabulary.metrics.stalledOther, { count }) : null;
+  }
+  if (id === 'waiting') {
+    const waits = details.items.filter(isDerivedWait);
+    if (waits.length === 0 || waits.some((wait) => wait.durationDays === null)) return null;
+    const longest = waits.reduce((left, right) => (left.durationDays ?? -1) >= (right.durationDays ?? -1) ? left : right);
+    return fill(vocabulary.metrics.waitingOldest, { days: longest.durationDays!, party: waitingOnText(longest, language) });
+  }
+  const pending = details.items.filter(isPersonPendingItem);
+  if (pending.length === 0) return null;
+  const durations = pending.map((item) => pendingDurationDays(item, readAtUnixMs));
+  if (durations.some((days) => days === null)) return null;
+  return fill(vocabulary.metrics.pendingOldest, { days: Math.max(...durations as number[]) });
+}
+
 function metric(
   id: MyMetricId,
   details: ViewMetric<unknown>,
   language: string,
+  currentPerson: PersonSummary | null,
+  readAtUnixMs: number | undefined,
 ): WorkbenchMetric {
   const vocabulary = workbenchVocabulary(language);
   const labels = {
@@ -229,19 +299,12 @@ function metric(
     waiting: vocabulary.metrics.waiting,
     pending: vocabulary.metrics.pending,
   };
-  let note = vocabulary.metrics.pendingNote;
-  if (id === 'verified') {
-    note = details.previousPeriod?.count === null || details.previousPeriod == null
-      ? vocabulary.metrics.previousUnknown
-      : fill(vocabulary.metrics.previousWeek, { count: details.previousPeriod.count });
-  } else if (id === 'agents') note = vocabulary.metrics.agentsNote;
-  else if (id === 'waiting') note = vocabulary.metrics.waitingNote;
   return {
     id,
     key: details.key,
     label: labels[id],
     unit: id === 'agents' ? vocabulary.units.agents : vocabulary.units.tasks,
-    note,
+    note: metricNote(id, details, language, currentPerson, readAtUnixMs),
     count: details.count,
     emphasized: id === 'pending',
     details,
@@ -253,12 +316,12 @@ export function buildMyWorkModel(
   language: string,
   options: MyWorkModelOptions = { personId: null },
 ): MyWorkModel {
-  const metrics = derived.views.me.metrics.map((item, index) => metric(
-    (['verified', 'agents', 'waiting', 'pending'] as const)[index], item, language,
-  )) as MyWorkModel['metrics'];
   const currentPerson = options.personId === null
     ? null
     : derived.people.find((summary) => summary.person.id === options.personId) ?? null;
+  const metrics = derived.views.me.metrics.map((item, index) => metric(
+    (['verified', 'agents', 'waiting', 'pending'] as const)[index], item, language, currentPerson, options.readAtUnixMs,
+  )) as MyWorkModel['metrics'];
   const chains = options.personId === null ? [] : derived.chains.filter((chain) => (
     chain.impact.items.some((task) => task.owner?.id === options.personId)
     || chain.root.queue.items.some((wait) => wait.waitingOn.some((person) => person.id === options.personId))
@@ -301,6 +364,13 @@ export function workbenchDisplayText(value: string | null | undefined, fallback:
   return normalized ? truncateCodePoints(normalized, budget).text : fallback;
 }
 
+export function workbenchAgentName(value: string | null | undefined, fallback: string): string {
+  const withoutOwnerSuffix = typeof value === 'string'
+    ? value.replace(/（[^（）]*的 Agent）$/, '').replace(/\([^()]*'s Agent\)$/, '').trim()
+    : '';
+  return workbenchDisplayText(withoutOwnerSuffix, fallback);
+}
+
 export function waitingOnText(wait: DerivedWait, language: string): string {
   const vocabulary = workbenchVocabulary(language).waiting;
   const names = wait.waitingOn.map((person) => workbenchDisplayText(person.displayName, '', 80)).filter(Boolean);
@@ -313,20 +383,69 @@ export function waitingOnText(wait: DerivedWait, language: string): string {
 
 const DAY_MS = 86_400_000;
 
-function weekPeriod(nowUnixMs: number, weeksBefore = 0) {
-  const date = new Date(nowUnixMs);
-  const midnight = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
-  const daysFromMonday = (date.getUTCDay() + 6) % 7;
-  const startUnixMs = midnight - (daysFromMonday + weeksBefore * 7) * DAY_MS;
-  return { startUnixMs, endUnixMs: startUnixMs + 7 * DAY_MS - 1 };
+interface ZonedDateParts {
+  year: number;
+  month: number;
+  day: number;
+  daysFromMonday: number;
 }
 
-function monthPeriod(nowUnixMs: number, monthsBefore = 0) {
-  const date = new Date(nowUnixMs);
-  const year = date.getUTCFullYear();
-  const month = date.getUTCMonth() - monthsBefore;
-  const startUnixMs = Date.UTC(year, month, 1);
-  return { startUnixMs, endUnixMs: Date.UTC(year, month + 1, 1) - 1 };
+function zonedDateParts(nowUnixMs: number, timeZone: string): ZonedDateParts {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short',
+  }).formatToParts(nowUnixMs);
+  const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? '';
+  const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  return {
+    year: Number(value('year')),
+    month: Number(value('month')),
+    day: Number(value('day')),
+    daysFromMonday: (weekdays.indexOf(value('weekday')) + 6) % 7,
+  };
+}
+
+function timeZoneOffsetMs(nowUnixMs: number, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  }).formatToParts(nowUnixMs);
+  const value = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((part) => part.type === type)?.value ?? 0);
+  const asUtc = Date.UTC(value('year'), value('month') - 1, value('day'), value('hour'), value('minute'), value('second'));
+  return asUtc - Math.floor(nowUnixMs / 1000) * 1000;
+}
+
+/** Convert a calendar midnight in the viewer's zone to its epoch timestamp, including DST changes. */
+function zonedCalendarToUtc(calendarUnixMs: number, timeZone: string): number {
+  let converted = calendarUnixMs;
+  for (let iteration = 0; iteration < 2; iteration += 1) {
+    converted = calendarUnixMs - timeZoneOffsetMs(converted, timeZone);
+  }
+  return converted;
+}
+
+function zonedDayCalendar(nowUnixMs: number, timeZone: string): number {
+  const parts = zonedDateParts(nowUnixMs, timeZone);
+  return Date.UTC(parts.year, parts.month - 1, parts.day);
+}
+
+function weekPeriod(nowUnixMs: number, weeksBefore = 0, timeZone = 'UTC') {
+  const dayCalendar = zonedDayCalendar(nowUnixMs, timeZone);
+  const { daysFromMonday } = zonedDateParts(nowUnixMs, timeZone);
+  const startCalendar = dayCalendar - (daysFromMonday + weeksBefore * 7) * DAY_MS;
+  return {
+    startUnixMs: zonedCalendarToUtc(startCalendar, timeZone),
+    endUnixMs: zonedCalendarToUtc(startCalendar + 7 * DAY_MS, timeZone) - 1,
+  };
+}
+
+function monthPeriod(nowUnixMs: number, monthsBefore = 0, timeZone = 'UTC') {
+  const { year, month } = zonedDateParts(nowUnixMs, timeZone);
+  const startCalendar = Date.UTC(year, month - 1 - monthsBefore, 1);
+  return {
+    startUnixMs: zonedCalendarToUtc(startCalendar, timeZone),
+    endUnixMs: zonedCalendarToUtc(Date.UTC(year, month - monthsBefore, 1), timeZone) - 1,
+  };
 }
 
 /** Fill caller-owned scopes and periods; an absent member remains explicitly unknown. */
@@ -334,6 +453,7 @@ export function workbenchInputOptions(
   options: OverviewDerivationOptions,
   projectId: string,
   personId: string | null,
+  timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone,
 ): OverviewDerivationOptions {
   const supplied = options.views;
   return {
@@ -344,10 +464,10 @@ export function workbenchInputOptions(
       lead: { personId, projectId },
       department: supplied?.department ?? { personId, projectIds: [projectId] },
       top: supplied?.top ?? { personId, goalIds: null },
-      currentWeek: supplied?.currentWeek ?? weekPeriod(options.nowUnixMs),
-      previousWeek: supplied?.previousWeek ?? weekPeriod(options.nowUnixMs, 1),
-      currentMonth: supplied?.currentMonth ?? monthPeriod(options.nowUnixMs),
-      previousMonth: supplied?.previousMonth ?? monthPeriod(options.nowUnixMs, 1),
+      currentWeek: supplied?.currentWeek ?? weekPeriod(options.nowUnixMs, 0, timeZone),
+      previousWeek: supplied?.previousWeek ?? weekPeriod(options.nowUnixMs, 1, timeZone),
+      currentMonth: supplied?.currentMonth ?? monthPeriod(options.nowUnixMs, 0, timeZone),
+      previousMonth: supplied?.previousMonth ?? monthPeriod(options.nowUnixMs, 1, timeZone),
     },
   };
 }

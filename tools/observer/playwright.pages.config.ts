@@ -22,6 +22,7 @@ export default defineConfig({
     { name: 'desktop-light', use: { viewport: { width: 1440, height: 900 }, colorScheme: 'light' } },
     { name: 'desktop-dark', use: { viewport: { width: 1440, height: 900 }, colorScheme: 'dark' } },
     { name: 'phone-light', use: { viewport: { width: 390, height: 844 }, colorScheme: 'light' } },
+    { name: 'desktop-new-york', use: { viewport: { width: 1440, height: 900 }, colorScheme: 'light', timezoneId: 'America/New_York' } },
   ],
   webServer: {
     command: 'node server.js --demo --demo-variant full --port 4175',

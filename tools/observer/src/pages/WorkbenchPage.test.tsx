@@ -1,5 +1,5 @@
 import { QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { OVERVIEW_PARTS, type OverviewInput } from '../core/overview';
@@ -11,7 +11,7 @@ import { createAppQueryClient, revokeObservationReads } from '../lib/queries';
 import { RevocationProvider } from '../lib/revocation';
 import { ScopeProvider } from '../lib/scope';
 import { stubFetch } from '../test-utils';
-import { myWorkInput } from '../components/workbench/testing';
+import { myWorkInput } from '../test-fixtures/workbench';
 import { WorkbenchPage } from './WorkbenchPage';
 
 const PROJECT = { key: 'demo', title: 'Synthetic Project', role: 'developer' };
@@ -176,13 +176,54 @@ describe('project scope selection', () => {
     expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes('/api/team/overview-model'))).toBe(false);
   });
 
-  it('uses a member only when the existing identity read establishes that member', async () => {
-    const input = myWorkInput({
-      options: { nowUnixMs: myWorkInput().options.nowUnixMs, stalledAfterDays: 1 },
-    });
+});
+
+describe('member identity from the composition only', () => {
+  function expectNoWorkNextRead() {
+    const workNextCalls = vi.mocked(fetch).mock.calls.filter(([input]) => String(input).includes('/api/team/read'));
+    expect(workNextCalls).toEqual([]);
+  }
+
+  it('uses a supplied id that matches a member and never issues a second identity read', async () => {
+    stubModel(myWorkInput());
+    const { container } = renderWorkbench();
+    expect(await screen.findByTestId('workbench-frame')).toBeTruthy();
+    expect(screen.queryByText('当前成员还不能确定')).toBeNull();
+    expect(container.querySelectorAll('.obs-chain-node-root').length).toBeGreaterThan(0);
+    expectNoWorkNextRead();
+  });
+
+  it('keeps a supplied id that matches no member unknown and draws no chains', async () => {
+    const base = myWorkInput();
+    const input = {
+      ...base,
+      options: {
+        ...base.options,
+        views: { ...base.options.views, me: { personId: 'person-missing', projectId: 'project-one' } },
+      },
+    };
     stubModel(input);
-    renderWorkbench();
-    await waitFor(() => expect(screen.getByTestId('workbench-loading')).toBeTruthy());
-    expect(document.body.textContent).not.toContain('Owner One');
+    const { container } = renderWorkbench();
+    expect(await screen.findByTestId('workbench-frame')).toBeTruthy();
+    expect(screen.getByText('当前成员还不能确定')).toBeTruthy();
+    expect(container.querySelectorAll('.obs-chain-node').length).toBe(0);
+    expectNoWorkNextRead();
+  });
+
+  it('keeps an absent id unknown and draws no chains or identity fallback', async () => {
+    const base = myWorkInput();
+    const input = {
+      ...base,
+      options: {
+        ...base.options,
+        views: { ...base.options.views, me: { personId: null, projectId: 'project-one' } },
+      },
+    };
+    stubModel(input);
+    const { container } = renderWorkbench();
+    expect(await screen.findByTestId('workbench-frame')).toBeTruthy();
+    expect(screen.getByText('当前成员还不能确定')).toBeTruthy();
+    expect(container.querySelectorAll('.obs-chain-node').length).toBe(0);
+    expectNoWorkNextRead();
   });
 });

@@ -1,5 +1,5 @@
 import { OVERVIEW_PARTS, type OverviewInput } from '../core/overview';
-import { myWorkInput } from '../components/workbench/testing';
+import { myWorkInput } from './workbench';
 
 /** A valid composition response for legacy shell tests whose old /overview stub used to match /overview-model. */
 export function demoOverviewModelResponse(input: OverviewInput = myWorkInput(), extra: Record<string, unknown> = {}) {

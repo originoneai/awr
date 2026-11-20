@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { deriveOverview } from '../../core/overview';
+import type { OverviewTask } from '../../core/overview';
 import i18n from '../../i18n';
 import { PerspectiveProvider } from '../../lib/perspective/PerspectiveProvider';
 import { unknownPerspectiveFacts } from '../../lib/perspective/types';
@@ -12,7 +13,7 @@ import { RevocationProvider } from '../../lib/revocation';
 import { CraftThemeProvider } from '../CraftThemeProvider';
 import { WorkbenchFrame } from './WorkbenchFrame';
 import { buildMyWorkModel, type WorkbenchPeriodUpdate } from './model';
-import { myWorkInput, WORKBENCH_NOW } from './testing';
+import { myWorkInput, WORKBENCH_NOW } from '../../test-fixtures/workbench';
 
 function LocationProbe() {
   const location = useLocation();
@@ -72,6 +73,11 @@ describe('shared workbench frame and My Work', () => {
     expect(screen.getByRole('button', { name: /还有 1 件/ })).toBeTruthy();
   });
 
+  it('marks an empty chain with the flat plain-state attribute', () => {
+    const { container } = renderFrame(myWorkInput({ tasks: { coverage: 'complete', items: [] } }));
+    expect(container.querySelector('.obs-chain-block')?.getAttribute('data-empty')).toBe('true');
+  });
+
   it('switches between multiple blocker chains and keeps exactly one red root', async () => {
     const user = userEvent.setup();
     const { container } = renderFrame();
@@ -83,6 +89,31 @@ describe('shared workbench frame and My Work', () => {
     expect(container.querySelector('.obs-chain-node-root .obs-chain-title')?.textContent).not.toBe(firstTitle);
     expect(container.querySelectorAll('.obs-chain-node-root')).toHaveLength(1);
     expect(container.querySelector('.obs-chain-node-root .obs-lamp[data-lamp="blocked"]')).not.toBeNull();
+  });
+
+  it('clamps invalid chain, tab and detail URL parameters to the first safe view', () => {
+    const { container } = renderFrame(myWorkInput(), '/workbench?scope=project-one&chain=99&tab=zzz&detail=bogus');
+    const chainButtons = within(screen.getByRole('group', { name: '链路' })).getAllByRole('button');
+    expect(chainButtons[0].getAttribute('aria-pressed')).toBe('true');
+    expect(container.querySelector('.obs-detail-tabs .ant-tabs-tab-active')?.textContent).toContain('我的 Agent');
+    expect(screen.queryByTestId('workbench-metric-detail')).toBeNull();
+  });
+
+  it('encodes a task link whose id contains a space, slash and question mark', async () => {
+    const user = userEvent.setup();
+    const base = myWorkInput();
+    const input = {
+      ...base,
+      tasks: {
+        ...base.tasks,
+        items: (base.tasks.items ?? []).map((task: OverviewTask) => task.id === 'mine-external' ? { ...task, id: 'external /?' } : task),
+      },
+    };
+    const { container } = renderFrame(input);
+    await user.click(screen.getByRole('button', { name: '等Example Client' }));
+    const taskNode = container.querySelector('.obs-chain-node[data-node-kind="task"]')!;
+    await user.click(taskNode);
+    expect(screen.getByTestId('location').getAttribute('data-path')).toBe('/tasks/external%20%2F%3F');
   });
 
   it.each([
@@ -102,6 +133,14 @@ describe('shared workbench frame and My Work', () => {
     expect(container.querySelector('.obs-detail-panel')).not.toBeNull();
   });
 
+  it('uses a quiet info note for unread-only coverage and warning for partial reads', () => {
+    const unread = renderFrame(myWorkInput({ approvals: { coverage: 'unread', reason: 'not-read' } }));
+    expect(unread.container.querySelector('[data-testid="workbench-partial"] .obs-notice')?.getAttribute('data-tone')).toBe('info');
+    unread.unmount();
+    const partial = renderFrame(myWorkInput({ dependencies: { coverage: 'partial', reason: 'read-failed', items: [] } }));
+    expect(partial.container.querySelector('[data-testid="workbench-partial"] .obs-notice')?.getAttribute('data-tone')).toBe('warning');
+  });
+
   it('shows the generic review-responsibility role instead of guessing a person', () => {
     const baseInput = myWorkInput({
       reviewRounds: { coverage: 'complete', items: [{
@@ -114,7 +153,7 @@ describe('shared workbench frame and My Work', () => {
       ...baseInput,
       tasks: {
         ...baseInput.tasks,
-        items: (baseInput.tasks.items ?? []).map((task) => task.id === 'other-review' ? { ...task, ownerPersonId: 'person-a' } : task),
+        items: (baseInput.tasks.items ?? []).map((task: OverviewTask) => task.id === 'other-review' ? { ...task, ownerPersonId: 'person-a' } : task),
       },
     };
     const { container } = renderFrame(input, '/workbench?scope=project-one&tab=waits');
@@ -126,7 +165,7 @@ describe('shared workbench frame and My Work', () => {
   it('shows an unread lessons state and never offers a business mutation', async () => {
     const user = userEvent.setup();
     renderFrame();
-    await user.click(screen.getByRole('button', { name: '在你的 Agent 里处理' }));
+    await user.click(screen.getByText('在你的 Agent 里处理', { selector: '.obs-todo-agent-control' }));
     await user.click(screen.getByRole('tab', { name: /经验/ }));
     expect(screen.getByText('经验还没读取')).toBeTruthy();
     for (const action of ['派发', '批准', '提交复核', '回答问题', '合入', '提交']) {
@@ -135,18 +174,69 @@ describe('shared workbench frame and My Work', () => {
     expect(screen.getByRole('button', { name: '复制这句话' })).toBeTruthy();
   });
 
+  it('opens the item from the whole first card and toggles its handback with H', async () => {
+    const user = userEvent.setup();
+    const first = renderFrame();
+    await user.click(first.container.querySelector('.obs-todo-title')!);
+    expect(screen.getByTestId('location').getAttribute('data-path')).toBe('/inbox');
+    first.unmount();
+
+    const second = renderFrame();
+    const card = second.container.querySelector('.obs-todo-card') as HTMLElement;
+    card.focus();
+    await user.keyboard('h');
+    expect(screen.getByTestId('agent-handback')).toBeTruthy();
+    expect(screen.getByTestId('location').getAttribute('data-path')).toBe('/workbench');
+  });
+
   it('copies the handback locally without a request', async () => {
     const user = userEvent.setup();
     const writeText = vi.fn(async (_text: string) => undefined);
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     renderFrame();
-    await user.click(screen.getByRole('button', { name: '在你的 Agent 里处理' }));
+    await user.click(screen.getByText('在你的 Agent 里处理', { selector: '.obs-todo-agent-control' }));
     await user.click(screen.getByRole('button', { name: '复制这句话' }));
     expect(writeText).toHaveBeenCalledTimes(1);
     const sentence = writeText.mock.calls[0]?.[0] ?? '';
     expect(sentence.length).toBeLessThanOrEqual(240);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('shows a structured title as stored plain text, not as markup', () => {
+    const base = myWorkInput();
+    const title = 'client[secret]=synthetic-work-title';
+    const input = {
+      ...base,
+      tasks: {
+        ...base.tasks,
+        items: (base.tasks.items ?? []).map((task: OverviewTask) => task.id === 'mine-running' ? { ...task, title } : task),
+      },
+    };
+    const { container } = renderFrame(input);
+    const taskCell = container.querySelector('.obs-data-table tbody tr td:nth-child(2)')!;
+    expect(taskCell.textContent).toBe(title);
+    expect(taskCell.querySelector('img, script, iframe, object')).toBeNull();
+  });
+
+  it('removes the recorded owner suffix from an Agent display name', () => {
+    const base = myWorkInput();
+    const input = {
+      ...base,
+      tasks: {
+        ...base.tasks,
+        items: (base.tasks.items ?? []).map((task: OverviewTask) => task.id === 'mine-running'
+          ? { ...task, agentName: 'Claude 桌面（林悦的 Agent）' }
+          : task),
+      },
+    };
+    const { container } = renderFrame(input);
+    const agentCell = container.querySelector('.obs-data-table tbody tr td:first-child')!;
+    expect(agentCell.textContent).toBe('Claude 桌面');
+    expect(container.querySelector('thead th:nth-child(3) span')?.getAttribute('title')).toBe('报告正文尚未读取');
+    expect(container.querySelector('thead th:nth-child(5) span')?.getAttribute('title')).toBe('报告时间尚未读取');
+    expect(container.querySelector('tbody tr td:nth-child(3)')?.textContent).toBe('—');
+    expect(container.querySelector('tbody tr td:nth-child(5)')?.textContent).toBe('—');
   });
 
   it('truncates untrusted long text and never treats markup as an element', () => {
@@ -156,7 +246,7 @@ describe('shared workbench frame and My Work', () => {
       ...baseInput,
       tasks: {
         ...baseInput.tasks,
-        items: (baseInput.tasks.items ?? []).map((task) => task.id === 'mine-running' ? { ...task, title: longTitle } : task),
+        items: (baseInput.tasks.items ?? []).map((task: OverviewTask) => task.id === 'mine-running' ? { ...task, title: longTitle } : task),
       },
     };
     const { container } = renderFrame(input);

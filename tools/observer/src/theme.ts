@@ -85,9 +85,10 @@ const sharedCraftTokens = {
   // Workbench measurements transcribed from .inst, .word, .say, .inst-body and .btn.
   workbench: {
     railWidth: 348,
-    grid: 20,
     healthHeight: 24,
     healthLamp: 10,
+    healthPaddingInline: 10,
+    captionText: 12,
     controlHeight: 32,
     verdictText: 24,
     verdictTextCompact: 20,
@@ -99,61 +100,15 @@ const sharedCraftTokens = {
     ageColumn: 96,
     waitKindColumn: 136,
     waitDurationColumn: 150,
+    waitBarMinWidth: 48,
     behindColumn: 104,
   },
-} as const;
-
-// Third-draft .inst follows the page theme; only .why keeps the dotted canvas.
-const lightInstrumentPalette = {
-  surface: '#FFFFFF',
-  raised: '#ECEFF4',
-  ink: '#111827',
-  secondary: '#4B5565',
-  muted: '#626B7C',
-  hairline: 'rgba(17, 24, 39, 0.08)',
-  hairlineStrong: 'rgba(17, 24, 39, 0.16)',
-  accent: '#1D4ED8',
-  onAccent: '#FFFFFF',
-  accentSoft: 'rgba(29, 78, 216, 0.08)',
-  positive: '#147B3B',
-  positiveSoft: 'rgba(20, 123, 59, 0.10)',
-  negative: '#B91C1C',
-  negativeSoft: 'rgba(185, 28, 28, 0.08)',
-  warning: '#925F0B',
-  warningSoft: 'rgba(146, 95, 11, 0.10)',
-  gridImage: 'none',
-} as const;
-
-const darkInstrumentPalette = {
-  surface: '#11141C',
-  raised: '#1A1E28',
-  ink: '#EEF0F5',
-  secondary: '#A3A9B8',
-  muted: '#7E869A',
-  hairline: 'rgba(238, 240, 245, 0.08)',
-  hairlineStrong: 'rgba(238, 240, 245, 0.16)',
-  accent: '#8AB0FF',
-  onAccent: '#07080D',
-  accentSoft: 'rgba(138, 176, 255, 0.12)',
-  positive: '#4CC38A',
-  positiveSoft: 'rgba(76, 195, 138, 0.14)',
-  negative: '#F2686C',
-  negativeSoft: 'rgba(242, 104, 108, 0.14)',
-  warning: '#E0A63A',
-  warningSoft: 'rgba(224, 166, 58, 0.14)',
-  gridImage: 'none',
 } as const;
 
 /** Every visual role has a complete light and dark value; shared geometry uses the same scale. */
 export const craftThemes = {
   light: {
     ...sharedCraftTokens,
-    instrument: {
-      ...lightInstrumentPalette,
-      background: '#FFFFFF',
-      edge: 'rgba(17, 24, 39, 0.08)',
-      shadow: '0 8px 24px rgba(17, 24, 39, 0.10)',
-    },
     color: {
       page: '#F3F5F9',
       side: '#FFFFFF',
@@ -192,12 +147,6 @@ export const craftThemes = {
   },
   dark: {
     ...sharedCraftTokens,
-    instrument: {
-      ...darkInstrumentPalette,
-      background: '#11141C',
-      edge: 'rgba(238, 240, 245, 0.08)',
-      shadow: 'none',
-    },
     color: {
       page: '#0B0D14',
       side: '#07080D',
@@ -366,33 +315,14 @@ export function craftCssVariables(mode: CraftThemeMode): Record<string, string> 
   const tokens = craftThemes[mode];
   const {
     color, chart, shadow, radius, motion, font, text, leading, measure,
-    height, gap, width, canvas, perspective, instrument, workbench,
+    height, gap, width, canvas, perspective, workbench,
   } = tokens;
   return {
-    '--craft-instrument-background': instrument.background,
-    '--craft-instrument-surface': instrument.surface,
-    '--craft-instrument-raised': instrument.raised,
-    '--craft-instrument-ink': instrument.ink,
-    '--craft-instrument-secondary': instrument.secondary,
-    '--craft-instrument-muted': instrument.muted,
-    '--craft-instrument-hairline': instrument.hairline,
-    '--craft-instrument-hairline-strong': instrument.hairlineStrong,
-    '--craft-instrument-accent': instrument.accent,
-    '--craft-instrument-on-accent': instrument.onAccent,
-    '--craft-instrument-accent-soft': instrument.accentSoft,
-    '--craft-instrument-positive': instrument.positive,
-    '--craft-instrument-positive-soft': instrument.positiveSoft,
-    '--craft-instrument-negative': instrument.negative,
-    '--craft-instrument-negative-soft': instrument.negativeSoft,
-    '--craft-instrument-warning': instrument.warning,
-    '--craft-instrument-warning-soft': instrument.warningSoft,
-    '--craft-instrument-grid-image': instrument.gridImage,
-    '--craft-instrument-edge': instrument.edge,
-    '--craft-instrument-shadow': instrument.shadow,
     '--craft-workbench-rail-width': `${workbench.railWidth}px`,
-    '--craft-workbench-grid': `${workbench.grid}px`,
     '--craft-workbench-health-height': `${workbench.healthHeight}px`,
     '--craft-workbench-health-lamp': `${workbench.healthLamp}px`,
+    '--craft-workbench-health-padding-inline': `${workbench.healthPaddingInline}px`,
+    '--craft-workbench-caption-text': `${workbench.captionText}px`,
     '--craft-workbench-control-height': `${workbench.controlHeight}px`,
     '--craft-workbench-verdict-text': `${workbench.verdictText}px`,
     '--craft-workbench-verdict-text-compact': `${workbench.verdictTextCompact}px`,
@@ -404,6 +334,7 @@ export function craftCssVariables(mode: CraftThemeMode): Record<string, string> 
     '--craft-workbench-column-age': `${workbench.ageColumn}px`,
     '--craft-workbench-column-wait-kind': `${workbench.waitKindColumn}px`,
     '--craft-workbench-column-wait-duration': `${workbench.waitDurationColumn}px`,
+    '--craft-workbench-wait-bar-min': `${workbench.waitBarMinWidth}px`,
     '--craft-workbench-column-behind': `${workbench.behindColumn}px`,
     '--craft-perspective-option-padding-inline': `${perspective.optionPaddingInline}px`,
     '--craft-color-page': color.page,

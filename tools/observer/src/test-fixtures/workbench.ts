@@ -1,5 +1,5 @@
-import type { OverviewInput } from '../../core/overview';
-import { DAY, approval, baseTask, complete, decision, dependency, reviewRound, startedTask, supportedAcceptance } from '../../core/overview/__tests__/factories';
+import type { OverviewInput } from '../core/overview';
+import { DAY, approval, baseTask, complete, decision, dependency, reviewRound, startedTask, supportedAcceptance } from '../core/overview/__tests__/factories';
 
 export const WORKBENCH_NOW = Date.parse('2026-11-19T12:00:00.000Z');
 export const WORKBENCH_WEEK_START = Date.parse('2026-11-16T00:00:00.000Z');
@@ -38,17 +38,17 @@ export function myWorkInput(overrides: Partial<OverviewInput> = {}): OverviewInp
   return {
     tasks: complete([mineVerified, mineRunning, mineDecision, mineExternal, review, mineDependent]
       .map((task) => ({ ...task, projectId: 'project-one' }))),
-    dependencies: complete([dependency('mine-dependent', 'other-review')]),
-    decisions: complete([decision('mine-decision', { allowedResponderIds: ['person-a'] })]),
+    dependencies: complete([dependency('mine-dependent', 'other-review', { sinceUnixMs: WORKBENCH_NOW - 2 * DAY })]),
+    decisions: complete([decision('mine-decision', { allowedResponderIds: ['person-a'], createdAtUnixMs: WORKBENCH_NOW - 2 * DAY })]),
     reviewRounds: complete([
-      reviewRound('mine-verified', 'approved'),
-      reviewRound('other-review', 'open', { reviewerPersonId: 'person-a' }),
+      reviewRound('mine-verified', 'approved', { openedAtUnixMs: WORKBENCH_NOW - 3 * DAY }),
+      reviewRound('other-review', 'open', { reviewerPersonId: 'person-a', openedAtUnixMs: WORKBENCH_NOW - 2 * DAY }),
     ]),
     handoffs: complete([{
       id: 'handoff-one', taskId: 'mine-running', kind: 'execution', status: 'proposed', pending: true,
       fromPersonId: 'person-c', toPersonId: 'person-a', updatedAtUnixMs: WORKBENCH_NOW - DAY,
     }]),
-    approvals: complete([approval('plan-approval', 'person-a', { projectId: 'project-one' })]),
+    approvals: complete([approval('plan-approval', 'person-a', { projectId: 'project-one', sinceUnixMs: WORKBENCH_NOW - 2 * DAY })]),
     members: complete([
       { personId: 'person-a', displayName: 'Owner One', groupId: 'group-one' },
       { personId: 'person-b', displayName: 'Reviewer Two', groupId: 'group-one' },

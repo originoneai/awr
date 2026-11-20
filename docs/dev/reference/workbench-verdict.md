@@ -34,6 +34,25 @@ objects as the visible KPI details.
 | `generated-agents` | `agents > 0` | `agentsOnly` |
 | `generated-calm` | `true` | `calm` |
 
+## KPI note rule table
+
+These rules produce the small factual note under a KPI. Every input comes from that metric's own
+array or the current member's derived in-progress array. A note appears only when its selection is
+met; incomplete facts leave the note blank.
+
+| Rule | Selection | Sentence key |
+| ---- | --------- | ------------ |
+| `verified-previous` | `previousPeriod.count !== null` | `previousWeek` |
+| `agents-stalled` | `stalledOwned > 0 && all activity known` | `stalledOther` |
+| `waiting-oldest` | `every waiting.durationDays !== null` | `waitingOldest` |
+| `pending-oldest` | `every pending duration is known at read time` | `pendingOldest` |
+
+`stalledOwned` counts the current member's stalled tasks with explicit inactive-Agent facts. Any
+unknown Agent activity leaves the note blank. `waitingOldest` also names the responsible party from
+the longest wait. `pending-oldest` uses wait durations when already derived and computes whole days
+for handoffs and approvals from their recorded timestamps against the common read time. Future or
+missing timestamps leave the note blank.
+
 The Chinese templates are:
 
 - `pendingAndWaiting`: `有 {{pending}} 件事等你处理；你名下的 {{waiting}} 件事正在等别人。`

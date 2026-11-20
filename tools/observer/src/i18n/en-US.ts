@@ -622,9 +622,9 @@ const enUS: Messages = {
   },
   workbench: {
     home: {
-      headingMe: 'My work', headingNotOpen: 'This perspective is not open yet', headingNotOpenDescription: 'Only My work is available now. Other perspectives will connect when their pages are ready.',
+      headingMe: 'My work',
       periodMe: 'Today, {{month}} {{day}}', periodUnknown: 'Current project',
-      selectProjectTitle: 'Choose a project first', selectProjectDescription: 'Your authorized scope contains several projects. Choose one to see its work; this page will not silently read every project.', chooseProject: 'Choose a project',
+      selectProjectTitle: 'Choose a project first', selectProjectDescription: 'Your authorized scope contains several projects. Choose one first, and its work will appear here.', chooseProject: 'Choose a project',
       noProjectsTitle: 'No projects to view', noProjectsDescription: 'There are no projects in your authorized scope yet.',
       loading: 'Reading this project', failedTitle: 'The workbench could not be read', failedDescription: 'Try again later. A failed read is not treated as no work.',
       unknownTitle: 'The latest result is uncertain', unknownDescription: 'This read could not be ordered against the existing records. Only confirmed content is shown.',
@@ -639,7 +639,7 @@ const enUS: Messages = {
       rootExternal: 'Still waiting for {{party}}', rootExternalUnknown: 'Still waiting for an outside party', rootExternalPartyFallback: 'Outside party', rootWhatFallback: 'No explanation was recorded for this wait',
       railTitle: 'Waiting for you', railEmptyTitle: 'Nothing is waiting for you', railEmptyDescription: 'New waiting records will appear here.', railUnknownTitle: 'Pending total unknown', railUnknownDescription: 'Some pending records have not been read, so this cannot be treated as an empty queue.', railUnknownNote: 'Pending records are not fully read; {{count}} confirmed items are shown below.',
       tabs: { agents: 'My Agents', waiting: 'Waiting on others', lessons: 'Lessons' },
-      agentColumns: { agent: 'Agent', task: 'Task', lastReport: 'Latest report', status: 'Status', age: 'When' }, noAgent: 'Not assigned to an Agent yet', reportNotRead: 'Report text not read', timeNotRead: 'Time not read',
+      agentColumns: { agent: 'Agent', task: 'Task', lastReport: 'Latest report', status: 'Status', age: 'When' }, noAgent: 'Not assigned to an Agent yet', reportNotRead: '—', timeNotRead: '—', reportUnreadReason: 'Report text has not been read', timeUnreadReason: 'Report time has not been read',
       waitColumns: { who: 'Who is waiting on whom', what: 'For what', kind: 'Kind', duration: 'How long', behind: 'Holding up' }, noWaits: 'Nobody is waiting on anybody else right now.',
       waitKinds: { decision: 'Decision', dependency: 'Upstream', review: 'Review', external: 'Outside party' }, waitWhatFallback: 'No explanation was recorded for this wait', waitReviewFallback: 'A submitted result is waiting for review', waitExternalFallback: 'Waiting for an outside party to reply',
       currentMemberUnknown: 'Current member unknown', unnamedTask: 'Task name not provided', unnamedAgent: 'Agent name not provided', unnamedPending: 'Pending item not provided', outsideParty: 'Outside party',
@@ -829,6 +829,7 @@ const enUS: Messages = {
       more: '{{remaining}} more',
       viewAll: 'All',
       handleInAgent: 'Handled in your own Agent',
+      handbackShortcut: 'Press H to open the Agent handback',
       viewItem: 'View this item',
     },
     acceptance: {

@@ -154,7 +154,7 @@ export function Chain({ nodes, connectors, present, onOpen, header, empty, foote
   });
 
   return (
-    <div className="obs-chain-block" data-compact={compactViewport || undefined}>
+    <div className="obs-chain-block" data-compact={compactViewport || undefined} data-empty={nodes.length === 0 && empty !== undefined || undefined}>
       {header}
       {nodes.length === 0 && empty !== undefined ? empty : (
         <div className="obs-chain" role="group" aria-label={t('display.chain.groupLabel')} data-compact={compactViewport || undefined}>

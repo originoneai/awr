@@ -6,9 +6,10 @@ describe('workbench named prototype tokens', () => {
   it('pins every added geometry token and exposes it as CSS', () => {
     expect(craftThemes.light.workbench).toEqual({
       railWidth: 348,
-      grid: 20,
       healthHeight: 24,
       healthLamp: 10,
+      healthPaddingInline: 10,
+      captionText: 12,
       controlHeight: 32,
       verdictText: 24,
       verdictTextCompact: 20,
@@ -20,30 +21,34 @@ describe('workbench named prototype tokens', () => {
       ageColumn: 96,
       waitKindColumn: 136,
       waitDurationColumn: 150,
+      waitBarMinWidth: 48,
       behindColumn: 104,
     });
     expect(craftThemes.dark.workbench).toEqual(craftThemes.light.workbench);
     const variables = craftCssVariables('light');
     expect(variables['--craft-workbench-rail-width']).toBe('348px');
-    expect(variables['--craft-workbench-grid']).toBe('20px');
     expect(variables['--craft-workbench-health-height']).toBe('24px');
     expect(variables['--craft-workbench-health-lamp']).toBe('10px');
+    expect(variables['--craft-workbench-health-padding-inline']).toBe('10px');
+    expect(variables['--craft-workbench-caption-text']).toBe('12px');
     expect(variables['--craft-workbench-verdict-text']).toBe('24px');
     expect(variables['--craft-workbench-verdict-leading']).toBe('32px');
+    expect(variables['--craft-workbench-wait-bar-min']).toBe('48px');
     expect(variables['--craft-workbench-column-agent']).toBe('168px');
   });
 
-  it('follows the third-draft page theme and removes the instrument shadow in dark mode', () => {
-    expect(craftThemes.light.instrument.background).toBe('#FFFFFF');
-    expect(craftThemes.light.instrument.shadow).toBe('0 8px 24px rgba(17, 24, 39, 0.10)');
-    expect(craftThemes.dark.instrument.background).toBe('#11141C');
-    expect(craftThemes.dark.instrument.shadow).toBe('none');
+  it('has no second instrument palette and keeps the prototype dark floating shadow', () => {
+    expect(craftThemes.light).not.toHaveProperty('instrument');
+    expect(craftThemes.dark).not.toHaveProperty('instrument');
+    const source = readFileSync('src/theme.ts', 'utf8');
+    expect(source).not.toMatch(/InstrumentPalette|--craft-instrument-|instrument\s*:/);
     for (const mode of ['light', 'dark'] as const) {
       const variables = craftCssVariables(mode);
-      expect(variables['--craft-instrument-background']).toBe(craftThemes[mode].instrument.background);
-      expect(variables['--craft-instrument-grid-image']).toBe('none');
-      expect(variables['--craft-instrument-muted']).toBe(craftThemes[mode].instrument.muted);
+      expect(Object.keys(variables).filter((key) => key.startsWith('--craft-instrument-'))).toEqual([]);
+      expect(variables['--craft-workbench-grid']).toBeUndefined();
+      expect(variables['--craft-shadow-floating']).toBe(craftThemes[mode].shadow.floating);
     }
+    expect(craftThemes.dark.shadow.floating).toBe('0 16px 40px rgba(0, 0, 0, 0.50)');
   });
 
   it('keeps raw colors and one-off absolute dimensions out of workbench production source', () => {

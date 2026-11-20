@@ -84,21 +84,46 @@ export function TodoRail({
               if (onFirstAgent) {
                 return (
                   <Fragment key={item.key}>
-                    <div className="obs-todo-card" {...shared}>
-                      {firstBody}
-                      <div className="obs-todo-acts">
-                        <button type="button" className="obs-todo-agent obs-todo-agent-control" onClick={onFirstAgent}>
-                          <DisplayIcon icon={Terminal} />{t('display.todo.handleInAgent')}
-                        </button>
-                        {onClick ? (
-                          <button type="button" className="obs-todo-view obs-todo-view-control" onClick={onClick}>
-                            {t('display.todo.viewItem')}<DisplayIcon icon={ArrowRight} />
+                    {onClick === undefined ? (
+                      <div className="obs-todo-card" {...shared}>
+                        {firstBody}
+                        <div className="obs-todo-acts">
+                          <button type="button" className="obs-todo-agent obs-todo-agent-control" onClick={onFirstAgent}>
+                            <DisplayIcon icon={Terminal} />{t('display.todo.handleInAgent')}
                           </button>
-                        ) : (
                           <span className="obs-todo-view">{t('display.todo.viewItem')}<DisplayIcon icon={ArrowRight} /></span>
-                        )}
+                        </div>
                       </div>
-                    </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="obs-todo-card"
+                        {...shared}
+                        onClick={onClick}
+                        onKeyDown={(event) => {
+                          if (event.key.toLocaleLowerCase() !== 'h') return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          onFirstAgent();
+                        }}
+                        aria-keyshortcuts="h"
+                        title={t('display.todo.handbackShortcut')}
+                      >
+                        {firstBody}
+                        <div className="obs-todo-acts">
+                          <span
+                            className="obs-todo-agent obs-todo-agent-control"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onFirstAgent();
+                            }}
+                          >
+                            <DisplayIcon icon={Terminal} />{t('display.todo.handleInAgent')}
+                          </span>
+                          <span className="obs-todo-view">{t('display.todo.viewItem')}<DisplayIcon icon={ArrowRight} /></span>
+                        </div>
+                      </button>
+                    )}
                     {firstAccessory}
                   </Fragment>
                 );

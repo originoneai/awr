@@ -12,6 +12,7 @@ const prototypeFile = process.env.OBSERVER_PROTOTYPE_FILE;
 test.skip(!prototypeFile, 'Set OBSERVER_PROTOTYPE_FILE to the local read-only panorama.html');
 
 test('capture real page and My Work prototype side-by-side inputs', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === 'desktop-new-york');
   await mkdir(evidence, { recursive: true });
   const mode = testInfo.project.name === 'desktop-dark' ? 'dark' : 'light';
   await page.emulateMedia({ reducedMotion: 'reduce' });

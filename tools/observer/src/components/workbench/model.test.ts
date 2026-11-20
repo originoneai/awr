@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { deriveOverview } from '../../core/overview';
-import { complete, reviewRound } from '../../core/overview/__tests__/factories';
+import type { OverviewReviewRound, OverviewTask } from '../../core/overview';
+import { complete, reviewRound, startedTask } from '../../core/overview/__tests__/factories';
 import {
   buildMyWorkModel,
   buildWorkbenchVerdict,
@@ -14,7 +15,7 @@ import {
   WORKBENCH_NOW as NOW,
   WORKBENCH_WEEK_START as WEEK_START,
   WORKBENCH_WEEK_END as WEEK_END,
-} from './testing';
+} from '../../test-fixtures/workbench';
 
 describe('My Work model', () => {
   it('uses the me view metrics and keeps every count tied to the exact detail array', () => {
@@ -73,6 +74,51 @@ describe('My Work model', () => {
   });
 });
 
+describe('fact-based KPI notes', () => {
+  it('derives previous, stalled, longest-wait and pending notes from the metric arrays', () => {
+    const base = myWorkInput();
+    const input = {
+      ...base,
+      tasks: complete([
+        ...(base.tasks.items ?? []),
+        startedTask('mine-stalled', {
+          ownerPersonId: 'person-a', agentName: 'Stopped Agent', agentActive: false, projectId: 'project-one',
+          report: { completed: false, reportedAtUnixMs: NOW - 4 * 86_400_000 },
+        }),
+      ]),
+    };
+    const model = buildMyWorkModel(deriveOverview(input), 'zh-CN', { personId: 'person-a', readAtUnixMs: NOW });
+    expect(model.metrics.map((metric) => metric.note)).toEqual([
+      '上周 0 件', '另有 1 个停着', '最久 5 天，等Example Client', '最久 2 天',
+    ]);
+  });
+
+  it('leaves every note blank when a required fact is unknown', () => {
+    const base = myWorkInput();
+    const input = {
+      ...base,
+      tasks: complete([
+        ...(base.tasks.items ?? []).map((task: OverviewTask) => task.id === 'mine-external' && task.externalWait
+          ? { ...task, externalWait: { ...task.externalWait, sinceUnixMs: null } }
+          : task),
+        startedTask('mine-stalled-unknown', {
+          ownerPersonId: 'person-a', agentName: 'Unknown Agent', agentActive: null, projectId: 'project-one',
+          report: { completed: false, reportedAtUnixMs: NOW - 4 * 86_400_000 },
+        }),
+      ]),
+      reviewRounds: complete((base.reviewRounds.items ?? []).map((round: OverviewReviewRound) => round.taskId === 'other-review'
+        ? { ...round, openedAtUnixMs: null }
+        : round)),
+      options: {
+        ...base.options,
+        views: { ...base.options.views, previousWeek: null },
+      },
+    };
+    const model = buildMyWorkModel(deriveOverview(input), 'zh-CN', { personId: 'person-a', readAtUnixMs: NOW });
+    expect(model.metrics.map((metric) => metric.note)).toEqual([null, null, null, null]);
+  });
+});
+
 describe('verdict sources and fixed sentence table', () => {
   it('uses a recorded period update with its health, author and time', () => {
     const derived = deriveOverview(myWorkInput());
@@ -118,5 +164,27 @@ describe('caller-owned view options', () => {
     const known = workbenchInputOptions(myWorkInput().options, 'project-one', 'person-a');
     expect(known.views?.me?.personId).toBe('person-a');
     expect(known.views?.lead?.personId).toBe('person-a');
+  });
+
+  it.each([
+    ['Asia/Shanghai', '2026-11-15T16:00:00.000Z', '2026-11-22T15:59:59.999Z', '2026-10-31T16:00:00.000Z', '2026-11-30T15:59:59.999Z'],
+    ['America/New_York', '2026-11-16T05:00:00.000Z', '2026-11-23T04:59:59.999Z', '2026-11-01T04:00:00.000Z', '2026-12-01T04:59:59.999Z'],
+  ])('uses %s local midnight and month boundaries across a UTC date change', (timeZone, weekStart, weekEnd, monthStart, monthEnd) => {
+    const options = workbenchInputOptions({ nowUnixMs: Date.parse('2026-11-20T01:30:00.000Z'), stalledAfterDays: 1 },
+      'project-one', 'person-a', timeZone);
+    expect(options.views?.currentWeek).toEqual({ startUnixMs: Date.parse(weekStart), endUnixMs: Date.parse(weekEnd) });
+    expect(options.views?.currentMonth).toEqual({ startUnixMs: Date.parse(monthStart), endUnixMs: Date.parse(monthEnd) });
+  });
+
+  it('uses the local Monday, not the UTC Monday, at the week boundary', () => {
+    const nowUnixMs = Date.parse('2026-11-23T01:30:00.000Z');
+    const newYork = workbenchInputOptions({ nowUnixMs, stalledAfterDays: 1 }, 'project-one', 'person-a', 'America/New_York');
+    expect(newYork.views?.currentWeek).toEqual({
+      startUnixMs: Date.parse('2026-11-16T05:00:00.000Z'), endUnixMs: Date.parse('2026-11-23T04:59:59.999Z'),
+    });
+    const shanghai = workbenchInputOptions({ nowUnixMs, stalledAfterDays: 1 }, 'project-one', 'person-a', 'Asia/Shanghai');
+    expect(shanghai.views?.currentWeek).toEqual({
+      startUnixMs: Date.parse('2026-11-22T16:00:00.000Z'), endUnixMs: Date.parse('2026-11-29T15:59:59.999Z'),
+    });
   });
 });

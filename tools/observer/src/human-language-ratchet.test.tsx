@@ -6,7 +6,7 @@ import BASELINE from './test-fixtures/human-language-baseline.json';
 import { findHumanLanguageViolations, visibleTextParts, withinHumanLanguageBaseline } from './lib/human-language-guard';
 import { REAL_API_WORK, realShapedActivity, realShapedOverview, realShapedSnapshot, realShapedWorkInbox, realShapedWorkNext, type RealMoment } from './test-fixtures/real-shaped';
 import { demoOverviewModelResponse, emptyOverviewModelResponse } from './test-fixtures/overview-model';
-import { myWorkInput } from './components/workbench/testing';
+import { myWorkInput } from './test-fixtures/workbench';
 import {
   DEMO_OVERVIEW,
   DEMO_PROJECTS,

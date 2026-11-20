@@ -33,7 +33,7 @@ import {
   type TodoItem,
 } from '../display';
 import { AgentHandback } from './AgentHandback';
-import { metricDetailItems, waitingOnText, workbenchDisplayText, type MyWorkModel, type WorkbenchMetric } from './model';
+import { metricDetailItems, waitingOnText, workbenchAgentName, workbenchDisplayText, type MyWorkModel, type WorkbenchMetric } from './model';
 import './workbench.css';
 
 export type WorkbenchFrameState = 'data' | 'empty' | 'partial' | 'unknown';
@@ -227,6 +227,8 @@ export function WorkbenchFrame({ model, projectKey, projectName, freshness, read
   if (model.coverage.incompleteFacts && model.coverage.partial.length === 0 && model.coverage.unread.length === 0) {
     coverageText.push(t('workbench.home.coverageIncomplete'));
   }
+  const coverageWarning = model.coverage.partial.length > 0
+    || (model.coverage.unread.length === 0 && model.coverage.incompleteFacts);
 
   const waitItems = model.metrics[2].details.items.filter(isWait);
   const longestWait = Math.max(0, ...waitItems.map((wait) => wait.durationDays ?? 0));
@@ -260,7 +262,7 @@ export function WorkbenchFrame({ model, projectKey, projectName, freshness, read
     key: task.id ?? `task-${index}`,
     cells: [
       task.agentName
-        ? <span className="obs-workbench-agent-name"><DisplayIcon icon={Bot} /><span>{workbenchDisplayText(task.agentName, t('workbench.home.noAgent'))}</span></span>
+        ? <span className="obs-workbench-agent-name"><DisplayIcon icon={Bot} /><span>{workbenchAgentName(task.agentName, t('workbench.home.noAgent'))}</span></span>
         : <span className="obs-workbench-dim">{t('workbench.home.noAgent')}</span>,
       workbenchDisplayText(task.title, t('workbench.home.unnamedTask')),
       <span className="obs-workbench-dim">{t('workbench.home.reportNotRead')}</span>,
@@ -275,7 +277,7 @@ export function WorkbenchFrame({ model, projectKey, projectName, freshness, read
       const taskNames = item.tasks.map((task) => workbenchDisplayText(task.title, '')).filter(Boolean);
       return {
         key: `agent-${index}`,
-        title: workbenchDisplayText(item.agentName, t('workbench.home.unnamedAgent')),
+        title: workbenchAgentName(item.agentName, t('workbench.home.unnamedAgent')),
         meta: taskNames.length > 0
           ? t('workbench.home.metricAgentTasks', { tasks: taskNames.join(t('common.listSeparator')) })
           : t('workbench.home.metricNoTasks'),
@@ -303,7 +305,7 @@ export function WorkbenchFrame({ model, projectKey, projectName, freshness, read
       return {
         key: `task-${index}`,
         title: workbenchDisplayText(item.title, t('workbench.home.unnamedTask')),
-        meta: workbenchDisplayText(item.agentName, t('workbench.home.noAgent')),
+        meta: workbenchAgentName(item.agentName, t('workbench.home.noAgent')),
         leading: <TaskStatusTag status={item.status} live={item.agentActive === true} />,
         onOpen: item.id ? () => openTask(item) : undefined,
       };
@@ -342,9 +344,9 @@ export function WorkbenchFrame({ model, projectKey, projectName, freshness, read
                 columns={[
                   { key: 'agent', title: t('workbench.home.agentColumns.agent'), width: 'var(--craft-workbench-column-agent)' },
                   { key: 'task', title: t('workbench.home.agentColumns.task'), width: '24%' },
-                  { key: 'report', title: t('workbench.home.agentColumns.lastReport') },
+                  { key: 'report', title: <span title={t('workbench.home.reportUnreadReason')}>{t('workbench.home.agentColumns.lastReport')}</span> },
                   { key: 'status', title: t('workbench.home.agentColumns.status'), width: 'var(--craft-workbench-column-status)', hideOnSmall: true },
-                  { key: 'age', title: t('workbench.home.agentColumns.age'), width: 'var(--craft-workbench-column-age)', align: 'right', hideOnSmall: true },
+                  { key: 'age', title: <span title={t('workbench.home.timeUnreadReason')}>{t('workbench.home.agentColumns.age')}</span>, width: 'var(--craft-workbench-column-age)', align: 'right', hideOnSmall: true },
                 ]}
                 rows={agentRows}
                 empty={<EmptyState title={t('workbench.home.noAgent')} />}
@@ -379,8 +381,8 @@ export function WorkbenchFrame({ model, projectKey, projectName, freshness, read
 
   const date = readAtUnixMs === undefined ? null : new Date(readAtUnixMs);
   const subtitle = date === null ? t('workbench.home.periodUnknown') : t('workbench.home.periodMe', {
-    month: i18n.language.startsWith('zh') ? date.getUTCMonth() + 1 : date.toLocaleString('en-US', { month: 'long', timeZone: 'UTC' }),
-    day: date.getUTCDate(),
+    month: i18n.language.startsWith('zh') ? date.getMonth() + 1 : date.toLocaleString('en-US', { month: 'long' }),
+    day: date.getDate(),
   });
 
   return (
@@ -392,7 +394,7 @@ export function WorkbenchFrame({ model, projectKey, projectName, freshness, read
           <div data-testid="workbench-ordering-unknown"><Notice tone="warning" title={t('workbench.home.unknownTitle')}>{t('workbench.home.unknownDescription')}</Notice></div>
         ) : null}
         {coverageText.length > 0 ? (
-          <div data-testid="workbench-partial"><Notice tone="warning" title={t('workbench.home.partialTitle')}>{coverageText.join(' ')}</Notice></div>
+          <div data-testid="workbench-partial"><Notice tone={coverageWarning ? 'warning' : 'info'} title={coverageWarning ? t('workbench.home.partialTitle') : undefined}>{coverageText.join(' ')}</Notice></div>
         ) : null}
         {model.currentPerson === null ? (
           <Notice title={t('workbench.home.memberUnknownTitle')}>{t('workbench.home.memberUnknownDescription')}</Notice>
@@ -433,7 +435,7 @@ export function WorkbenchFrame({ model, projectKey, projectName, freshness, read
           label: metric.label,
           value: metric.count === null ? '—' : String(metric.count),
           unit: metric.unit || undefined,
-          change: { text: metric.note },
+          change: metric.note === null ? undefined : { text: metric.note },
           emphasized: metric.emphasized,
           onOpen: metric.count === null ? undefined : () => updateParams({ detail: metric.id, tab: null }),
         }))} />
