@@ -230,7 +230,12 @@ describe('fact-based KPI notes', () => {
 });
 
 describe('My Work chain order', () => {
-  function chain(id: string, impact: number, oldestDays: number, waitingOn: readonly string[]): DerivedChain {
+  function chain(
+    id: string,
+    impact: number | null,
+    oldestDays: number | null,
+    waitingOn: readonly (string | null)[],
+  ): DerivedChain {
     return {
       id,
       root: {
@@ -259,6 +264,43 @@ describe('My Work chain order', () => {
     expect(input.map((item) => item.id)).toEqual(original);
   });
 
+  it('keeps derived input order when impact and oldest-wait keys are both equal', () => {
+    const input = [
+      chain('derived-first', 4, 3, ['person-a']),
+      chain('derived-second', 4, 3, ['person-a']),
+    ];
+    expect(orderWorkbenchChains(input, 'person-a', 'me').map((item) => item.id))
+      .toEqual(['derived-first', 'derived-second']);
+  });
+
+  it('sorts an unknown impact after a known impact', () => {
+    const input = [
+      chain('unknown-impact', null, 9, ['person-a']),
+      chain('known-impact', 1, 1, ['person-a']),
+    ];
+    expect(orderWorkbenchChains(input, 'person-a', 'me').map((item) => item.id))
+      .toEqual(['known-impact', 'unknown-impact']);
+  });
+
+  it('sorts an unknown oldest wait after a known oldest wait', () => {
+    const input = [
+      chain('unknown-age', 2, null, ['person-a']),
+      chain('known-age', 2, 1, ['person-a']),
+    ];
+    expect(orderWorkbenchChains(input, 'person-a', 'me').map((item) => item.id))
+      .toEqual(['known-age', 'unknown-age']);
+  });
+
+  it('never treats a missing viewer id and a missing waiting-person id as a match', () => {
+    const input = [
+      chain('missing-person', 1, 1, [null]),
+      chain('known-other', 2, 2, ['person-b']),
+    ];
+    const expected = ['known-other', 'missing-person'];
+    expect(orderWorkbenchChains(input, null, 'me').map((item) => item.id)).toEqual(expected);
+    expect(orderWorkbenchChains(input, 'person-a', 'me').map((item) => item.id)).toEqual(expected);
+  });
+
   it.each<ViewId>(['lead', 'department', 'top'])('keeps the %s perspective in its derived order', (perspective) => {
     const input = [chain('other', 8, 8, ['person-b']), chain('mine', 1, 1, ['person-a'])];
     expect(orderWorkbenchChains(input, 'person-a', perspective)).toEqual(input);
@@ -278,6 +320,13 @@ describe('My Work chain order', () => {
 });
 
 describe('verdict sources and fixed sentence table', () => {
+  const generatedMetrics = deriveOverview(myWorkInput()).views.me.metrics;
+  function generatedByline(referenceUnixMs?: number): string {
+    return buildWorkbenchVerdict(generatedMetrics, null, 'zh-CN', NOW, 'me', {
+      referenceUnixMs, timeZone: 'UTC',
+    }).byline;
+  }
+
   it('uses a recorded period update with its health, author and time', () => {
     const derived = deriveOverview(myWorkInput());
     const update: WorkbenchPeriodUpdate = {
@@ -294,8 +343,9 @@ describe('verdict sources and fixed sentence table', () => {
   });
 
   it('uses the prototype waiting word and risk tone when facts are pending for the viewer', () => {
-    const derived = deriveOverview(myWorkInput());
-    const verdict = buildWorkbenchVerdict(derived.views.me.metrics, null, 'zh-CN', NOW);
+    const verdict = buildWorkbenchVerdict(generatedMetrics, null, 'zh-CN', NOW, 'me', {
+      referenceUnixMs: NOW, timeZone: 'UTC',
+    });
     expect(verdict.health).toBe('risk');
     expect(verdict.healthLabel).toBe('等你');
     expect(verdict.healthLabel).not.toBe('正常');
@@ -311,7 +361,9 @@ describe('verdict sources and fixed sentence table', () => {
     });
     const derived = deriveOverview(input);
     expect(derived.views.me.metrics[3].count).toBe(0);
-    const verdict = buildWorkbenchVerdict(derived.views.me.metrics, null, 'zh-CN', NOW);
+    const verdict = buildWorkbenchVerdict(derived.views.me.metrics, null, 'zh-CN', NOW, 'me', {
+      referenceUnixMs: NOW, timeZone: 'UTC',
+    });
     expect(verdict.health).toBe('none');
     expect(verdict.healthLabel).toBe('没有更新');
     expect(verdict.byline).toBe('按你名下的任务和 Agent 的报告算出 · 刚刚');
@@ -320,27 +372,92 @@ describe('verdict sources and fixed sentence table', () => {
   it('keeps no-update wording and the fixed unknown sentence when pending is unknown', () => {
     const input = myWorkInput({ approvals: { coverage: 'unread', reason: 'not-read' } });
     const derived = deriveOverview(input);
-    const verdict = buildWorkbenchVerdict(derived.views.me.metrics, null, 'en-US', NOW);
+    const verdict = buildWorkbenchVerdict(derived.views.me.metrics, null, 'en-US', NOW, 'me', {
+      referenceUnixMs: NOW, timeZone: 'UTC',
+    });
     expect(verdict.health).toBe('none');
     expect(verdict.healthLabel).toBe('No update');
     expect(verdict.sentence).toBe('Some totals are not fully read yet; the confirmed details remain below.');
-    expect(verdict.byline).toBe('Calculated from your tasks and Agent reports · just now');
+    expect(verdict.byline).toBe('Calculated from your tasks and Agent reports · Just now');
   });
 
-  it('uses the prototype source line for every recorded-update perspective', () => {
-    const derived = deriveOverview(myWorkInput());
+  it('marks a just-completed read as just now', () => {
+    expect(generatedByline(NOW)).toBe('按你名下的任务和 Agent 的报告算出 · 刚刚');
+  });
+
+  it('keeps a thirty-second-old read in the just-now bucket', () => {
+    expect(generatedByline(NOW + 30_000)).toBe('按你名下的任务和 Agent 的报告算出 · 刚刚');
+  });
+
+  it('uses whole minutes for a five-minute-old read', () => {
+    expect(generatedByline(NOW + 5 * 60_000)).toBe('按你名下的任务和 Agent 的报告算出 · 5 分钟前');
+  });
+
+  it('uses ageText calendar wording for a two-hour-old read', () => {
+    expect(generatedByline(NOW + 2 * 60 * 60_000)).toBe('按你名下的任务和 Agent 的报告算出 · 今天 12:00');
+  });
+
+  it('omits the age suffix when no reference clock is supplied', () => {
+    expect(generatedByline()).toBe('按你名下的任务和 Agent 的报告算出');
+  });
+
+  describe('recorded-update author identity', () => {
     const readAt = new Date(2026, 10, 19, 12, 0).getTime();
     const update: WorkbenchPeriodUpdate = {
       id: 'update-one', health: 'risk', sentence: 'A synthetic update.', authorName: 'Project Lead',
-      writtenAtUnixMs: new Date(2026, 10, 19, 9, 30).getTime(),
+      authorPersonId: 'person-a', writtenAtUnixMs: new Date(2026, 10, 19, 9, 30).getTime(),
     };
-    expect(buildWorkbenchVerdict(derived.views.lead.metrics, update, 'zh-CN', readAt, 'lead').byline)
-      .toBe('你今天 09:30 在自己的 Agent 里写的 · 第 47 周');
-    const earlier = { ...update, writtenAtUnixMs: new Date(2026, 10, 17, 9, 30).getTime() };
-    expect(buildWorkbenchVerdict(derived.views.department.metrics, earlier, 'zh-CN', readAt, 'department').byline)
-      .toBe('你 11 月 17 日在自己的 Agent 里写的 · 汇总时取最差的那个，不取平均');
-    expect(buildWorkbenchVerdict(derived.views.top.metrics, earlier, 'zh-CN', readAt, 'top').byline)
-      .toBe('取自各部门的月更新，取最差的那个 · 11 月 17 日');
+    function byline(
+      perspective: 'lead' | 'department' | 'top',
+      value: WorkbenchPeriodUpdate = update,
+      viewerPersonId: string | null = 'person-a',
+      at: number = readAt,
+    ): string {
+      const derived = deriveOverview(myWorkInput());
+      return buildWorkbenchVerdict(derived.views[perspective].metrics, value, 'zh-CN', at, perspective, {
+        viewerPersonId,
+      }).byline;
+    }
+    function expectGenericAuthorLine(text: string): void {
+      expect(text).toMatch(/^Project Lead 于 /);
+      expect(text).not.toContain('在自己的 Agent');
+      expect(text).not.toContain('今天');
+      expect(text).not.toContain('取自各部门');
+    }
+
+    it('uses each viewer-authored perspective line only when author and viewer ids match', () => {
+      expect(byline('lead')).toBe('你今天 09:30 在自己的 Agent 里写的 · 第 47 周');
+      const earlier = { ...update, writtenAtUnixMs: new Date(2026, 10, 17, 9, 30).getTime() };
+      expect(byline('department', earlier)).toBe('你 11 月 17 日在自己的 Agent 里写的 · 汇总时取最差的那个，不取平均');
+      expect(byline('top', earlier)).toBe('取自各部门的月更新，取最差的那个 · 11 月 17 日');
+    });
+
+    it.each(['lead', 'department', 'top'] as const)('uses the generic author line for a different author on %s', (perspective) => {
+      expectGenericAuthorLine(byline(perspective, update, 'person-b'));
+    });
+
+    it.each(['lead', 'department', 'top'] as const)('uses the generic author line when author id is missing on %s', (perspective) => {
+      expectGenericAuthorLine(byline(perspective, { ...update, authorPersonId: undefined }));
+    });
+
+    it.each(['lead', 'department', 'top'] as const)('uses the generic author line when viewer id is missing on %s', (perspective) => {
+      expectGenericAuthorLine(byline(perspective, update, null));
+    });
+
+    it('does not say today for a lead update written on another local day', () => {
+      const earlier = { ...update, writtenAtUnixMs: new Date(2026, 10, 17, 9, 30).getTime() };
+      expectGenericAuthorLine(byline('lead', earlier));
+    });
+
+    it.each([
+      ['Sunday', 2026, 10, 22, 47],
+      ['Monday', 2026, 10, 23, 48],
+      ['the cross-year week', 2027, 0, 1, 53],
+    ])('uses the ISO week for %s', (_name, year, month, day, week) => {
+      const at = new Date(year, month, day, 12, 0).getTime();
+      const value = { ...update, writtenAtUnixMs: new Date(year, month, day, 9, 30).getTime() };
+      expect(byline('lead', value, 'person-a', at)).toContain(`第 ${week} 周`);
+    });
   });
 });
 

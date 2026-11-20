@@ -22,19 +22,28 @@ selection expression, sentence key, and both catalogs against the implementation
 - `unknown-not-zero`: a null pending or waiting total selects the unknown sentence. Unread approvals
   and partial waits map to unknown instead of zero.
 
-## Prototype source lines
+## Source lines and honesty guards
 
-The source line is part of the prototype, not a free-form timestamp caption:
+The source line follows read facts, even where the prototype's hand-written demo line says more
+than those facts support:
 
-- My Work without a recorded update: `按你名下的任务和 Agent 的报告算出 · 刚刚`.
-- Group lead with an update written on the read's local day: `你今天 HH:mm 在自己的 Agent 里写的 · 第 N 周`.
-  The week is the ISO week of the read's viewer-local date. An update from another day uses the
-  generic recorded-author line rather than claiming it was written today.
-- Department: `你 M 月 D 日在自己的 Agent 里写的 · 汇总时取最差的那个，不取平均`.
-- Top: `取自各部门的月更新，取最差的那个 · M 月 D 日`.
+- My Work without a recorded update starts with `按你名下的任务和 Agent 的报告算出`. When both the
+  read timestamp and an explicit reference clock are known, append the result of `ageText`: `刚刚`
+  under a minute, whole minutes under an hour, then its calendar/absolute wording. The reference is
+  the page-read timestamp used by the freshness data. With no reference clock, omit the age suffix
+  rather than using a constant `刚刚`.
+- Group lead with a viewer-authored update written on the read's local day:
+  `你今天 HH:mm 在自己的 Agent 里写的 · 第 N 周`. The week is the ISO week of the read's
+  viewer-local date. An update from another day uses the generic recorded-author line instead of
+  claiming today.
+- Department viewer-authored update: `你 M 月 D 日在自己的 Agent 里写的 · 汇总时取最差的那个，不取平均`.
+- Top viewer-authored update: `取自各部门的月更新，取最差的那个 · M 月 D 日`.
 
-The recorded dates and times come from the update; the read's fixed timestamp supplies the lead's
-current week. No wall clock is consulted. English uses the same rules and placeholders.
+`authorPersonId` and the viewer's person id must both be present and equal before any of those
+first-person lines is allowed. A different author, a missing author id, or a missing viewer id uses
+`{{name}} 于 {{time}} 写的`. The recorded dates and times come from the update; the read's fixed
+timestamp supplies the lead's current week. No wall clock is consulted. English uses the same rules
+and placeholders.
 
 ## My Work chain order
 
@@ -47,6 +56,14 @@ current week. No wall clock is consulted. English uses the same rules and placeh
 3. Lead, department, and top perspectives return the derived order unchanged.
 4. The frame's existing first-chain fallback selects index zero, so the first viewer-waiting chain
    is the default selected chain. Invalid URL indices still clamp to that same safe default.
+
+## Chain footer wording
+
+- A viewer-owned decision says `你回答之后，后面 N 件事可以接着走。`; N is the derived impact count.
+- Another person's internal step says only `这一环不在你手里。` / `This step is not yours.` The page
+  must not add that a group lead has seen it without a corresponding read fact.
+- The outside-party sentence `这一环在项目外。谁去催，可以请小组负责人定。` remains a suggestion,
+  not a claim that anyone has seen or approved the wait.
 
 ## Generated sentence table
 

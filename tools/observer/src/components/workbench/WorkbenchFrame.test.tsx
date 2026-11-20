@@ -31,6 +31,7 @@ function renderFrame(
     personId: input.options.views?.me?.personId ?? null,
     latestPeriodUpdate,
     readAtUnixMs: WORKBENCH_NOW,
+    referenceUnixMs: WORKBENCH_NOW,
     inputTasks: input.tasks.items,
   });
   return render(
@@ -113,6 +114,19 @@ describe('shared workbench frame and My Work', () => {
     expect(cards[2].querySelector('.obs-todo-age')?.textContent).toBe('6 天前');
   });
 
+  it('omits the viewer name from the subtitle when the member record has no name', () => {
+    const base = myWorkInput();
+    const input = {
+      ...base,
+      members: complete((base.members.items ?? []).map((member) => member.personId === 'person-a'
+        ? { ...member, displayName: null }
+        : member)),
+    };
+    const { container } = renderFrame(input);
+    expect(container.querySelector('.obs-page-subtitle')?.textContent).toBe('今天，11 月 19 日');
+    expect(container.querySelector('.obs-page-subtitle')?.textContent).not.toContain('·');
+  });
+
   it('uses decision and breakdown wording without replacing the recorded title', () => {
     const base = myWorkInput({
       decisions: complete([]), handoffs: complete([]), reviewRounds: complete([]),
@@ -135,12 +149,12 @@ describe('shared workbench frame and My Work', () => {
     expect(decision.container.querySelector('.obs-todo-title')?.textContent).toBe('Which synthetic option should be used?');
   });
 
-  it('uses the prototype footer sentence for each My Work chain kind', async () => {
+  it('uses only supported footer facts for each My Work chain kind', async () => {
     const user = userEvent.setup();
     const { container } = renderFrame();
     const cases = [
       ['等你回答', '你回答之后，后面 1 件事可以接着走。'],
-      ['等复核', '这一环不在你手里，小组负责人已经看到了。'],
+      ['等复核', '这一环不在你手里。'],
       ['等Example Client', '这一环在项目外。谁去催，可以请小组负责人定。'],
     ];
     for (const [label, sentence] of cases) {
@@ -565,7 +579,7 @@ describe('English rendering', () => {
     const { container } = renderFrame();
     expect(screen.getByRole('heading', { level: 1, name: 'My work' })).toBeTruthy();
     expect(screen.getByText('Waiting for you', { selector: '.obs-workbench-health-word' })).toBeTruthy();
-    expect(screen.getByText('Calculated from your tasks and Agent reports · just now')).toBeTruthy();
+    expect(screen.getByText('Calculated from your tasks and Agent reports · Just now')).toBeTruthy();
     expect(container.querySelectorAll('.obs-kpi')).toHaveLength(4);
     expect(screen.getByRole('heading', { name: 'Where work is stuck' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Waiting for you' })).toBeTruthy();

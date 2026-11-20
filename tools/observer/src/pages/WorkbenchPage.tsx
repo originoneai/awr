@@ -121,6 +121,7 @@ export function WorkbenchPage() {
     personId,
     projectId: effectiveProject,
     readAtUnixMs: modelResponse.read_at_unix_ms,
+    referenceUnixMs: modelResponse.freshness.page_read.at_unix_ms,
     latestPeriodUpdate: modelResponse.latestPeriodUpdate ?? null,
     inputTasks: modelInput?.tasks?.items,
   });

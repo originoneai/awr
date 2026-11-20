@@ -107,6 +107,18 @@ describe('WorkbenchPage seven read states in Chinese and English', () => {
     unknown.unmount();
   });
 
+  it('uses the page-read freshness clock for the generated source age', async () => {
+    const input = myWorkInput();
+    const freshness = {
+      ...responseFor(input).freshness,
+      page_read: { status: 'measured', at_unix_ms: input.options.nowUnixMs + 5 * 60_000 },
+    };
+    stubModel(input, { freshness });
+    renderWorkbench();
+    expect(await screen.findByTestId('workbench-frame')).toBeTruthy();
+    expect(screen.getByText('按你名下的任务和 Agent 的报告算出 · 5 分钟前')).toBeTruthy();
+  });
+
   it.each(['zh-CN', 'en-US'] as const)('renders loading and failure in %s', async (language) => {
     await i18n.changeLanguage(language);
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {

@@ -15,6 +15,7 @@ import type {
   ViewMetricKey,
   ViewId,
 } from '../../core/overview';
+import { ageText } from '../../core/observation';
 import { truncateCodePoints } from '../../lib/agent-handback';
 import { formatUnixMs } from '../../lib/format';
 import type { HealthStatus } from '../display';
@@ -58,7 +59,16 @@ export interface WorkbenchPeriodUpdate {
   health: HealthStatus;
   sentence: string;
   authorName: string | null;
+  /** First-person author wording requires an explicit match with the viewer. */
+  authorPersonId?: string | null;
   writtenAtUnixMs: number;
+}
+
+export interface WorkbenchVerdictContext {
+  viewerPersonId?: string | null;
+  /** The page-read freshness clock; never supplied from Date.now() inside the model. */
+  referenceUnixMs?: number;
+  timeZone?: string;
 }
 
 interface WorkbenchVocabulary {
@@ -100,8 +110,8 @@ const VOCABULARY: Record<'zh-CN' | 'en-US', WorkbenchVocabulary> = {
         unknown: '有些数字还没有读全；已确认的明细仍在下面。',
       },
       waitingForViewer: '等你',
-      generatedBy: '按你名下的任务和 Agent 的报告算出 · 刚刚',
-      generatedByNoTime: '按你名下的任务和 Agent 的报告算出 · 刚刚',
+      generatedBy: '按你名下的任务和 Agent 的报告算出 · {{age}}',
+      generatedByNoTime: '按你名下的任务和 Agent 的报告算出',
       updateBy: '{{name}} 于 {{time}} 写的',
       updateByLead: '你今天 {{time}} 在自己的 Agent 里写的 · 第 {{week}} 周',
       updateByDepartment: '你 {{date}}在自己的 Agent 里写的 · 汇总时取最差的那个，不取平均',
@@ -132,8 +142,8 @@ const VOCABULARY: Record<'zh-CN' | 'en-US', WorkbenchVocabulary> = {
         unknown: 'Some totals are not fully read yet; the confirmed details remain below.',
       },
       waitingForViewer: 'Waiting for you',
-      generatedBy: 'Calculated from your tasks and Agent reports · just now',
-      generatedByNoTime: 'Calculated from your tasks and Agent reports · just now',
+      generatedBy: 'Calculated from your tasks and Agent reports · {{age}}',
+      generatedByNoTime: 'Calculated from your tasks and Agent reports',
       updateBy: 'Written by {{name}} at {{time}}',
       updateByLead: 'You wrote this in your own Agent at {{time}} today · week {{week}}',
       updateByDepartment: 'You wrote this in your own Agent on {{date}} · the aggregate uses the worst result, not an average',
@@ -201,12 +211,17 @@ function recordedUpdateByline(
   language: string,
   readAtUnixMs: number | undefined,
   perspective: ViewId,
+  context: WorkbenchVerdictContext,
 ): string {
   const generic = () => fill(vocabulary.verdict.updateBy, {
     name: update.authorName?.trim() || vocabulary.verdict.updateAuthorFallback,
     time: formatUnixMs(update.writtenAtUnixMs, language),
   });
-  if (!Number.isFinite(update.writtenAtUnixMs)) return generic();
+  const viewerPersonId = context.viewerPersonId;
+  const viewerAuthored = typeof update.authorPersonId === 'string' && update.authorPersonId.length > 0
+    && typeof viewerPersonId === 'string' && viewerPersonId.length > 0
+    && update.authorPersonId === viewerPersonId;
+  if (!viewerAuthored || !Number.isFinite(update.writtenAtUnixMs)) return generic();
   if (perspective === 'lead' && readAtUnixMs !== undefined && Number.isFinite(readAtUnixMs)
     && sameLocalDay(update.writtenAtUnixMs, readAtUnixMs)) {
     return fill(vocabulary.verdict.updateByLead, {
@@ -228,6 +243,7 @@ export function buildWorkbenchVerdict(
   language: string,
   readAtUnixMs?: number,
   perspective: ViewId = 'me',
+  context: WorkbenchVerdictContext = {},
 ): WorkbenchVerdict {
   const vocabulary = workbenchVocabulary(language);
   if (update && update.sentence.trim()) {
@@ -236,7 +252,7 @@ export function buildWorkbenchVerdict(
       healthLabel: vocabulary.health[update.health],
       sentence: update.sentence,
       source: 'recorded-update',
-      byline: recordedUpdateByline(update, vocabulary, language, readAtUnixMs, perspective),
+      byline: recordedUpdateByline(update, vocabulary, language, readAtUnixMs, perspective, context),
       updateId: update.id,
     };
   }
@@ -253,14 +269,23 @@ export function buildWorkbenchVerdict(
   else if (agents !== null && agents > 0) rule = VERDICT_RULES[4];
   else rule = VERDICT_RULES[5];
   const waitingForViewer = pending !== null && pending > 0;
+  const referenceUnixMs = context.referenceUnixMs;
+  const hasReferenceClock = typeof readAtUnixMs === 'number' && Number.isFinite(readAtUnixMs)
+    && typeof referenceUnixMs === 'number' && Number.isFinite(referenceUnixMs);
   return {
     health: waitingForViewer ? 'risk' : 'none',
     healthLabel: waitingForViewer ? vocabulary.verdict.waitingForViewer : vocabulary.health.none,
     sentence: fill(vocabulary.verdict.sentences[rule.sentenceKey], values),
     source: 'generated',
-    byline: readAtUnixMs === undefined
-      ? vocabulary.verdict.generatedByNoTime
-      : vocabulary.verdict.generatedBy,
+    byline: hasReferenceClock
+      ? fill(vocabulary.verdict.generatedBy, {
+        age: ageText(readAtUnixMs, {
+          language,
+          nowUnixMs: referenceUnixMs,
+          timeZone: context.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+        }).text,
+      })
+      : vocabulary.verdict.generatedByNoTime,
     updateId: null,
   };
 }
@@ -311,6 +336,8 @@ export interface MyWorkModelOptions {
   personId: string | null;
   projectId?: string | null;
   readAtUnixMs?: number;
+  /** Explicit page-read freshness reference for the generated source age. */
+  referenceUnixMs?: number;
   latestPeriodUpdate?: WorkbenchPeriodUpdate | null;
   /** The raw overview task items; the recorded report fact is joined by task id. */
   inputTasks?: readonly OverviewTask[];
@@ -512,7 +539,14 @@ export function buildMyWorkModel(
     chainTabs,
     currentPerson,
     agentTasks: reportedTasks(derived, options.personId, options.inputTasks),
-    verdict: buildWorkbenchVerdict(derived.views.me.metrics, options.latestPeriodUpdate, language, options.readAtUnixMs),
+    verdict: buildWorkbenchVerdict(
+      derived.views.me.metrics,
+      options.latestPeriodUpdate,
+      language,
+      options.readAtUnixMs,
+      'me',
+      { viewerPersonId: options.personId, referenceUnixMs: options.referenceUnixMs },
+    ),
     coverage: {
       partial: (Object.entries(derived.coverage.parts) as Array<[OverviewPart, { state: string }]>)
         .filter(([, part]) => part.state === 'partial').map(([part]) => part),

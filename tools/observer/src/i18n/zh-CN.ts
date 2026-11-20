@@ -836,7 +836,7 @@ const zhCN = {
       verdictUpdateBasis: '这句话来自负责人写的一期更新，作者和时间显示在出处行。', verdictWaitingMeaning: '有事在等你处理', closeBasis: '收起依据',
       chainTitle: '卡在哪', chainCount: '{{count}} 条链路卡住', chainGroup: '链路', emptyChainTitle: '现在没有卡住的链路', emptyChainDescription: '有任务开始等别人的时候，这里会画出是谁卡住了谁。',
       chainImpact: '你回答之后，后面 {{count}} 件事可以接着走。', chainImpactUnknown: '你回答之后，后面的事可以接着走；完整数量暂时无法确认。', chainCommitments: '影响 {{count}} 个承诺', chainCommitmentsUnknown: '受影响的承诺数量暂时未知',
-      chainInternalFooter: '这一环不在你手里，小组负责人已经看到了。', chainOutsideFooter: '这一环在项目外。谁去催，可以请小组负责人定。',
+      chainInternalFooter: '这一环不在你手里。', chainOutsideFooter: '这一环在项目外。谁去催，可以请小组负责人定。',
       rootReviewQueue: '{{name}}的复核队列', rootReviewUnknown: '有复核职责的成员', rootDecisionYou: '等你回答一个问题', rootDecisionOther: '等{{name}}回答', rootDecisionUnknown: '等一个决定',
       rootExternal: '还在等{{party}}回复', rootExternalUnknown: '还在等项目外的一方回复', rootExternalPartyFallback: '项目外的一方', rootWhatFallback: '等待事项还没有文字说明',
       railTitle: '等你的事', railEmptyTitle: '现在没有等你处理的事', railEmptyDescription: '新的等待记录出现后，会在这里列出。', railUnknownTitle: '待处理数量暂时未知', railUnknownDescription: '有些待处理记录还没读到，不能当作没有待处理事项。', railUnknownNote: '待处理记录未读全，已确认的 {{count}} 件列在下面。',
