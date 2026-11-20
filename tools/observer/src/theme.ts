@@ -10,8 +10,9 @@ const sharedCraftTokens = {
   },
   navigationRowHeight: 36,
   controlHeight: 36,
-  headerHeight: 64,
-  siderWidth: 240,
+  // Prototype .top height and .app grid column (232px) / .wrap max-width (1480px).
+  headerHeight: 56,
+  siderWidth: 232,
   // Prototype .brand and .brand b; the owner's supplied mark replaces the 22px prototype glyph.
   brand: {
     rowHeight: 32,
@@ -22,11 +23,12 @@ const sharedCraftTokens = {
     marginBottom: 20,
     wordmarkFontSize: 17,
     wordmarkFontWeight: 600,
-    wordmarkLineHeight: 22,
+    // Prototype .brand b inherits the body 20px line-height.
+    wordmarkLineHeight: 20,
   },
   // Smallest touch target the mobile acceptance allows (drawer rows, header entry).
   touchTarget: 40,
-  contentMaxWidth: 1600,
+  contentMaxWidth: 1480,
   // Prototype .as, .seg and .seg button; the caption has its own non-layout breakpoint.
   perspective: {
     captionMaxWidth: 1040,
@@ -52,7 +54,15 @@ const sharedCraftTokens = {
   },
   font: {
     interface: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif',
-    meta: 'ui-monospace, "SFMono-Regular", "Cascadia Mono", "Roboto Mono", monospace',
+    // Prototype --mono, verbatim (including Menlo).
+    meta: 'ui-monospace, "SFMono-Regular", "Cascadia Mono", "Roboto Mono", Menlo, monospace',
+  },
+  // Prototype shell parts antd has no token for; global.css consumes them as variables.
+  shell: {
+    // Prototype .top: the page tone mixed at 88% and blurred 8px behind the bar.
+    topbar: { pageMixPercent: 88, blurPx: 8 },
+    // Prototype .av: a 28px circle with a 12px/500 initial.
+    avatar: { size: 28, initialFontSize: 12, initialFontWeight: 500 },
   },
   radius: {
     control: 8,
@@ -101,6 +111,27 @@ const sharedCraftTokens = {
     overlayMs: 200,
     enterMs: 400,
   },
+  // Workbench measurements transcribed from .inst, .word, .say, .inst-body and .btn.
+  workbench: {
+    railWidth: 348,
+    healthHeight: 24,
+    healthLamp: 10,
+    healthPaddingInline: 10,
+    captionText: 12,
+    controlHeight: 32,
+    verdictText: 24,
+    verdictTextCompact: 20,
+    verdictLeading: 32,
+    verdictLeadingCompact: 28,
+    agentLine: 160,
+    agentColumn: 168,
+    statusColumn: 108,
+    ageColumn: 96,
+    waitKindColumn: 136,
+    waitDurationColumn: 150,
+    waitBarMinWidth: 48,
+    behindColumn: 104,
+  },
 } as const;
 
 /** Every visual role has a complete light and dark value; shared geometry uses the same scale. */
@@ -114,7 +145,8 @@ export const craftThemes = {
       raised: '#ECEFF4',
       ink: '#111827',
       secondary: '#4B5565',
-      muted: '#626B7C',
+      // Prototype --ink-3 (light). The owner voided the earlier higher-contrast substitute.
+      muted: '#6B7487',
       hairline: 'rgba(17, 24, 39, 0.08)',
       hairlineStrong: 'rgba(17, 24, 39, 0.16)',
       accent: '#1D4ED8',
@@ -152,7 +184,8 @@ export const craftThemes = {
       raised: '#1A1E28',
       ink: '#EEF0F5',
       secondary: '#A3A9B8',
-      muted: '#7E869A',
+      // Prototype --ink-3 (dark).
+      muted: '#7A8296',
       hairline: 'rgba(238, 240, 245, 0.08)',
       hairlineStrong: 'rgba(238, 240, 245, 0.16)',
       accent: '#8AB0FF',
@@ -313,14 +346,37 @@ export function craftCssVariables(mode: CraftThemeMode): Record<string, string> 
   const tokens = craftThemes[mode];
   const {
     color, chart, shadow, radius, motion, font, text, leading, measure,
-    height, gap, width, canvas, perspective, brand, activity,
+    height, gap, width, canvas, perspective, workbench, activity, brand, shell,
   } = tokens;
   return {
+    '--craft-workbench-rail-width': `${workbench.railWidth}px`,
+    '--craft-workbench-health-height': `${workbench.healthHeight}px`,
+    '--craft-workbench-health-lamp': `${workbench.healthLamp}px`,
+    '--craft-workbench-health-padding-inline': `${workbench.healthPaddingInline}px`,
+    '--craft-workbench-caption-text': `${workbench.captionText}px`,
+    '--craft-workbench-control-height': `${workbench.controlHeight}px`,
+    '--craft-workbench-verdict-text': `${workbench.verdictText}px`,
+    '--craft-workbench-verdict-text-compact': `${workbench.verdictTextCompact}px`,
+    '--craft-workbench-verdict-leading': `${workbench.verdictLeading}px`,
+    '--craft-workbench-verdict-leading-compact': `${workbench.verdictLeadingCompact}px`,
+    '--craft-measure-agent-line': `${workbench.agentLine}px`,
+    '--craft-workbench-column-agent': `${workbench.agentColumn}px`,
+    '--craft-workbench-column-status': `${workbench.statusColumn}px`,
+    '--craft-workbench-column-age': `${workbench.ageColumn}px`,
+    '--craft-workbench-column-wait-kind': `${workbench.waitKindColumn}px`,
+    '--craft-workbench-column-wait-duration': `${workbench.waitDurationColumn}px`,
+    '--craft-workbench-wait-bar-min': `${workbench.waitBarMinWidth}px`,
+    '--craft-workbench-column-behind': `${workbench.behindColumn}px`,
     '--craft-perspective-option-padding-inline': `${perspective.optionPaddingInline}px`,
     '--craft-activity-column-time': `${activity.columnTime}px`,
     '--craft-activity-column-actor': `${activity.columnActor}px`,
     '--craft-activity-column-task': activity.columnTask,
     '--craft-activity-section-title-text': `${activity.sectionTitleText}px`,
+    '--craft-shell-topbar-page-mix': `${shell.topbar.pageMixPercent}%`,
+    '--craft-shell-topbar-blur': `${shell.topbar.blurPx}px`,
+    '--craft-shell-avatar-size': `${shell.avatar.size}px`,
+    '--craft-shell-avatar-initial-font-size': `${shell.avatar.initialFontSize}px`,
+    '--craft-shell-avatar-initial-font-weight': String(shell.avatar.initialFontWeight),
     '--craft-color-page': color.page,
     '--craft-color-side': color.side,
     '--craft-color-surface': color.surface,
@@ -371,6 +427,12 @@ export function craftCssVariables(mode: CraftThemeMode): Record<string, string> 
     // The dotted canvas image lives here because the craft guard keeps gradient functions
     // out of component styles; theme.ts is the one exempt definition point.
     '--craft-canvas-grid-image': `radial-gradient(${color.hairlineStrong} 1px, transparent 1px)`,
+    // The prototype inbox page's weak text (panorama --ink-3). The approved global muted
+    // role keeps its higher contrast; this page-local pair stays a prototype value
+    // (token-gap list in the AWR-PPO-030 PR).
+    '--craft-inbox-muted': mode === 'dark' ? '#7A8296' : '#6B7487',
+    // The prototype's mono stack keeps Menlo; the shared meta font stops one family earlier.
+    '--craft-inbox-mono': 'ui-monospace, "SFMono-Regular", "Cascadia Mono", "Roboto Mono", Menlo, monospace',
     '--craft-size-canvas-grid': `${canvas.grid}px`,
     '--craft-perspective-radius': `${perspective.optionRadius}px`,
     '--craft-perspective-height': `${perspective.optionHeight}px`,

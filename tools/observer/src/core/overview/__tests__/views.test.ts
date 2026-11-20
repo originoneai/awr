@@ -163,6 +163,27 @@ describe('four prototype views', () => {
     expect(noOptions.coverage.sections.views.complete).toBe(false);
   });
 
+  it('keeps a self-addressed decision in the owner waiting list when the task has no Agent', () => {
+    const result = deriveOverview(makeInput({
+      tasks: complete([scopedTask('self-decision', 'project-one', 'group-one', 'goal-one', {
+        ownerPersonId: 'person-a', started: true, agentActive: false, agentName: null,
+      })]),
+      decisions: complete([decision('self-decision', { allowedResponderIds: ['person-a'] })]),
+      options: {
+        nowUnixMs: NOW,
+        stalledAfterDays: 3,
+        views: { me: { personId: 'person-a', projectId: 'project-one' } },
+      },
+    }));
+
+    // The owner is the waiter when no Agent is named; the same decision is also pending for them.
+    expect(result.waitCounts.byKind.decision.count).toBe(1);
+    const waiting = result.views.me.metrics[2];
+    expectKnown(waiting, 1);
+    expect(waiting.items.map((item) => (item as { task: { id: string } }).task.id)).toEqual(['self-decision']);
+    expect(result.views.me.metrics[3].count).toBe(1);
+  });
+
   it('counts a review waiting on somebody else\'s task as pending for the viewer in the me view', () => {
     const views: OverviewViewOptions = {
       me: { personId: 'person-b', projectId: 'project-one' },

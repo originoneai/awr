@@ -5,6 +5,8 @@ import i18n from './i18n';
 import BASELINE from './test-fixtures/human-language-baseline.json';
 import { findHumanLanguageViolations, visibleTextParts, withinHumanLanguageBaseline } from './lib/human-language-guard';
 import { REAL_API_WORK, realShapedActivity, realShapedOverview, realShapedSnapshot, realShapedWorkInbox, realShapedWorkNext, type RealMoment } from './test-fixtures/real-shaped';
+import { demoOverviewModelResponse, emptyOverviewModelResponse } from './test-fixtures/overview-model';
+import { myWorkInput } from './test-fixtures/workbench';
 import {
   DEMO_OVERVIEW,
   DEMO_PROJECTS,
@@ -108,7 +110,32 @@ function installRealShapeMock(state: State, moment: RealMoment) {
       members: state === 'empty' ? [] : [{ name: 'Example member', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] }],
     } });
     if (url.includes('/api/team/connections/list')) return json(state === 'partial' ? failure : { ok: true, data: { items: [], next_cursor: null } });
-    if (url.includes('/api/team/overview-model')) return json(realShapedOverviewModel(state));
+    if (url.includes('/api/team/overview-model')) {
+      // The workbench states drive the response (empty input, partial dependencies, incomparable
+      // ordering). The real-shaped works and member directory from the activity page (#703) are laid
+      // over it so /activity keeps resolving real task titles and registered member names.
+      const layRealDirectoryOver = (response: ReturnType<typeof demoOverviewModelResponse>) => {
+        const real = realShapedOverviewModel(state);
+        const concat = <T,>(base: readonly T[] | undefined, extra: readonly Record<string, unknown>[]) =>
+          [...(base ?? []), ...(extra as unknown as readonly T[])];
+        return {
+          ...response,
+          input: {
+            ...response.input,
+            tasks: { ...response.input.tasks, items: concat(response.input.tasks.items, real.input.tasks.items) },
+            members: { ...response.input.members, items: concat(response.input.members.items, real.input.members.items) },
+          },
+        };
+      };
+      if (state === 'empty') return json(emptyOverviewModelResponse());
+      if (state === 'partial') {
+        return json(layRealDirectoryOver(demoOverviewModelResponse(myWorkInput({
+          dependencies: { coverage: 'partial', reason: 'read-failed', items: [] },
+        }))));
+      }
+      if (state === 'unknown') return json(layRealDirectoryOver(demoOverviewModelResponse(myWorkInput(), { ordering: 'incomparable' })));
+      return json(layRealDirectoryOver(demoOverviewModelResponse()));
+    }
     if (url.includes('/api/team/overview')) {
       if (state === 'empty') return json({ ...DEMO_OVERVIEW, works: [], workstreams: [] });
       return json({
@@ -254,8 +281,6 @@ const DELIVERED = {
 const REPORTER_SENTENCES = {
   plan: [IN_REVIEW.next, ...IN_REVIEW.report],
   planDelivered: [DELIVERED.next, ...DELIVERED.report],
-  workbench: [IN_REVIEW.next, ...IN_REVIEW.report],
-  workbenchDelivered: [DELIVERED.next, ...DELIVERED.report],
   overview: [IN_REVIEW.next],
 } as const;
 
@@ -264,7 +289,7 @@ describe('the real-shaped pages show a reporter as written, with long identifier
     const marked = (readdirSync('src', { recursive: true }) as string[])
       .filter((file) => file.endsWith('.tsx') && !file.endsWith('.test.tsx'))
       .filter((file) => readFileSync(`src/${file}`, 'utf8').includes('data-reporter-text'));
-    expect(marked.sort()).toEqual(['components/ProgressReport.tsx', 'components/WorkDetailPanel.tsx', 'pages/ProjectOverview.tsx', 'pages/WorkbenchPage.tsx']);
+    expect(marked.sort()).toEqual(['components/ProgressReport.tsx', 'components/WorkDetailPanel.tsx', 'pages/ProjectOverview.tsx']);
   });
 
   it.each(Object.keys(REPORTER_SENTENCES) as Array<keyof typeof REPORTER_SENTENCES>)('%s exempts exactly the reporter\'s sentences', async (page) => {
@@ -278,7 +303,7 @@ describe('the real-shaped pages show a reporter as written, with long identifier
 
 
 describe('shared product labels across project pages', () => {
-  it.each(['zh-CN', 'en-US'].flatMap((language) => ['overview', 'plan', 'knowledge', 'workbench'].map((tab) => ({ language, tab }))))(
+  it.each(['zh-CN', 'en-US'].flatMap((language) => ['overview', 'plan', 'knowledge'].map((tab) => ({ language, tab }))))(
     'withholds structured work and workstream titles in $tab for $language', async ({ language, tab }) => {
       await act(async () => { await i18n.changeLanguage(language); });
       installRealShapeMock('data', 'in-review');

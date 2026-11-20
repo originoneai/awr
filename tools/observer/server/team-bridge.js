@@ -7,7 +7,7 @@
 
 const { mapObservation, createGithubObserver } = require('./team-progress');
 const { projectDirectory } = require('./directory');
-const { createDemoOrganization, DEMO_FUTURE_READ_OPS } = require('./demo-organization');
+const { createDemoOrganization, DEMO_FUTURE_READ_OPS, canonicalOverviewInput, demoOverviewAsOf } = require('./demo-organization');
 const { OBSERVATION_STALE_AFTER_MS, READ_TIMEOUT_MS, OVERVIEW_DEADLINE_MS, compareAuthoritative, resolveCurrency } = require('./observation-contract');
 
 const fs = require('fs');
@@ -1751,9 +1751,69 @@ function createTeamBridge(opts) {
     return { ok: false, error: { code, message }, freshness: compositionFailedFreshness(code, now()) };
   }
 
+  /** Demo-only `canonical` variant: the same envelope the composed path produces, around the
+   * fully-known canonical input scoped to one project. The reads that would supply these
+   * facts live do not exist yet, so this variant serves them from the demo organization for
+   * pixel comparison with the prototype; the live path never takes this branch. */
+  function canonicalDemoOverviewValue(project, session) {
+    const demo = TEAM.demoOrganization;
+    const whole = canonicalOverviewInput(demo.data);
+    const scopedTasks = whole.tasks.items.filter((task) => task.projectId === project);
+    const taskInProject = new Set(scopedTasks.map((task) => task.id));
+    const planes = {
+      tasks: scopedTasks,
+      dependencies: whole.dependencies.items.filter((item) => taskInProject.has(item.consumerTaskId)),
+      decisions: whole.decisions.items.filter((item) => taskInProject.has(item.taskId)),
+      reviewRounds: whole.reviewRounds.items.filter((item) => taskInProject.has(item.taskId)),
+      handoffs: whole.handoffs.items.filter((item) => taskInProject.has(item.taskId)),
+      // The member directory spans projects: cross-group waits and the wide-view personas
+      // resolve through it, and every project's reply needs the same whole roster.
+      members: whole.members.items,
+      activity: whole.activity.items.filter((item) => taskInProject.has(item.taskId)),
+      approvals: whole.approvals.items.filter((item) => item.projectId === project),
+    };
+    const periods = whole.options.views;
+    const readAt = session.readAt ?? now();
+    const complete = (items) => ({ coverage: 'complete', items });
+    return {
+      ok: true,
+      project,
+      read_at_unix_ms: readAt,
+      input: {
+        ...Object.fromEntries(Object.entries(planes).map(([plane, items]) => [plane, complete(items)])),
+        options: {
+          nowUnixMs: demo.data.now_unix_ms,
+          // The canonical threshold, not the live composition's 3 days: the fixture's
+          // stalled task reported 1.9 days before its "now", so the wider threshold would
+          // relabel it running and the derived statuses would drift off the prototype's.
+          stalledAfterDays: whole.options.stalledAfterDays,
+          views: {
+            me: { personId: demo.data.viewer.person_id, projectId: project },
+            currentWeek: periods.currentWeek,
+            previousWeek: periods.previousWeek,
+            currentMonth: periods.currentMonth,
+            previousMonth: periods.previousMonth,
+          },
+        },
+      },
+      coverage: Object.fromEntries(Object.keys(planes).map((plane) => [plane, { status: 'complete', missing: [] }])),
+      freshness: {
+        report_received: { status: 'not_measured' },
+        authoritative: {
+          ...resolveCurrency({ atUnixMs: demo.data.now_unix_ms, readAtMs: readAt, staleAfterMs: OBSERVATION_STALE_AFTER_MS }),
+          ...demoOverviewAsOf(project),
+          at_unix_ms: demo.data.now_unix_ms,
+        },
+        page_read: { status: 'measured', at_unix_ms: readAt },
+      },
+    };
+  }
+
   async function executeOverviewModelComposition(project, req, res, session) {
     const generation = overviewCacheGeneration(req);
-    const composed = await composeOverviewModel(project, req, res, session);
+    const composed = TEAM.demoOrganization?.variant === 'canonical'
+      ? { value: canonicalDemoOverviewValue(project, session) }
+      : await composeOverviewModel(project, req, res, session);
     if (composed.authError) {
       clearOverviewCache(req);
       return overviewModelReadFailure(composed.authError.code, composed.authError.message);
