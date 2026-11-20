@@ -17,6 +17,7 @@ import {
 } from '../core/overview/__tests__/factories';
 import {
   buildInboxModel,
+  inboxCalendarDays,
   inboxPendingLabel,
   inboxTaskPath,
   resolveInboxSelection,
@@ -315,5 +316,39 @@ describe('cross-project inbox read model', () => {
     });
     expect(unidentified.viewer).toBeNull();
     expect(unidentified.entries).toEqual([]);
+  });
+
+  it('uses one calendar-date rule for the prototype answer, lesson, report and assignment ages', () => {
+    const now = Date.parse('2026-11-19T12:00:00.000Z');
+    expect(inboxCalendarDays(Date.parse('2026-11-17T12:00:00.000Z'), now, 'UTC')).toBe(2);
+    expect(inboxCalendarDays(Date.parse('2026-11-13T12:00:00.000Z'), now, 'UTC')).toBe(6);
+    // This is the prototype's 46-hour report interval: two dates, not two completed 24-hour periods.
+    expect(inboxCalendarDays(Date.parse('2026-11-17T14:00:00.000Z'), now, 'UTC')).toBe(2);
+    expect(inboxCalendarDays(Date.parse('2026-11-19T09:40:00.000Z'), now, 'UTC')).toBe(0);
+    // Calendar arithmetic, rather than dividing by 24 hours, also handles a daylight-saving transition.
+    expect(inboxCalendarDays(Date.parse('2026-11-01T01:30:00.000Z'), Date.parse('2026-11-02T00:30:00.000Z'), 'America/New_York')).toBe(1);
+    expect(inboxCalendarDays(now + 1, now, 'UTC')).toBeNull();
+    expect(inboxCalendarDays(null, now, 'UTC')).toBeNull();
+    expect(inboxCalendarDays(now, Number.NaN, 'UTC')).toBeNull();
+  });
+
+  it('carries the report timestamp, optional description and render-clock offset without deriving a second fact', () => {
+    const sourceInput = allKindsInput();
+    if (sourceInput.decisions.coverage === 'complete') {
+      Object.assign(sourceInput.decisions.items.find((item) => item.id === 'answer-record')!, {
+        description: 'A separately recorded focus description',
+      });
+    }
+    const source = model(sourceInput);
+    source.read_at_unix_ms = NOW + 60_000;
+    const result = buildInboxModel({ models: [source], projects });
+    const answer = result.entries.find((entry) => entry.kind === 'answer')!;
+    expect(answer.description).toBe('A separately recorded focus description');
+    expect(answer.clockOffsetUnixMs).toBe(-60_000);
+    expect(answer.basis).toContainEqual({
+      tone: 'info',
+      fact: { fact: 'reportAge', atUnixMs: NOW - DAY / 24, stale: false },
+    });
+    expect(result.entries.filter((entry) => entry.kind !== 'answer').every((entry) => entry.description === null)).toBe(true);
   });
 });

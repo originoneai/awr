@@ -148,6 +148,10 @@ function canonicalOverviewInput(data) {
       state: decision.state,
       current: decision.current,
       question: decision.question,
+      // Keep the short question as the card title and expose the separately recorded
+      // focus description. Live replies without this optional fact use the page template.
+      description: data.pending.find((item) => item.work_id === decision.work_id
+        && item.title === decision.question && ['回答', '决定'].includes(item.kind))?.description ?? null,
       impact: decision.impact,
       allowedResponderIds: decision.allowed_responder_person_ids,
       createdAtUnixMs: decision.created_at_unix_ms,

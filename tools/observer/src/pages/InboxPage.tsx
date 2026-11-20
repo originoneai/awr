@@ -20,6 +20,7 @@ import { ObservationForbidden } from '../components/states';
 import { buildHandback, copyText } from '../lib/agent-handback';
 import { useInboxModel } from '../lib/inbox-queries';
 import {
+  inboxCalendarDays,
   inboxPendingLabel,
   inboxTaskPath,
   resolveInboxSelection,
@@ -95,15 +96,44 @@ export function InboxPage() {
   const label = inboxPendingLabel(model);
   const countText = label ?? '—';
   const viewerName = model.viewer?.displayName ?? t('inbox.page.viewerUnknown');
-  const oldest = model.entries.reduce<number | null>((current, entry) => (
-    entry.durationDays == null ? current : current == null ? entry.durationDays : Math.max(current, entry.durationDays)
-  ), null);
+  const renderNowUnixMs = Date.now();
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const referenceUnixMs = (entry: InboxEntry) => renderNowUnixMs + entry.clockOffsetUnixMs;
+  const ageDays = (entry: InboxEntry) => inboxCalendarDays(entry.sinceUnixMs, referenceUnixMs(entry), timeZone);
+  // A lesson's date is when the session recorded it, not how long an answer has been waiting.
+  // The prototype's "oldest wait" therefore considers questions, decisions, assignments and breakdowns.
+  const oldest = model.entries.reduce<number | null>((current, entry) => {
+    if (entry.kind === 'lesson') return current;
+    const days = ageDays(entry);
+    return days == null ? current : current == null ? days : Math.max(current, days);
+  }, null);
   const showList = listReady && model.count != null;
 
   function ageText(entry: InboxEntry): string {
-    if (entry.durationDays == null) return t('inbox.page.ageUnknown');
-    if (entry.durationDays === 0) return t('inbox.page.ageToday');
-    return t('inbox.page.ageDays', { count: entry.durationDays });
+    const days = ageDays(entry);
+    if (days == null) return t('inbox.page.ageUnknown');
+    if (days === 0) return t('workbench.home.pendingAgeToday');
+    return entry.kind === 'answer' || entry.kind === 'decision'
+      ? t('workbench.home.pendingAgeDays', { count: days })
+      : t('workbench.home.pendingAgeDaysAgo', { count: days });
+  }
+
+  function sessionDateText(entry: InboxEntry): string | null {
+    if (ageDays(entry) == null || entry.sinceUnixMs == null) return null;
+    if (!i18n.language.toLowerCase().startsWith('zh')) {
+      return new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', timeZone }).format(entry.sinceUnixMs);
+    }
+    const parts = new Intl.DateTimeFormat('en-US', { month: 'numeric', day: 'numeric', timeZone })
+      .formatToParts(new Date(entry.sinceUnixMs));
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${values.month} 月 ${values.day} 日`;
+  }
+
+  function titleText(entry: InboxEntry): string {
+    if (entry.kind === 'assignment' && entry.fromPerson?.displayName && entry.taskName) {
+      return t('inbox.page.titleAssignment', { who: entry.fromPerson.displayName, task: entry.taskName });
+    }
+    return entry.title ?? t('inbox.page.titleMissing');
   }
 
   function fromText(entry: InboxEntry): string {
@@ -117,11 +147,14 @@ export function InboxPage() {
           ? t('inbox.page.from.othersTask', { owner: entry.taskOwner.displayName })
           : t('inbox.page.from.othersTaskUnnamed');
       case 'assignment':
-        return entry.fromPerson?.displayName
-          ? t('inbox.page.from.assignment', { who: entry.fromPerson.displayName })
-          : t('inbox.page.from.assignmentUnnamed');
-      case 'lesson':
-        return t('inbox.page.from.lesson');
+        if (!entry.fromPerson?.displayName) return t('inbox.page.from.assignmentUnnamed');
+        return ageDays(entry) === 0
+          ? t('inbox.page.from.assignmentToday', { who: entry.fromPerson.displayName })
+          : t('inbox.page.from.assignment', { who: entry.fromPerson.displayName });
+      case 'lesson': {
+        const date = sessionDateText(entry);
+        return date == null ? t('inbox.page.from.lesson') : t('inbox.page.from.lessonAt', { date });
+      }
       default:
         return t('inbox.page.from.planApproval');
     }
@@ -132,6 +165,7 @@ export function InboxPage() {
     switch (entry.kind) {
       case 'answer':
       case 'decision':
+        if (entry.description) return entry.description;
         return entry.taskName
           ? t('inbox.page.description.answer', { question: title, task: entry.taskName })
           : t('inbox.page.description.answerNoTask', { question: title });
@@ -146,14 +180,16 @@ export function InboxPage() {
     }
   }
 
-  function basisText(item: InboxBasisItem): string {
+  function basisText(item: InboxBasisItem, entry: InboxEntry): string {
     switch (item.fact.fact) {
       case 'task':
         return t('inbox.page.basisTask', { title: item.fact.title });
       case 'reportAge': {
-        const age = item.fact.days === 0
+        const days = inboxCalendarDays(item.fact.atUnixMs, referenceUnixMs(entry), timeZone);
+        if (days == null) return t('inbox.page.basisReportAgeUnknown');
+        const age = days === 0
           ? t('inbox.page.ageToday')
-          : t('inbox.page.reportAgeDays', { count: item.fact.days });
+          : t('inbox.page.reportAgeDays', { count: days });
         return t('inbox.page.basisReportAge', { age });
       }
       case 'noReport':
@@ -178,6 +214,9 @@ export function InboxPage() {
       task: { executionAgentName: selected.executionAgentName },
     }, i18n.language)
     : null;
+  const handbackWhere = selected?.kind === 'answer' && selected.executionAgentName
+    ? t('inbox.page.answerWhereKnown', { agent: selected.executionAgentName })
+    : handback?.where;
 
   async function copyLine() {
     if (!handback) return;
@@ -242,7 +281,7 @@ export function InboxPage() {
           <section className="inbox-queue" data-testid="inbox-queue" aria-label={t('inbox.page.queueLabel')}>
             {model.entries.map((entry) => {
               const Icon = KIND_ICONS[entry.kind];
-              const title = entry.title ?? t('inbox.page.titleMissing');
+              const title = titleText(entry);
               const current = entry.key === selected?.key;
               return (
                 <button
@@ -271,9 +310,9 @@ export function InboxPage() {
                 </div>
                 <h3
                   className="inbox-focus-title"
-                  data-truncate={needsTitleClamp(selected.title ?? '') || undefined}
+                  data-truncate={needsTitleClamp(titleText(selected)) || undefined}
                 >
-                  {selected.title ?? t('inbox.page.titleMissing')}
+                  {titleText(selected)}
                 </h3>
                 <div className="inbox-focus-from">{fromText(selected)} · {ageText(selected)}</div>
                 <p className="inbox-focus-ask">{descriptionText(selected)}</p>
@@ -288,14 +327,14 @@ export function InboxPage() {
                         return (
                           <li key={index} data-s={item.tone}>
                             {Icon ? <span className="inbox-ev-icon" aria-hidden><Icon size={18} strokeWidth={1.5} /></span> : null}
-                            {basisText(item)}
+                            {basisText(item, selected)}
                           </li>
                         );
                       })}
                     </ul>
                   )}
                 </div>
-                <div className="inbox-sec" data-testid="inbox-impact">
+                <div className="inbox-sec inbox-impact" data-testid="inbox-impact">
                   <h4>{t('inbox.page.impactTitle')}</h4>
                   <p>
                     {selected.impactText
@@ -331,7 +370,7 @@ export function InboxPage() {
                     <span className="inbox-where-icon" aria-hidden><TerminalIcon size={16} strokeWidth={1.5} /></span>
                     {t('inbox.page.handbackTitle')}
                   </div>
-                  <p>{handback.where}</p>
+                  <p>{handbackWhere}</p>
                   <div className="inbox-sayline">
                     <span className="inbox-sayline-text" data-testid="inbox-handback-line">{handback.sentence}</span>
                     <button type="button" className="inbox-copy" data-testid="inbox-copy" onClick={() => { void copyLine(); }}>
