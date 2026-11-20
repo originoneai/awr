@@ -64,6 +64,9 @@ const sharedCraftTokens = {
     // Prototype .av: a 28px circle with a 12px/500 initial.
     avatar: { size: 28, initialFontSize: 12, initialFontWeight: 500 },
   },
+  // Prototype @media(max-width:860px): mark() and .side-foot button / .wrap.
+  // Kept separate from the pinned desktop shell contract.
+  mobileShell: { brandMarkSize: 22, themeButtonSize: 36, contentBottom: 48 },
   radius: {
     control: 8,
     card: 12,
@@ -351,7 +354,7 @@ export function craftCssVariables(mode: CraftThemeMode): Record<string, string> 
   const tokens = craftThemes[mode];
   const {
     color, chart, shadow, radius, motion, font, text, leading, measure,
-    height, gap, width, canvas, perspective, workbench, activity, brand, shell,
+    height, gap, width, canvas, perspective, workbench, activity, brand, shell, mobileShell,
   } = tokens;
   return {
     '--craft-workbench-rail-width': `${workbench.railWidth}px`,
@@ -383,6 +386,9 @@ export function craftCssVariables(mode: CraftThemeMode): Record<string, string> 
     '--craft-shell-avatar-size': `${shell.avatar.size}px`,
     '--craft-shell-avatar-initial-font-size': `${shell.avatar.initialFontSize}px`,
     '--craft-shell-avatar-initial-font-weight': String(shell.avatar.initialFontWeight),
+    '--craft-shell-mobile-brand-mark-size': `${mobileShell.brandMarkSize}px`,
+    '--craft-shell-mobile-theme-button-size': `${mobileShell.themeButtonSize}px`,
+    '--craft-shell-mobile-content-bottom': `${mobileShell.contentBottom}px`,
     '--craft-color-page': color.page,
     '--craft-color-side': color.side,
     '--craft-color-surface': color.surface,

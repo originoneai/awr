@@ -1,0 +1,32 @@
+{
+  "page": "shell-mobile",
+  "proto": "#p=activity&id=&tab=orders",
+  "app": "/activity?project=P-001&kind=development",
+  "ready": "[data-testid=\"page-activity\"]",
+  "protoReady": ".block",
+  "notes": [
+    "Prototype-only .tog is the demo data-source control and .top .as is the four-identity demo row. The application does not add either control. The four-identity row and its 8px gap make the prototype .top 89px high while the real single-perspective shell header is 49px; only __h is skipped on the topbar pair for that 40px prototype-only row. All topbar paint, padding, position, width and breadcrumb-row geometry remain compared.",
+    "The content wrapper's __h is skipped because the prototype and canonical full demo have different activity records and therefore different table heights. Its width, padding and the page header's anchor-relative geometry are compared.",
+    "The scope label has different data wording (prototype 示例组织; application 全部授权范围), so breadcrumb x positions are not selected. Icon/text y positions, sizes, typography and paint are compared without a skip.",
+    "The application uses the owner-supplied dual-theme AWR image in place of the prototype's SVG glyph. The pair selects the visible light/dark image and compares its box; the artwork itself remains the approved product asset.",
+    "There is no drawer, drawer mask or menu button in either the prototype or application. Those clauses were retired by the supervisor on 2026-11-20; no pairs are added for them."
+  ],
+  "pairs": [
+    ["page title (anchor)", ".head h1", ".obs-page-title", ["TEXT"], {"noPosition": true}],
+    ["mobile top bar", ".side", "[data-testid=\"mobile-navigation\"]", ["BOX", "PAINT", "line-height", "position", "__ax", "__ay"], {"noPosition": true}],
+    ["mobile brand", ".brand", ".shell-brand-mobile", ["BOX", "TEXT", "__ax", "__ay"], {"noPosition": true}],
+    ["mobile brand mark", ".brand > svg", "html:not([data-theme=\"dark\"]) .shell-brand-mobile .shell-brand-mark-color, html[data-theme=\"dark\"] .shell-brand-mobile .shell-brand-mark-white", ["__ax", "__ay"], {"noPosition": true}],
+    ["mobile brand wordmark", ".brand b", ".shell-brand-wordmark", ["TEXT", "__ax", "__ay"], {"noPosition": true}],
+    ["mobile picker slot", ".mobile-pick", "[data-testid=\"page-selector\"]", ["__ax", "__ay"], {"noPosition": true}],
+    ["mobile page selector", ".mobile-pick select", "[data-testid=\"page-selector\"]", ["BOX", "TEXT", "PAINT", "border-right-color", "border-bottom-color", "border-top-right-radius", "border-bottom-left-radius", "border-bottom-right-radius", "__ax", "__ay"], {"noPosition": true}],
+    ["mobile theme button", ".side-foot button", "[data-testid=\"mobile-theme-toggle\"]", ["BOX", "TEXT", "PAINT", "__ax", "__ay"], {"noPosition": true}],
+    ["mobile theme icon", ".side-foot button svg", "[data-testid=\"mobile-theme-toggle\"] svg", ["__ax", "__ay", "color", "stroke-width"], {"noPosition": true}],
+    ["breadcrumb bar", ".top", ".shell-header", ["BOX", "TEXT", "PAINT", "position", "backdrop-filter", "__ax", "__ay"], {"noPosition": true, "skip": ["__h"]}],
+    ["breadcrumb building icon", ".top .crumb > svg:first-child", ".shell-header nav.ant-breadcrumb svg:first-of-type", ["__ax", "__ay", "color"], {"noPosition": true}],
+    ["breadcrumb current page", ".top .crumb b", ".shell-header nav.ant-breadcrumb li:last-child .ant-breadcrumb-link span", ["TEXT", "__ay"], {"noPosition": true}],
+    ["breadcrumb separator", ".top .crumb > svg:nth-of-type(2)", ".shell-header nav.ant-breadcrumb li.ant-breadcrumb-separator svg", ["__ay", "color"], {"noPosition": true}],
+    ["mobile avatar hidden", ".top > .av", "[data-testid=\"avatar-menu-trigger\"]", ["display"], {"noPosition": true}],
+    ["content wrapper", ".wrap", ".shell-content", ["BOX", "PAINT", "max-width"], {"noPosition": true, "skip": ["__h"]}],
+    ["page header", ".head", ".obs-page-header", ["BOX", "PAINT"]]
+  ]
+}
