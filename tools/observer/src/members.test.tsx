@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -34,17 +35,26 @@ expect.extend({
 });
 
 const NOW = 1794600000000;
+const nodeRequire = createRequire(import.meta.url);
+const { projectDirectory } = nodeRequire('../server/directory.js') as { projectDirectory: (value: unknown) => unknown };
 const DIRECTORY = {
   configured: true,
   organization: 'Example company',
   departments: [{ key: 'engineering', name: 'Engineering' }],
   updated_at_ms: NOW,
   members: [
-    { name: 'Taylor', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] },
-    { name: 'Riley', available: true, departments: [{ key: 'research', name: 'Research' }] },
-    { name: null, available: false, departments: [] },
+    { personId: 'person-taylor', name: 'Taylor', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] },
+    { personId: 'person-riley', name: 'Riley', available: true, departments: [{ key: 'research', name: 'Research' }] },
+    { personId: 'person-unavailable', name: null, available: false, departments: [] },
   ],
 };
+
+function recordedIdentityDirectory() {
+  const sample = JSON.parse(readFileSync('test/fixtures/directory-web-read-identities.json', 'utf8')) as { data: unknown };
+  const directory = projectDirectory(sample.data);
+  expect(directory).not.toBeNull();
+  return directory;
+}
 
 function overviewModel(): TeamOverviewModelResponse {
   const complete = <T,>(items: T[] = []): ReadSlice<T> => ({ coverage: 'complete', items });
@@ -97,6 +107,25 @@ function overviewModel(): TeamOverviewModelResponse {
       page_read: { status: 'measured', at_unix_ms: NOW },
     },
   };
+}
+
+function identityOverviewModel(): TeamOverviewModelResponse {
+  const model = overviewModel();
+  const task = model.input.tasks.items![0];
+  model.input.members = { coverage: 'complete', items: [
+    { personId: 'directory-person', displayName: 'Project coordinator', groupId: 'engineering' },
+    { personId: 'directory-person-two', displayName: 'Project coordinator', groupId: 'research' },
+  ] };
+  model.input.tasks = { coverage: 'complete', items: [
+    { ...task, id: 'identity-first', title: 'First recorded task', ownerPersonId: 'directory-person', groupId: 'engineering' },
+    { ...task, id: 'identity-second', title: 'Second recorded task', ownerPersonId: 'directory-person-two', groupId: 'research' },
+  ] };
+  model.input.approvals = { coverage: 'complete', items: [
+    { id: 'identity-pending-first', kind: 'plan-approval', recipientPersonId: 'directory-person', projectId: 'demo', title: 'First pending item' },
+    { id: 'identity-pending-second-a', kind: 'plan-approval', recipientPersonId: 'directory-person-two', projectId: 'demo', title: 'Second pending item A' },
+    { id: 'identity-pending-second-b', kind: 'plan-approval', recipientPersonId: 'directory-person-two', projectId: 'demo', title: 'Second pending item B' },
+  ] };
+  return model;
 }
 
 function setup() {
@@ -158,7 +187,7 @@ describe('members and Agents panorama', () => {
     expect(screen.getByTestId('members-flat-note')).toHaveTextContent(i18n.t('members.flatHierarchy'));
     expect(screen.getByTestId('member-doing-person-taylor')).toHaveTextContent('A very long task title');
     expect(screen.getByTestId('member-pending-person-taylor')).toHaveTextContent('3');
-    expect(screen.getByTestId('member-pending-person-riley')).toHaveTextContent('0');
+    expect(screen.getByTestId('member-pending-person-riley')).toHaveTextContent(i18n.t('members.noPending'));
     expect(screen.getByTestId('member-pending-unknown-2')).toHaveTextContent('—');
     expect(screen.getByTestId('member-row-person-taylor')).toHaveAttribute('data-highlighted', 'true');
     expect(screen.getAllByText(i18n.t('members.roleMissing')).length).toBeGreaterThan(0);
@@ -247,14 +276,15 @@ describe('members and Agents panorama', () => {
     expect(screen.getByTestId('members-detail-count')).toHaveTextContent('3');
   });
 
-  it('opens a known zero as an empty detail and leaves an unknown count closed', async () => {
+  it('renders a known zero as quiet text and leaves unknown counts closed', async () => {
     setup();
     renderApp('/members?scope=demo');
     await loaded();
-    await userEvent.setup().click(screen.getByTestId('member-pending-person-riley'));
-    expect(await screen.findByTestId('members-detail-empty')).toBeTruthy();
-    expect(screen.queryByTestId('members-detail-row')).toBeNull();
-    expect(screen.getByTestId('members-detail-count')).toHaveTextContent('0');
+    const knownEmpty = screen.getByTestId('member-pending-person-riley');
+    expect(knownEmpty.tagName).toBe('SPAN');
+    expect(knownEmpty).toHaveTextContent(i18n.t('members.noPending'));
+    expect(knownEmpty.className).toContain('members-dim');
+    expect(screen.queryByTestId('members-detail')).toBeNull();
     expect(screen.getByTestId('member-pending-unknown-2').tagName).not.toBe('BUTTON');
   });
 
@@ -322,8 +352,16 @@ describe('members and Agents panorama', () => {
     emptyModel.input.tasks = { coverage: 'complete', items: [] };
     emptyModel.input.approvals = { coverage: 'complete', items: [] };
     setOverviewResponse(emptyModel);
-    renderApp('/members?scope=demo');
+    const empty = renderApp('/members?scope=demo');
     expect(await screen.findByTestId('members-empty')).toHaveTextContent(i18n.t('members.empty'));
+    expect(findHumanLanguageViolations(screen.getByTestId('page-members'))).toEqual([]);
+    empty.unmount();
+    setDirectoryResponse({ ok: true, data: {
+      configured: false, organization: null, departments: [], updated_at_ms: null, members: [],
+    } });
+    renderApp('/members?scope=demo');
+    expect(await screen.findByTestId('members-empty')).toHaveTextContent(i18n.t('members.notRegistered'));
+    expect(screen.getByTestId('members-empty')).toHaveTextContent(i18n.t('members.registrationHelp'));
     expect(findHumanLanguageViolations(screen.getByTestId('page-members'))).toEqual([]);
   });
 
@@ -421,43 +459,48 @@ describe('members and Agents panorama', () => {
     }
   });
 
-  it('keeps same-name members separate and refuses ambiguous person identity matches', async () => {
+  it('joins recorded same-name and multi-group directory identities only by person ID', async () => {
     const { setDirectoryResponse, setOverviewResponse } = setup();
-    setDirectoryResponse({ ok: true, data: { ...DIRECTORY, members: [
-      { name: 'Taylor', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] },
-      { name: 'Taylor', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] },
-    ] } });
-    const model = overviewModel();
-    model.input.members = { coverage: 'complete', items: [
-      { personId: 'person-first', displayName: 'Taylor', groupId: 'engineering' },
-      { personId: 'person-second', displayName: 'Taylor', groupId: 'engineering' },
-    ] };
+    setDirectoryResponse({ ok: true, data: recordedIdentityDirectory() });
+    const model = identityOverviewModel();
+    model.input.members.items![0].displayName = 'A different overview display label';
+    model.input.members.items![0].groupId = 'an-unrelated-overview-group';
     setOverviewResponse(model);
     renderApp('/members?scope=demo');
-    await waitFor(() => expect(screen.getAllByText('Taylor')).toHaveLength(2));
-    expect(screen.getByTestId('member-row-unknown-0')).not.toHaveAttribute('data-openable');
-    expect(screen.getByTestId('member-row-unknown-1')).not.toHaveAttribute('data-openable');
-    expect(screen.queryByTestId('member-row-person-first')).toBeNull();
-    expect(screen.queryByTestId('member-row-person-second')).toBeNull();
+    const first = await screen.findByTestId('member-row-directory-person');
+    const second = await screen.findByTestId('member-row-directory-person-two');
+    expect(first).toHaveAttribute('data-openable', 'true');
+    expect(second).toHaveAttribute('data-openable', 'true');
+    expect(screen.getAllByText('Project coordinator')).toHaveLength(2);
+    expect(document.querySelectorAll('.members-table tbody tr.ant-table-row')).toHaveLength(2);
+    expect(screen.getByTestId('member-doing-directory-person')).toHaveTextContent('First recorded task');
+    expect(screen.getByTestId('member-doing-directory-person-two')).toHaveTextContent('Second recorded task');
+    expect(screen.getByTestId('member-pending-directory-person')).toHaveTextContent('1');
+    expect(screen.getByTestId('member-pending-directory-person-two')).toHaveTextContent('2');
+    expect(first).not.toHaveTextContent('Second recorded task');
+    expect(second).not.toHaveTextContent('First recorded task');
+    expect(within(first).getByText('Engineering · Research')).toBeTruthy();
+    expect(within(second).getByText('Research')).toBeTruthy();
   });
 
-  it('refuses ambiguous overview people for a single directory member', async () => {
+  it('keeps facts unverified when a directory person ID is absent instead of guessing by name and group', async () => {
     const { setDirectoryResponse, setOverviewResponse } = setup();
-    setDirectoryResponse({ ok: true, data: { ...DIRECTORY, members: [
-      { name: 'Taylor', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] },
-    ] } });
-    const model = overviewModel();
-    model.input.members = { coverage: 'complete', items: [
-      { personId: 'person-first', displayName: 'Taylor', groupId: 'engineering' },
-      { personId: 'person-second', displayName: 'Taylor', groupId: 'engineering' },
-    ] };
+    setDirectoryResponse({ ok: true, data: recordedIdentityDirectory() });
+    const model = identityOverviewModel();
+    model.input.members = { coverage: 'complete',
+      items: model.input.members.items!.filter((member) => member.personId !== 'directory-person') };
     setOverviewResponse(model);
     renderApp('/members?scope=demo');
-    expect(await screen.findByTestId('member-row-unknown-0')).not.toHaveAttribute('data-openable');
+    expect(await screen.findByTestId('member-row-directory-person-two')).toHaveAttribute('data-openable', 'true');
+    const missing = screen.getByTestId('member-row-unknown-0');
+    expect(missing).not.toHaveAttribute('data-openable');
+    expect(missing).not.toHaveTextContent('First recorded task');
+    expect(missing).not.toHaveTextContent('Second recorded task');
     expect(screen.getByTestId('member-pending-unknown-0')).toHaveTextContent('—');
     expect(screen.getByTestId('member-doing-unknown-0')).toHaveTextContent(i18n.t('members.doingUnknown'));
-    expect(screen.queryByTestId('member-row-person-first')).toBeNull();
-    expect(screen.queryByTestId('member-row-person-second')).toBeNull();
+    expect(screen.queryByTestId('member-row-directory-person')).toBeNull();
+    expect(screen.getByTestId('member-doing-directory-person-two')).toHaveTextContent('Second recorded task');
+    expect(screen.getByTestId('member-pending-directory-person-two')).toHaveTextContent('2');
   });
 
   it('highlights exactly three pending items but not two', async () => {
@@ -475,80 +518,6 @@ describe('members and Agents panorama', () => {
     expect(screen.getByTestId('member-pending-person-riley')).toHaveTextContent('2');
     expect(screen.getByTestId('member-row-person-taylor')).toHaveAttribute('data-highlighted', 'true');
     expect(screen.getByTestId('member-row-person-riley')).not.toHaveAttribute('data-highlighted');
-  });
-
-  it('resolves same-name people by group without borrowing another group identity', async () => {
-    const { setDirectoryResponse, setOverviewResponse } = setup();
-    setDirectoryResponse({ ok: true, data: { ...DIRECTORY, members: [
-      { name: 'Taylor', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] },
-      { name: 'Taylor', available: true, departments: [{ key: 'delivery', name: 'Delivery' }] },
-    ] } });
-    const model = overviewModel();
-    model.input.members = { coverage: 'complete', items: [
-      { personId: 'person-group-a', displayName: 'Taylor', groupId: 'engineering' },
-      { personId: 'person-group-b', displayName: 'Taylor', groupId: 'research' },
-    ] };
-    setOverviewResponse(model);
-    renderApp('/members?scope=demo');
-    expect(await screen.findByTestId('member-row-person-group-a')).toHaveAttribute('data-openable', 'true');
-    expect(screen.getByTestId('member-pending-person-group-a')).toHaveTextContent('0');
-    expect(screen.getByTestId('member-row-unknown-1')).not.toHaveAttribute('data-openable');
-    expect(screen.getByTestId('member-pending-unknown-1')).toHaveTextContent('—');
-    expect(screen.getByTestId('member-doing-unknown-1')).toHaveTextContent(i18n.t('members.doingUnknown'));
-  });
-
-  it('leaves duplicate directory name-and-group rows unidentified with only one overview person', async () => {
-    const { setDirectoryResponse, setOverviewResponse } = setup();
-    setDirectoryResponse({ ok: true, data: { ...DIRECTORY, members: [
-      { name: 'Taylor', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] },
-      { name: 'Taylor', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] },
-    ] } });
-    const model = overviewModel();
-    model.input.members = { coverage: 'complete', items: [
-      { personId: 'person-single', displayName: 'Taylor', groupId: 'engineering' },
-    ] };
-    setOverviewResponse(model);
-    renderApp('/members?scope=demo');
-    await waitFor(() => expect(screen.getAllByText('Taylor')).toHaveLength(2));
-    for (const rowId of ['unknown-0', 'unknown-1']) {
-      expect(screen.getByTestId(`member-row-${rowId}`)).not.toHaveAttribute('data-openable');
-      expect(screen.getByTestId(`member-pending-${rowId}`)).toHaveTextContent('—');
-      expect(screen.getByTestId(`member-doing-${rowId}`)).toHaveTextContent(i18n.t('members.doingUnknown'));
-    }
-    expect(screen.queryByTestId('member-row-person-single')).toBeNull();
-  });
-
-  it('resolves a formerly duplicated directory row when it becomes the only row', async () => {
-    const { setDirectoryResponse, setOverviewResponse } = setup();
-    setDirectoryResponse({ ok: true, data: { ...DIRECTORY, members: [
-      { name: 'Taylor', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] },
-    ] } });
-    const model = overviewModel();
-    model.input.members = { coverage: 'complete', items: [
-      { personId: 'person-single', displayName: 'Taylor', groupId: 'engineering' },
-    ] };
-    setOverviewResponse(model);
-    renderApp('/members?scope=demo');
-    expect(await screen.findByTestId('member-row-person-single')).toHaveAttribute('data-openable', 'true');
-    expect(screen.getByTestId('member-pending-person-single')).toHaveTextContent('0');
-  });
-
-  it('uses one overview person only once across different directory group sets', async () => {
-    const { setDirectoryResponse, setOverviewResponse } = setup();
-    setDirectoryResponse({ ok: true, data: { ...DIRECTORY, members: [
-      { name: 'Taylor', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] },
-      { name: 'Taylor', available: true, departments: [{ key: 'engineering', name: 'Engineering' }, { key: 'research', name: 'Research' }] },
-    ] } });
-    const model = overviewModel();
-    model.input.members = { coverage: 'complete', items: [
-      { personId: 'person-used', displayName: 'Taylor', groupId: 'engineering' },
-    ] };
-    setOverviewResponse(model);
-    renderApp('/members?scope=demo');
-    expect(await screen.findByTestId('member-row-person-used')).toHaveAttribute('data-openable', 'true');
-    expect(screen.getByTestId('member-pending-person-used')).toHaveTextContent('0');
-    expect(screen.getByTestId('member-row-unknown-1')).not.toHaveAttribute('data-openable');
-    expect(screen.getByTestId('member-pending-unknown-1')).toHaveTextContent('—');
   });
 
   it('does not render revoked connections as Agent chips', async () => {
@@ -597,7 +566,7 @@ describe('members and Agents panorama', () => {
     const { setDirectoryResponse, setOverviewResponse } = setup();
     const names = ['Zoe', 'Alpha', 'Morgan'];
     setDirectoryResponse({ ok: true, data: { ...DIRECTORY, members: names.map((name) => ({
-      name, available: true, departments: [{ key: 'engineering', name: 'Engineering' }],
+      personId: `person-${name.toLowerCase()}`, name, available: true, departments: [{ key: 'engineering', name: 'Engineering' }],
     })) } });
     const model = overviewModel();
     model.input.members = { coverage: 'complete', items: names.map((name) => ({
@@ -621,7 +590,7 @@ describe('members and Agents panorama', () => {
   it('matches member search case insensitively', async () => {
     const { setDirectoryResponse, setOverviewResponse } = setup();
     setDirectoryResponse({ ok: true, data: { ...DIRECTORY, members: [
-      { name: 'Owner A', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] },
+      { personId: 'person-taylor', name: 'Owner A', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] },
     ] } });
     const model = overviewModel();
     model.input.members = { coverage: 'complete', items: [
@@ -655,7 +624,7 @@ describe('members and Agents panorama', () => {
     const { setDirectoryResponse, setOverviewResponse } = setup();
     const personId = 'a/b?c d';
     setDirectoryResponse({ ok: true, data: { ...DIRECTORY, members: [
-      { name: 'Taylor', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] },
+      { personId, name: 'Taylor', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] },
     ] } });
     const model = overviewModel();
     model.input.tasks = { coverage: 'complete', items: [] };
@@ -716,7 +685,7 @@ describe('members and Agents panorama', () => {
       ...DIRECTORY,
       organization: 'client9x',
       departments: [{ key: 'private-department', name: 'status: custom failure' }],
-      members: [{ name: 'agent7a', available: true, departments: [{ key: 'private-department', name: 'status: custom failure' }] }],
+      members: [{ personId: 'person-unreadable', name: 'agent7a', available: true, departments: [{ key: 'private-department', name: 'status: custom failure' }] }],
     } });
     renderApp('/members?scope=demo');
     await screen.findAllByText(humanText('nameUnavailable', 'zh-CN'));

@@ -4,7 +4,7 @@
   "app": "/members?scope=P-001",
   "ready": "[data-testid=\"member-table\"]",
   "protoReady": ".block table.t",
-  "notes": {"styleComparison": "Every style property is compared, colours included. This file is reviewer-owned: a builder may add pairs, never skip or loosen a style property.", "openDifferences": ["quiet pending cell: a known zero reads as a 0 件 button in the app and as the quiet 没有 text in the prototype (AWR-PPO-077)"]},
+  "notes": {"styleComparison": "Every style property is compared, colours included. This file is reviewer-owned: a builder may add pairs, never skip or loosen a style property."},
   "pairs": [
     ["page title", ".head h1", ".obs-page-title", ["TEXT", "margin-top", "margin-bottom"]],
     ["page subtitle", ".head .sub", ".obs-page-subtitle", ["TEXT", "margin-left"]],
@@ -24,6 +24,7 @@
     ["small text", ".block table.t tbody .sm", ".members-table tbody .members-small", ["TEXT"], {"skip": ["__w", "__h"]}],
     ["doing cell", ".block table.t tbody td:nth-child(4)", ".members-table tbody td:nth-child(3)", ["TEXT", "padding-top", "padding-bottom", "padding-left", "vertical-align"]],
     ["empty doing", ".block table.t tbody tr:first-child td:nth-child(4) .dim", ".members-table tbody tr:first-child td:nth-child(3) .members-dim", ["TEXT"], {"skip": ["__w", "__h"]}],
+    ["recorded doing", ".block table.t tbody tr:nth-child(3) td:nth-child(4)", ".members-table tbody tr:nth-child(3) td:nth-child(3)", ["TEXT", "padding-top", "padding-bottom", "padding-left", "vertical-align"]],
     ["pending heading", ".block table.t th:nth-child(6)", ".members-table thead th:nth-child(4)", ["TEXT", "padding-top", "padding-bottom", "padding-left", "__h"]],
     ["quiet pending cell", ".block table.t tbody tr:nth-child(3) td:nth-child(6)", ".members-table tbody tr:nth-child(3) td:nth-child(4)", ["TEXT", "padding-top", "padding-bottom", "padding-left", "vertical-align"]],
     ["navigation cell", ".block table.t tbody td.chevc", ".members-table tbody td.obs-table-arrow-column", ["BOX", "PAINT", "__w", "__h"]],

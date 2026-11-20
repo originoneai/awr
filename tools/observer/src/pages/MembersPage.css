@@ -212,12 +212,12 @@ button.members-detail-row:focus-visible {
 
 .members-number,
 .members-pending-button,
-.members-unknown-count {
+.members-quiet-count {
   font-variant-numeric: tabular-nums;
 }
 
 .members-pending-button,
-.members-unknown-count {
+.members-quiet-count {
   white-space: nowrap;
 }
 
@@ -359,6 +359,10 @@ button.members-detail-row:hover {
 }
 
 @media (max-width: 860px) {
+  .members-doing {
+    white-space: normal;
+  }
+
   .members-lead {
     font-size: var(--members-lead-compact-size);
     line-height: var(--members-lead-compact-leading);

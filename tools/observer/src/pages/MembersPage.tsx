@@ -15,7 +15,7 @@ import { ObservationForbidden } from '../components/states';
 import { readableNarrative, workLabel } from '../core/observation';
 import { readsAsName } from '../core/observation/owner';
 import { hasObservationValue } from '../core/observation/values';
-import { deriveOverview, type DerivedTask, type OverviewDerivation, type OverviewMember, type PersonPendingItem, type PersonSummary } from '../core/overview';
+import { deriveOverview, type DerivedTask, type OverviewDerivation, type PersonPendingItem, type PersonSummary } from '../core/overview';
 import { FORBIDDEN_VISIBLE_PATTERNS, humanText } from '../i18n/human-language';
 import { ApiError, apiPost, isAuthError } from '../lib/api';
 import { projectLabel } from '../lib/project-label';
@@ -39,6 +39,7 @@ interface Department {
 }
 
 interface DirectoryMember {
+  personId: string;
   name: string | null;
   available: boolean;
   departments: Department[];
@@ -212,30 +213,15 @@ function ProjectMembers({ project, projects }: { project: string; projects: { da
   const viewerPersonId = overviewData?.input.options.views?.me?.personId ?? null;
 
   const rows = useMemo<MemberRow[]>(() => {
-    const overviewMembers = overviewData?.input.members.items ?? [];
+    const overviewPersonIds = new Set((overviewData?.input.members.items ?? [])
+      .flatMap((member) => member.personId ? [member.personId] : []));
     const summaries = new Map((derived?.people ?? []).map((summary) => [summary.person.id, summary]));
-    const directoryMembers = directory?.members ?? [];
-    const signature = (member: DirectoryMember) => JSON.stringify([
-      member.name, member.departments.map((item) => item.key).sort(),
-    ]);
-    const signatureCounts = new Map<string, number>();
-    for (const member of directoryMembers) {
-      const key = signature(member);
-      signatureCounts.set(key, (signatureCounts.get(key) ?? 0) + 1);
-    }
-    const used = new Set<string>();
-    return directoryMembers.map((member, index) => {
+    return (directory?.members ?? []).map((member, index) => {
       const rawName = typeof member.name === 'string' ? member.name : null;
       const name = rawName && readsAsName(rawName) ? rawName
         : hasObservationValue(rawName) ? unavailableName : t('members.unnamed', { number: index + 1 });
-      const departmentKeys = new Set(member.departments.map((item) => item.key));
-      // Identical directory rows cannot decide which one owns a single overview identity.
-      const candidates = (signatureCounts.get(signature(member)) ?? 0) > 1 ? [] : overviewMembers.filter((candidate): candidate is OverviewMember & { personId: string } => {
-        if (!candidate.personId || used.has(candidate.personId) || candidate.displayName !== rawName || !rawName) return false;
-        return candidate.groupId != null && departmentKeys.has(candidate.groupId);
-      });
-      const personId = candidates.length === 1 ? candidates[0].personId : null;
-      if (personId) used.add(personId);
+      // Directory identity joins only to the same project-scoped ID in the overview membership read.
+      const personId = overviewPersonIds.has(member.personId) ? member.personId : null;
       return {
         key: personId ?? `directory-${index}`,
         rowId: personId ?? `unknown-${index}`,
@@ -315,7 +301,10 @@ function ProjectMembers({ project, projects }: { project: string; projects: { da
   function pendingCell(row: MemberRow) {
     const count = row.summary?.pending.count;
     if (count == null) {
-      return <span className="members-dim members-unknown-count" data-testid={`member-pending-${row.rowId}`} aria-label={t('members.pendingUnknown')}>—</span>;
+      return <span className="members-dim members-quiet-count" data-testid={`member-pending-${row.rowId}`} aria-label={t('members.pendingUnknown')}>—</span>;
+    }
+    if (count === 0) {
+      return <span className="members-dim members-quiet-count" data-testid={`member-pending-${row.rowId}`}>{t('members.noPending')}</span>;
     }
     return <button type="button" className="members-pending-button" data-testid={`member-pending-${row.rowId}`} onClick={() => row.personId && openDetail('pending', row.personId)}>{t('members.pendingCount', { count })}</button>;
   }

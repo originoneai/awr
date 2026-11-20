@@ -4,7 +4,7 @@
   "app": "/members?scope=P-001",
   "ready": "[data-testid=\"member-table\"]",
   "protoReady": ".block table.t",
-  "notes": {"styleComparison": "Every style property is compared, colours included. This file is reviewer-owned: a builder may add pairs, never skip or loosen a style property.", "openDifferences": ["quiet pending cell: a known zero reads as a 0 件 button in the app and as the quiet 没有 text in the prototype (AWR-PPO-077)"]},
+  "notes": {"styleComparison": "Every style property is compared, colours included. This file is reviewer-owned: a builder may add pairs, never skip or loosen a style property."},
   "pairs": [
     ["page title", ".head h1", ".obs-page-title", ["TEXT", "margin-top", "margin-bottom"]],
     ["page subtitle", ".head .sub", ".obs-page-subtitle", ["TEXT", "margin-left"]],
