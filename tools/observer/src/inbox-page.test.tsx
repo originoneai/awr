@@ -252,6 +252,32 @@ describe('prototype inbox page', () => {
     expect(unnamed.textContent).not.toContain('派给了你');
   });
 
+  it('words a waiting answer as how long it has waited and the other ages as how long ago', async () => {
+    setup();
+    const page = await screen.findByTestId('page-inbox');
+    const queue = await within(page).findByTestId('inbox-queue');
+    const rows = within(queue).getAllByTestId('inbox-queue-row');
+    const age = (needle: string) => rows.find((row) => row.textContent?.includes(needle))!
+      .querySelector('.inbox-qrow-age')?.textContent;
+    expect(age('Should the empty state explain the next step?')).toBe('等了 2 天');
+    expect(age('Recovery work breakdown')).toBe('1 天前');
+  });
+
+  it('shows the age and the report age as unknown, not a guess, when the read is stamped later than the derivation clock allows', async () => {
+    const source = pageInput();
+    if (source.tasks.coverage === 'complete') {
+      source.tasks.items.find((task) => task.id === 'answer-task')!.report = { completed: false, reportedAtUnixMs: NOW - DAY };
+    }
+    setup({ modelPayload: { ...response(source), read_at_unix_ms: Date.now() + 40 * DAY } });
+    const page = await screen.findByTestId('page-inbox');
+    const queue = await within(page).findByTestId('inbox-queue');
+    const answer = within(queue).getAllByTestId('inbox-queue-row')
+      .find((row) => row.textContent?.includes('Should the empty state explain the next step?'))!;
+    expect(answer.querySelector('.inbox-qrow-age')?.textContent).toBe('不知道等了多久');
+    await userEvent.click(answer);
+    expect(within(page).getByTestId('inbox-basis').textContent).toContain('Agent 最后一次报告的时间还没有读到');
+  });
+
   it('uses the PPO-012 sentence and browser-only copy with a selection fallback', async () => {
     const writeText = vi.fn(async () => {});
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });

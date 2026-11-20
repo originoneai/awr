@@ -351,4 +351,30 @@ describe('cross-project inbox read model', () => {
     });
     expect(result.entries.filter((entry) => entry.kind !== 'answer').every((entry) => entry.description === null)).toBe(true);
   });
+  it('measures calendar dates in the viewer zone and at the edges of the clock', () => {
+    const now = Date.parse('2026-11-18T00:30:00.000Z');
+    const at = Date.parse('2026-11-17T23:30:00.000Z');
+    // One hour apart: two dates in UTC, one date in Tokyo.
+    expect(inboxCalendarDays(at, now, 'UTC')).toBe(1);
+    expect(inboxCalendarDays(at, now, 'Asia/Tokyo')).toBe(0);
+    // The same moment is today; the epoch is a valid moment; a negative one and an unknown zone are not.
+    expect(inboxCalendarDays(now, now, 'UTC')).toBe(0);
+    expect(inboxCalendarDays(0, Date.parse('1970-01-02T00:00:00.000Z'), 'UTC')).toBe(1);
+    expect(inboxCalendarDays(-1, now, 'UTC')).toBeNull();
+    expect(inboxCalendarDays(at, now, 'Not/AZone')).toBeNull();
+  });
+
+  it('calls a report stale exactly at the stalled bound and fresh one millisecond inside it', () => {
+    for (const [offset, stale] of [[0, true], [1, false]] as const) {
+      const sourceInput = allKindsInput();
+      const task = sourceInput.tasks.coverage === 'complete'
+        ? sourceInput.tasks.items.find((item) => item.id === 'answer-task')
+        : undefined;
+      task!.report = { completed: false, reportedAtUnixMs: NOW - 3 * DAY + offset };
+      const answer = buildInboxModel({ models: [model(sourceInput)], projects }).entries
+        .find((entry) => entry.kind === 'answer')!;
+      expect(answer.basis.find((item) => item.fact.fact === 'reportAge'), `offset ${offset}`)
+        .toMatchObject({ tone: stale ? 'bad' : 'info', fact: { stale } });
+    }
+  });
 });
