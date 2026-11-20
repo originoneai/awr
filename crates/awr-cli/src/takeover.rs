@@ -251,6 +251,39 @@ fn classify(failure: &Failure, root: &Path) -> Stop {
     Stop::new("awr_error", describe(failure)).with(json!({ "code": failure.code }))
 }
 
+/// A stop of the accept step. A credential stop there comes from a file the reviewed draft maps.
+fn accept_stop(failure: &Failure, root: &Path) -> Stop {
+    let mut stop = classify(failure, root);
+    if stop.reason == "secret_boundary"
+        && stop
+            .detail
+            .as_ref()
+            .is_some_and(|detail| detail["path"].is_string())
+    {
+        stop.message.push_str(
+            " The reviewed draft maps this file: redact the value, or leave the file out of the reviewed mapping.",
+        );
+    }
+    stop
+}
+
+/// The documents `init` left unmapped because the secret boundary refuses their content, or `None` when there are
+/// none. Only their count and places are copied, so that nothing else of the report reaches the record or receipt.
+fn refused_documents(shown: &Value) -> Option<Value> {
+    let refused = shown.get("refused_documents")?;
+    let documents: Vec<Value> = refused["documents"]
+        .as_array()
+        .map(|list| {
+            list.iter()
+                .map(|d| json!({ "path": d["path"], "line": d["line"], "category": d["category"] }))
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(
+        json!({ "total": refused["total"], "documents": documents, "meaning": refused["meaning"] }),
+    )
+}
+
 /// A path in one comparable spelling: forward slashes, no `\\?\` verbatim prefix, and no leading slash before a
 /// drive letter (a file URL spells `C:\x` as `/C:/x`).
 fn normalized_path(path: &str) -> String {
@@ -878,7 +911,7 @@ impl Run<'_> {
             )
             .into());
         }
-        Ok(json!({
+        let mut result = json!({
             "draft_path": draft_path,
             "manifest": manifest,
             "inventory_fingerprint": draft["inventory_fingerprint"],
@@ -888,7 +921,11 @@ impl Run<'_> {
             "gaps": draft["gaps"].as_array().map(|g| g.iter().take(10).cloned().collect::<Vec<_>>()),
             "generated_files": draft["generated_files"].as_object().map(|f| f.keys().cloned().collect::<Vec<_>>()),
             "git": draft["git"].clone(),
-        }))
+        });
+        if let Some(refused) = refused_documents(&shown) {
+            result["refused_documents"] = refused;
+        }
+        Ok(result)
     }
 
     fn review(&mut self) -> std::result::Result<Value, StepEnd> {
@@ -995,7 +1032,7 @@ impl Run<'_> {
         let shown = match self.awr.run(&["init", "--from-draft", &reviewed_arg]) {
             Ok(shown) => shown,
             Err(failure) => {
-                let stop = classify(&failure, &self.root);
+                let stop = accept_stop(&failure, &self.root);
                 return Err(match stop.reason.as_str() {
                     "inventory_changed" => StepEnd::Retry(stop.message),
                     _ => StepEnd::Stop(stop),
@@ -1038,7 +1075,7 @@ impl Run<'_> {
             "--expected-preview",
             &fingerprint,
         ]) {
-            let stop = classify(&failure, &self.root);
+            let stop = accept_stop(&failure, &self.root);
             if self.root.join(".awr").join("project.toml").is_file() {
                 return Err(Stop::new(
                     "accept_failed_partial",
@@ -1056,9 +1093,11 @@ impl Run<'_> {
             .filter_map(|w| w["path"].as_str())
             .filter(|path| !inside_awr(path))
             .collect();
-        Ok(
-            json!({ "fingerprint": fingerprint, "writes": writes, "written_outside_awr": written_outside }),
-        )
+        let mut result = json!({ "fingerprint": fingerprint, "writes": writes, "written_outside_awr": written_outside });
+        if let Some(refused) = refused_documents(&shown) {
+            result["refused_documents"] = refused;
+        }
+        Ok(result)
     }
 
     fn organize(&mut self) -> std::result::Result<Value, StepEnd> {
@@ -1147,7 +1186,7 @@ impl Run<'_> {
         if let Some(notes) = review.get("notes") {
             reviewed["notes"] = notes.clone();
         }
-        let body = json!({
+        let mut body = json!({
             "version": RECORD_VERSION,
             "run": self.record["id"],
             "project": self.root,
@@ -1168,6 +1207,18 @@ impl Run<'_> {
             "awaiting_confirmation": awaiting,
             "git": { "head_before": head_before, "head_after": head_after, "committed": false, "pushed": false, "head_moved": head_before != json!(head_after) },
         });
+        // The reviewed draft that was accepted decides which refused documents were left out; an accept recovered
+        // from an earlier attempt has only the preview to go by.
+        let decided = if accepted["recovered"] == true {
+            &preview
+        } else {
+            &accepted
+        };
+        if let Some(refused) = decided.get("refused_documents") {
+            let mut refused = refused.clone();
+            refused["inventory"] = json!(".awr/intake/inventory.json");
+            body["refused_documents"] = refused;
+        }
         let directory = self.root.join(".awr").join("takeover");
         fs::create_dir_all(&directory)?;
         let in_project = directory.join("receipt.json");
@@ -1593,6 +1644,15 @@ fn print_outcome(outcome: &Value, json_output: bool) {
                 receipt["mapped"]["sources"].as_array().map_or(0, Vec::len),
                 receipt["mapped"]["inventory"]
             );
+            if let Some(refused) = receipt.get("refused_documents") {
+                println!(
+                    "  left {} document(s) unmapped and unfingerprinted because the secret boundary refuses their content; {} lists them",
+                    refused["total"],
+                    refused["inventory"]
+                        .as_str()
+                        .unwrap_or(".awr/intake/inventory.json")
+                );
+            }
             if let Some(goals) = receipt["awaiting_confirmation"]
                 .as_array()
                 .filter(|g| !g.is_empty())
