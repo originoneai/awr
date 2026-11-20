@@ -115,3 +115,34 @@ month edge slides into the neighbouring month, so a month-based figure can drift
 while every week-based figure stays put. And the rounded "now" trails the real read time by
 up to half a week; that gap is why freshness reports the answer moment separately (see
 above) instead of measuring the derivation clock.
+
+## Display clock and display zone (canonical demo)
+
+Every displayed age and calendar label formats against one reference clock and one zone,
+supplied by the reads the page already owns:
+
+- **Reference clock.** A reply that carries a derivation clock (`input.options.nowUnixMs`,
+  the overview-model replies) supplies `nowUnixMs - read_at_unix_ms` as an offset; the
+  page renders against `Date.now() + offset`, so the read's clock keeps walking forward
+  with real time instead of freezing at the answer moment. The reply's `page_read.at_unix_ms`
+  equals its read time and never serves as "now". When a page holds no reply clock (a
+  failed or absent overview read), the viewer's own clock is the fallback. The helpers live
+  in `tools/observer/src/lib/display-clock.tsx` (`readClockOffsetUnixMs`,
+  `referenceNowUnixMs`), and a guard test keeps every page and rendering component from
+  reading `Date.now()` on its own.
+- **Display zone.** `GET /api/team/shell` carries `displayTimeZone`. The `canonical`
+  variant answers `'UTC'` because the fixture's clock times are the prototype's wall-clock
+  times in UTC: with the reference clock above they make the activity ledger read exactly
+  the prototype's `12 分钟前` / `今天 09:40` / `昨天 15:20` / `11 月 18 日 10:02`. Every
+  other variant and every live deployment answer `null`, and pages then format in the
+  viewer's own zone. The zone is a fact from the bridge, never inferred from a variant
+  name in the page, and a value the runtime cannot resolve reads as unpinned.
+- **Ledger wording.** The shared formatter (`compactTimeText` in
+  `src/core/observation/time.ts`) keeps relative wording to the last hour, calendar
+  wording (`今天` / `昨天`) to the last 24 hours of the reference clock, and reads anything
+  older as the calendar fact (`11 月 18 日 10:02`, with the year for earlier years). All
+  pages (activity, inbox, projects, workbench, members) format through it.
+
+The pinned zone is demo-only presentation: it changes which wall clock the viewer reads,
+never any stored fact, and the live path keeps answering `null` until a real deployment
+says otherwise.

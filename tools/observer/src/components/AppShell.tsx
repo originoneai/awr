@@ -20,6 +20,7 @@ import { useCallback, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, matchPath, NavLink, useLocation, useNavigate } from 'react-router';
 import { readsAsName } from '../core/observation/owner';
+import { DisplayTimeZoneProvider, validDisplayTimeZone } from '../lib/display-clock';
 import { PerspectiveProvider } from '../lib/perspective/PerspectiveProvider';
 import { PerspectiveSwitcher } from '../lib/perspective/PerspectiveSwitcher';
 import { PERSPECTIVE_IDS, unknownPerspectiveFacts, type PerspectiveFacts, type PerspectiveId } from '../lib/perspective/types';
@@ -113,11 +114,17 @@ function shellFactsFrom(reply: TeamShellResponse | undefined): {
   source: ShellSource;
   organizationName: string | null;
   perspective: PerspectiveFacts | null;
+  displayTimeZone: string | null;
 } {
-  if (!reply || reply.ok !== true) return { source: null, organizationName: null, perspective: null };
+  if (!reply || reply.ok !== true) {
+    return { source: null, organizationName: null, perspective: null, displayTimeZone: null };
+  }
   const source = reply.source === 'demo' || reply.source === 'live' ? reply.source : null;
   const organizationName = typeof reply.organizationName === 'string' && reply.organizationName.trim() !== ''
     ? reply.organizationName : null;
+  // The pinned display zone is only honored when the runtime resolves it; anything else
+  // reads as unpinned and pages keep the viewer's own zone.
+  const displayTimeZone = validDisplayTimeZone(reply.displayTimeZone);
   const raw = reply.perspective;
   const count = (value: unknown): value is number | null => value === null
     || (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0);
@@ -133,7 +140,7 @@ function shellFactsFrom(reply: TeamShellResponse | undefined): {
     && PERSPECTIVE_IDS.every((id) => count(pending[id]))
     ? raw
     : null;
-  return { source, organizationName, perspective };
+  return { source, organizationName, perspective, displayTimeZone };
 }
 
 function ShellNavigation({ selectedKey, pendingLabel }: { selectedKey: NavigationPath; pendingLabel: string | null }) {
@@ -230,7 +237,7 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
   const shell = useQuery(shellQueryOptions(revoked));
   // The source is the bridge's own fact, never guessed from the deployment URL: a failed
   // or incomplete read leaves it unknown and the control says so instead of assuming.
-  const { source: shellSource, organizationName, perspective: shellPerspective } = shellFactsFrom(shell.data);
+  const { source: shellSource, organizationName, perspective: shellPerspective, displayTimeZone } = shellFactsFrom(shell.data);
   // Shell indicators subscribe to reads the open page already owns; they never add another source.
   const overview = useQuery({ ...overviewQueryOptions(projectKey, revoked), enabled: false });
   // The pending pill, the bell dot and the inbox queue share this one read-model source
@@ -583,7 +590,9 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
             </>
           ) : null}
         </Header>
-        <Content className="shell-content">{children}</Content>
+        <Content className="shell-content">
+          <DisplayTimeZoneProvider timeZone={displayTimeZone}>{children}</DisplayTimeZoneProvider>
+        </Content>
       </Layout>
       </Layout>
     </PerspectiveProvider>

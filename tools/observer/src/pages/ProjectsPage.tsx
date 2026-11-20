@@ -24,6 +24,7 @@ import {
 } from '../components/projects/project-list-model';
 import { absoluteTimeText } from '../core/observation';
 import { isAuthError } from '../lib/api';
+import { readClockOffsetUnixMs, referenceNowUnixMs, useDisplayTimeZone } from '../lib/display-clock';
 import { projectLabel } from '../lib/project-label';
 import {
   normalizeProjectDetail,
@@ -152,10 +153,16 @@ export function ProjectsPage() {
     }),
   }) as ModelQuery[];
   const relevant = entries.flatMap((entry, index) => entry.takeover ? [] : [{ entry, query: modelQueries[index] }]);
+  // Display clock and zone (AWR-PPO-079): each project's own model read carries its
+  // derivation clock, walked forward with real time; the zone is the deployment's pinned
+  // display zone. The takeover entry has no model read, so it keeps the shared display
+  // zone and the list clock below.
+  const displayTimeZone = useDisplayTimeZone();
   const items = entries.map((entry, index) => deriveProjectListItem(
     entry,
     matchingModel(entry, modelQueries[index]),
-    Intl.DateTimeFormat().resolvedOptions().timeZone,
+    displayTimeZone,
+    referenceNowUnixMs(readClockOffsetUnixMs(matchingModel(entry, modelQueries[index]))),
   ));
   const summary = summarizeProjects(items);
   const visibleItems = detail === 'all' ? items
@@ -165,7 +172,11 @@ export function ProjectsPage() {
     const model = matchingModel(entry, query);
     return model ? [model] : [];
   });
-  const commonNow = models[0]?.input.options.nowUnixMs;
+  // One clock for the updated column (the first ready model's display clock, matching the
+  // list's shared comparison basis); the browser clock is only the fallback with no model.
+  const commonNow = models.length > 0
+    ? referenceNowUnixMs(readClockOffsetUnixMs(models[0]))
+    : referenceNowUnixMs(null);
   const projectFailure = projects.isError && !projects.data;
   const factsFailure = relevant.length > 0 && relevant.every(({ query }) => query?.isError && !query.data);
   const initialLoading = projects.isPending;

@@ -1162,6 +1162,9 @@ test('canonical directory and shell facts establish all four perspectives withou
     ok: true,
     source: 'demo',
     organizationName: '示例组织',
+    // The canonical fixture's clock times are the prototype's wall-clock times in UTC,
+    // so this variant pins the pages' display zone; every other variant answers null.
+    displayTimeZone: 'UTC',
     perspective: {
       supervisedGroupCount: 0,
       memberGroupProjectCount: 1,
@@ -1181,7 +1184,7 @@ test('shell source is a bridge fact while every pre-existing variant reply stays
     if (variant === 'canonical') continue;
     const bridge = bridgeForTest({ demoVariant: variant, demoTimestampShiftMs: 0, now: () => fixture.now_unix_ms });
     assert.deepEqual(await bridge.call('GET /api/team/shell', '/api/team/shell'),
-      { ok: true, source: 'demo', organizationName: '示例组织', perspective: null }, variant);
+      { ok: true, source: 'demo', organizationName: '示例组织', perspective: null, displayTimeZone: null }, variant);
     assert.notEqual(bridge.bridge.TEAM.demoOrganization.data.viewer.can_view_all_projects, true,
       `${variant}: only canonical records the viewer's all-projects grant`);
     const projects = await bridge.call('GET /api/team/projects', '/api/team/projects');
@@ -1203,7 +1206,7 @@ test('shell source is a bridge fact while every pre-existing variant reply stays
   }
   const live = bridgeForTest({ teamUrl: 'http://127.0.0.1:1', demo: false });
   assert.deepEqual(await live.call('GET /api/team/shell', '/api/team/shell'),
-    { ok: true, source: 'live', perspective: null, organizationName: null });
+    { ok: true, source: 'live', perspective: null, organizationName: null, displayTimeZone: null });
 });
 
 test('the shell read is refused when the deployment is neither live nor a demo', async () => {

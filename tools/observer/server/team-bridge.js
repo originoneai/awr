@@ -2031,11 +2031,12 @@ function createTeamBridge(opts) {
 
     'GET /api/team/shell': async () => {
       // The shell's own fact read: which records this deployment's pages read, the
-      // organization's display name, plus the perspective facts the canonical demo
-      // directory establishes. Live deployments and every other demo variant answer
-      // perspective null; no perspective rule lives here.
+      // organization's display name, the display time zone the canonical demo pins, plus
+      // the perspective facts the canonical demo directory establishes. Live deployments
+      // and every other demo variant answer perspective and displayTimeZone null; no
+      // perspective rule lives here.
       if (TEAM.live) {
-        return { ok: true, source: 'live', perspective: null, organizationName: null };
+        return { ok: true, source: 'live', perspective: null, organizationName: null, displayTimeZone: null };
       }
       if (!TEAM.demoMode) {
         return { ok: false, error: { code: 'DemoDisabled', message: 'fixtures require demo mode' } };
@@ -2047,6 +2048,10 @@ function createTeamBridge(opts) {
           ? TEAM.demoOrganization.data.organization?.name ?? null : null,
         perspective: TEAM.demoOrganization && TEAM.demoOrganization.variant === 'canonical'
           ? canonicalPerspectiveFacts(TEAM.demoOrganization.data) : null,
+        // Demo-only display fact: the canonical fixture's clock times are the prototype's
+        // wall-clock times in UTC, so that variant pins the display zone every page formats
+        // in. Live deployments and every other variant keep the viewer's own zone (null).
+        displayTimeZone: TEAM.demoOrganization?.variant === 'canonical' ? 'UTC' : null,
       };
     },
 

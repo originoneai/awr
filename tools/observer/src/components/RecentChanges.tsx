@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { ageText, foldOperations, operationWord } from '../core/observation';
+import { referenceNowUnixMs, useDisplayTimeZone } from '../lib/display-clock';
 import type { TeamActivityItem } from '../lib/types';
 
 /** The pause after which two records no longer read as one stretch of work (owner decision). */
@@ -36,8 +37,10 @@ export function RecentChanges({
   const notes = Array.from(new Map(
     folded.disclosures.filter((item) => item.code !== 'time-gap').map((item) => [item.code, item]),
   ).values());
-  const nowUnixMs = Date.now();
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  // Display clock (AWR-PPO-079): this list has no model read of its own, so ages fall
+  // back to the viewer's clock through the shared read; the zone is the deployment's.
+  const nowUnixMs = referenceNowUnixMs(null);
+  const timeZone = useDisplayTimeZone();
   return (
     <div data-testid={testId}>
       <List
