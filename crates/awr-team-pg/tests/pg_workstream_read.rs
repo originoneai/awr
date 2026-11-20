@@ -941,9 +941,13 @@ async fn list_execution_liveness_stays_batched_on_a_full_page() {
     }
     proxy.abort();
     println!("work.list statement counts for pages of 1 and 40 works: {counts:?}");
+    // Both reads use the same proxy and always include liveness, so a build
+    // without this field cannot be compared in one test. The one-statement
+    // allowance covers page-level planning variance only; per-work execution
+    // lookups would exceed it immediately on this 40-work page.
     assert!(
-        counts[1] <= counts[0] + 3,
-        "a 40-work page must not add per-work statements: {counts:?}"
+        counts[1] <= counts[0] + 1,
+        "a 40-work page must add no per-work statements: {counts:?}"
     );
 }
 
@@ -1072,7 +1076,7 @@ async fn list_summaries_match_snapshots_and_keep_latest_actual_report() {
 }
 
 #[tokio::test]
-async fn list_summaries_report_execution_liveness_of_the_latest_current_ownership_session() {
+async fn list_summaries_report_execution_liveness_of_the_session_of_record() {
     let (_guard, admin, _, store) = setup().await;
     admin
         .execute(
@@ -1112,9 +1116,8 @@ async fn list_summaries_report_execution_liveness_of_the_latest_current_ownershi
         found["value"]["last_checkpoint_at_unix_ms"],
         a["value"]["last_checkpoint_at_unix_ms"]
     );
-    // The most recently created session decides, not the claim-ordered one:
-    // a newer ended attempt reads as ended with its own checkpoint time,
-    // even while the older session is still marked active.
+    // Without claims, an older active developer session still wins over a
+    // newer ended reviewer session, and the checkpoint time stays with it.
     let stream = Id::from(1).to_string();
     admin
         .execute(
@@ -1134,19 +1137,58 @@ async fn list_summaries_report_execution_liveness_of_the_latest_current_ownershi
         )
         .await
         .unwrap();
-    let ended = store
+    let active = store
         .query(TENANT, PROJECT, A, query("work.list"))
         .await
         .unwrap();
-    let a = &work_item(&ended, "a")["summary"]["execution"];
-    assert_eq!(a["value"]["session_state"], "ended");
-    assert_eq!(a["value"]["last_checkpoint_at_unix_ms"], 1793707200000_i64);
+    let a = &work_item(&active, "a")["summary"]["execution"];
+    assert_eq!(a["value"]["session_state"], "active");
+    assert_eq!(a["value"]["last_checkpoint_at_unix_ms"], 1793534400000_i64);
     assert!(a["as_of_unix_ms"].is_i64());
-    // Interrupted and incomplete sessions read as ended too.
-    for state in ["interrupted", "incomplete"] {
+    // A live claim selects the developer's active session before both the
+    // newer ended reviewer and another active session with a newer checkpoint.
+    // The third session makes claim precedence distinguishable from active-state
+    // precedence: without the claim ordering, the newer checkpoint would win.
+    admin
+        .batch_execute(
+            "INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state,workstream_id,ownership_version)
+             VALUES('reader-tenant','reader-project','yy-newer-active','main','a','agent','cli-a','parallel-work','active',
+             (SELECT workstream_id FROM awr_team.sessions WHERE id='session-a'),1);
+            INSERT INTO awr_team.checkpoints(tenant_id,project_id,id,session_id,context_hash,contract_hash,
+             observed_revision,next_action,open_loops_json,created_at)
+             VALUES('reader-tenant','reader-project','cp-newer-active','yy-newer-active','context','contract',3,
+             'Parallel active journal','[]','2026-11-04T12:00:00Z');
+            UPDATE awr_team.sessions SET latest_checkpoint_id='cp-newer-active' WHERE id='yy-newer-active';
+            INSERT INTO awr_team.claims(tenant_id,project_id,id,scope_id,work_id,session_id,actor_id,
+             fence,acquired_at,expires_at,state,workstream_id,ownership_version,coordinator_epoch)
+             VALUES('reader-tenant','reader-project','liveness-claim','main','a','session-a','agent',1,
+             clock_timestamp(),clock_timestamp()+interval '1 hour','active',
+             (SELECT workstream_id FROM awr_team.sessions WHERE id='session-a'),1,'epoch-a')",
+        )
+        .await
+        .unwrap();
+    let claimed = store
+        .query(TENANT, PROJECT, A, query("work.list"))
+        .await
+        .unwrap();
+    let a = &work_item(&claimed, "a")["summary"]["execution"];
+    assert_eq!(a["value"]["session_state"], "active");
+    assert_eq!(a["value"]["last_checkpoint_at_unix_ms"], 1793534400000_i64);
+    // With only terminal sessions, each non-active state reads as ended and
+    // the newest checkpoint determines which session supplies the timestamp.
+    admin
+        .execute(
+            "UPDATE awr_team.claims SET expires_at=clock_timestamp()-interval '1 second'
+             WHERE tenant_id=$1 AND project_id=$2 AND id='liveness-claim'",
+            &[&TENANT, &PROJECT],
+        )
+        .await
+        .unwrap();
+    for state in ["ended", "interrupted", "incomplete"] {
         admin
             .execute(
-                "UPDATE awr_team.sessions SET state=$3 WHERE tenant_id=$1 AND project_id=$2 AND id='zz-newer-attempt'",
+                "UPDATE awr_team.sessions SET state=$3
+                 WHERE tenant_id=$1 AND project_id=$2 AND work_id='a'",
                 &[&TENANT, &PROJECT, &state],
             )
             .await
@@ -1155,10 +1197,14 @@ async fn list_summaries_report_execution_liveness_of_the_latest_current_ownershi
             .query(TENANT, PROJECT, A, query("work.list"))
             .await
             .unwrap();
+        let execution = &work_item(&list, "a")["summary"]["execution"];
         assert_eq!(
-            work_item(&list, "a")["summary"]["execution"]["value"]["session_state"],
-            "ended",
+            execution["value"]["session_state"], "ended",
             "{state} must read as ended"
+        );
+        assert_eq!(
+            execution["value"]["last_checkpoint_at_unix_ms"],
+            1793793600000_i64
         );
     }
     // A session superseded by a newer ownership version never counts.
@@ -1191,6 +1237,7 @@ async fn list_summaries_report_execution_liveness_of_the_latest_current_ownershi
     );
     assert!(!b.to_string().contains("session-a"));
     assert!(!b.to_string().contains("zz-newer-attempt"));
+    assert!(!b.to_string().contains("yy-newer-active"));
 }
 
 #[tokio::test]

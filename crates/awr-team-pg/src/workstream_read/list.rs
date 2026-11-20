@@ -12,6 +12,7 @@ const LIST_PAGE_QUERY: &str = "WITH page AS MATERIALIZED (
         )
         SELECT c.work_id,c.title,c.contract_hash,c.ownership_version,
         r.state,t.owner_person_id,p.display_name,s.id,s.client_info_json,
+        s.session_state,s.last_checkpoint_at_unix_ms,
         (extract(epoch FROM statement_timestamp())*1000)::bigint,t.work_id
         FROM page c
         LEFT JOIN awr_team.work_runtime r USING(tenant_id,project_id,scope_id,work_id)
@@ -20,7 +21,7 @@ const LIST_PAGE_QUERY: &str = "WITH page AS MATERIALIZED (
         LEFT JOIN awr_team.persons p
           ON (p.tenant_id,p.project_id,p.id)=(t.tenant_id,t.project_id,t.owner_person_id)
         LEFT JOIN LATERAL (
-          SELECT s.id,s.client_info_json FROM awr_team.sessions s
+          SELECT s.id,s.client_info_json,s.state AS session_state,(extract(epoch FROM cp.created_at)*1000)::bigint AS last_checkpoint_at_unix_ms FROM awr_team.sessions s
           LEFT JOIN awr_team.checkpoints cp
             ON (cp.tenant_id,cp.project_id,cp.session_id,cp.id)=(s.tenant_id,s.project_id,s.id,s.latest_checkpoint_id)
           WHERE s.tenant_id=c.tenant_id AND s.project_id=c.project_id AND s.scope_id=c.scope_id
@@ -39,56 +40,6 @@ fn field(value: Value, at: i64, missing: &str) -> Value {
     } else {
         json!({"value":value,"as_of_unix_ms":at,"reason":null})
     }
-}
-
-/// Execution liveness for the already-bounded page: per work, the most
-/// recently created session bound to the current ownership version (the
-/// same `workstream_snapshot_ownership` join the observation paths use),
-/// its state and the time of that session's latest checkpoint. Session ids
-/// are ULIDs, so descending id order is creation order. One batched query
-/// per page; checkpoint contents stay unread.
-const EXECUTION_PAGE_QUERY: &str = "SELECT DISTINCT ON (o.work_id) o.work_id,s.state,
-  (extract(epoch FROM cp.created_at)*1000)::bigint
-  FROM awr_team.workstream_snapshot_ownership o
-  JOIN awr_team.sessions s
-    ON (s.tenant_id,s.project_id,s.scope_id,s.work_id)=(o.tenant_id,o.project_id,o.scope_id,o.work_id)
-    AND s.workstream_id=o.workstream_id AND s.ownership_version=o.ownership_version
-  LEFT JOIN awr_team.checkpoints cp
-    ON (cp.tenant_id,cp.project_id,cp.session_id,cp.id)=(s.tenant_id,s.project_id,s.id,s.latest_checkpoint_id)
-  WHERE o.tenant_id=$1 AND o.project_id=$2 AND o.snapshot_id=$3 AND o.workstream_id=$4
-    AND o.work_id=ANY($5)
-  ORDER BY o.work_id,s.id DESC";
-
-pub(super) async fn executions(
-    tx: &Transaction<'_>,
-    tenant: &str,
-    project: &str,
-    auth: &ReaderAuthority,
-    stream: &str,
-    works: &[String],
-) -> PgResult<BTreeMap<String, (String, Option<i64>)>> {
-    let mut result = BTreeMap::new();
-    if works.is_empty() {
-        return Ok(result);
-    }
-    for row in tx
-        .query(
-            EXECUTION_PAGE_QUERY,
-            &[&tenant, &project, &auth.snapshot, &stream, &works],
-        )
-        .await?
-    {
-        let work: String = row.get(0);
-        // Only a live session is active; ended, interrupted and incomplete
-        // all read as ended to the summary consumer.
-        let state = if row.get::<_, String>(1) == "active" {
-            "active"
-        } else {
-            "ended"
-        };
-        result.insert(work, (state.into(), row.get(2)));
-    }
-    Ok(result)
 }
 
 pub(super) async fn read(
@@ -132,7 +83,6 @@ pub(super) async fn read(
         .collect();
     let work_ids: Vec<String> = bindings.iter().map(|(id, _)| id.clone()).collect();
     let mut historical = retained::owners(tx, tenant, project, &work_ids).await?;
-    let mut executions = executions(tx, tenant, project, auth, stream, &work_ids).await?;
     let mut reports: BTreeMap<String, _> =
         crate::feedback::report_rows(tx, tenant, project, stream, &bindings, None, "progress")
             .await?
@@ -146,7 +96,7 @@ pub(super) async fn read(
     let items: Vec<_> = rows.iter().take(limit as usize).map(|r| {
         let work: String = r.get(0);
         let contract: String = r.get(2);
-        let observed: i64 = r.get(9);
+        let observed: i64 = r.get(11);
         let has_session = r.get::<_,Option<String>>(7).is_some();
         let client = r.get::<_,Option<Value>>(8).unwrap_or(Value::Null);
         let missing = if has_session {crate::feedback::missing(&client,"progress")} else {"no_session"};
@@ -170,10 +120,14 @@ pub(super) async fn read(
             json!({"origin":report["origin"],"contract_matches_current":report["contract_matches_current"],
                 "stale":report["stale"],"provenance":report["provenance"]})
         };
-        let owner_missing = if r.get::<_,Option<String>>(10).is_some() {"unassigned"} else {"not_recorded"};
-        // Liveness is a page-batched fact; absence is explicit, never guessed.
-        let execution = match executions.remove(&work) {
-            Some((state, checkpoint)) => field(
+        let owner_missing = if r.get::<_,Option<String>>(12).is_some() {"unassigned"} else {"not_recorded"};
+        // Liveness rides the bounded page row and uses its session of record.
+        // Only active stays active; all terminal states read as ended.
+        let session_state = r.get::<_,Option<String>>(9).map(|state|
+            if state == "active" {"active"} else {"ended"});
+        let checkpoint = r.get::<_,Option<i64>>(10);
+        let execution = match session_state {
+            Some(state) => field(
                 json!({"session_state":state,"last_checkpoint_at_unix_ms":checkpoint}),
                 observed,
                 "no_session",
@@ -207,7 +161,7 @@ pub(super) async fn read(
 
 #[cfg(test)]
 mod tests {
-    use super::{EXECUTION_PAGE_QUERY, LIST_PAGE_QUERY};
+    use super::LIST_PAGE_QUERY;
 
     #[test]
     fn list_page_is_bounded_before_metadata_joins() {
@@ -230,20 +184,27 @@ mod tests {
 
     #[test]
     fn execution_liveness_is_batched_and_current_ownership_only() {
-        let normalized = EXECUTION_PAGE_QUERY
+        let normalized = LIST_PAGE_QUERY
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ");
-        // One statement covers the whole page: no per-work parameter slots.
-        assert!(normalized.contains("o.work_id=ANY($5)"));
-        assert!(!normalized.contains("=$6"));
+        // Liveness rides the one already-bounded page statement. The existing
+        // LATERAL must expose the selected session's state and checkpoint time.
+        assert!(normalized.contains(
+            "SELECT s.id,s.client_info_json,s.state AS session_state,(extract(epoch FROM cp.created_at)*1000)::bigint AS last_checkpoint_at_unix_ms"
+        ));
         // Sessions must match the current ownership row exactly; a session
         // left behind by an older ownership version must not count.
-        assert!(normalized.contains("s.ownership_version=o.ownership_version"));
-        assert!(normalized.contains("s.workstream_id=o.workstream_id"));
-        // The most recently created session of each work decides; session ids
-        // are ULIDs, so id order is creation order.
-        assert!(normalized.contains("ORDER BY o.work_id,s.id DESC"));
+        assert!(normalized.contains("s.ownership_version=c.ownership_version"));
+        assert!(normalized.contains("s.workstream_id=c.workstream_id"));
+        // Preserve the session-of-record ordering shared with observation:
+        // live claim, active state, latest checkpoint, then newer session id.
+        assert!(normalized.contains("ORDER BY EXISTS(SELECT 1 FROM awr_team.claims cl"));
+        assert!(
+            normalized.contains(
+                "(s.state='active') DESC,cp.created_at DESC NULLS LAST,s.id DESC LIMIT 1"
+            )
+        );
         // The checkpoint pointer is read for its timestamp only.
         assert!(normalized.contains("s.latest_checkpoint_id"));
     }

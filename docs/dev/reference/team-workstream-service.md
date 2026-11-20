@@ -166,10 +166,12 @@ The owner includes the recorded `person_id` and `display_name`. Phase and next
 action come from the latest actual progress report, even when a newer ordinary
 checkpoint contains no progress. Their time is the report's receive time.
 Runtime and responsibility are read as of the current transaction. `execution`
-is the work's liveness fact: the `active`/`ended` state of its most recently
-created session under the current ownership version and that session's last
-checkpoint time, or an explicit `no_session` when none exists; it names no
-session, client or actor (see [Agent activity in work.list
+is the work's liveness fact: the `active`/`ended` state of its session of
+record under the current ownership version and that session's last checkpoint
+time, or an explicit `no_session` when none exists. Selection uses the same
+rule as `work.observe`: a session holding a live claim first, then an active
+session, then the latest checkpoint, then the newer session id. The fact names
+no session, client or actor (see [Agent activity in work.list
 summaries](work-list-agent-activity.md)). Outcome
 retains the reported summary and completed work alongside the selected
 integration's state and `current_binding`. Only a rejection of the current
@@ -178,8 +180,8 @@ contract currency and staleness; no claim of independent validation is added.
 
 List summaries use the same report and integration selectors as `work.snapshot`
 under the caller's current WorkRead scope. One page performs a fixed set of
-batched data queries — total count, bounded page selection, retained owners,
-latest progress reports, integration summaries and execution liveness —
+batched data queries — total count, bounded page selection (including execution
+liveness), retained owners, latest progress reports and integration summaries —
 regardless of its item count, in addition to existing authorization
 and transaction checks. Pagination, search and visibility remain unchanged.
 These fields are read-only observations; they grant no execution or approval.

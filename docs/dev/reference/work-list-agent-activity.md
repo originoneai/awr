@@ -39,7 +39,7 @@ When no session exists, the field is:
 | Aspect | Definition |
 | --- | --- |
 | Value shape | `session_state` (`active` or `ended`) plus `last_checkpoint_at_unix_ms` (integer or `null`), or an explicit `no_session` absence. |
-| Selected session | The most recently created session bound to the work's current ownership version — sessions joined with `workstream_snapshot_ownership` on scope, work, workstream and an equal `ownership_version`. Session ids are ULIDs, so descending id order is creation order. |
+| Selected session | The same session of record as `work.observe`, restricted to the work's current ownership version: a session holding a live claim first, then an active session, then the latest checkpoint, then the newer session id. The ownership join matches scope, work, workstream and `ownership_version`. |
 | Session state | The selected session's `sessions.state`; only `active` reads as `active`. `ended`, `interrupted` and `incomplete` all read as `ended`. |
 | Last checkpoint time | `created_at` of the selected session's latest checkpoint, from the session's `latest_checkpoint_id` pointer. Checkpoint contents stay unread. |
 | As-of time | The read transaction's page timestamp, like the other populated summary fields. |
@@ -65,7 +65,7 @@ The synthetic full demo emits the field from each task's recorded `agent_active`
 ## Service status
 
 The production Team service provides this field in every `work.list` and
-`work.search` summary item (AWR-PPD-056). One extra batched query per page
-fetches the liveness fact for the whole page; no per-work queries are added.
-See [Team workstream service](team-workstream-service.md) for the summary
-envelope.
+`work.search` summary item (AWR-PPD-056). The existing bounded page query
+carries the liveness fact from its selected session of record; it adds no
+separate page query or per-work queries. See [Team workstream
+service](team-workstream-service.md) for the summary envelope.
