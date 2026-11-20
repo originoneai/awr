@@ -450,9 +450,10 @@ export function craftCssVariables(mode: CraftThemeMode): Record<string, string> 
     '--craft-perspective-height': `${perspective.optionHeight}px`,
     '--craft-perspective-padding': `${perspective.padding}px`,
     '--craft-perspective-gap': `${perspective.gap}px`,
-    // "none" cannot be a second box-shadow list item; dark keeps the hairline on its own.
+    // Prototype dark computes to none: its selected-segment declaration mixes none into a
+    // shadow list and is invalid at computed-value time. All three segment controls share this.
     '--craft-perspective-selected-shadow': shadow.small === 'none'
-      ? `0 0 0 ${perspective.selectedLineWidth}px ${color.hairline}`
+      ? 'none'
       : `0 0 0 ${perspective.selectedLineWidth}px ${color.hairline}, ${shadow.small}`,
     '--craft-text-small': `${text.small}px`,
     '--craft-text-title': `${text.title}px`,

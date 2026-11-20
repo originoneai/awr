@@ -28,10 +28,10 @@ export interface HandbackVocabulary {
 export const HANDBACK_VOCABULARY: Record<'zh-CN' | 'en-US', HandbackVocabulary> = {
   'zh-CN': {
     kind: {
-      answer: '回答问题',
-      decision: '做决定',
+      answer: '回答',
+      decision: '决定',
       'plan-approval': '批准拆解',
-      assignment: '接下派工',
+      assignment: '接任务',
       lesson: '确认经验',
     },
     sentence: {
@@ -55,10 +55,10 @@ export const HANDBACK_VOCABULARY: Record<'zh-CN' | 'en-US', HandbackVocabulary> 
   'en-US': {
     kind: {
       answer: 'Answer a question',
-      decision: 'Make a decision',
-      'plan-approval': 'Approve a breakdown',
-      assignment: 'Take an assignment',
-      lesson: 'Confirm a lesson',
+      decision: 'Decision',
+      'plan-approval': 'Approve breakdown',
+      assignment: 'Take task',
+      lesson: 'Confirm lesson',
     },
     sentence: {
       answer: 'Answer the question “{{question}}” waiting for me on “{{task}}” in {{project}}',

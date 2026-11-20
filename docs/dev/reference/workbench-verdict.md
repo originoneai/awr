@@ -12,12 +12,58 @@ selection expression, sentence key, and both catalogs against the implementation
   input is `latestPeriodUpdate`; AWR-PPD-012 will supply it through a later bridge read.
 - `generated`: when that update is absent, select exactly one fixed sentence from the table using
   the My Work pending, waiting, and running-Agent metrics. The source line states that the sentence
-  was generated from recorded facts.
-- `no-update-health`: when a period update is absent, the health word remains **没有更新 / No update**.
-  A generated statement about waiting work is separate from health judgement. Keep this word even
-  when every derived count is zero or healthy; **正常 / On track** requires a recorded update.
+  was calculated from the viewer's tasks and Agent reports.
+- `generated-waiting-health`: in My Work, a known `pending > 0` selects **等你 / Waiting for you**
+  and the `risk` tone. This is a deterministic waiting-for-viewer fact, not a claim that a recorded
+  period update declared the project to be at risk.
+- `no-update-health`: when a period update is absent and `pending` is zero or null, the health word
+  remains **没有更新 / No update** with the `none` tone. Null never becomes zero; **正常 / On track**
+  requires a recorded update.
 - `unknown-not-zero`: a null pending or waiting total selects the unknown sentence. Unread approvals
   and partial waits map to unknown instead of zero.
+
+## Source lines and honesty guards
+
+The source line follows read facts, even where the prototype's hand-written demo line says more
+than those facts support:
+
+- My Work without a recorded update starts with `按你名下的任务和 Agent 的报告算出`. When both the
+  read timestamp and an explicit reference clock are known, append the result of `ageText`: `刚刚`
+  under a minute, whole minutes under an hour, then its calendar/absolute wording. The reference is
+  the page-read timestamp used by the freshness data. With no reference clock, omit the age suffix
+  rather than using a constant `刚刚`.
+- Group lead with a viewer-authored update written on the read's local day:
+  `你今天 HH:mm 在自己的 Agent 里写的 · 第 N 周`. The week is the ISO week of the read's
+  viewer-local date. An update from another day uses the generic recorded-author line instead of
+  claiming today.
+- Department viewer-authored update: `你 M 月 D 日在自己的 Agent 里写的 · 汇总时取最差的那个，不取平均`.
+- Top viewer-authored update: `取自各部门的月更新，取最差的那个 · M 月 D 日`.
+
+`authorPersonId` and the viewer's person id must both be present and equal before any of those
+first-person lines is allowed. A different author, a missing author id, or a missing viewer id uses
+`{{name}} 于 {{time}} 写的`. The recorded dates and times come from the update; the read's fixed
+timestamp supplies the lead's current week. No wall clock is consulted. English uses the same rules
+and placeholders.
+
+## My Work chain order
+
+`orderWorkbenchChains` is the page-model ordering layer; core chain derivation is unchanged.
+
+1. In My Work, chains whose root queue explicitly waits for the viewer come first. Identity comes
+   only from `waitingOn[].person.id`; a missing viewer or person id never counts as a match.
+2. Within that partition, sort by `impact.count` descending, then `root.oldestDays` descending.
+   Unknown counts and ages sort after known values. Equal keys preserve the derived input order.
+3. Lead, department, and top perspectives return the derived order unchanged.
+4. The frame's existing first-chain fallback selects index zero, so the first viewer-waiting chain
+   is the default selected chain. Invalid URL indices still clamp to that same safe default.
+
+## Chain footer wording
+
+- A viewer-owned decision says `你回答之后，后面 N 件事可以接着走。`; N is the derived impact count.
+- Another person's internal step says only `这一环不在你手里。` / `This step is not yours.` The page
+  must not add that a group lead has seen it without a corresponding read fact.
+- The outside-party sentence `这一环在项目外。谁去催，可以请小组负责人定。` remains a suggestion,
+  not a claim that anyone has seen or approved the wait.
 
 ## Generated sentence table
 

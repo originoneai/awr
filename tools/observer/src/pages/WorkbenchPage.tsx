@@ -121,6 +121,9 @@ export function WorkbenchPage() {
     personId,
     projectId: effectiveProject,
     readAtUnixMs: modelResponse.read_at_unix_ms,
+    // The clock at render (like the activity page): the reply's page_read time equals its read time, so using it
+    // as the reference would make the generated source line read 刚刚 however old the read is.
+    referenceUnixMs: Date.now(),
     latestPeriodUpdate: modelResponse.latestPeriodUpdate ?? null,
     inputTasks: modelInput?.tasks?.items,
   });
