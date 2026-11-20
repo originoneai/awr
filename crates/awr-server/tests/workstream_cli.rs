@@ -183,31 +183,44 @@ fn now_ms() -> i64 {
         .as_millis() as i64
 }
 
+fn normalize_measured_time(result: &mut Value, path: &str, start: i64, end: i64) {
+    if let Some(time) = result.pointer_mut(path) {
+        let measured = time.as_i64().expect("observed read time");
+        assert!(
+            (start - 2000..=end + 2000).contains(&measured),
+            "{path}: {measured}"
+        );
+        *time = json!(0);
+    }
+}
+
 fn assert_same_facts(mut cli: Value, mut mcp: Value, start: i64, end: i64) {
     // Only these measured read times vary. Never remove contracts, hashes,
     // revisions, ownership, permissions, context gaps or entire observation blocks.
-    for path in [
-        "/data/observed_at_unix_ms",
-        "/data/collaboration/source_state/query_started_at_unix_ms",
-        "/data/snapshot/queried_at_unix_ms",
-        "/data/observation/observed_at_unix_ms",
-        "/data/observation/collaboration/source_state/query_started_at_unix_ms",
-    ] {
+    let mut paths = vec![
+        "/data/observed_at_unix_ms".to_string(),
+        "/data/collaboration/source_state/query_started_at_unix_ms".to_string(),
+        "/data/snapshot/queried_at_unix_ms".to_string(),
+        "/data/observation/observed_at_unix_ms".to_string(),
+        "/data/observation/collaboration/source_state/query_started_at_unix_ms".to_string(),
+    ];
+    // List-summary execution liveness is measured per read transaction, so the
+    // CLI and MCP passes carry their own as-of time for every item.
+    if let Some(items) = cli.pointer("/data/items").and_then(Value::as_array) {
+        for index in 0..items.len() {
+            paths.push(format!(
+                "/data/items/{index}/summary/execution/as_of_unix_ms"
+            ));
+        }
+    }
+    for path in &paths {
         assert_eq!(
             cli.pointer(path).is_some(),
             mcp.pointer(path).is_some(),
             "{path}"
         );
-        for result in [&mut cli, &mut mcp] {
-            if let Some(time) = result.pointer_mut(path) {
-                let measured = time.as_i64().expect("observed read time");
-                assert!(
-                    (start - 2000..=end + 2000).contains(&measured),
-                    "{path}: {measured}"
-                );
-                *time = json!(0);
-            }
-        }
+        normalize_measured_time(&mut cli, path, start, end);
+        normalize_measured_time(&mut mcp, path, start, end);
     }
     assert_eq!(cli, mcp);
 }

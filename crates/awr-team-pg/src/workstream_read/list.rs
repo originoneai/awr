@@ -41,6 +41,56 @@ fn field(value: Value, at: i64, missing: &str) -> Value {
     }
 }
 
+/// Execution liveness for the already-bounded page: per work, the most
+/// recently created session bound to the current ownership version (the
+/// same `workstream_snapshot_ownership` join the observation paths use),
+/// its state and the time of that session's latest checkpoint. Session ids
+/// are ULIDs, so descending id order is creation order. One batched query
+/// per page; checkpoint contents stay unread.
+const EXECUTION_PAGE_QUERY: &str = "SELECT DISTINCT ON (o.work_id) o.work_id,s.state,
+  (extract(epoch FROM cp.created_at)*1000)::bigint
+  FROM awr_team.workstream_snapshot_ownership o
+  JOIN awr_team.sessions s
+    ON (s.tenant_id,s.project_id,s.scope_id,s.work_id)=(o.tenant_id,o.project_id,o.scope_id,o.work_id)
+    AND s.workstream_id=o.workstream_id AND s.ownership_version=o.ownership_version
+  LEFT JOIN awr_team.checkpoints cp
+    ON (cp.tenant_id,cp.project_id,cp.session_id,cp.id)=(s.tenant_id,s.project_id,s.id,s.latest_checkpoint_id)
+  WHERE o.tenant_id=$1 AND o.project_id=$2 AND o.snapshot_id=$3 AND o.workstream_id=$4
+    AND o.work_id=ANY($5)
+  ORDER BY o.work_id,s.id DESC";
+
+pub(super) async fn executions(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    auth: &ReaderAuthority,
+    stream: &str,
+    works: &[String],
+) -> PgResult<BTreeMap<String, (String, Option<i64>)>> {
+    let mut result = BTreeMap::new();
+    if works.is_empty() {
+        return Ok(result);
+    }
+    for row in tx
+        .query(
+            EXECUTION_PAGE_QUERY,
+            &[&tenant, &project, &auth.snapshot, &stream, &works],
+        )
+        .await?
+    {
+        let work: String = row.get(0);
+        // Only a live session is active; ended, interrupted and incomplete
+        // all read as ended to the summary consumer.
+        let state = if row.get::<_, String>(1) == "active" {
+            "active"
+        } else {
+            "ended"
+        };
+        result.insert(work, (state.into(), row.get(2)));
+    }
+    Ok(result)
+}
+
 pub(super) async fn read(
     tx: &Transaction<'_>,
     tenant: &str,
@@ -82,6 +132,7 @@ pub(super) async fn read(
         .collect();
     let work_ids: Vec<String> = bindings.iter().map(|(id, _)| id.clone()).collect();
     let mut historical = retained::owners(tx, tenant, project, &work_ids).await?;
+    let mut executions = executions(tx, tenant, project, auth, stream, &work_ids).await?;
     let mut reports: BTreeMap<String, _> =
         crate::feedback::report_rows(tx, tenant, project, stream, &bindings, None, "progress")
             .await?
@@ -120,12 +171,22 @@ pub(super) async fn read(
                 "stale":report["stale"],"provenance":report["provenance"]})
         };
         let owner_missing = if r.get::<_,Option<String>>(10).is_some() {"unassigned"} else {"not_recorded"};
+        // Liveness is a page-batched fact; absence is explicit, never guessed.
+        let execution = match executions.remove(&work) {
+            Some((state, checkpoint)) => field(
+                json!({"session_state":state,"last_checkpoint_at_unix_ms":checkpoint}),
+                observed,
+                "no_session",
+            ),
+            None => field(Value::Null, observed, "no_session"),
+        };
         json!({"work_id":work,"title":r.get::<_,String>(1),"contract_hash":contract,
             "historical_responsibility":historical.remove(&work),
             "summary":{"version":1,
                 "owner":field(owner,observed,owner_missing),
                 "phase":field(report["phase"].clone(),reported,missing),
                 "runtime":field(json!(r.get::<_,Option<String>>(4)),observed,"no_runtime"),
+                "execution":execution,
                 "outcome":field(outcome,if integration.is_null(){reported}else{observed},"no_reported_outcome"),
                 "blocker":field(blocker,if has_reported_blocker{reported}else{observed},blocker_missing),
                 "next_action":field(report["next_action"].clone(),reported,missing),
@@ -146,7 +207,7 @@ pub(super) async fn read(
 
 #[cfg(test)]
 mod tests {
-    use super::LIST_PAGE_QUERY;
+    use super::{EXECUTION_PAGE_QUERY, LIST_PAGE_QUERY};
 
     #[test]
     fn list_page_is_bounded_before_metadata_joins() {
@@ -165,5 +226,25 @@ mod tests {
         assert!(metadata.contains("FROM page c"));
         assert!(metadata.contains("LEFT JOIN LATERAL"));
         assert!(!metadata.contains("LIMIT $7"));
+    }
+
+    #[test]
+    fn execution_liveness_is_batched_and_current_ownership_only() {
+        let normalized = EXECUTION_PAGE_QUERY
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        // One statement covers the whole page: no per-work parameter slots.
+        assert!(normalized.contains("o.work_id=ANY($5)"));
+        assert!(!normalized.contains("=$6"));
+        // Sessions must match the current ownership row exactly; a session
+        // left behind by an older ownership version must not count.
+        assert!(normalized.contains("s.ownership_version=o.ownership_version"));
+        assert!(normalized.contains("s.workstream_id=o.workstream_id"));
+        // The most recently created session of each work decides; session ids
+        // are ULIDs, so id order is creation order.
+        assert!(normalized.contains("ORDER BY o.work_id,s.id DESC"));
+        // The checkpoint pointer is read for its timestamp only.
+        assert!(normalized.contains("s.latest_checkpoint_id"));
     }
 }

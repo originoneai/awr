@@ -23,6 +23,15 @@ mod responsibility_reads;
 #[path = "cases/document_reads.rs"]
 mod document_reads;
 
+fn work_item<'a>(list: &'a Value, work: &str) -> &'a Value {
+    list["data"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["work_id"] == work)
+        .unwrap()
+}
+
 async fn source_record(admin: &tokio_postgres::Client) -> (String, Value) {
     let row=admin.query_one("SELECT s.id,s.source_ref_json FROM awr_team.source_snapshots s
         JOIN awr_team.projects p ON p.tenant_id=s.tenant_id AND p.id=s.project_id AND p.active_snapshot_id=s.id
@@ -877,6 +886,68 @@ async fn list_summaries_have_a_constant_number_of_database_round_trips() {
 }
 
 #[tokio::test]
+async fn list_execution_liveness_stays_batched_on_a_full_page() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    let (_guard, admin, database, _) = setup().await;
+    // Grow the readable stream to 40 works; none of them may add statements.
+    admin
+        .batch_execute(
+            "INSERT INTO awr_team.work_items(tenant_id,project_id,id,external_key)
+         SELECT tenant_id,project_id,'bulk-'||g,'bulk-'||g
+           FROM awr_team.work_items,generate_series(1,38) g WHERE id='a';
+        INSERT INTO awr_team.work_contracts(tenant_id,project_id,snapshot_id,scope_id,work_id,
+          contract_hash,definition_state,title,contract_json)
+         SELECT tenant_id,project_id,snapshot_id,scope_id,'bulk-'||g,contract_hash,definition_state,title,contract_json
+           FROM awr_team.work_contracts,generate_series(1,38) g WHERE work_id='a';
+        INSERT INTO awr_team.workstream_snapshot_ownership(tenant_id,project_id,snapshot_id,scope_id,
+          work_id,workstream_id,ownership_version)
+         SELECT tenant_id,project_id,snapshot_id,scope_id,'bulk-'||g,workstream_id,ownership_version
+           FROM awr_team.workstream_snapshot_ownership,generate_series(1,38) g WHERE work_id='a';",
+        )
+        .await
+        .unwrap();
+    let upstream = common::with_app_role(&common::test_config(), &database);
+    let count = Arc::new(AtomicUsize::new(0));
+    let (port, proxy) = counted_pg(upstream.clone(), count.clone()).await;
+    let mut counts = Vec::new();
+    for limit in [1, 40] {
+        let mut config = tokio_postgres::Config::new();
+        config
+            .host("127.0.0.1")
+            .port(port)
+            .user("awr_app")
+            .password("app-test")
+            .dbname(&database);
+        let store = awr_team_pg::WorkstreamReadStore::from_config(config);
+        let mut q = query("work.list");
+        q.limit = Some(limit);
+        count.store(0, Ordering::SeqCst);
+        let result = store.query(TENANT, PROJECT, A, q).await.unwrap();
+        assert_eq!(
+            result["data"]["items"].as_array().unwrap().len(),
+            limit as usize
+        );
+        // Every page reports each work's liveness, batched or not.
+        assert!(
+            result["data"]["items"][0]["summary"]["execution"]
+                .get("value")
+                .is_some()
+        );
+        counts.push(count.load(Ordering::SeqCst));
+        drop(store);
+    }
+    proxy.abort();
+    println!("work.list statement counts for pages of 1 and 40 works: {counts:?}");
+    assert!(
+        counts[1] <= counts[0] + 3,
+        "a 40-work page must not add per-work statements: {counts:?}"
+    );
+}
+
+#[tokio::test]
 async fn list_summaries_match_snapshots_and_keep_latest_actual_report() {
     use serde_json::json;
     let (_guard, admin, _, store) = setup().await;
@@ -946,6 +1017,7 @@ async fn list_summaries_match_snapshots_and_keep_latest_actual_report() {
             "owner",
             "phase",
             "runtime",
+            "execution",
             "outcome",
             "blocker",
             "next_action",
@@ -968,6 +1040,13 @@ async fn list_summaries_match_snapshots_and_keep_latest_actual_report() {
     assert_eq!(summary["blocker"]["value"]["text"], report["blockers"][0]);
     assert_eq!(summary["next_action"]["value"], "Check interrupted renewal");
     assert_eq!(summary["phase"]["as_of_unix_ms"], 1793534400000_i64);
+    // Liveness follows the latest checkpoint of the work's session, here the
+    // ordinary journal entry, and never the older progress report's time.
+    assert_eq!(summary["execution"]["value"]["session_state"], "active");
+    assert_eq!(
+        summary["execution"]["value"]["last_checkpoint_at_unix_ms"],
+        1793620800000_i64
+    );
     assert_eq!(
         summary["outcome"]["as_of_unix_ms"],
         summary["phase"]["as_of_unix_ms"]
@@ -993,6 +1072,128 @@ async fn list_summaries_match_snapshots_and_keep_latest_actual_report() {
 }
 
 #[tokio::test]
+async fn list_summaries_report_execution_liveness_of_the_latest_current_ownership_session() {
+    let (_guard, admin, _, store) = setup().await;
+    admin
+        .execute(
+            "UPDATE awr_team.checkpoints SET created_at='2026-11-01T12:00:00Z'
+        WHERE id='cp-session-a'",
+            &[],
+        )
+        .await
+        .unwrap();
+    let list = store
+        .query(TENANT, PROJECT, A, query("work.list"))
+        .await
+        .unwrap();
+    // A live session with a checkpoint reports active plus that time.
+    let a = &work_item(&list, "a")["summary"]["execution"];
+    assert_eq!(a["value"]["session_state"], "active");
+    assert_eq!(a["value"]["last_checkpoint_at_unix_ms"], 1793534400000_i64);
+    assert!(a["as_of_unix_ms"].is_i64());
+    assert!(a["reason"].is_null());
+    assert!(
+        !a.to_string().contains("session-a"),
+        "session ids must not appear in the summary"
+    );
+    // No session under the current ownership is an explicit no_session.
+    let c = &work_item(&list, "c")["summary"]["execution"];
+    assert!(c["value"].is_null());
+    assert!(c["as_of_unix_ms"].is_null());
+    assert_eq!(c["reason"], "no_session");
+    // work.search carries the same fact on the same visibility boundary.
+    let mut search = query("work.search");
+    search.search = Some("a".into());
+    let searched = store.query(TENANT, PROJECT, A, search).await.unwrap();
+    assert_eq!(searched["data"]["total"], 1);
+    let found = &searched["data"]["items"][0]["summary"]["execution"];
+    assert_eq!(found["value"]["session_state"], "active");
+    assert_eq!(
+        found["value"]["last_checkpoint_at_unix_ms"],
+        a["value"]["last_checkpoint_at_unix_ms"]
+    );
+    // The most recently created session decides, not the claim-ordered one:
+    // a newer ended attempt reads as ended with its own checkpoint time,
+    // even while the older session is still marked active.
+    let stream = Id::from(1).to_string();
+    admin
+        .execute(
+            "INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state,workstream_id,ownership_version)
+             VALUES($1,$2,'zz-newer-attempt','main','a','agent','cli-a','newer-review','ended',$3,1)",
+            &[&TENANT, &PROJECT, &stream],
+        )
+        .await
+        .unwrap();
+    admin
+        .batch_execute(
+            "INSERT INTO awr_team.checkpoints(tenant_id,project_id,id,session_id,context_hash,contract_hash,
+            observed_revision,next_action,open_loops_json,created_at)
+            VALUES('reader-tenant','reader-project','cp-newer-attempt','zz-newer-attempt','context','contract',2,
+            'Newer attempt journal','[]','2026-11-03T12:00:00Z');
+            UPDATE awr_team.sessions SET latest_checkpoint_id='cp-newer-attempt' WHERE id='zz-newer-attempt'",
+        )
+        .await
+        .unwrap();
+    let ended = store
+        .query(TENANT, PROJECT, A, query("work.list"))
+        .await
+        .unwrap();
+    let a = &work_item(&ended, "a")["summary"]["execution"];
+    assert_eq!(a["value"]["session_state"], "ended");
+    assert_eq!(a["value"]["last_checkpoint_at_unix_ms"], 1793707200000_i64);
+    assert!(a["as_of_unix_ms"].is_i64());
+    // Interrupted and incomplete sessions read as ended too.
+    for state in ["interrupted", "incomplete"] {
+        admin
+            .execute(
+                "UPDATE awr_team.sessions SET state=$3 WHERE tenant_id=$1 AND project_id=$2 AND id='zz-newer-attempt'",
+                &[&TENANT, &PROJECT, &state],
+            )
+            .await
+            .unwrap();
+        let list = store
+            .query(TENANT, PROJECT, A, query("work.list"))
+            .await
+            .unwrap();
+        assert_eq!(
+            work_item(&list, "a")["summary"]["execution"]["value"]["session_state"],
+            "ended",
+            "{state} must read as ended"
+        );
+    }
+    // A session superseded by a newer ownership version never counts.
+    admin
+        .batch_execute(
+            "UPDATE awr_team.sessions SET ownership_version=ownership_version+1
+        WHERE tenant_id='reader-tenant' AND project_id='reader-project' AND work_id='a'",
+        )
+        .await
+        .unwrap();
+    let bumped = store
+        .query(TENANT, PROJECT, A, query("work.list"))
+        .await
+        .unwrap();
+    let a = &work_item(&bumped, "a")["summary"]["execution"];
+    assert!(a["value"].is_null());
+    assert!(a["as_of_unix_ms"].is_null());
+    assert_eq!(a["reason"], "no_session");
+    // The visibility boundary is unchanged: reader B still sees only its own
+    // work, with its own liveness fact and none of A's sessions.
+    let b = store
+        .query(TENANT, PROJECT, B, query("work.list"))
+        .await
+        .unwrap();
+    assert_eq!(b["data"]["total"], 1);
+    assert_eq!(b["data"]["items"][0]["work_id"], "b-private");
+    assert_eq!(
+        b["data"]["items"][0]["summary"]["execution"]["value"]["session_state"],
+        "active"
+    );
+    assert!(!b.to_string().contains("session-a"));
+    assert!(!b.to_string().contains("zz-newer-attempt"));
+}
+
+#[tokio::test]
 async fn list_summaries_keep_null_reasons_permissions_search_and_pagination() {
     let (_guard, admin, _, store) = setup().await;
     let mut q = query("work.list");
@@ -1003,11 +1204,19 @@ async fn list_summaries_keep_null_reasons_permissions_search_and_pagination() {
         first["data"]["items"][0]["summary"]["phase"]["reason"],
         "client_capability_unknown"
     );
+    assert_eq!(
+        first["data"]["items"][0]["summary"]["execution"]["value"]["session_state"],
+        "active"
+    );
     q.cursor = Some(first["data"]["next_cursor"].as_str().unwrap().into());
     let second = store.query(TENANT, PROJECT, A, q).await.unwrap();
     assert_eq!(second["data"]["items"][0]["work_id"], "c");
     assert_eq!(
         second["data"]["items"][0]["summary"]["phase"]["reason"],
+        "no_session"
+    );
+    assert_eq!(
+        second["data"]["items"][0]["summary"]["execution"]["reason"],
         "no_session"
     );
     assert!(second["data"]["next_cursor"].is_null());

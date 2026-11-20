@@ -155,24 +155,32 @@ returns independently timed summaries and host usage snapshots, with explicit
 missing reasons; it never infers token costs or settles execution from progress.
 
 `work.list` and `work.search` add a versioned `summary` to every item. Its
-`owner`, `phase`, `runtime`, `outcome`, `blocker`, `next_action` and `report`
-fields each contain `value`, `as_of_unix_ms` and `reason`. A missing value is
-explicitly null, with a reason such as `unassigned`, `no_session`,
-`client_capability_unknown` or `no_reported_blocker`; it is never guessed from
-the task title. A populated field has an as-of time and a null reason.
+`owner`, `phase`, `runtime`, `execution`, `outcome`, `blocker`, `next_action`
+and `report` fields each contain `value`, `as_of_unix_ms` and `reason`. A
+missing value is explicitly null, with a reason such as `unassigned`,
+`no_session`, `client_capability_unknown` or `no_reported_blocker`; it is
+never guessed from the task title. A populated field has an as-of time and a
+null reason.
 
 The owner includes the recorded `person_id` and `display_name`. Phase and next
 action come from the latest actual progress report, even when a newer ordinary
 checkpoint contains no progress. Their time is the report's receive time.
-Runtime and responsibility are read as of the current transaction. Outcome
+Runtime and responsibility are read as of the current transaction. `execution`
+is the work's liveness fact: the `active`/`ended` state of its most recently
+created session under the current ownership version and that session's last
+checkpoint time, or an explicit `no_session` when none exists; it names no
+session, client or actor (see [Agent activity in work.list
+summaries](work-list-agent-activity.md)). Outcome
 retains the reported summary and completed work alongside the selected
 integration's state and `current_binding`. Only a rejection of the current
 selection becomes an integration blocker. Report metadata retains attribution,
 contract currency and staleness; no claim of independent validation is added.
 
 List summaries use the same report and integration selectors as `work.snapshot`
-under the caller's current WorkRead scope. One page performs four batched data
-queries, regardless of its item count, in addition to existing authorization
+under the caller's current WorkRead scope. One page performs a fixed set of
+batched data queries — total count, bounded page selection, retained owners,
+latest progress reports, integration summaries and execution liveness —
+regardless of its item count, in addition to existing authorization
 and transaction checks. Pagination, search and visibility remain unchanged.
 These fields are read-only observations; they grant no execution or approval.
 
