@@ -147,7 +147,7 @@ const fullRoutes = [
   { name: 'account', path: '/account?scope=P-001' },
   { name: 'agent-connect', path: '/agent-connect?scope=P-001' },
   { name: 'lessons-pending', path: '/lessons', pending: true },
-  { name: 'settings-pending', path: '/settings', pending: true },
+  { name: 'settings', path: '/settings?scope=P-001' },
   { name: 'task-pending', path: '/tasks/T-101', pending: true },
   { name: 'goal-pending', path: '/goals/GOAL-001', pending: true },
   { name: 'document-pending', path: '/documents/DOC-001', pending: true },
@@ -160,6 +160,7 @@ const variantRoutes = {
   empty: [
     { name: 'projects', path: '/projects' },
     { name: 'members-chooser', path: '/members' },
+    { name: 'settings-empty', path: '/settings' },
   ],
   single: [
     { name: 'projects', path: '/projects' },
@@ -171,10 +172,12 @@ const variantRoutes = {
     { name: 'projects', path: '/projects', expectedErrors: ['Forbidden'] },
     { name: 'project-knowledge-denied', path: '/projects/P-001?tab=knowledge', expectedErrors: ['Forbidden'] },
     { name: 'onboard-denied', path: '/projects/P-003?tab=plan', expectedErrors: ['Forbidden'] },
+    { name: 'settings-revoked', path: '/settings?scope=P-001', expectedErrors: ['Forbidden'] },
   ],
   partial: [
     { name: 'project-plan-partial', path: '/projects/P-001?tab=plan&work=T-101', expectedErrors: ['Unavailable'] },
     { name: 'activity-partial', path: '/activity?project=P-001&kind=development', expectedErrors: ['Unavailable'] },
+    { name: 'settings-partial', path: '/settings?scope=P-001', expectedErrors: ['Unavailable'] },
   ],
 };
 
