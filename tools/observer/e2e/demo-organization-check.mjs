@@ -177,21 +177,20 @@ const variantRoutes = {
 };
 
 /* The canonical variant exists so the workbench can be compared with the prototype with
-   every fact known. The server promises are asserted; the page's four numbers are only
-   recorded until the workbench overview lands, so a mismatch is evidence, not a failure. */
+   every fact known. The server promises are asserted, and so are the page's four KPI
+   numbers: under the canonical variant they must equal the prototype's [2, 1, 2, 3]; a
+   red number assertion means the page or the derivation regressed. */
 const canonicalWorkbenchRecords = [];
 
 async function recordCanonicalWorkbench(page) {
   await settle(page);
-  const pageNumbers = await page.evaluate(() => {
-    const value = (element) => {
-      const text = (element.textContent ?? '').trim();
-      return /^(?:—|–|-|\d+)$/.test(text) ? text : null;
-    };
-    return [...document.querySelectorAll('[data-testid*="metric" i], .ant-statistic-content-value')]
-      .map((element) => ({ testid: element.getAttribute('data-testid'), value: value(element) }))
-      .filter((item) => item.value !== null);
-  });
+  await page.getByTestId('workbench-frame').waitFor();
+  const pageNumbers = await page.evaluate(() =>
+    [...document.querySelectorAll('.obs-kpis .obs-kpi-value')]
+      .map((element) => (element.textContent ?? '').trim())
+      .map((text) => (/^(\d+)/.exec(text) ?? [])[0] ?? null));
+  assert.deepEqual(pageNumbers, ['2', '1', '2', '3'],
+    'the canonical workbench KPI numbers must equal the prototype [2, 1, 2, 3]');
   const response = await page.request
     .get(new URL('/api/team/overview-model?project=P-001', page.url()).href);
   assert.equal(response.status(), 200);
@@ -221,8 +220,6 @@ async function recordCanonicalWorkbench(page) {
     route: '/workbench?scope=P-001&perspective=me',
     prototypeNumbers: [2, 1, 2, 3],
     pageNumbers,
-    numbersMatchPrototype: JSON.stringify(pageNumbers.map((item) => item.value))
-      === JSON.stringify(['2', '1', '2', '3']),
     modelReadAtUnixMs: model.read_at_unix_ms,
     modelNowUnixMs: model.input.options.nowUnixMs,
   });
@@ -414,8 +411,7 @@ async function visit(baseUrl, variant, route, viewport) {
     const keyLeaks = body.match(/\b(?:T|P|WS|M|Q|DOC|GOAL|U|A|L|H|PC|PW)-\d{3}\b/g) || [];
     const expectedKeyLeaks = route.expectedKeyLeaks || [];
     const unexpectedKeyLeaks = keyLeaks.filter((key) => !expectedKeyLeaks.includes(key));
-    const missingExpectedKeys = expectedKeyLeaks.filter((key) => !keyLeaks.includes(key));
-    const forbiddenText = [
+    const missingExpectedKeys = expectedKeyLeaks.filter((key) => !keyLeaks.includes(key));    const forbiddenText = [
       ...(body.match(/\b(?:undefined|null|NaN|Unsupported|BadGateway|ReadTimeout|protocol_version|workstream_id|contract_hash|source_snapshot_id|coordinator_epoch|execution_authorized|passed)\b/g) || []),
       ...(body.match(/(?:^|\n)##+\s/g) || []),
       ...unexpectedKeyLeaks,
@@ -442,6 +438,7 @@ async function visit(baseUrl, variant, route, viewport) {
       forbiddenText,
       keyLeaks,
       documentedKeyLeaks: expectedKeyLeaks,
+      keyLeakExemptionReason: route.keyLeakReason ?? null,
       unexpectedKeyLeaks,
       missingExpectedKeys,
     };
@@ -480,7 +477,12 @@ try {
         ? [{
           name: 'workbench-canonical',
           path: '/workbench?scope=P-001&perspective=me',
-          // Record the default tab first (where the overview numbers live), then take the
+          // Temporary, reason-recorded exemption: the chain impact nodes still render the
+          // raw project and goal keys. AWR-PPO-067 replaces them with product language;
+          // until then these two keys are documented leaks on this one route only.
+          expectedKeyLeaks: ['P-001', 'GOAL-001'],
+          keyLeakReason: 'AWR-PPO-067 replaces raw project and goal keys in the chain impact nodes',
+          // Record the default tab first (where the KPI numbers live), then take the
           // same queue-and-detail walk the full variant uses, so the shared body checks
           // see the same settled state they already guard for the full variant.
           action: async (page) => {
@@ -505,6 +507,8 @@ const documentedKeyLeaks = results.filter((item) => item.keyLeaks?.length).map((
   route: item.route,
   viewport: item.viewport,
   keys: item.keyLeaks,
+  exempted: item.documentedKeyLeaks,
+  exemptionReason: item.keyLeakExemptionReason,
   screenshot: item.screenshot,
 }));
 const report = {
