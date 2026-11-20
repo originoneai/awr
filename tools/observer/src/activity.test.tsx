@@ -437,6 +437,57 @@ describe('activity prototype structure and product language', () => {
     }
     expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
   });
+
+  it('keeps a machine-shaped client name out of the sentence', async () => {
+    const items = [
+      event('machine-client', 'execution.report', WORK_A, KNOWN_ACTOR, 0, {
+        name: 'Alex Example', client: 'observer-host-native-20261031T203834Z', clientAttributed: true,
+      }),
+    ];
+    setupActivity({ development: activityPayload(items) });
+    renderApp('/activity?project=demo');
+    await waitFor(() => expect(tableRows()).toHaveLength(1));
+    expect(tableRows()[0].querySelector('td:nth-child(2)')?.textContent).toBe('Alex Example');
+  });
+
+  it('words an unread and a partial context differently and ends a self-scope read with that note alone', async () => {
+    const cases: Array<[string, { taskCoverage: string; memberCoverage: string }, string]> = [
+      ['unread tasks', { taskCoverage: 'unread', memberCoverage: 'complete' }, '数据读取情况：任务和成员资料尚未读取；姓名和任务名可能显示为未登记'],
+      ['partial members', { taskCoverage: 'complete', memberCoverage: 'partial' }, '数据读取情况：部分任务或成员资料没有读全；姓名和任务名只按已读取内容翻译'],
+    ];
+    for (const [name, coverage, expected] of cases) {
+      setupActivity({ overview: overviewModel(coverage) });
+      const view = renderApp('/activity?project=demo');
+      await waitFor(() => expect(tableRows()).toHaveLength(8));
+      expect((await screen.findByTestId('activity-coverage')).textContent, name).toBe(expected);
+      view.unmount();
+    }
+    const selfScope = activityPayload([event('self', 'execution.report', WORK_A, KNOWN_ACTOR, 0)], null);
+    (selfScope.data as { scope?: string }).scope = 'self';
+    setupActivity({ development: selfScope });
+    renderApp('/activity?project=demo');
+    // The task title proves the context read has finished, so the absences below are meaningful.
+    await waitFor(() => expect(tableRows()[0]?.textContent).toContain('Synthetic task alpha'));
+    expect(screen.queryByTestId('activity-coverage')).toBeNull();
+    expect(screen.getByTestId('activity-scope').parentElement?.textContent).toBe('当前只显示你自己的记录');
+  });
+
+  it('shows the freshness badge for a failed plane as well as a stale one', async () => {
+    const failed = overviewModel();
+    (failed.freshness as { authoritative?: { status: string } }).authoritative = { status: 'failed' };
+    setupActivity({ overview: failed });
+    renderApp('/activity?project=demo');
+    expect(await screen.findByTestId('freshness-badge')).toBeTruthy();
+  });
+
+  it('gives the time column the numeric style and shows no section count before the read', async () => {
+    setupActivity();
+    renderApp('/activity?project=demo');
+    expect(sectionCount()).toBeUndefined();
+    await waitFor(() => expect(tableRows()).toHaveLength(8));
+    expect(tableRows()[0].querySelector('td:first-child')?.classList.contains('obs-table-numeric-column')).toBe(true);
+    expect(sectionCount()).toBe('8');
+  });
 });
 
 describe.each([

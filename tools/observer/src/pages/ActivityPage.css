@@ -158,3 +158,20 @@
 .activity-detail-outcome {
   padding: 0 var(--ant-padding-md) var(--ant-padding-sm);
 }
+
+/* Below 860px the prototype's zero-width action column wraps one character per line and
+   makes rows 100 to 200px tall (the prototype's own phone table). The product clamps each
+   cell to one line so phone rows stay bounded, keeping the prototype's computed
+   white-space value (the same technique as the projects page) and the exact text in the
+   cell title. Desktop keeps the prototype's wrapping cells. */
+@media (max-width: 860px) {
+  .activity-ellipsis {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: normal;
+  }
+}

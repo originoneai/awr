@@ -184,9 +184,11 @@ export function ActivityPage() {
   function actorText(event: OperationEvent): string {
     // AWR-PPD-055: the audit record carries its own identity disclosure. The person's
     // display name is the fact; a machine identifier in that field is never shown as a
-    // name. The client is named only when the record discloses it, and the record's own
-    // client attribution decides who did the doing: an operation attributed to a client
-    // is written "client (name)", a person acting through one "name (via client)".
+    // name. The client is named only when the record discloses it. The sentence form
+    // follows the record's client attribution (client_id): attributed to a client reads
+    // "client (name)", unattributed reads "name (via client)". The server's audit does not
+    // name clients yet (AWR-PPD-062) and does not say whether an Agent or a person acted, so
+    // on live data only the person's name shows today; the demo carries both facts.
     const recordedName = typeof event.actor?.display_name === 'string' ? event.actor.display_name.trim() : '';
     const name = recordedName && readsAsName(recordedName) ? recordedName : t('activity.unregisteredName');
     const recordedClient = typeof event.client?.display_name === 'string' ? event.client.display_name.trim() : '';
