@@ -29,7 +29,7 @@ const PAGES = {
   agentConnect: '/agent-connect?scope=demo',
   inbox: '/inbox?scope=demo',
   dependencies: '/projects/demo?tab=deps',
-  placeholders: '/members',
+  members: '/members?scope=demo',
 } as const;
 const MOMENTS: Partial<Record<keyof typeof PAGES, RealMoment>> = { workbenchDelivered: 'delivered', planDelivered: 'delivered' };
 const STATES = ['data', 'empty', 'error', 'partial', 'revoked', 'unknown'] as const;
@@ -102,6 +102,12 @@ function installRealShapeMock(state: State, moment: RealMoment) {
         }],
       });
     }
+    if (url.includes('/api/team/directory')) return json({ ok: true, data: {
+      configured: true, organization: 'Example company',
+      departments: [{ key: 'engineering', name: 'Engineering' }], updated_at_ms: 1790000000000,
+      members: state === 'empty' ? [] : [{ name: 'Example member', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] }],
+    } });
+    if (url.includes('/api/team/connections/list')) return json(state === 'partial' ? failure : { ok: true, data: { items: [], next_cursor: null } });
     if (url.includes('/api/team/overview-model')) return json(realShapedOverviewModel(state));
     if (url.includes('/api/team/overview')) {
       if (state === 'empty') return json({ ...DEMO_OVERVIEW, works: [], workstreams: [] });
