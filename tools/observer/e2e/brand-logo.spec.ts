@@ -59,8 +59,8 @@ test('owner brand mark matches the prototype brand geometry', async ({ page }, t
   const visible = mode === 'light' ? color : white;
   const hidden = mode === 'light' ? white : color;
   // A flex item's inline-block display is blockified in Chromium; visibility is the metric here.
-  await expect.soft(visible).toBeVisible();
-  await expect.soft(hidden).toHaveCSS('display', 'none');
+  await expect(visible).toBeVisible();
+  await expect(hidden).toHaveCSS('display', 'none');
   await visible.evaluate((image: HTMLImageElement) => image.decode());
   await page.evaluate(() => document.fonts.ready);
 
@@ -87,14 +87,14 @@ test('owner brand mark matches the prototype brand geometry', async ({ page }, t
       naturalWidth: (mark as HTMLImageElement).naturalWidth,
     };
   });
-  expect.soft(metrics.markWidth).toBe(24);
-  expect.soft(metrics.markHeight).toBe(18.75);
-  expect.soft(metrics.markToWordmarkGap).toBe(10);
-  expect.soft(metrics.verticalCenterDelta).toBeLessThanOrEqual(0.5);
-  expect.soft(metrics.wordmarkFontSize).toBe('17px');
-  expect.soft(metrics.wordmarkFontWeight).toBe('600');
-  expect.soft(metrics.currentSrc).toBe(`${baseUrl}/awr-logo-${mode === 'light' ? 'color' : 'white'}-72.png`);
-  expect.soft(metrics.naturalWidth).toBe(72);
+  expect(metrics.markWidth).toBe(24);
+  expect(metrics.markHeight).toBe(18.75);
+  expect(metrics.markToWordmarkGap).toBe(10);
+  expect(metrics.verticalCenterDelta).toBeLessThanOrEqual(0.5);
+  expect(metrics.wordmarkFontSize).toBe('17px');
+  expect(metrics.wordmarkFontWeight).toBe('600');
+  expect(metrics.currentSrc).toBe(`${baseUrl}/awr-logo-${mode === 'light' ? 'color' : 'white'}-72.png`);
+  expect(metrics.naturalWidth).toBe(72);
 
   await page.waitForFunction(() => document.querySelectorAll('.ant-spin-spinning').length === 0);
   await page.screenshot({
