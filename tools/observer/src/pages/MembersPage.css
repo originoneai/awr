@@ -1,9 +1,8 @@
 .members-page {
   /* Prototype panorama.html: members() column widths, .av 28, .who gap 10,
      .chip 22/6/8/6, .chevc 36 and its 14px icon. Local values avoid new global tokens.
-     These token mixes resolve to the prototype's muted channels 107/116/135 and,
-     in dark mode, 122/130/150, without page-level colour literals. */
-  --members-color-muted: color-mix(in srgb, color-mix(in srgb, color-mix(in srgb, var(--craft-color-muted) 82.7295%, var(--craft-color-surface) 17.2705%) 95.5017%, var(--craft-color-accent) 4.4983%) 86.7%, var(--craft-color-ink) 13.3%);
+     Muted text uses the shared --craft-color-muted, which is the prototype's muted ink in
+     both themes (107/116/135 light, 122/130/150 dark); the page keeps no colour mix of its own. */
   --members-column-member: 148px;
   --members-column-group: 164px;
   --members-column-agents: 212px;
@@ -26,10 +25,6 @@
   -webkit-font-smoothing: antialiased;
 }
 
-:root[data-theme="dark"] .members-page {
-  --members-color-muted: color-mix(in srgb, var(--craft-color-muted) 97%, var(--craft-color-side) 3%);
-}
-
 .members-page .obs-page-subtitle,
 .members-lead > span,
 .members-section .obs-section-count,
@@ -38,7 +33,7 @@
 .members-state,
 .members-observation-meta,
 .members-detail-count {
-  color: var(--members-color-muted);
+  color: var(--craft-color-muted);
 }
 
 .members-lead {
@@ -124,7 +119,7 @@ button.members-detail-row:focus-visible {
 }
 
 .members-table .obs-data-table .ant-table-thead > tr > th {
-  color: var(--members-color-muted);
+  color: var(--craft-color-muted);
 }
 
 .members-sort {
@@ -244,7 +239,7 @@ button.members-detail-row:focus-visible {
   width: var(--members-column-navigation);
   border-bottom-width: 0;
   background: transparent;
-  color: var(--members-color-muted);
+  color: var(--craft-color-muted);
 }
 
 .members-table .obs-data-table .ant-table-tbody > tr:hover > .obs-table-arrow-column {
@@ -264,7 +259,7 @@ button.members-detail-row:focus-visible {
 .members-pnote {
   padding: calc(var(--ant-padding-xs) + var(--ant-padding-xxs)) var(--ant-padding-md);
   border-top: var(--ant-line-width) solid var(--craft-color-hairline);
-  color: var(--members-color-muted);
+  color: var(--craft-color-muted);
   font-size: var(--ant-font-size-sm);
   line-height: var(--craft-leading-tight);
 }
@@ -335,7 +330,7 @@ button.members-detail-row:hover {
 
 .members-detail-empty {
   padding: var(--ant-padding-sm) var(--ant-padding-md);
-  color: var(--members-color-muted);
+  color: var(--craft-color-muted);
   font-size: var(--craft-text-small);
 }
 
