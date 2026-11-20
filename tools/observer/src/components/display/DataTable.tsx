@@ -1,10 +1,10 @@
 import { Table, theme } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { ChevronRight } from 'lucide-react';
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import { useCompactViewport } from '../../lib/viewport';
 import { DisplayIcon } from './DisplayIcon';
 import { EmptyState } from './EmptyState';
+import { ChevronRightIcon } from '../icons/prototype-icons';
 import './display.css';
 
 export interface DataTableColumn {
@@ -60,7 +60,7 @@ export function DataTable({ columns, rows, empty, navigationWidth, stickyNavigat
       fixed: stickyNavigation ? 'right' : undefined,
       className: 'obs-table-arrow-column',
       onHeaderCell: () => ({ 'aria-hidden': true }),
-      render: (_value, row) => row.onOpen ? <DisplayIcon icon={ChevronRight} /> : null,
+      render: (_value, row) => row.onOpen ? <DisplayIcon icon={ChevronRightIcon} /> : null,
     });
   }
 

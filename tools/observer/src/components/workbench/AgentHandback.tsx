@@ -1,10 +1,10 @@
-import { Copy, Terminal } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { PersonPendingItem } from '../../core/overview';
 import { buildHandback, copyText } from '../../lib/agent-handback';
 import type { HandbackKind } from '../../lib/agent-handback';
 import { DisplayIcon } from '../display';
+import { CopyIcon, TerminalIcon } from '../icons/prototype-icons';
 import './workbench.css';
 
 function handbackKind(item: PersonPendingItem): HandbackKind {
@@ -47,12 +47,12 @@ export function AgentHandback({ item, projectName }: { item: PersonPendingItem; 
 
   return (
     <section className="obs-agent-handback" aria-label={t('workbench.home.handbackTitle')} data-testid="agent-handback">
-      <div className="obs-agent-handback-title"><DisplayIcon icon={Terminal} />{t('workbench.home.handbackTitle')}</div>
+      <div className="obs-agent-handback-title"><DisplayIcon icon={TerminalIcon} />{t('workbench.home.handbackTitle')}</div>
       <p>{result.where}</p>
       <div className="obs-agent-handback-line">
         <span data-testid="agent-handback-sentence">{result.sentence}</span>
         <button type="button" onClick={copy}>
-          <DisplayIcon icon={Copy} />{t('workbench.home.handbackCopy')}
+          <DisplayIcon icon={CopyIcon} />{t('workbench.home.handbackCopy')}
         </button>
       </div>
       {status === 'idle' ? null : (

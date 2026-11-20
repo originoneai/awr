@@ -1,9 +1,9 @@
 import { Typography } from 'antd';
-import { ArrowLeft } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useCompactViewport } from '../../lib/viewport';
 import { DisplayIcon } from './DisplayIcon';
+import { ArrowLeftIcon } from '../icons/prototype-icons';
 import './display.css';
 
 export interface PageHeaderProps {
@@ -48,7 +48,7 @@ export function PageHeader({
   return (
     <div className="obs-page-with-back">
       <button type="button" className="obs-page-back" onClick={onBack}>
-        <DisplayIcon icon={ArrowLeft} />
+        <DisplayIcon icon={ArrowLeftIcon} />
         {backLabel ?? t('display.pageHeader.back')}
       </button>
       {header}

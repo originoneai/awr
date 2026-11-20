@@ -1,11 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { Button, Space, Tag, Typography } from 'antd';
 import { useState } from 'react';
-import { Stamp } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ApiError } from '../lib/api';
 import { fetchArtifactContent, fetchArtifactSegments, type ArtifactSelector } from '../lib/artifact';
 import { asText, at } from '../lib/json';
+import { StampIcon } from './icons/prototype-icons';
 
 function isOperationalRecord(text: string): boolean {
   try {
@@ -65,7 +65,7 @@ export function ArtifactReader({
       <Space size={8} wrap>
         {status ? (
           <Tag data-testid={`artifact-digest-${artifactId}`} color={status === 'verified' ? 'success' : status === 'mismatch' ? 'error' : 'default'}>
-            {status === 'verified' ? <Stamp size={16} strokeWidth={1.5} aria-label={digestText} /> : null}
+            {status === 'verified' ? <StampIcon size={16} strokeWidth={1.5} aria-label={digestText} /> : null}
             {digestText}
           </Tag>
         ) : <Tag>{t('acceptance.unverified')}</Tag>}

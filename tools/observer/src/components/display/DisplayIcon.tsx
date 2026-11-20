@@ -1,4 +1,4 @@
-import type { LucideIcon } from 'lucide-react';
+import type { LucideIcon } from '../icons/prototype-icons';
 import './display.css';
 
 /** One icon box, size and stroke for the shared display components. */

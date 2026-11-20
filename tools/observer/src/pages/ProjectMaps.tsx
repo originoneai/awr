@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
 import { Alert, Button, Flex, Spin, Typography, theme } from 'antd';
-import { RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useRef, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import page from 'awr-progress-map/project-map/page.js';
@@ -10,6 +9,7 @@ import zh from 'awr-progress-map/locales/zh-CN.js';
 import 'awr-progress-map/project-map.css';
 import 'awr-progress-map/project-map/interact.css';
 import { ObservationEmpty, ObservationForbidden } from '../components/states';
+import { RefreshCwIcon } from '../components/icons/prototype-icons';
 import { apiGet, isAuthError } from '../lib/api';
 import { teamProjectSnapshot, type TeamGraphResponse } from '../lib/project-map';
 import { useRevocation } from '../lib/revocation';
@@ -93,7 +93,7 @@ export function ProjectMaps({ project }: { project: string }) {
     <Flex vertical gap={16} data-testid="project-maps">
       <Flex wrap gap={12} align="center" justify="space-between">
         <Typography.Title level={5} style={{ margin: 0 }}>{t('projectMaps.title')}</Typography.Title>
-        <Button icon={<RefreshCw size={16} strokeWidth={1.5} />} loading={graph.isFetching} onClick={() => void graph.refetch()}>
+        <Button icon={<RefreshCwIcon size={16} strokeWidth={1.5} />} loading={graph.isFetching} onClick={() => void graph.refetch()}>
           {t('projectMaps.refresh')}
         </Button>
       </Flex>

@@ -14,10 +14,12 @@ describe('craft product visual signature', () => {
     expect(states).toContain('icon={null}');
   });
 
-  it('marks only verified digests with the lucide stamp signature', () => {
+  it('marks only verified digests with the stamp signature from the icon registry', () => {
     const artifact = readFileSync('src/components/ArtifactReader.tsx', 'utf8');
     const knowledge = readFileSync('src/pages/ProjectKnowledge.tsx', 'utf8');
-    expect(artifact).toContain("status === 'verified' ? <Stamp size={16} strokeWidth={1.5}");
-    expect(knowledge).toContain("digestCheck === 'verified' ? <Stamp size={16} strokeWidth={1.5}");
+    expect(artifact).toContain("status === 'verified' ? <StampIcon size={16} strokeWidth={1.5}");
+    expect(artifact).toContain("import { StampIcon } from './icons/prototype-icons'");
+    expect(knowledge).toContain("digestCheck === 'verified' ? <StampIcon size={16} strokeWidth={1.5}");
+    expect(knowledge).toContain("import { StampIcon } from '../components/icons/prototype-icons'");
   });
 });

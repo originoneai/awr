@@ -1,7 +1,7 @@
-import { ChevronRight } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { DisplayIcon } from './DisplayIcon';
 import { EmptyState } from './EmptyState';
+import { ChevronRightIcon } from '../icons/prototype-icons';
 import './display.css';
 
 export interface RowListItem {
@@ -34,7 +34,7 @@ export function RowList({ items, empty, flush = false }: RowListProps) {
               {item.meta === undefined ? null : <span className="obs-row-meta">{item.meta}</span>}
             </span>
             {item.trailing === undefined ? null : <span className="obs-row-trailing">{item.trailing}</span>}
-            {item.onOpen ? <DisplayIcon icon={ChevronRight} /> : null}
+            {item.onOpen ? <DisplayIcon icon={ChevronRightIcon} /> : null}
           </>
         );
         return (
