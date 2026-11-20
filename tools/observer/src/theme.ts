@@ -433,6 +433,12 @@ export function craftCssVariables(mode: CraftThemeMode): Record<string, string> 
     // The dotted canvas image lives here because the craft guard keeps gradient functions
     // out of component styles; theme.ts is the one exempt definition point.
     '--craft-canvas-grid-image': `radial-gradient(${color.hairlineStrong} 1px, transparent 1px)`,
+    // The prototype inbox page's weak text (panorama --ink-3). The approved global muted
+    // role keeps its higher contrast; this page-local pair stays a prototype value
+    // (token-gap list in the AWR-PPO-030 PR).
+    '--craft-inbox-muted': mode === 'dark' ? '#7A8296' : '#6B7487',
+    // The prototype's mono stack keeps Menlo; the shared meta font stops one family earlier.
+    '--craft-inbox-mono': 'ui-monospace, "SFMono-Regular", "Cascadia Mono", "Roboto Mono", Menlo, monospace',
     '--craft-size-canvas-grid': `${canvas.grid}px`,
     '--craft-perspective-radius': `${perspective.optionRadius}px`,
     '--craft-perspective-height': `${perspective.optionHeight}px`,

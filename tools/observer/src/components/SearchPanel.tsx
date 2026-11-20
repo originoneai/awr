@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { overviewModelQueryOptions, projectsQueryOptions } from '../lib/queries';
+import { overviewModelQueryOptions, POLL_INTERVAL_MS, projectsQueryOptions } from '../lib/queries';
 import { searchSourcesFromReads } from '../lib/search-sources';
 import { useRevocation } from '../lib/revocation';
 import { SearchDialog } from './SearchDialog';
@@ -24,6 +24,9 @@ export function SearchPanel({ projectKey, renderTrigger }: SearchPanelProps) {
   const overview = useQuery({
     ...overviewModelQueryOptions(effectiveProject, revoked),
     enabled: open && Boolean(effectiveProject) && !revoked,
+    // A page that already owns this read keeps its polling cadence; opening search only subscribes.
+    refetchOnMount: false,
+    staleTime: POLL_INTERVAL_MS,
   });
   const sources = useMemo(() => searchSourcesFromReads({
     projects: projects.data,

@@ -2,7 +2,7 @@ import { createBrowserRouter, Navigate, useLocation, type RouteObject } from 're
 import { AccountPage } from './pages/AccountPage';
 import { ActivityPage } from './pages/ActivityPage';
 import { InboxPage } from './pages/InboxPage';
-import { MembersPage } from './pages/MembersPage';
+import { MembersPage, PERSON_ROUTE_BASE } from './pages/MembersPage';
 import { PlaceholderPage, type PlaceholderPageKey } from './pages/PlaceholderPage';
 import { AgentConnectPage } from './pages/AgentConnectPage';
 import { ProjectsPage } from './pages/ProjectsPage';
@@ -33,6 +33,8 @@ export const routes: RouteObject[] = [
       // ProjectShell routes all five project pages: overview, plan, dependencies, acceptance and knowledge.
       { path: 'projects/:project', element: <ProjectShell /> },
       { path: 'tasks/:task', element: placeholder('task') },
+      { path: `${PERSON_ROUTE_BASE}/:id`, element: placeholder('person') },
+      // Keep previously shared member links working while new rows use the designed person route.
       { path: 'members/:member', element: placeholder('person') },
       { path: 'goals/:goal', element: placeholder('goal') },
       { path: 'documents/:document', element: placeholder('document') },

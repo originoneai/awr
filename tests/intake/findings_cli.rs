@@ -484,3 +484,56 @@ fn a_document_left_out_of_a_manifest_and_mapped_in_review_is_refused_as_a_source
     let _ = fs::remove_file(draft);
     let _ = fs::remove_file(manifest);
 }
+
+#[test]
+fn mapped_readme_with_empty_default_env_and_auth_placeholders_previews_cleanly() {
+    let p = Project::new("env-placeholder");
+    let readme = "\
+# Example Project
+
+Edit `config/domains.yaml`:
+
+```yaml
+cubejs:
+  url: \"http://172.16.70.88:4000\"
+  token: \"${CUBEJS_API_TOKEN:-}\"  # optional
+```
+
+```json
+{
+  \"headers\": {
+    \"Authorization\": \"Bearer ${env:AWR_ENGINEERING_TOKEN}\"
+  }
+}
+```
+";
+    p.write("README.md", readme);
+
+    let (preview, _) = p.ok(&["init"]);
+    assert_eq!(preview["status"], "preview", "{preview}");
+    assert!(
+        mapped_paths(&preview["draft"])
+            .iter()
+            .any(|path| path == "README.md"),
+        "{preview}"
+    );
+    assert!(listed(&preview["draft"], "README.md")["sha256"].is_string());
+    assert!(preview.get("refused_documents").is_none(), "{preview}");
+
+    let leaked = readme.replace(
+        "${CUBEJS_API_TOKEN:-}",
+        "${CUBEJS_API_TOKEN:-synthetic-private-value}",
+    );
+    p.write("README.md", &leaked);
+    let (report, all) = p.fails(&["init"]);
+    assert_eq!(report["code"], "RuleViolation", "{report}");
+    assert_eq!(report["details"]["category"], "labelled_value", "{report}");
+    assert!(
+        report["details"]["location"]["locator"]
+            .as_str()
+            .unwrap()
+            .ends_with("README.md"),
+        "{report}"
+    );
+    assert!(!all.contains("synthetic-private-value"), "{all}");
+}

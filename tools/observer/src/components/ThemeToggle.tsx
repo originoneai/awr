@@ -1,14 +1,13 @@
 import { Button } from 'antd';
-import { Sun } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useCraftTheme } from './CraftThemeProvider';
-import { ShellMoonIcon } from './ShellGlyphs';
+import { MoonIcon, SunIcon } from './icons/prototype-icons';
 
 export function ThemeToggle() {
   const { t } = useTranslation();
   const { mode, toggle } = useCraftTheme();
   const dark = mode === 'dark';
-  const Icon = dark ? Sun : ShellMoonIcon;
+  const Icon = dark ? SunIcon : MoonIcon;
   const label = t(dark ? 'shell.switchToLight' : 'shell.switchToDark');
   return (
     <div className="shell-theme">

@@ -1,4 +1,3 @@
-import { ArrowLeft, ArrowRight, Bot, CheckCircle2 } from 'lucide-react';
 import { useMemo, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useSearchParams } from 'react-router';
@@ -33,6 +32,7 @@ import {
   type TodoItem,
 } from '../display';
 import { AgentHandback } from './AgentHandback';
+import { ArrowLeftIcon, ArrowRightIcon, BotIcon, CircleCheckIcon } from '../icons/prototype-icons';
 import {
   metricDetailItems,
   reportAge,
@@ -291,7 +291,7 @@ export function WorkbenchFrame({ model, projectKey, projectName, projectTitles, 
     return {
       key: `${wait.kind}-${wait.task.id ?? index}-${index}`,
       cells: [
-        <span className="obs-workbench-wait-people"><span>{owner}</span><DisplayIcon icon={ArrowRight} /><span>{waitingOn}</span></span>,
+        <span className="obs-workbench-wait-people"><span>{owner}</span><DisplayIcon icon={ArrowRightIcon} /><span>{waitingOn}</span></span>,
         what,
         <span className="obs-tag">{t(`workbench.home.waitKinds.${wait.kind}`)}</span>,
         wait.durationDays === null ? t('workbench.home.durationUnknown') : (
@@ -316,7 +316,7 @@ export function WorkbenchFrame({ model, projectKey, projectName, projectTitles, 
         task.agentName
           ? (
             <span className="obs-workbench-agent-name">
-              <span className="obs-workbench-agent-badge" aria-hidden="true"><DisplayIcon icon={Bot} /></span>
+              <span className="obs-workbench-agent-badge" aria-hidden="true"><DisplayIcon icon={BotIcon} /></span>
               <span>{workbenchAgentName(task.agentName, t('workbench.home.noAgent'))}</span>
             </span>
           )
@@ -341,7 +341,7 @@ export function WorkbenchFrame({ model, projectKey, projectName, projectTitles, 
         meta: taskNames.length > 0
           ? t('workbench.home.metricAgentTasks', { tasks: taskNames.join(t('common.listSeparator')) })
           : t('workbench.home.metricNoTasks'),
-        leading: <DisplayIcon icon={Bot} />,
+        leading: <DisplayIcon icon={BotIcon} />,
         onOpen: item.tasks[0]?.id ? () => openTask(item.tasks[0]) : undefined,
       };
     }
@@ -380,7 +380,7 @@ export function WorkbenchFrame({ model, projectKey, projectName, projectTitles, 
       <section className="obs-detail-panel obs-workbench-metric-detail" data-testid="workbench-metric-detail" data-count={items.length}>
         <div className="obs-workbench-detail-head">
           <button type="button" className="obs-workbench-back" onClick={() => updateParams({ detail: null })}>
-            <DisplayIcon icon={ArrowLeft} />{t('workbench.home.metricDetailBack')}
+            <DisplayIcon icon={ArrowLeftIcon} />{t('workbench.home.metricDetailBack')}
           </button>
           <h2>{detailMetric.label}</h2>
           <span>{detailMetric.count}{detailMetric.unit}</span>
@@ -486,7 +486,7 @@ export function WorkbenchFrame({ model, projectKey, projectName, projectTitles, 
               {searchParams.get('basis') === '1' && !model.verdict.updateId
                 ? t('workbench.home.closeBasis')
                 : t('workbench.home.verdictBasis')}
-              <DisplayIcon icon={ArrowRight} />
+              <DisplayIcon icon={ArrowRightIcon} />
             </button>
           </div>
         </div>
@@ -518,7 +518,7 @@ export function WorkbenchFrame({ model, projectKey, projectName, projectTitles, 
             )}
             empty={(
               <div className="obs-workbench-calm">
-                <DisplayIcon icon={CheckCircle2} />
+                <DisplayIcon icon={CircleCheckIcon} />
                 <div><strong>{t('workbench.home.emptyChainTitle')}</strong><p>{t('workbench.home.emptyChainDescription')}</p></div>
               </div>
             )}

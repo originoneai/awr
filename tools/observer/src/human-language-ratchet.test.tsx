@@ -31,7 +31,7 @@ const PAGES = {
   agentConnect: '/agent-connect?scope=demo',
   inbox: '/inbox?scope=demo',
   dependencies: '/projects/demo?tab=deps',
-  placeholders: '/members',
+  members: '/members?scope=demo',
 } as const;
 const MOMENTS: Partial<Record<keyof typeof PAGES, RealMoment>> = { workbenchDelivered: 'delivered', planDelivered: 'delivered' };
 const STATES = ['data', 'empty', 'error', 'partial', 'revoked', 'unknown'] as const;
@@ -104,6 +104,12 @@ function installRealShapeMock(state: State, moment: RealMoment) {
         }],
       });
     }
+    if (url.includes('/api/team/directory')) return json({ ok: true, data: {
+      configured: true, organization: 'Example company',
+      departments: [{ key: 'engineering', name: 'Engineering' }], updated_at_ms: 1790000000000,
+      members: state === 'empty' ? [] : [{ name: 'Example member', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] }],
+    } });
+    if (url.includes('/api/team/connections/list')) return json(state === 'partial' ? failure : { ok: true, data: { items: [], next_cursor: null } });
     if (url.includes('/api/team/overview-model')) {
       // The workbench states drive the response (empty input, partial dependencies, incomparable
       // ordering). The real-shaped works and member directory from the activity page (#703) are laid
@@ -283,7 +289,7 @@ describe('the real-shaped pages show a reporter as written, with long identifier
     const marked = (readdirSync('src', { recursive: true }) as string[])
       .filter((file) => file.endsWith('.tsx') && !file.endsWith('.test.tsx'))
       .filter((file) => readFileSync(`src/${file}`, 'utf8').includes('data-reporter-text'));
-    expect(marked.sort()).toEqual(['components/ProgressReport.tsx', 'components/WorkDetailPanel.tsx', 'pages/ProjectOverview.tsx']);
+    expect(marked.sort()).toEqual(['components/ProgressReport.tsx', 'components/WorkDetailPanel.tsx', 'pages/ProjectOverview.tsx', 'pages/ProjectsPage.tsx']);
   });
 
   it.each(Object.keys(REPORTER_SENTENCES) as Array<keyof typeof REPORTER_SENTENCES>)('%s exempts exactly the reporter\'s sentences', async (page) => {

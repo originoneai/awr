@@ -1,4 +1,3 @@
-import { FileText } from 'lucide-react';
 import { lazy, Suspense, useState, type ReactNode } from 'react';
 import {
   HealthTag,
@@ -27,6 +26,7 @@ import { PerspectiveProvider } from '../../../lib/perspective/PerspectiveProvide
 import { PerspectiveSwitcher } from '../../../lib/perspective/PerspectiveSwitcher';
 import type { PerspectiveFacts } from '../../../lib/perspective/types';
 import type { SearchSource } from '../../../lib/search-index';
+import { FileTextIcon } from '../../icons/prototype-icons';
 import { catalogI18n, useCatalogTranslation } from './catalog-i18n';
 import type { CatalogExampleTextKey } from './catalog-messages';
 
@@ -84,7 +84,7 @@ function RowListExample() {
               key: 'agreement',
               title: titles[0],
               meta: t('display.catalog.examples.rowFirstMeta'),
-              leading: <DisplayIcon icon={FileText} />,
+              leading: <DisplayIcon icon={FileTextIcon} />,
               trailing: t('display.catalog.examples.rowTrailing'),
               selected: true,
               onOpen: () => setOpened(titles[0]),
@@ -93,14 +93,14 @@ function RowListExample() {
               key: 'checks',
               title: titles[1],
               meta: t('display.catalog.examples.rowSecondMeta'),
-              leading: <DisplayIcon icon={FileText} />,
+              leading: <DisplayIcon icon={FileTextIcon} />,
               onOpen: () => setOpened(titles[1]),
             },
             {
               key: 'notes',
               title: t('display.catalog.examples.rowThird'),
               meta: t('display.catalog.examples.rowThirdMeta'),
-              leading: <DisplayIcon icon={FileText} />,
+              leading: <DisplayIcon icon={FileTextIcon} />,
             },
           ]}
         />

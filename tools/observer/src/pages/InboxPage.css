@@ -1,0 +1,519 @@
+/*
+ * Prototype inbox page (panorama.html “queue + focus pages”): every value below is the
+ * prototype selector it names. Sizes without an existing token live here as named page
+ * custom properties so no TSX file carries a pixel constant.
+ *
+ * Token gap (see the PR's Questions for the supervisor): the prototype's weak text
+ * colour (its --ink-3) differs from the approved global muted token; this page uses
+ * the prototype value through --craft-inbox-muted, defined per theme in theme.ts.
+ */
+.inbox-page {
+  /* The prototype page body sets antialiased smoothing; keep it on this page's text. */
+  -webkit-font-smoothing: antialiased;
+  --craft-inbox-head-padding-top: 24px;
+  --craft-inbox-head-padding-bottom: 16px;
+  --craft-inbox-head-padding-compact-top: 16px;
+  --craft-inbox-head-padding-compact-bottom: 12px;
+  --craft-inbox-head-gap: 12px;
+  --craft-inbox-sub-size: 13px;
+  --craft-inbox-lead-size: 20px;
+  --craft-inbox-lead-leading: 28px;
+  --craft-inbox-lead-leading-compact: 26px;
+  --craft-inbox-lead-size-compact: 18px;
+  --craft-inbox-lead-margin: 20px;
+  --craft-inbox-queue-column: 372px;
+  --craft-inbox-md-gap: 24px;
+  --craft-inbox-qrow-padding-block: 14px;
+  --craft-inbox-qrow-padding-inline: 16px;
+  --craft-inbox-qrow-gap: 12px;
+  --craft-inbox-qrow-meta-gap: 2px;
+  --craft-inbox-ki-size: 32px;
+  --craft-inbox-ki-radius: 8px;
+  --craft-inbox-icon-kind: 18px;
+  --craft-inbox-focus-padding-block: 24px;
+  --craft-inbox-focus-padding-inline: 28px;
+  --craft-inbox-focus-padding-compact: 20px;
+  --craft-inbox-focus-title-gap: 12px;
+  --craft-inbox-focus-ask-gap: 20px;
+  --craft-inbox-ask-size: 15px;
+  --craft-inbox-ask-leading: 24px;
+  --craft-inbox-sec-gap: 24px;
+  --craft-inbox-sec-h-gap: 8px;
+  --craft-inbox-ev-gap: 4px;
+  --craft-inbox-ev-item-gap: 10px;
+  --craft-inbox-ev-item-min-height: 36px;
+  --craft-inbox-ev-item-padding-block: 6px;
+  --craft-inbox-ev-item-padding-inline: 12px;
+  --craft-inbox-related-gap: 20px;
+  --craft-inbox-related-link-gap: 4px;
+  --craft-inbox-where-padding-top: 16px;
+  --craft-inbox-where-padding-inline: 28px;
+  --craft-inbox-where-padding-bottom: 20px;
+  --craft-inbox-where-padding-compact: 16px;
+  --craft-inbox-where-gap: 8px;
+  --craft-inbox-where-p-gap: 8px;
+  --craft-inbox-sayline-gap: 12px;
+  --craft-inbox-sayline-margin: 12px;
+  --craft-inbox-sayline-padding: 8px;
+  --craft-inbox-sayline-padding-start: 12px;
+  --craft-inbox-sayline-radius: 10px;
+  --craft-inbox-copy-padding-block: 4px;
+  --craft-inbox-copy-padding-inline: 12px;
+  --craft-inbox-copy-min-height: 32px;
+  --craft-inbox-hint-margin: 8px;
+  --craft-inbox-partial-margin: 20px;
+
+  width: 100%;
+  min-width: 0;
+}
+
+/* .head: baseline h1 + sub on one row. */
+.inbox-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--craft-inbox-head-gap);
+  padding: var(--craft-inbox-head-padding-top) 0 var(--craft-inbox-head-padding-bottom);
+}
+
+.inbox-title {
+  margin: 0;
+  font-size: var(--craft-text-title);
+  line-height: var(--craft-leading-title);
+  font-weight: 500;
+}
+
+.inbox-sub {
+  color: var(--craft-inbox-muted);
+  font-size: var(--craft-inbox-sub-size);
+  line-height: var(--craft-leading-body);
+}
+
+/* .lead */
+.inbox-lead {
+  margin: 0 0 var(--craft-inbox-lead-margin);
+  font-size: var(--craft-inbox-lead-size);
+  line-height: var(--craft-inbox-lead-leading);
+  font-weight: 500;
+}
+
+/* The prototype lead number is not tabular; only the shell's count pill is. */
+.inbox-lead-count {
+  font-variant-numeric: normal;
+}
+
+.inbox-lead > span:not(.inbox-lead-count) {
+  color: var(--craft-inbox-muted);
+  font-weight: 400;
+}
+
+/* .md */
+.inbox-md {
+  display: grid;
+  grid-template-columns: var(--craft-inbox-queue-column) minmax(0, 1fr);
+  gap: var(--craft-inbox-md-gap);
+  align-items: start;
+}
+
+/* .queue */
+.inbox-queue {
+  min-width: 0;
+  border: var(--ant-line-width) solid var(--craft-color-hairline);
+  border-radius: var(--craft-radius-panel);
+  background: var(--craft-color-surface);
+  box-shadow: var(--craft-shadow-small);
+  overflow: hidden;
+}
+
+/* .qrow */
+.inbox-qrow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--craft-inbox-qrow-gap);
+  width: 100%;
+  padding: var(--craft-inbox-qrow-padding-block) var(--craft-inbox-qrow-padding-inline);
+  border: 0;
+  border-top: var(--ant-line-width) solid var(--craft-color-hairline);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--craft-motion-feedback) var(--craft-motion-easing);
+}
+
+.inbox-qrow:first-child {
+  border-top: 0;
+}
+
+.inbox-qrow:hover {
+  background: color-mix(in srgb, var(--craft-color-raised) 55%, transparent);
+}
+
+.inbox-qrow[aria-current='true'] {
+  background: var(--craft-color-accent-soft);
+  box-shadow: inset 3px 0 0 var(--craft-color-accent);
+}
+
+.inbox-qrow-body {
+  flex: 1;
+  min-width: 0;
+  line-height: var(--craft-leading-body);
+}
+
+/* .tt — untrusted text; over-long titles clamp to two lines instead of unwrapping the row. */
+.inbox-qrow-title {
+  display: inline;
+  font-weight: 500;
+  line-height: var(--craft-leading-body);
+  overflow-wrap: anywhere;
+}
+
+.inbox-qrow-title[data-truncate='true'] {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+/* .mm */
+.inbox-qrow-meta {
+  display: block;
+  margin-top: var(--craft-inbox-qrow-meta-gap);
+  color: var(--craft-inbox-muted);
+  font-size: var(--ant-font-size-sm);
+  line-height: var(--craft-leading-tight);
+}
+
+/* .age */
+.inbox-qrow-age {
+  flex: none;
+  color: var(--craft-inbox-muted);
+  font-size: var(--ant-font-size-sm);
+  line-height: var(--craft-leading-body);
+  white-space: nowrap;
+  padding-top: var(--craft-inbox-qrow-meta-gap);
+}
+
+/* .ki */
+.inbox-ki {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--craft-inbox-ki-size);
+  height: var(--craft-inbox-ki-size);
+  border-radius: var(--craft-inbox-ki-radius);
+  background: var(--craft-color-raised);
+  color: var(--craft-color-secondary);
+}
+
+.inbox-qrow[aria-current='true'] .inbox-ki {
+  background: var(--craft-color-surface);
+  color: var(--craft-color-accent);
+}
+
+/* .focus */
+.inbox-focus {
+  min-width: 0;
+  border: var(--ant-line-width) solid var(--craft-color-hairline);
+  border-radius: var(--craft-radius-panel);
+  background: var(--craft-color-surface);
+  box-shadow: var(--craft-shadow-small);
+  overflow: hidden;
+}
+
+.inbox-focus-body {
+  padding: var(--craft-inbox-focus-padding-block) var(--craft-inbox-focus-padding-inline);
+}
+
+.inbox-focus-kind {
+  display: flex;
+  align-items: center;
+  gap: var(--craft-inbox-where-gap);
+}
+
+/* .tag */
+.inbox-kind-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--craft-gap-tag);
+  height: var(--craft-height-tag);
+  padding: 0 var(--craft-inbox-sec-h-gap);
+  border-radius: var(--craft-radius-tag);
+  background: var(--craft-color-accent-soft);
+  color: var(--craft-color-accent);
+  font-size: var(--ant-font-size-sm);
+  line-height: var(--craft-leading-tight);
+  white-space: nowrap;
+}
+
+.inbox-focus-title {
+  margin: var(--craft-inbox-focus-title-gap) 0 0;
+  font-size: var(--craft-text-title);
+  line-height: var(--craft-leading-title);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+/* .from */
+.inbox-focus-from {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--craft-inbox-where-gap);
+  margin-top: var(--craft-inbox-where-gap);
+  color: var(--craft-inbox-muted);
+  font-size: var(--craft-inbox-sub-size);
+  line-height: var(--craft-leading-body);
+}
+
+/* .ask */
+.inbox-focus-ask {
+  margin: var(--craft-inbox-focus-ask-gap) 0 0;
+  font-size: var(--craft-inbox-ask-size);
+  line-height: var(--craft-inbox-ask-leading);
+  overflow-wrap: anywhere;
+}
+
+/* .sec */
+.inbox-sec {
+  margin-top: var(--craft-inbox-sec-gap);
+}
+
+.inbox-sec h4 {
+  margin: 0 0 var(--craft-inbox-sec-h-gap);
+  color: var(--craft-inbox-muted);
+  font-size: var(--ant-font-size-sm);
+  line-height: var(--craft-leading-tight);
+  font-weight: 400;
+}
+
+.inbox-sec p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* .ev */
+.inbox-ev {
+  display: grid;
+  gap: var(--craft-inbox-ev-gap);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.inbox-ev li {
+  display: flex;
+  align-items: center;
+  gap: var(--craft-inbox-ev-item-gap);
+  min-height: var(--craft-inbox-ev-item-min-height);
+  padding: var(--craft-inbox-ev-item-padding-block) var(--craft-inbox-ev-item-padding-inline);
+  border-radius: var(--craft-inbox-ki-radius);
+  background: var(--craft-color-raised);
+  font-size: var(--craft-inbox-sub-size);
+  overflow-wrap: anywhere;
+}
+
+.inbox-ev-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--craft-inbox-muted);
+}
+
+.inbox-ev li[data-s='ok'] .inbox-ev-icon {
+  color: var(--craft-color-positive);
+}
+
+.inbox-ev li[data-s='bad'] .inbox-ev-icon {
+  color: var(--craft-color-negative);
+}
+
+/* related entries row (prototype inline flex gap 20) */
+.inbox-related {
+  display: flex;
+  gap: var(--craft-inbox-related-gap);
+  flex-wrap: wrap;
+}
+
+/* .link */
+.inbox-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--craft-inbox-related-link-gap);
+  padding: 0;
+  color: var(--craft-color-accent);
+  font-size: var(--craft-inbox-sub-size);
+  line-height: var(--craft-leading-body);
+  text-align: center;
+  text-decoration: none;
+}
+
+.inbox-link:hover,
+.inbox-link:focus-visible {
+  color: var(--craft-color-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* .where */
+.inbox-where {
+  padding: var(--craft-inbox-where-padding-top) var(--craft-inbox-where-padding-inline) var(--craft-inbox-where-padding-bottom);
+  border-top: var(--ant-line-width) solid var(--craft-color-hairline);
+  background: color-mix(in srgb, var(--craft-color-raised) 45%, transparent);
+}
+
+.inbox-where-head {
+  display: flex;
+  align-items: center;
+  gap: var(--craft-inbox-where-gap);
+  font-weight: 500;
+  line-height: var(--craft-leading-body);
+}
+
+.inbox-where-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--craft-color-accent);
+}
+
+.inbox-where p {
+  margin: var(--craft-inbox-where-p-gap) 0 0;
+  color: var(--craft-color-secondary);
+  font-size: var(--craft-inbox-sub-size);
+  line-height: var(--craft-leading-body);
+}
+
+/* .sayline */
+.inbox-sayline {
+  display: flex;
+  align-items: center;
+  gap: var(--craft-inbox-sayline-gap);
+  margin-top: var(--craft-inbox-sayline-margin);
+  padding: var(--craft-inbox-sayline-padding) var(--craft-inbox-sayline-padding) var(--craft-inbox-sayline-padding) var(--craft-inbox-sayline-padding-start);
+  border: var(--ant-line-width) solid var(--craft-color-hairline);
+  border-radius: var(--craft-inbox-sayline-radius);
+  background: var(--craft-color-surface);
+}
+
+.inbox-sayline-text {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--craft-inbox-mono);
+  font-size: var(--craft-inbox-sub-size);
+  line-height: var(--craft-leading-body);
+  overflow-wrap: anywhere;
+}
+
+/* .btn — the only button on the page besides navigation. */
+.inbox-copy {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--craft-inbox-where-gap);
+  min-height: var(--craft-inbox-copy-min-height);
+  padding: var(--craft-inbox-copy-padding-block) var(--craft-inbox-copy-padding-inline);
+  border: var(--ant-line-width) solid var(--craft-color-hairline-strong);
+  border-radius: var(--craft-inbox-ki-radius);
+  background: var(--craft-color-surface);
+  color: var(--craft-color-ink);
+  font: inherit;
+  font-size: var(--craft-inbox-sub-size);
+  cursor: pointer;
+  transition: border-color var(--craft-motion-feedback) var(--craft-motion-easing);
+}
+
+.inbox-copy:hover {
+  border-color: var(--craft-inbox-muted);
+}
+
+.inbox-copy-status {
+  display: block;
+  margin-top: var(--craft-inbox-hint-margin);
+  color: var(--craft-color-secondary);
+  font-size: var(--craft-inbox-sub-size);
+}
+
+/* .where .hint */
+.inbox-hint {
+  margin-top: var(--craft-inbox-hint-margin);
+  color: var(--craft-inbox-muted);
+  font-size: var(--ant-font-size-sm);
+  line-height: var(--craft-leading-body);
+}
+
+/* designed non-list states */
+.inbox-state {
+  padding: var(--craft-inbox-focus-padding-inline);
+  border: var(--ant-line-width) solid var(--craft-color-hairline);
+  border-radius: var(--craft-radius-panel);
+  background: var(--craft-color-surface);
+  box-shadow: var(--craft-shadow-small);
+  color: var(--craft-color-secondary);
+  font-size: var(--craft-inbox-sub-size);
+  line-height: var(--craft-leading-body);
+  overflow-wrap: anywhere;
+}
+
+.inbox-partial {
+  margin-bottom: var(--craft-inbox-partial-margin);
+  padding: var(--craft-inbox-ev-item-padding-inline);
+  border-radius: var(--craft-inbox-ki-radius);
+  background: var(--craft-color-warning-soft);
+  color: var(--craft-color-secondary);
+  font-size: var(--craft-inbox-sub-size);
+  line-height: var(--craft-leading-body);
+  overflow-wrap: anywhere;
+}
+
+/* read-coverage note (product requirement; the prototype page has no such footer) */
+.inbox-pnote {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--craft-inbox-ev-gap) var(--craft-inbox-sayline-gap);
+  margin-top: var(--craft-inbox-lead-margin);
+  padding: var(--craft-inbox-ev-item-padding-inline) 0 0;
+  border-top: var(--ant-line-width) solid var(--craft-color-hairline);
+  color: var(--craft-inbox-muted);
+  font-size: var(--ant-font-size-sm);
+  line-height: var(--craft-leading-tight);
+}
+
+.inbox-freshness {
+  min-width: 0;
+}
+
+@media (max-width: 1040px) {
+  .inbox-md {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 860px) {
+  .inbox-head {
+    padding: var(--craft-inbox-head-padding-compact-top) 0 var(--craft-inbox-head-padding-compact-bottom);
+  }
+
+  .inbox-lead {
+    font-size: var(--craft-inbox-lead-size-compact);
+    line-height: var(--craft-inbox-lead-leading-compact);
+  }
+
+  .inbox-focus-body {
+    padding: var(--craft-inbox-focus-padding-compact);
+  }
+
+  .inbox-where {
+    padding: var(--craft-inbox-where-padding-compact);
+  }
+
+  .inbox-sayline {
+    flex-wrap: wrap;
+  }
+}
