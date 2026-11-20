@@ -581,40 +581,37 @@ fn fold_work(
 /// departments outermost first. Plans stored before hierarchy support carry
 /// no `parent_id`, so every department is a leaf and the chain stays empty.
 fn directory_summary(plan_json: Option<&Value>) -> Value {
-    let Some(plan) = plan_json else {
+    let Some(plan_value) = plan_json else {
         return json!({"registered":false,"group":null,"departments":null});
     };
-    let departments = plan["departments"].as_array().cloned().unwrap_or_default();
+    let Ok(plan) = serde_json::from_value::<awr_team::ProjectDirectoryPlan>(plan_value.clone())
+    else {
+        return json!({"registered":true,"group":null,"departments":null});
+    };
+    let departments = &plan.departments;
     let parents: BTreeSet<&str> = departments
         .iter()
-        .filter_map(|unit| unit["parent_id"].as_str())
+        .filter_map(|unit| unit.parent_id.as_deref())
         .collect();
-    let by_id: BTreeMap<&str, &Value> = departments
+    let by_id: BTreeMap<&str, &awr_team::DirectoryDepartment> = departments
         .iter()
-        .filter_map(|unit| unit["id"].as_str().map(|id| (id, unit)))
+        .map(|unit| (unit.id.as_str(), unit))
         .collect();
-    let attached_ids: Vec<String> = plan["project_department_ids"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default()
+    let leaves: Vec<&str> = plan
+        .project_department_ids
         .iter()
-        .filter_map(|value| value.as_str().map(str::to_owned))
-        .collect();
-    let attached: Vec<&str> = attached_ids.iter().map(String::as_str).collect();
-    let leaves: Vec<&str> = attached
-        .iter()
-        .filter(|id| !parents.contains(**id) && by_id.contains_key(**id))
-        .copied()
+        .filter(|id| !parents.contains(id.as_str()) && by_id.contains_key(id.as_str()))
+        .map(String::as_str)
         .collect();
     let group = leaves
         .first()
-        .map(|id| json!({"id":id,"name":by_id[id]["name"].as_str().unwrap_or_default()}));
+        .map(|id| json!({"id":id,"name":by_id[id].name}));
     let mut chain = Vec::new();
     if let Some(group_id) = leaves.first().copied() {
         let mut seen = BTreeSet::from([group_id]);
         let mut current = by_id
             .get(group_id)
-            .and_then(|unit| unit["parent_id"].as_str());
+            .and_then(|unit| unit.parent_id.as_deref());
         while let Some(parent) = current {
             if !seen.insert(parent) {
                 chain.clear();
@@ -622,10 +619,8 @@ fn directory_summary(plan_json: Option<&Value>) -> Value {
             }
             match by_id.get(parent) {
                 Some(unit) => {
-                    chain.push(json!({
-                        "id":parent,
-                        "name":unit["name"].as_str().unwrap_or_default()}));
-                    current = unit["parent_id"].as_str();
+                    chain.push(json!({"id":parent,"name":unit.name}));
+                    current = unit.parent_id.as_deref();
                 }
                 None => break,
             }

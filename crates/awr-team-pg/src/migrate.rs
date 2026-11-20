@@ -263,7 +263,6 @@ const MIGRATIONS: &[(&str, i32)] = &[
     (
         include_str!("../migrations/20261119000066_portfolio_read_policies.sql"),
         66,
-
     ),
 ];
 
