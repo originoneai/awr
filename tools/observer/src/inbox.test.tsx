@@ -1,10 +1,16 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { render } from '@testing-library/react';
+import { createMemoryRouter, RouterProvider } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from './i18n';
 import { defaultVisibleText, findHumanLanguageViolations } from './lib/human-language-guard';
+import { ProjectQuestions } from './components/ProjectQuestions';
+import { RevocationProvider } from './lib/revocation';
+import { createAppQueryClient } from './lib/queries';
 import type { OrdinaryDecision } from './lib/types';
-import { DEMO_OVERVIEW, DEMO_PROJECTS, mockViewport, renderApp } from './test-utils';
+import { DEMO_OVERVIEW, DEMO_PROJECTS, mockViewport } from './test-utils';
 
 const AT = 1793534400000;
 const INTERNAL = '01M68M12NPA7JRA43BFT56VBYF';
@@ -25,6 +31,9 @@ function page(items = [question()], cursor: string | null = null) {
     execution_authorized: false, as_of: { at_unix_ms: AT } } } };
 }
 
+// The project-questions component now serves the knowledge confirmations tab; the
+// inbox page itself was rebuilt in AWR-PPO-030. These tests mount the component
+// directly so its open/all paging stays covered at its own route level.
 function setup(respond: (query: Record<string, unknown>) => unknown = () => page(),
   discovery: () => unknown = () => ({ ok: true, result: { queries: ['decisions.list'] } })) {
   const calls: Array<Record<string, unknown>> = [];
@@ -40,7 +49,16 @@ function setup(respond: (query: Record<string, unknown>) => unknown = () => page
     } else payload = { ok: false, error: { code: 'NoRoute', message: 'Not available' } };
     return new Response(JSON.stringify(payload), { status: 200, headers: { 'content-type': 'application/json' } });
   }));
-  return { ...renderApp('/inbox?scope=demo'), calls };
+  const queryClient = createAppQueryClient({ retry: false });
+  const router = createMemoryRouter([{ path: '/', element: <ProjectQuestions project="demo" /> }], { initialEntries: ['/'] });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <RevocationProvider>
+        <RouterProvider router={router} />
+      </RevocationProvider>
+    </QueryClientProvider>,
+  );
+  return { queryClient, calls };
 }
 
 afterEach(async () => {

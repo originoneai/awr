@@ -4,7 +4,7 @@ import './display.css';
 
 export interface SectionProps {
   title: ReactNode;
-  count?: number;
+  count?: ReactNode;
   extra?: ReactNode;
   children: ReactNode;
   padded?: boolean;

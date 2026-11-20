@@ -25,7 +25,9 @@ import { PerspectiveProvider } from '../lib/perspective/PerspectiveProvider';
 import { PerspectiveSwitcher } from '../lib/perspective/PerspectiveSwitcher';
 import { unknownPerspectiveFacts, type PerspectiveFacts, type PerspectiveId } from '../lib/perspective/types';
 import { projectLabel } from '../lib/project-label';
-import { ordinaryDecisionsQueryOptions, overviewQueryOptions, projectsQueryOptions } from '../lib/queries';
+import { inboxPendingLabel } from '../lib/inbox-model';
+import { useInboxModel } from '../lib/inbox-queries';
+import { overviewQueryOptions, projectsQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
 import { useScope } from '../lib/scope';
 import type { TeamOverviewResponse } from '../lib/types';
@@ -122,7 +124,7 @@ function ShellNavigation({ selectedKey, pendingLabel }: { selectedKey: Navigatio
           <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {t(`nav.${item.label}`)}
           </span>
-          {item.path === '/inbox' && pendingLabel ? (
+          {item.path === '/inbox' && pendingLabel !== null && pendingLabel !== '0' ? (
             <span
               data-testid="inbox-count"
               style={{
@@ -195,7 +197,9 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
   const projects = useQuery(projectsQueryOptions(revoked));
   // Shell indicators subscribe to reads the open page already owns; they never add another source.
   const overview = useQuery({ ...overviewQueryOptions(projectKey, revoked), enabled: false });
-  const pending = useQuery({ ...ordinaryDecisionsQueryOptions(projectKey ?? '', 'open', null, revoked), enabled: false });
+  // The pending pill, the bell dot and the inbox queue share this one read-model source
+  // (AWR-PPO-030): the member's pending entries across projects.
+  const inbox = useInboxModel();
   const compactNavigation = useCompactViewport();
   const compactSearch = useMediaQuery(COMPACT_SEARCH_QUERY);
   const selectedKey = selectedNavigation(location.pathname);
@@ -231,11 +235,8 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
     },
   };
 
-  const pendingData = pending.data?.result.data;
-  const pendingCount = pendingData?.items.length ?? null;
-  const pendingLabel = pendingData && pendingCount !== null && pendingCount > 0
-    ? `${pendingCount}${pendingData.truncated || pendingData.next_cursor !== null ? '+' : ''}`
-    : null;
+  const pendingLabel = inboxPendingLabel(inbox.model);
+  const pendingCount = pendingLabel === null ? null : inbox.model.count;
   const memberName = currentMemberName(overview.data) ?? t('shell.you');
   const MobileThemeIcon = mode === 'dark' ? SunIcon : MoonIcon;
   const mobileThemeLabel = t(mode === 'dark' ? 'shell.switchToLight' : 'shell.switchToDark');
@@ -533,6 +534,7 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
               <Badge dot={pendingCount !== null && pendingCount > 0} color="var(--craft-color-accent)">
                 <Button
                   type="text"
+                  data-testid="inbox-bell"
                   aria-label={pendingCount === null
                     ? t('nav.inbox')
                     : t('shell.pendingNotifications', { count: pendingCount })}

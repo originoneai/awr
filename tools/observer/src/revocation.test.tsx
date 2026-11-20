@@ -21,7 +21,7 @@ function revocationFetch(calls: { count: number }, revoked: { value: boolean }) 
     } else if (url.includes('/api/team/projects')) {
       payload = DEMO_PROJECTS;
     } else if (url.includes('/api/team/overview-model')) {
-      payload = demoOverviewModelResponse();
+      payload = demoOverviewModelResponse(undefined, { project: new URL(url, 'http://synthetic.invalid').searchParams.get('project') ?? 'demo' });
     } else if (url.includes('/api/team/overview')) {
       payload = DEMO_PROJECT_OVERVIEW;
     } else if (url.includes('/api/team/activity')) {
@@ -65,6 +65,7 @@ describe.each([
     const fetchMock = revocationFetch(calls, revoked);
     const { queryClient } = renderApp(path);
 
+    await advance(0);
     await advance(0);
     expect(screen.getAllByText(restrictedText)).not.toHaveLength(0);
     expect(screen.getByTestId(pageTestId)).toBeTruthy();
