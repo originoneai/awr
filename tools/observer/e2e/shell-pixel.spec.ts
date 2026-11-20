@@ -227,10 +227,11 @@ test('the shell matches the prototype numbers at 1440x900', async ({ page }, tes
   // --- Body type (prototype body: 400 14px/20px var(--font), antialiased) ---
   expect(metrics.htmlSmoothing).toBe('antialiased');
   expect(metrics.bodySmoothing).toBe('antialiased');
-  expect(metrics.bodyFont).toEqual({
-    // Chrome's computed serialization renames the bare BlinkMacSystemFont to "system-ui";
-    // both pages compute identically (the probe compares them directly and passes).
-    family: '-apple-system, "system-ui", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif',
+  // Chrome serializes the bare BlinkMacSystemFont as "system-ui" on macOS and keeps it verbatim on
+  // Linux; the page and the prototype compute identically either way, so compare the prototype's own
+  // declared stack after undoing that renaming.
+  expect({ ...metrics.bodyFont, family: metrics.bodyFont.family.replace('"system-ui"', 'BlinkMacSystemFont') }).toEqual({
+    family: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif',
     size: '14px',
     lineHeight: '20px',
     weight: '400',
@@ -323,16 +324,26 @@ test('the shell matches the prototype numbers at 390x844', async ({ page }, test
   expect(metrics.navigationStyle).toEqual({ padding: '12px 16px', lineHeight: '20px', background: side, border: palette.hairline, position: 'static' });
 
   // Prototype .brand: 32px row, no mobile inset/margin, 10px gap; mark() is 22x22.
-  expect(metrics.brand).toEqual({ x: 16, y: 14, w: 70.36, h: 32 });
+  // The wordmark's text width comes from the platform UI font (SF Pro on macOS, a fallback on
+  // Linux), so no absolute width of a content-sized box is a shared number: the position, the
+  // height and the structure (brand = mark + 10px gap + wordmark) are pinned, the width follows
+  // from the font that the style checks below already pin by family, size and weight.
+  expect(metrics.brand).toMatchObject({ x: 16, y: 14, h: 32 });
   expect(metrics.brandStyle).toEqual({ padding: '0px', margin: '0px', gap: '10px', lineHeight: '20px' });
   expect(metrics.mark).toEqual({ x: 16, y: 19, w: 22, h: 22 });
 
   // Prototype .brand b: 17px/20px weight 600, beginning at x48 after the 22px mark and 10px gap.
-  expect(metrics.wordmark).toEqual({ x: 48, y: 20, w: 38.36, h: 20 });
+  expect(metrics.wordmark).toMatchObject({ x: 48, y: 20, h: 20 });
+  expect(metrics.wordmark!.w).toBeGreaterThan(0);
+  expect(metrics.brand!.w).toBeCloseTo(22 + 10 + metrics.wordmark!.w, 1);
   expect(metrics.wordmarkStyle).toEqual({ size: '17px', lineHeight: '20px', weight: '600', color: ink });
 
   // Prototype .mobile-pick and select.pick: fluid 32px field, 0 28px 0 12px, 13px with the native normal line height.
-  expect(metrics.selector).toEqual({ x: 94.36, y: 14, w: 235.64, h: 32 });
+  // It starts 8px after the brand and ends 8px before the 36px theme button at x338, so its
+  // right edge is 330 on every platform and only its left edge and width follow the wordmark.
+  expect(metrics.selector).toMatchObject({ y: 14, h: 32 });
+  expect(metrics.selector!.x).toBeCloseTo(metrics.brand!.x + metrics.brand!.w + 8, 1);
+  expect(metrics.selector!.x + metrics.selector!.w).toBeCloseTo(330, 1);
   expect(metrics.selectorStyle).toEqual({ padding: '0px 28px 0px 12px', size: '13px', lineHeight: 'normal', color: ink, background: surface, border: palette.hairlineStrong, radius: '8px' });
 
   // Prototype mobile .side-foot button: 36x36, no border, 20px line, ink-2; icon is 16x16.

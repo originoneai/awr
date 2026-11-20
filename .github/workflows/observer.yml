@@ -38,7 +38,7 @@ jobs:
       - name: Server syntax check
         run: node --check server.js
       - name: Server tests
-        run: node --test test/*.test.js
+        run: node --test test/*.test.js e2e/pixel-pairs.guard.test.js
       - name: No external asset loads
         run: |
           # This local tool must not load external resources: the CSP allows
@@ -50,3 +50,49 @@ jobs:
             echo "External resource loading found under dist/"
             exit 1
           fi
+
+  pixel:
+    name: observer pixel
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: tools/observer
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Evidence directory
+        # The runner context is not available in a job-level env, so the path is exported here.
+        run: echo "OBSERVER_EVIDENCE_DIR=$RUNNER_TEMP/observer-pixel-evidence" >> "$GITHUB_ENV"
+      - name: Install
+        run: npm ci
+      - name: Install locked Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Build
+        run: npx vite build
+      - name: Prepare text output
+        run: ': > "$RUNNER_TEMP/observer-pixel-specs.log"'
+      - name: Pixel-pair skip guard
+        run: node --test e2e/pixel-pairs.guard.test.js 2>&1 | tee -a "$RUNNER_TEMP/observer-pixel-specs.log"
+      - name: Shell metrics
+        if: ${{ !cancelled() }}
+        run: npx playwright test -c e2e/shell-pixel.playwright.config.ts 2>&1 | tee -a "$RUNNER_TEMP/observer-pixel-specs.log"
+      - name: Workbench metrics
+        if: ${{ !cancelled() }}
+        run: npx playwright test -c playwright.pages.config.ts 2>&1 | tee -a "$RUNNER_TEMP/observer-pixel-specs.log"
+      - name: Brand geometry
+        if: ${{ !cancelled() }}
+        run: npx playwright test -c e2e/brand-logo.playwright.config.ts 2>&1 | tee -a "$RUNNER_TEMP/observer-pixel-specs.log"
+      - name: Demo organization geometry
+        if: ${{ !cancelled() }}
+        run: node e2e/demo-organization-check.mjs 2>&1 | tee -a "$RUNNER_TEMP/observer-pixel-specs.log"
+      - name: Upload text-only spec output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: observer-pixel-spec-output
+          path: ${{ runner.temp }}/observer-pixel-specs.log
+          if-no-files-found: warn
+          retention-days: 7
