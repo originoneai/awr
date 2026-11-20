@@ -1051,6 +1051,14 @@ async fn list_summaries_match_snapshots_and_keep_latest_actual_report() {
         summary["execution"]["value"]["last_checkpoint_at_unix_ms"],
         1793620800000_i64
     );
+    // Liveness is stamped with the page statement's own time, like every other
+    // fact observed in this read; a placeholder or zero stamp would show the
+    // Agent as observed at the epoch.
+    assert_eq!(
+        summary["execution"]["as_of_unix_ms"],
+        summary["owner"]["as_of_unix_ms"]
+    );
+    assert!(summary["execution"]["as_of_unix_ms"].as_i64().unwrap() > 0);
     assert_eq!(
         summary["outcome"]["as_of_unix_ms"],
         summary["phase"]["as_of_unix_ms"]
