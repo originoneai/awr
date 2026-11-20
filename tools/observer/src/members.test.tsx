@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -438,6 +439,256 @@ describe('members and Agents panorama', () => {
     expect(screen.getByTestId('member-row-unknown-1')).not.toHaveAttribute('data-openable');
     expect(screen.queryByTestId('member-row-person-first')).toBeNull();
     expect(screen.queryByTestId('member-row-person-second')).toBeNull();
+  });
+
+  it('highlights exactly three pending items but not two', async () => {
+    const { setOverviewResponse } = setup();
+    const model = overviewModel();
+    model.input.approvals = { coverage: 'complete', items: [
+      ...(model.input.approvals.items ?? []),
+      { id: 'riley-first', kind: 'plan-approval', recipientPersonId: 'person-riley', projectId: 'demo', title: 'Riley first' },
+      { id: 'riley-second', kind: 'plan-approval', recipientPersonId: 'person-riley', projectId: 'demo', title: 'Riley second' },
+    ] };
+    setOverviewResponse(model);
+    renderApp('/members?scope=demo');
+    await loaded();
+    expect(screen.getByTestId('member-pending-person-taylor')).toHaveTextContent('3');
+    expect(screen.getByTestId('member-pending-person-riley')).toHaveTextContent('2');
+    expect(screen.getByTestId('member-row-person-taylor')).toHaveAttribute('data-highlighted', 'true');
+    expect(screen.getByTestId('member-row-person-riley')).not.toHaveAttribute('data-highlighted');
+  });
+
+  it('resolves same-name people by group without borrowing another group identity', async () => {
+    const { setDirectoryResponse, setOverviewResponse } = setup();
+    setDirectoryResponse({ ok: true, data: { ...DIRECTORY, members: [
+      { name: 'Taylor', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] },
+      { name: 'Taylor', available: true, departments: [{ key: 'delivery', name: 'Delivery' }] },
+    ] } });
+    const model = overviewModel();
+    model.input.members = { coverage: 'complete', items: [
+      { personId: 'person-group-a', displayName: 'Taylor', groupId: 'engineering' },
+      { personId: 'person-group-b', displayName: 'Taylor', groupId: 'research' },
+    ] };
+    setOverviewResponse(model);
+    renderApp('/members?scope=demo');
+    expect(await screen.findByTestId('member-row-person-group-a')).toHaveAttribute('data-openable', 'true');
+    expect(screen.getByTestId('member-pending-person-group-a')).toHaveTextContent('0');
+    expect(screen.getByTestId('member-row-unknown-1')).not.toHaveAttribute('data-openable');
+    expect(screen.getByTestId('member-pending-unknown-1')).toHaveTextContent('—');
+    expect(screen.getByTestId('member-doing-unknown-1')).toHaveTextContent(i18n.t('members.doingUnknown'));
+  });
+
+  it('leaves duplicate directory name-and-group rows unidentified with only one overview person', async () => {
+    const { setDirectoryResponse, setOverviewResponse } = setup();
+    setDirectoryResponse({ ok: true, data: { ...DIRECTORY, members: [
+      { name: 'Taylor', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] },
+      { name: 'Taylor', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] },
+    ] } });
+    const model = overviewModel();
+    model.input.members = { coverage: 'complete', items: [
+      { personId: 'person-single', displayName: 'Taylor', groupId: 'engineering' },
+    ] };
+    setOverviewResponse(model);
+    renderApp('/members?scope=demo');
+    await waitFor(() => expect(screen.getAllByText('Taylor')).toHaveLength(2));
+    for (const rowId of ['unknown-0', 'unknown-1']) {
+      expect(screen.getByTestId(`member-row-${rowId}`)).not.toHaveAttribute('data-openable');
+      expect(screen.getByTestId(`member-pending-${rowId}`)).toHaveTextContent('—');
+      expect(screen.getByTestId(`member-doing-${rowId}`)).toHaveTextContent(i18n.t('members.doingUnknown'));
+    }
+    expect(screen.queryByTestId('member-row-person-single')).toBeNull();
+  });
+
+  it('resolves a formerly duplicated directory row when it becomes the only row', async () => {
+    const { setDirectoryResponse, setOverviewResponse } = setup();
+    setDirectoryResponse({ ok: true, data: { ...DIRECTORY, members: [
+      { name: 'Taylor', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] },
+    ] } });
+    const model = overviewModel();
+    model.input.members = { coverage: 'complete', items: [
+      { personId: 'person-single', displayName: 'Taylor', groupId: 'engineering' },
+    ] };
+    setOverviewResponse(model);
+    renderApp('/members?scope=demo');
+    expect(await screen.findByTestId('member-row-person-single')).toHaveAttribute('data-openable', 'true');
+    expect(screen.getByTestId('member-pending-person-single')).toHaveTextContent('0');
+  });
+
+  it('uses one overview person only once across different directory group sets', async () => {
+    const { setDirectoryResponse, setOverviewResponse } = setup();
+    setDirectoryResponse({ ok: true, data: { ...DIRECTORY, members: [
+      { name: 'Taylor', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] },
+      { name: 'Taylor', available: true, departments: [{ key: 'engineering', name: 'Engineering' }, { key: 'research', name: 'Research' }] },
+    ] } });
+    const model = overviewModel();
+    model.input.members = { coverage: 'complete', items: [
+      { personId: 'person-used', displayName: 'Taylor', groupId: 'engineering' },
+    ] };
+    setOverviewResponse(model);
+    renderApp('/members?scope=demo');
+    expect(await screen.findByTestId('member-row-person-used')).toHaveAttribute('data-openable', 'true');
+    expect(screen.getByTestId('member-pending-person-used')).toHaveTextContent('0');
+    expect(screen.getByTestId('member-row-unknown-1')).not.toHaveAttribute('data-openable');
+    expect(screen.getByTestId('member-pending-unknown-1')).toHaveTextContent('—');
+  });
+
+  it('does not render revoked connections as Agent chips', async () => {
+    const { setOverviewResponse, setConnectionsResponse } = setup();
+    const model = overviewModel();
+    model.input.tasks = { coverage: 'complete', items: [] };
+    setOverviewResponse(model);
+    setConnectionsResponse({ ok: true, data: { next_cursor: null, items: [
+      { kind: 'agent', state: 'revoked', client_name: 'Riley · Retired Agent' },
+    ] } });
+    renderApp('/members?scope=demo');
+    await loaded();
+    const agents = screen.getByTestId('member-agents-person-riley');
+    expect(agents.querySelector('.members-chip')).toBeNull();
+    expect(agents).toHaveTextContent(i18n.t('members.noAgents'));
+  });
+
+  it('does not render browser connections as Agent chips', async () => {
+    const { setOverviewResponse, setConnectionsResponse } = setup();
+    const model = overviewModel();
+    model.input.tasks = { coverage: 'complete', items: [] };
+    setOverviewResponse(model);
+    setConnectionsResponse({ ok: true, data: { next_cursor: null, items: [
+      { kind: 'browser', state: 'active', client_name: 'Riley · Chrome' },
+    ] } });
+    renderApp('/members?scope=demo');
+    await loaded();
+    const agents = screen.getByTestId('member-agents-person-riley');
+    expect(agents.querySelector('.members-chip')).toBeNull();
+    expect(agents).toHaveTextContent(i18n.t('members.noAgents'));
+  });
+
+  it.each(['zh-CN', 'en-US'])('distinguishes unknown current work from known empty current work in %s', async (language) => {
+    setup();
+    await act(async () => { await i18n.changeLanguage(language); });
+    renderApp('/members?scope=demo');
+    await loaded();
+    const knownEmpty = screen.getByTestId('member-doing-person-riley');
+    const unknown = screen.getByTestId('member-doing-unknown-2');
+    expect(knownEmpty).toHaveTextContent(i18n.t('members.noDoing'));
+    expect(unknown).toHaveTextContent(i18n.t('members.doingUnknown'));
+    expect(knownEmpty.textContent).not.toBe(unknown.textContent);
+  });
+
+  it('cycles name sorting through ascending descending and directory order', async () => {
+    const { setDirectoryResponse, setOverviewResponse } = setup();
+    const names = ['Zoe', 'Alpha', 'Morgan'];
+    setDirectoryResponse({ ok: true, data: { ...DIRECTORY, members: names.map((name) => ({
+      name, available: true, departments: [{ key: 'engineering', name: 'Engineering' }],
+    })) } });
+    const model = overviewModel();
+    model.input.members = { coverage: 'complete', items: names.map((name) => ({
+      personId: `person-${name.toLowerCase()}`, displayName: name, groupId: 'engineering',
+    })) };
+    setOverviewResponse(model);
+    renderApp('/members?scope=demo');
+    await screen.findByTestId('member-row-person-zoe');
+    const order = () => [...document.querySelectorAll('.members-table tbody .members-name')].map((element) => element.textContent);
+    expect(order()).toEqual(['Zoe', 'Alpha', 'Morgan']);
+    const user = userEvent.setup();
+    const sort = screen.getByRole('button', { name: i18n.t('members.sortByName') });
+    await user.click(sort);
+    await waitFor(() => expect(order()).toEqual(['Alpha', 'Morgan', 'Zoe']));
+    await user.click(sort);
+    await waitFor(() => expect(order()).toEqual(['Zoe', 'Morgan', 'Alpha']));
+    await user.click(sort);
+    await waitFor(() => expect(order()).toEqual(['Zoe', 'Alpha', 'Morgan']));
+  });
+
+  it('matches member search case insensitively', async () => {
+    const { setDirectoryResponse, setOverviewResponse } = setup();
+    setDirectoryResponse({ ok: true, data: { ...DIRECTORY, members: [
+      { name: 'Owner A', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] },
+    ] } });
+    const model = overviewModel();
+    model.input.members = { coverage: 'complete', items: [
+      { personId: 'person-taylor', displayName: 'Owner A', groupId: 'engineering' },
+    ] };
+    setOverviewResponse(model);
+    renderApp('/members?scope=demo');
+    await loaded();
+    await userEvent.setup().type(screen.getByRole('textbox', { name: i18n.t('members.search') }), 'owner');
+    expect(screen.getByTestId('member-row-person-taylor')).toBeTruthy();
+    expect(screen.getByTestId('members-section-count')).toHaveTextContent('1');
+  });
+
+  it('keeps member details equal to the filtered visible rows', async () => {
+    setup();
+    renderApp('/members?scope=demo');
+    await loaded();
+    const user = userEvent.setup();
+    await user.type(screen.getByRole('textbox', { name: i18n.t('members.search') }), 'Research');
+    expect(screen.getByTestId('members-section-count')).toHaveTextContent('1');
+    await user.click(screen.getByTestId('members-section-count'));
+    expect(await screen.findByTestId('members-detail')).toBeTruthy();
+    expect(document.querySelectorAll('.members-table tbody tr.ant-table-row')).toHaveLength(1);
+    expect(screen.getAllByTestId('members-detail-row')).toHaveLength(1);
+    expect(screen.getByTestId('members-detail-count')).toHaveTextContent('1');
+    expect(screen.getByTestId('members-detail')).toHaveTextContent('Riley');
+    expect(screen.getByTestId('members-detail')).not.toHaveTextContent('Taylor');
+  });
+
+  it('encodes person ids in row navigation and member detail links', async () => {
+    const { setDirectoryResponse, setOverviewResponse } = setup();
+    const personId = 'a/b?c d';
+    setDirectoryResponse({ ok: true, data: { ...DIRECTORY, members: [
+      { name: 'Taylor', available: true, departments: [{ key: 'engineering', name: 'Engineering' }] },
+    ] } });
+    const model = overviewModel();
+    model.input.tasks = { coverage: 'complete', items: [] };
+    model.input.approvals = { coverage: 'complete', items: [] };
+    model.input.members = { coverage: 'complete', items: [
+      { personId, displayName: 'Taylor', groupId: 'engineering' },
+    ] };
+    setOverviewResponse(model);
+    const { router } = renderApp('/members?scope=demo&detail=members');
+    const detailLink = await screen.findByTestId('members-detail-row');
+    expect(detailLink).toHaveAttribute('href', '/people/a%2Fb%3Fc%20d');
+    await userEvent.setup().click(screen.getByRole('button', { name: i18n.t('members.closeDetail') }));
+    fireEvent.keyDown(screen.getByTestId(`member-row-${personId}`), { key: 'Enter' });
+    await waitFor(() => expect(router.state.location.pathname).toBe('/people/a%2Fb%3Fc%20d'));
+  });
+
+  it('does not reread the directory after revocation', async () => {
+    const source = readFileSync('src/pages/MembersPage.tsx', 'utf8');
+    const directoryOptions = source.slice(source.indexOf("queryKey: ['team', 'directory', project]"), source.indexOf('  const denied ='));
+    // The parent also unmounts this page; pin the query gate itself as well as counting requests.
+    expect(directoryOptions).toContain('enabled: !revoked,');
+    const { fetch } = setup();
+    const { queryClient } = renderApp('/members?scope=demo');
+    await loaded();
+    const directoryReads = () => fetch.mock.calls.filter(([input]) => String(input) === '/api/team/directory').length;
+    const before = directoryReads();
+    act(() => revokeObservationReads(queryClient));
+    expect(await screen.findByTestId('state-forbidden')).toBeTruthy();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    expect(directoryReads()).toBe(before);
+  });
+
+  it('rejects an overview model belonging to another project', async () => {
+    const { setOverviewResponse } = setup();
+    const model = overviewModel();
+    model.project = 'docs';
+    setOverviewResponse(model);
+    renderApp('/members?scope=demo');
+    expect(await screen.findByTestId('member-row-unknown-0')).not.toHaveAttribute('data-openable');
+    expect(screen.getByTestId('member-pending-unknown-0')).toHaveTextContent('—');
+    expect(screen.getByTestId('member-pending-unknown-1')).toHaveTextContent('—');
+    expect(screen.queryByTestId('member-row-person-taylor')).toBeNull();
+    expect(screen.getByTestId('page-members')).not.toHaveTextContent('3 件');
+  });
+
+  it('marks a connection list with another page as partial', async () => {
+    const { setConnectionsResponse } = setup();
+    setConnectionsResponse({ ok: true, data: { items: [], next_cursor: `agent_${'3'.repeat(64)}` } });
+    renderApp('/members?scope=demo');
+    await loaded();
+    expect(await screen.findByTestId('members-partial')).toHaveTextContent(i18n.t('members.partialCoverage'));
+    expect(screen.getByTestId('members-coverage')).toHaveTextContent(i18n.t('members.coveragePartial'));
   });
 
   it('distinguishes unreadable names from absent names without exposing references', async () => {

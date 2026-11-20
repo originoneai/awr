@@ -214,13 +214,23 @@ function ProjectMembers({ project, projects }: { project: string; projects: { da
   const rows = useMemo<MemberRow[]>(() => {
     const overviewMembers = overviewData?.input.members.items ?? [];
     const summaries = new Map((derived?.people ?? []).map((summary) => [summary.person.id, summary]));
+    const directoryMembers = directory?.members ?? [];
+    const signature = (member: DirectoryMember) => JSON.stringify([
+      member.name, member.departments.map((item) => item.key).sort(),
+    ]);
+    const signatureCounts = new Map<string, number>();
+    for (const member of directoryMembers) {
+      const key = signature(member);
+      signatureCounts.set(key, (signatureCounts.get(key) ?? 0) + 1);
+    }
     const used = new Set<string>();
-    return (directory?.members ?? []).map((member, index) => {
+    return directoryMembers.map((member, index) => {
       const rawName = typeof member.name === 'string' ? member.name : null;
       const name = rawName && readsAsName(rawName) ? rawName
         : hasObservationValue(rawName) ? unavailableName : t('members.unnamed', { number: index + 1 });
       const departmentKeys = new Set(member.departments.map((item) => item.key));
-      const candidates = overviewMembers.filter((candidate): candidate is OverviewMember & { personId: string } => {
+      // Identical directory rows cannot decide which one owns a single overview identity.
+      const candidates = (signatureCounts.get(signature(member)) ?? 0) > 1 ? [] : overviewMembers.filter((candidate): candidate is OverviewMember & { personId: string } => {
         if (!candidate.personId || used.has(candidate.personId) || candidate.displayName !== rawName || !rawName) return false;
         return candidate.groupId != null && departmentKeys.has(candidate.groupId);
       });
