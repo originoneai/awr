@@ -35,7 +35,7 @@ describe('craft color tokens', () => {
     expect(offenders).toEqual([]);
   });
 
-  const roles = ['ink', 'secondary', 'muted', 'accent', 'positive', 'negative', 'warning'] as const;
+  const roles = ['ink', 'secondary', 'accent', 'positive', 'negative', 'warning'] as const;
   const surfaces = ['page', 'surface', 'raised'] as const;
   it.each(roles.flatMap((role) => surfaces.map((surface) => ({ role, surface }))))(
     'keeps $role text accessible on $surface (review r1.2)',
@@ -43,4 +43,13 @@ describe('craft color tokens', () => {
       expect(contrast(craftTokens.color[role], craftTokens.color[surface])).toBeGreaterThanOrEqual(4.5);
     },
   );
+
+  it('pins the prototype weak ink with its owner-approved sub-4.5 pairs', () => {
+    // The owner restored the prototype --ink-3 (#6B7487) on 2026-11-19; it reads below 4.5
+    // on the page and raised surfaces by design. Pin the exact numbers so drift fails.
+    expect(craftTokens.color.muted).toBe('#6B7487');
+    expect(contrast(craftTokens.color.muted, craftTokens.color.surface)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(craftTokens.color.muted, craftTokens.color.page)).toBeCloseTo(4.30, 1);
+    expect(contrast(craftTokens.color.muted, craftTokens.color.raised)).toBeCloseTo(4.07, 1);
+  });
 });

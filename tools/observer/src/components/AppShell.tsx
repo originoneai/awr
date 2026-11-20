@@ -11,20 +11,10 @@ import {
   type MenuProps,
 } from 'antd';
 import {
-  Activity,
-  Bell,
-  BookOpen,
-  Building2,
   ChevronDown,
   ChevronRight,
   Folder,
-  LayoutDashboard,
-  Moon,
-  Search,
-  Settings,
-  SquareCheckBig,
   Sun,
-  Users,
   type LucideIcon,
 } from 'lucide-react';
 import { useCallback, type ReactNode } from 'react';
@@ -35,13 +25,27 @@ import { PerspectiveProvider } from '../lib/perspective/PerspectiveProvider';
 import { PerspectiveSwitcher } from '../lib/perspective/PerspectiveSwitcher';
 import { unknownPerspectiveFacts, type PerspectiveFacts, type PerspectiveId } from '../lib/perspective/types';
 import { projectLabel } from '../lib/project-label';
-import { ordinaryDecisionsQueryOptions, overviewQueryOptions, projectsQueryOptions } from '../lib/queries';
+import { inboxPendingLabel } from '../lib/inbox-model';
+import { useInboxModel } from '../lib/inbox-queries';
+import { overviewQueryOptions, projectsQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
 import { useScope } from '../lib/scope';
 import type { TeamOverviewResponse } from '../lib/types';
 import { craftTokens } from '../theme';
 import { useCraftTheme } from './CraftThemeProvider';
 import { SearchPanel } from './SearchPanel';
+import {
+  ShellActivityIcon,
+  ShellBellIcon,
+  ShellBuildingIcon,
+  ShellInboxIcon,
+  ShellLessonsIcon,
+  ShellMembersIcon,
+  ShellMoonIcon,
+  ShellSearchIcon,
+  ShellSettingsIcon,
+  ShellWorkbenchIcon,
+} from './ShellGlyphs';
 import { ThemeToggle } from './ThemeToggle';
 import { useCompactViewport, useMediaQuery } from '../lib/viewport';
 
@@ -49,16 +53,16 @@ const { Header, Sider, Content } = Layout;
 const COMPACT_SEARCH_QUERY = '(max-width: 1240px)';
 
 const PRIMARY_NAVIGATION = [
-  { path: '/workbench', icon: LayoutDashboard, label: 'workbench' },
+  { path: '/workbench', icon: ShellWorkbenchIcon, label: 'workbench' },
   { path: '/projects', icon: Folder, label: 'projects' },
-  { path: '/inbox', icon: SquareCheckBig, label: 'inbox' },
-  { path: '/lessons', icon: BookOpen, label: 'lessons' },
+  { path: '/inbox', icon: ShellInboxIcon, label: 'inbox' },
+  { path: '/lessons', icon: ShellLessonsIcon, label: 'lessons' },
 ] as const;
 
 const ADMIN_NAVIGATION = [
-  { path: '/members', icon: Users, label: 'members' },
-  { path: '/activity', icon: Activity, label: 'activity' },
-  { path: '/settings', icon: Settings, label: 'settings' },
+  { path: '/members', icon: ShellMembersIcon, label: 'members' },
+  { path: '/activity', icon: ShellActivityIcon, label: 'activity' },
+  { path: '/settings', icon: ShellSettingsIcon, label: 'settings' },
 ] as const;
 
 const NAVIGATION = [...PRIMARY_NAVIGATION, ...ADMIN_NAVIGATION];
@@ -120,7 +124,7 @@ function ShellNavigation({ selectedKey, pendingLabel }: { selectedKey: Navigatio
           <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {t(`nav.${item.label}`)}
           </span>
-          {item.path === '/inbox' && pendingLabel ? (
+          {item.path === '/inbox' && pendingLabel !== null && pendingLabel !== '0' ? (
             <span
               data-testid="inbox-count"
               style={{
@@ -193,7 +197,9 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
   const projects = useQuery(projectsQueryOptions(revoked));
   // Shell indicators subscribe to reads the open page already owns; they never add another source.
   const overview = useQuery({ ...overviewQueryOptions(projectKey, revoked), enabled: false });
-  const pending = useQuery({ ...ordinaryDecisionsQueryOptions(projectKey ?? '', 'open', null, revoked), enabled: false });
+  // The pending pill, the bell dot and the inbox queue share this one read-model source
+  // (AWR-PPO-030): the member's pending entries across projects.
+  const inbox = useInboxModel();
   const compactNavigation = useCompactViewport();
   const compactSearch = useMediaQuery(COMPACT_SEARCH_QUERY);
   const selectedKey = selectedNavigation(location.pathname);
@@ -229,13 +235,10 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
     },
   };
 
-  const pendingData = pending.data?.result.data;
-  const pendingCount = pendingData?.items.length ?? null;
-  const pendingLabel = pendingData && pendingCount !== null && pendingCount > 0
-    ? `${pendingCount}${pendingData.truncated || pendingData.next_cursor !== null ? '+' : ''}`
-    : null;
+  const pendingLabel = inboxPendingLabel(inbox.model);
+  const pendingCount = pendingLabel === null ? null : inbox.model.count;
   const memberName = currentMemberName(overview.data) ?? t('shell.you');
-  const MobileThemeIcon = mode === 'dark' ? Sun : Moon;
+  const MobileThemeIcon = mode === 'dark' ? Sun : ShellMoonIcon;
   const mobileThemeLabel = t(mode === 'dark' ? 'shell.switchToLight' : 'shell.switchToDark');
   const perspectiveFacts = revoked
     ? unknownPerspectiveFacts()
@@ -295,8 +298,13 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
         <Avatar
           aria-hidden
           data-testid="current-member-avatar"
-          size={28}
-          style={{ background: token.colorFillSecondary, color: token.colorTextSecondary }}
+          className="shell-avatar"
+          size={craftTokens.shell.avatar.size}
+          // antd writes its own inline font size, so the initial's type stays inline too.
+          style={{
+            fontSize: craftTokens.shell.avatar.initialFontSize,
+            fontWeight: craftTokens.shell.avatar.initialFontWeight,
+          }}
         >
           {nameInitial(memberName)}
         </Avatar>
@@ -430,13 +438,12 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
             minHeight: 56,
             padding: compactNavigation ? '8px 16px' : '0 32px',
             lineHeight: 'normal',
-            background: 'var(--craft-color-page)',
             borderBottom: `1px solid ${token.colorSplit}`,
           }}
         >
           <Breadcrumb
             aria-label={t('shell.breadcrumbs')}
-            separator={<ChevronRight size={16} strokeWidth={1.5} aria-hidden />}
+            separator={<ChevronRight size={14} strokeWidth={1.5} aria-hidden />}
             style={{
               flex: compactNavigation ? '1 1 auto' : '0 1 auto',
               minWidth: 0,
@@ -450,7 +457,7 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
               {
                 title: (
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                    <Building2 size={16} strokeWidth={1.5} aria-hidden />
+                    <ShellBuildingIcon size={16} strokeWidth={1.5} aria-hidden />
                     <Dropdown menu={scopeMenu} trigger={['click']}>
                       <Button
                         type="text"
@@ -500,17 +507,7 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
                 aria-label={t('shell.search')}
                 aria-keyshortcuts="Meta+K Control+K"
                 onClick={(event) => openSearch(event.currentTarget)}
-                icon={<Search size={16} strokeWidth={1.5} aria-hidden />}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  flex: '0 0 200px',
-                  width: 200,
-                  height: 32,
-                  marginLeft: 'auto',
-                  paddingInline: 12,
-                  textAlign: 'left',
-                }}
+                icon={<ShellSearchIcon size={16} strokeWidth={1.5} aria-hidden />}
               >
                 <span style={{ flex: 1 }}>{t('shell.search')}</span>
                 <span
@@ -537,11 +534,12 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
               <Badge dot={pendingCount !== null && pendingCount > 0} color="var(--craft-color-accent)">
                 <Button
                   type="text"
+                  data-testid="inbox-bell"
                   aria-label={pendingCount === null
                     ? t('nav.inbox')
                     : t('shell.pendingNotifications', { count: pendingCount })}
                   onClick={() => navigate(inboxPath)}
-                  icon={<Bell size={16} strokeWidth={1.5} aria-hidden />}
+                  icon={<ShellBellIcon size={18} strokeWidth={1.5} aria-hidden />}
                   style={{ width: 32, height: 32, padding: 0 }}
                 />
               </Badge>

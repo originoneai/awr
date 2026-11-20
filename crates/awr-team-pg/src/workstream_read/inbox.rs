@@ -431,7 +431,13 @@ fn select(
                 "Inspect the refusal and coordinate its resolution with the responsible member. Target changes require a revised candidate, checks and independent review before integration; do not finalize the rejected version."
             },
         )
-    } else if data["waiting_user"] == true || matches!(phase, Some("blocked" | "waiting_user")) {
+    } else if data["waiting_user"] == true
+        || (!closed
+            && data["definition_state"]
+                .as_str()
+                .is_none_or(|s| s == "enabled")
+            && matches!(phase, Some("blocked" | "waiting_user")))
+    {
         (
             "blocked",
             "a current blocker or user wait remains",
@@ -813,5 +819,24 @@ mod tests {
     fn a_role_with_neither_authority_gets_no_route_guidance() {
         let data = route_available();
         assert!(select(&data, false, false, false, false, true).is_none());
+    }
+
+    #[test]
+    fn inactive_stale_blocker_phase_is_ignored_while_open_wait_remains() {
+        let mut data = json!({
+            "work_id": "a",
+            "workstream_id": "s",
+            "definition_state": "archived",
+            "runtime": {"state": "pending"},
+            "responsibility": {"relation": "pool"},
+            "progress": {"phase": "blocked", "contract_matches_current": true, "stale": false},
+            "waiting_user": false,
+            "collaboration": {}
+        });
+        assert!(select(&data, false, false, false, false, true).is_none());
+
+        data["waiting_user"] = json!(true);
+        let hint = select(&data, false, false, false, false, true).unwrap();
+        assert_eq!(hint["code"], "blocked");
     }
 }

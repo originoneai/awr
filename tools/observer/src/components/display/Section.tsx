@@ -4,7 +4,9 @@ import './display.css';
 
 export interface SectionProps {
   title: ReactNode;
-  count?: number;
+  count?: ReactNode;
+  onCountClick?: () => void;
+  countTestId?: string;
   extra?: ReactNode;
   children: ReactNode;
   padded?: boolean;
@@ -12,14 +14,16 @@ export interface SectionProps {
 }
 
 /** The prototype's bordered section: title, quiet count, trailing area and content. */
-export function Section({ title, count, extra, children, padded = false, className }: SectionProps) {
+export function Section({ title, count, onCountClick, countTestId, extra, children, padded = false, className }: SectionProps) {
   return (
     <Card
       className={['obs-section', className].filter(Boolean).join(' ')}
       title={(
         <span className="obs-section-heading">
           <h2 className="obs-section-title">{title}</h2>
-          {count === undefined ? null : <span className="obs-section-count">{count}</span>}
+          {count === undefined ? null : onCountClick ? (
+            <button type="button" className="obs-section-count obs-section-count-button" data-testid={countTestId} onClick={onCountClick}>{count}</button>
+          ) : <span className="obs-section-count" data-testid={countTestId}>{count}</span>}
         </span>
       )}
       extra={extra}

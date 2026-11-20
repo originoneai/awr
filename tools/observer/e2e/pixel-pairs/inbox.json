@@ -1,0 +1,333 @@
+{
+  "page": "inbox",
+  "proto": "#v=0&p=inbox&id=&tab=",
+  "app": "/inbox?scope=P-001&detail=answer%3AQ-001%3AM-002",
+  "ready": "[data-testid=\"page-inbox\"]",
+  "protoReady": ".queue",
+  "pairs": [
+    [
+      "page title",
+      ".head h1",
+      ".inbox-title",
+      [
+        "TEXT",
+        "margin-top",
+        "margin-bottom"
+      ]
+    ],
+    [
+      "page sub",
+      ".head .sub",
+      ".inbox-sub",
+      [
+        "TEXT",
+        "margin-left"
+      ]
+    ],
+    [
+      "page header",
+      ".head",
+      ".inbox-head",
+      [
+        "BOX",
+        "__h"
+      ]
+    ],
+    [
+      "lead",
+      ".lead",
+      ".inbox-lead",
+      [
+        "TEXT",
+        "margin-top",
+        "margin-bottom"
+      ]
+    ],
+    [
+      "queue+focus grid",
+      ".md",
+      ".inbox-md",
+      [
+        "display",
+        "grid-template-columns",
+        "column-gap",
+        "__h"
+      ]
+    ],
+    [
+      "queue card",
+      ".queue",
+      ".inbox-queue",
+      [
+        "BOX",
+        "background-color",
+        "border-top-color",
+        "box-shadow",
+        "__w"
+      ]
+    ],
+    [
+      "queue row",
+      ".qrow",
+      ".inbox-qrow",
+      [
+        "BOX",
+        "text-align",
+        "transition-property",
+        "__h"
+      ]
+    ],
+    [
+      "queue row selected",
+      ".qrow[aria-current=\"true\"]",
+      ".inbox-qrow[aria-current=\"true\"]",
+      [
+        "background-color",
+        "box-shadow"
+      ]
+    ],
+    [
+      "queue row title",
+      ".qrow .tt",
+      ".inbox-qrow-title",
+      [
+        "TEXT",
+        "overflow-wrap"
+      ]
+    ],
+    [
+      "queue row meta",
+      ".qrow .mm",
+      ".inbox-qrow-meta",
+      [
+        "TEXT",
+        "margin-top"
+      ]
+    ],
+    [
+      "queue row age",
+      ".qrow .age",
+      ".inbox-qrow-age",
+      [
+        "TEXT",
+        "padding-top",
+        "white-space"
+      ]
+    ],
+    [
+      "kind icon frame selected",
+      ".qrow[aria-current=\"true\"] .ki",
+      ".inbox-qrow[aria-current=\"true\"] .inbox-ki",
+      [
+        "width",
+        "height",
+        "border-top-left-radius",
+        "background-color",
+        "color",
+        "__w",
+        "__h"
+      ]
+    ],
+    [
+      "kind icon frame plain",
+      ".qrow:not([aria-current]) .ki",
+      ".inbox-qrow:not([aria-current]) .inbox-ki",
+      [
+        "width",
+        "height",
+        "border-top-left-radius",
+        "background-color",
+        "color",
+        "__w",
+        "__h"
+      ]
+    ],
+    [
+      "focus card",
+      ".focus",
+      ".inbox-focus",
+      [
+        "BOX",
+        "background-color",
+        "border-top-color",
+        "box-shadow"
+      ]
+    ],
+    [
+      "focus body",
+      ".focus-body",
+      ".inbox-focus-body",
+      [
+        "padding-top",
+        "padding-right",
+        "padding-bottom",
+        "padding-left"
+      ]
+    ],
+    [
+      "kind tag",
+      ".focus .tag",
+      ".inbox-kind-tag",
+      [
+        "BOX",
+        "TEXT",
+        "background-color",
+        "__h"
+      ]
+    ],
+    [
+      "focus title",
+      ".focus h3",
+      ".inbox-focus-title",
+      [
+        "TEXT",
+        "margin-top",
+        "overflow-wrap"
+      ]
+    ],
+    [
+      "focus from",
+      ".focus .from",
+      ".inbox-focus-from",
+      [
+        "BOX",
+        "TEXT",
+        "margin-top"
+      ]
+    ],
+    [
+      "focus ask",
+      ".focus .ask",
+      ".inbox-focus-ask",
+      [
+        "TEXT",
+        "margin-top",
+        "overflow-wrap"
+      ]
+    ],
+    [
+      "section heading",
+      ".sec h4",
+      ".inbox-sec h4",
+      [
+        "TEXT",
+        "margin-top",
+        "margin-bottom"
+      ]
+    ],
+    [
+      "basis list",
+      ".ev",
+      ".inbox-ev",
+      [
+        "display",
+        "column-gap",
+        "margin-top",
+        "padding-left"
+      ]
+    ],
+    [
+      "basis item",
+      ".ev li",
+      ".inbox-ev li",
+      [
+        "BOX",
+        "background-color",
+        "min-height",
+        "__h"
+      ]
+    ],
+    [
+      "related row",
+      ".sec[style*=\"gap: 20px\"]",
+      ".inbox-related",
+      [
+        "display",
+        "column-gap",
+        "flex-wrap",
+        "margin-top"
+      ]
+    ],
+    [
+      "related link",
+      ".sec .link",
+      ".inbox-link",
+      [
+        "TEXT",
+        "gap",
+        "text-decoration-line"
+      ]
+    ],
+    [
+      "where box",
+      ".where",
+      ".inbox-where",
+      [
+        "BOX",
+        "background-color",
+        "border-top-color"
+      ]
+    ],
+    [
+      "where heading",
+      ".where-h",
+      ".inbox-where-head",
+      [
+        "BOX",
+        "TEXT"
+      ]
+    ],
+    [
+      "where text",
+      ".where p",
+      ".inbox-where p",
+      [
+        "TEXT",
+        "margin-top"
+      ]
+    ],
+    [
+      "sayline",
+      ".sayline",
+      ".inbox-sayline",
+      [
+        "BOX",
+        "background-color",
+        "border-top-color"
+      ]
+    ],
+    [
+      "sayline text",
+      ".sayline .q",
+      ".inbox-sayline-text",
+      [
+        "TEXT",
+        "font-family",
+        "overflow-wrap"
+      ]
+    ],
+    [
+      "copy button",
+      ".sayline .btn",
+      ".inbox-copy",
+      [
+        "height",
+        "min-height",
+        "padding-left",
+        "border-top-left-radius",
+        "font-size",
+        "color",
+        "background-color"
+      ]
+    ],
+    [
+      "hint",
+      ".where .hint",
+      ".inbox-hint",
+      [
+        "TEXT",
+        "margin-top"
+      ]
+    ]
+  ]
+}
