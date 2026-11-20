@@ -12,11 +12,24 @@ explicit rotation. The current Observer member page does not issue credentials.
 After connecting, call `awr_team_query` with `op: "capabilities"` to confirm the
 current identity and permissions, then `op: "work.next"`. Both use
 `protocol_version: 1`. This project-level entry lists up to 20 resumable sessions
-owned by the current actor/client and a paged set of visible unfinished tasks.
+owned by the current actor/client and a paged set of visible unfinished tasks
+whose definitions are enabled. Draft, archived and cancelled definitions remain
+available through explicit reads, but are excluded from the candidate page even
+when no runtime row exists. An inactive own session is listed for continuation
+only while its current guidance has a recovery, settlement or other pending step;
+sessions that only redirect to `work.next` remain historical reads. Filtered
+history does not consume the 20-session bound or set `resume_truncated`.
 It distinguishes preparation, observation, held leases, dependency waits and
-recovery needs without exposing private dependency names. Follow the returned
-`next_query`; consume `work.prepare` before claiming or executing. Navigation
+recovery needs without exposing private dependency names. Read-only `observe`
+candidates link to `work.observe`. Follow the returned `next_query`; consume
+`work.prepare` before claiming or executing. Navigation
 grants no execution authority and does not certify dependency acceptance.
+
+`inspect_only` ends the current observation step. Its retained `action.op` of
+`work.next` is a recheck entry point after a change listed in `recheck_on`, not
+an instruction to immediately repeat navigation. Stop automatic navigation while
+authority and source state are unchanged; acquiring execution authority still
+requires the appropriate scoped grant.
 
 The native [Team CLI](team-cli.md) exposes the same reads through
 `awr team capabilities --remote NAME` and `awr team work next --remote NAME`,

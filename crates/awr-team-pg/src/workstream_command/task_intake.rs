@@ -720,27 +720,29 @@ pub(crate) async fn read_state(
     Ok(data)
 }
 
-/// Replace only generic intake hints. Client declaration, recovery, live
-/// execution and delivery retain priority; no read grants execution authority.
+/// Guide intake from the published definition and current responsibility.
+/// Protective recovery and collaboration hints retain priority; read grants
+/// do not authorize execution.
 pub(crate) fn guidance(data: &Value, fallback: Value) -> Value {
     if data["definition_state"]
         .as_str()
         .is_some_and(|s| s != "enabled")
-        && matches!(
+        && (matches!(
             fallback["code"].as_str(),
             Some(
                 "restore_context"
                     | "start_session"
                     | "other_client_session"
                     | "declare_client"
+                    | "renew_claim"
                     | "report_at_boundary"
                     | "prepare_execution"
                     | "start_execution"
             )
-        )
+        ) || (fallback["code"] == "wait_for_change" && data["waiting_user"] != true))
     {
         return json!({"code":"work_definition_inactive","when":"the current task definition is inactive",
-            "because":"the published definition is not enabled","action":{"op":"work.next","note":"Select enabled work; archive or draft state does not grant execution authority."},
+            "because":"the published definition is not enabled","action":{"op":"work.next","note":"Select an enabled candidate; draft, archived and cancelled definitions remain readable but do not grant execution authority."},
             "recheck_on":"source definition or recovery changes"});
     }
     if !matches!(
@@ -770,10 +772,7 @@ pub(crate) fn guidance(data: &Value, fallback: Value) -> Value {
         "pool" | "assigned_to_me" | "owned_by_me"
             if data["responsibility"]["coordination_allowed_advisory"] != true =>
         {
-            (
-                "work.next",
-                "Observe this task within your current scope; taking it requires a current development grant.",
-            )
+            return crate::workstream_read::inspect_only();
         }
         "pool" | "assigned_to_me" | "owned_by_me" if data["claim"]["lease_live"] != true => {
             let owns_session =
