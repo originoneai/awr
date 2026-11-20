@@ -16,12 +16,36 @@ as `not_read` with a reason and leaves the other projects intact.
 | Surface | Entry | Input |
 | --- | --- | --- |
 | Agent tool | `awr_team_portfolio_overview` (MCP, read-only annotation) | `protocol_version`, optional `limit`, optional `cursor` |
+| Browser | `POST /v1/web/portfolio/overview` (HttpOnly cookie session) | the same JSON object as the Agent tool |
 | Store | `WorkstreamReadStore::portfolio_overview(tenant, bearer, registered, limit, cursor)` | as above plus the operator-registered project ids of the tenant |
 
 The tenant comes from the transport, never from the request body. The read
 covers projects that are operator-registered in the serving instance and in that
 tenant; a project the operator has yet to register stays unenumerated even when
 a membership exists, matching the member project list of the web entry.
+
+## Browser session entry
+
+The browser route follows the other POST routes under `/v1/web/*`: an exact
+allowlisted Origin, an allowed Host, the `x-awr-web` guard, and a live HttpOnly
+cookie session are required. Login binds the session to the credential's tenant
+on the server; the browser cannot supply or change it. Session revocation,
+credential revocation, and permission changes therefore affect the next read
+without a bridge cache retaining the old member result.
+
+MCP and the browser route call the same service function and serialize its
+returned JSON value directly. A successful browser response is the same object
+as the MCP tool's `structured_content`, with no additional `ok` or `data`
+wrapper. Two separate calls can have different `data.as_of.at_unix_ms` read
+clocks; every other field follows the same implementation and disclosure rules.
+The browser request body accepts only `protocol_version`, `limit`, and `cursor`.
+
+Observer exposes this read as `GET /api/team/portfolio`, forwarding the optional
+`limit` and `cursor` query parameters to the POST body. It revalidates the cookie
+session on every request and does not cache the portfolio result. Its response
+keeps the service object unchanged under `result` and adds only the bridge read
+time, coverage, and freshness metadata. Authentication or upstream failures
+return no previous `result`.
 
 ## Field table
 

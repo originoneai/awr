@@ -134,14 +134,17 @@ describe('narrow viewport guard', () => {
     expect(violations).toEqual([]);
   });
 
-  it('uses a native mobile page selector and keeps the theme target at 40px', () => {
+  it('uses a native mobile page selector and keeps the theme target in the mobile shell token', () => {
     const css = readFileSync('src/global.css', 'utf8');
     const shell = readFileSync('src/components/AppShell.tsx', 'utf8');
     const theme = readFileSync('src/theme.ts', 'utf8');
-    expect(theme).toMatch(/touchTarget:\s*40/);
+    expect(theme).toMatch(/mobileShell:\s*\{[^}]*brandMarkSize[^}]*themeButtonSize:\s*36/);
     expect(shell).toMatch(/<select[\s\S]*data-testid="page-selector"/);
     expect(shell).toMatch(/onChange=\{\(event\) => navigate\(`\$\{event\.target\.value\}\$\{scopeSearch\}`\)\}/);
-    expect(shell).toMatch(/width: craftTokens\.touchTarget, height: craftTokens\.touchTarget/);
+    // AWR-PPO-081: compact sizing lives in the CSS token (the prototype's 36px mobile
+    // button), and AppShell keeps no inline width/height metrics for it.
+    expect(css).toContain('width: var(--craft-shell-mobile-theme-button-size)');
+    expect(shell).not.toMatch(/width:\s*craftTokens\.touchTarget/);
     expect(shell).not.toContain('<Drawer');
     expect(css).not.toContain('.shell-drawer');
   });

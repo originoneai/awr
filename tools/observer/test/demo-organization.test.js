@@ -901,6 +901,15 @@ test('the canonical variant serves the fully-known overview model for each proje
     assert.equal(derived.coverage.sections.waits.complete, true, `${project} waits section`);
     if (project === 'P-001') {
       assert.deepEqual(derived.views.me.metrics.map((metric) => metric.count), PROTOTYPE_METRICS.me);
+      const question = model.input.decisions.items.find((item) => item.id === 'Q-001');
+      const pending = fixture.pending.find((item) => item.pending_id === 'A-001');
+      assert.equal(question.question, '空状态要不要显示引导文案');
+      assert.equal(question.description, pending.description);
+      assert.match(question.description, /订单列表为空时/);
+      // The report fact stays at the prototype's Nov 17 14:00; the page's calendar-day
+      // rule turns its 47-hour interval into the prototype's two-day report age.
+      assert.equal(model.input.tasks.items.find((task) => task.id === 'T-104').report.reportedAtUnixMs,
+        Date.parse('2026-11-17T14:00:00.000Z'));
     }
     for (const plane of Object.keys(union)) {
       for (const item of model.input[plane].items) union[plane].push(item);
@@ -1095,4 +1104,72 @@ test('the full variant keeps the merged overview-model reply shape byte for byte
   const model = await call('GET /api/team/overview-model', '/api/team/overview-model?project=P-001');
   assert.equal(model.ok, true, JSON.stringify(model));
   assert.deepEqual(model, require('./fixtures/overview-model-full-demo.json'));
+});
+
+test('canonical directory and shell facts establish all four perspectives without relaxing their rules', async () => {
+  const demo = createDemoOrganization({ variant: 'canonical', timestampShiftMs: 0 });
+  const directory = demo.directory('P-001').json.data;
+  assert.deepEqual(directory.plan.departments.map(({ id, name, parent_id }) => ({ id, name, parent_id: parent_id ?? null })), [
+    { id: 'G-004', name: '研发部', parent_id: null },
+    { id: 'G-005', name: '客户交付部', parent_id: null },
+    { id: 'G-001', name: '应用小组', parent_id: 'G-004' },
+    { id: 'G-002', name: '平台小组', parent_id: 'G-004' },
+    { id: 'G-003', name: '交付小组', parent_id: 'G-005' },
+  ]);
+  assert.notEqual(projectDirectory(directory), null, 'the real directory validator accepts the complete hierarchy');
+
+  const bridge = bridgeForTest({ demoVariant: 'canonical', demoTimestampShiftMs: 0 });
+  const reply = await bridge.call('GET /api/team/shell', '/api/team/shell');
+  assert.deepEqual(reply, {
+    ok: true,
+    source: 'demo',
+    organizationName: '示例组织',
+    perspective: {
+      supervisedGroupCount: 0,
+      memberGroupProjectCount: 1,
+      visibleProjectGroupCount: 3,
+      visibleProjectDepartmentCount: 2,
+      canViewAllProjects: true,
+      directory: { groupsRegistered: true, departmentsRegistered: true },
+      pending: { me: null, lead: null, dept: null, top: null },
+    },
+  });
+  assert.equal(bridge.bridge.TEAM.demoOrganization.data.viewer.can_view_all_projects, true,
+    'the authorization is an explicit recorded viewer-scope fact, not inferred from coverage');
+});
+
+test('shell source is a bridge fact while every pre-existing variant reply stays unchanged', async () => {
+  for (const variant of DEMO_VARIANTS) {
+    if (variant === 'canonical') continue;
+    const bridge = bridgeForTest({ demoVariant: variant, demoTimestampShiftMs: 0, now: () => fixture.now_unix_ms });
+    assert.deepEqual(await bridge.call('GET /api/team/shell', '/api/team/shell'),
+      { ok: true, source: 'demo', organizationName: '示例组织', perspective: null }, variant);
+    assert.notEqual(bridge.bridge.TEAM.demoOrganization.data.viewer.can_view_all_projects, true,
+      `${variant}: only canonical records the viewer's all-projects grant`);
+    const projects = await bridge.call('GET /api/team/projects', '/api/team/projects');
+    assert.deepEqual(Object.keys(projects), ['ok', 'projects', 'session', 'view'], `${variant}: no new project-reply fields`);
+    assert.equal('perspective' in projects, false, `${variant}: perspective facts use the separate shell read`);
+    if (variant === 'full') {
+      assert.deepEqual(projects.projects, fixture.projects.map((project) => ({
+        key: project.key, title: project.title, role: fixture.viewer.role,
+      })));
+      const fullDirectory = bridge.bridge.TEAM.demoOrganization.directory('P-001').json.data;
+      // Main's unchanged full slice: the project's group and parent plus the groups of its
+      // own members (M-004 许宁 belongs to 平台小组), exactly as before this task.
+      assert.deepEqual(fullDirectory.plan.departments.map(({ id, name, parent_id }) => ({ id, name, parent_id: parent_id ?? null })), [
+        { id: 'G-004', name: '研发部', parent_id: null },
+        { id: 'G-001', name: '应用小组', parent_id: 'G-004' },
+        { id: 'G-002', name: '平台小组', parent_id: 'G-004' },
+      ]);
+    }
+  }
+  const live = bridgeForTest({ teamUrl: 'http://127.0.0.1:1', demo: false });
+  assert.deepEqual(await live.call('GET /api/team/shell', '/api/team/shell'),
+    { ok: true, source: 'live', perspective: null, organizationName: null });
+});
+
+test('the shell read is refused when the deployment is neither live nor a demo', async () => {
+  const bridge = bridgeForTest({ demo: false });
+  assert.deepEqual(await bridge.call('GET /api/team/shell', '/api/team/shell'),
+    { ok: false, error: { code: 'DemoDisabled', message: 'fixtures require demo mode' } });
 });

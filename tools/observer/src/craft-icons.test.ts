@@ -28,12 +28,18 @@ describe('craft icon rules', () => {
   it('draws the shell from the prototype registry, not from direct icon imports', () => {
     // The shell's glyphs (including home, sliders, activity, bell, search, building,
     // book, moon, which lucide redesigned after the prototype's snapshot) all come
-    // from the one registry; its fixture test pins the node data itself.
+    // from the one registry; its fixture test pins the node data itself. The scope
+    // control dropped its chevron with the prototype crumb parity (AWR-PPO-081), so
+    // the shell no longer draws ChevronDownIcon.
     const shell = readFileSync('src/components/AppShell.tsx', 'utf8');
     expect(shell).toContain("from './icons/prototype-icons'");
-    for (const name of ['HomeIcon', 'FolderIcon', 'InboxIcon', 'BookIcon', 'UsersIcon', 'ActivityIcon', 'SlidersIcon', 'BellIcon', 'SearchIcon', 'BuildingIcon', 'MoonIcon', 'SunIcon', 'ChevronRightIcon', 'ChevronDownIcon']) {
+    for (const name of ['HomeIcon', 'FolderIcon', 'InboxIcon', 'BookIcon', 'UsersIcon', 'ActivityIcon', 'SlidersIcon', 'BellIcon', 'SearchIcon', 'BuildingIcon', 'MoonIcon', 'SunIcon', 'ChevronRightIcon']) {
       expect(shell).toMatch(new RegExp(`\\b${name}\\b`));
     }
+    // The header's data-source control draws its layers glyph from the same registry.
+    const dataSource = readFileSync('src/components/DataSourceToggle.tsx', 'utf8');
+    expect(dataSource).toContain("from './icons/prototype-icons'");
+    expect(dataSource).toMatch(/\bLayersIcon\b/);
     for (const protoName of ['home', 'inbox', 'book', 'users', 'activity', 'sliders', 'bell', 'search', 'building', 'moon', 'chev', 'sun', 'folder']) {
       expect(PROTOTYPE_ICONS).toHaveProperty(protoName);
     }

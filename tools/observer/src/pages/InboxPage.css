@@ -294,6 +294,9 @@
 
 .inbox-sec p {
   margin: 0;
+  /* The prototype's .sec p inherits the body's 14px/20px; the app root keeps antd's
+     ratio, so the shared body-leading token restores the prototype's 20px. */
+  line-height: var(--craft-leading-body);
   overflow-wrap: anywhere;
 }
 
@@ -315,6 +318,8 @@
   border-radius: var(--craft-inbox-ki-radius);
   background: var(--craft-color-raised);
   font-size: var(--craft-inbox-sub-size);
+  /* The prototype's .ev li (13px) inherits the body's absolute 20px; pin the same token. */
+  line-height: var(--craft-leading-body);
   overflow-wrap: anywhere;
 }
 

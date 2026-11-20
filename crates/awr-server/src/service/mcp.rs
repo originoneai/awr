@@ -1667,7 +1667,7 @@ fn catalog() -> Vec<Tool> {
     vec![
         input_contracts::tool(),
         Tool::new("awr_team_query",
-            "Scoped Team reads. Begin with capabilities (current identity/permissions), then work.next (own sessions and scoped task navigation). Consume work.prepare before any claim or execution. Use work.snapshot for context and observation in one read transaction, within max_context_bytes; its context_hash remains compatible with work.prepare. Supervisors use selector-free work.inbox. work.list / work.search summaries carry an execution liveness fact: the active/ended state of the work's session of record under its current ownership version (the work.observe selector: live claim, active session, latest checkpoint, then newer session id), plus that session's last checkpoint time; it names no session, client or actor, reads no checkpoint content, and grants no authority. work.observe shares bounded neutral candidate/check/review/integration/publication facts and independently scoped role guidance with prepare/snapshot/inbox, preserving context hashes. Follow one action.op and its optional action.query; recheck_on names refresh triggers. Required context and unknown effects retain priority. max_context_bytes bounds the full observation response. Receipt access and unknown model/usage remain explicit. audit.requests and audit.development provide paged metadata/history under the same personal/project permission boundary. Ops audit: audit.history / audit.export / audit.count (TMCP-040) — members see own allowed records; project-wide requires audit.read_project. Counts/exports use the same scope. Not full chat/tool-IO/token billing; PG audit does not claim DB-owner non-repudiation. Tool discovery is navigation-only; each query rechecks authority. Re-prepare after relevant changes. No execution admission. Approved cross-stream content: delivery.exports with consumer work_id, then artifact.content or bounded artifact.segment with export_id and expected_sha256. For segments follow every next_query, concatenate contiguous ranges from zero and verify the full length/digest; the last page alone is not a complete read. Disclosure never satisfies adoption. Neutral facts: delivery.neutral.inspect. Current source synchronization: delivery.source.status. Missing neutral command response: delivery.neutral.outcome with actual work_id and original client retry ID. delivery.integration.inspect uses the generated IntegrationRequest.request_id (data.integration_id), preserving the original candidate. Neutral inspection includes scoped connector versions; review.inspect includes decision IDs. Descriptions grant no authority.",
+            "Scoped Team reads. Begin with capabilities (current identity/permissions), then work.next (own sessions and scoped task navigation). Consume work.prepare before any claim or execution. Use work.snapshot for context and observation in one read transaction, within max_context_bytes; its context_hash remains compatible with work.prepare. Supervisors use selector-free work.inbox. work.list / work.search summaries carry an execution liveness fact: the active/ended state of the work's session of record under its current ownership version (the work.observe selector: live claim, active session, latest checkpoint, then newer session id), plus that session's last checkpoint time; it names no session, client or actor, reads no checkpoint content, and grants no authority. work.observe shares bounded neutral candidate/check/review/integration/publication facts and independently scoped role guidance with prepare/snapshot/inbox, preserving context hashes. Follow one action.op and its optional action.query; recheck_on names refresh triggers. Required context and unknown effects retain priority. max_context_bytes bounds the full observation response. Receipt access and unknown model/usage remain explicit. audit.requests and audit.development provide paged metadata/history under the same personal/project permission boundary; each item additionally carries an `actor` object (person_id, display_name) and a `client` object (display_name) resolved only from recorded, unambiguous, currently active person-agent bindings — agent accounts through active bindings, human accounts through the shared review resolver, conflicting or inactive relationships stay null — and both objects are filled only when the reader separately holds the directory.read authority (agent readers also need a live Project-scoped read delegation); otherwise every identity field is null while the audit rows return unchanged, and `client.display_name` stays null until a per-client display-name source is registered. Ops audit: audit.history / audit.export / audit.count (TMCP-040) — members see own allowed records; project-wide requires audit.read_project. Counts/exports use the same scope. Not full chat/tool-IO/token billing; PG audit does not claim DB-owner non-repudiation. Tool discovery is navigation-only; each query rechecks authority. Re-prepare after relevant changes. No execution admission. Approved cross-stream content: delivery.exports with consumer work_id, then artifact.content or bounded artifact.segment with export_id and expected_sha256. For segments follow every next_query, concatenate contiguous ranges from zero and verify the full length/digest; the last page alone is not a complete read. Disclosure never satisfies adoption. Neutral facts: delivery.neutral.inspect. Current source synchronization: delivery.source.status. Missing neutral command response: delivery.neutral.outcome with actual work_id and original client retry ID. delivery.integration.inspect uses the generated IntegrationRequest.request_id (data.integration_id), preserving the original candidate. Neutral inspection includes scoped connector versions; review.inspect includes decision IDs. Descriptions grant no authority.",
             query.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(true).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_command",
@@ -1994,25 +1994,13 @@ impl ServerHandler for Endpoint {
                     super::directory::operate(&self.state, &self.project, &access.bearer, args, operation).await
                 }
                 "awr_team_portfolio_overview" => {
-                    let req: awr_team_pg::PortfolioOverviewRequest =
-                        serde_json::from_value(args)
-                            .map_err(|_| PgError::invalid_command_fields())?;
-                    let registered: Vec<String> = self
-                        .state
-                        .projects
-                        .values()
-                        .filter(|registered| registered.tenant_id == self.project.tenant_id)
-                        .map(|registered| registered.project_id.clone())
-                        .collect();
-                    self.state
-                        .store
-                        .portfolio_overview(
-                            &self.project.tenant_id,
-                            &access.bearer,
-                            &registered,
-                            req,
-                        )
-                        .await
+                    super::portfolio::overview(
+                        &self.state,
+                        &self.project.tenant_id,
+                        &access.bearer,
+                        args,
+                    )
+                    .await
                 }
                 "awr_team_access_inspect" => {
                     let req: super::AccessInspectBody = serde_json::from_value(args)

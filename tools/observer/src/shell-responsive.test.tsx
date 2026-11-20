@@ -1,8 +1,16 @@
+import { readFileSync } from 'node:fs';
 import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import i18n from './i18n';
 import { DEMO_OVERVIEW, DEMO_PROJECTS, mockViewport, renderApp, stubFetch } from './test-utils';
+
+const shellStyles = document.createElement('style');
+// jsdom never evaluates width media queries, so this sheet copy unwraps the compact
+// breakpoint: every test below renders at or under 860px, where the block genuinely applies.
+shellStyles.textContent = readFileSync('src/global.css', 'utf8')
+  .replace(/@media \(max-width: 860px\)/g, '@media all');
+document.head.append(shellStyles);
 
 let narrowViewport: ReturnType<typeof mockViewport> | null = null;
 
@@ -27,8 +35,11 @@ describe('responsive navigation at 860px', () => {
     expect(document.querySelector('.ant-layout-sider-zero-width-trigger')).toBeNull();
     expect(document.querySelector('.ant-drawer')).toBeNull();
     const theme = screen.getByTestId('mobile-theme-toggle');
-    expect(theme.style.width).toBe('40px');
-    expect(theme.style.height).toBe('40px');
+    const themeStyle = getComputedStyle(theme);
+    expect(themeStyle.width).toBe('var(--craft-shell-mobile-theme-button-size)');
+    expect(themeStyle.height).toBe('var(--craft-shell-mobile-theme-button-size)');
+    expect(theme.style.width).toBe('');
+    expect(theme.style.height).toBe('');
     expect(screen.getByTestId('avatar-menu-trigger')).toBeTruthy();
     const mobileBrand = screen.getByTestId('mobile-navigation').querySelector('.shell-brand-mobile');
     expect(mobileBrand?.querySelector('[data-testid="brand-mark-color"]')?.getAttribute('src'))
@@ -119,10 +130,23 @@ describe('responsive navigation at 860px', () => {
     const header = document.querySelector<HTMLElement>('.shell-header');
     const content = document.querySelector<HTMLElement>('.shell-content');
     const mobile = screen.getByTestId('mobile-navigation');
-    expect(header?.style.flexWrap).toBe('wrap');
-    expect(header?.style.height).toBe('auto');
-    expect(content?.style.padding).toBe('16px');
-    expect(mobile.style.minWidth).toBe('0px');
+    const headerStyle = header ? getComputedStyle(header) : null;
+    const contentStyle = content ? getComputedStyle(content) : null;
+    const mobileStyle = getComputedStyle(mobile);
+    expect(headerStyle?.flexWrap).toBe('wrap');
+    expect(headerStyle?.height).toBe('auto');
+    expect(headerStyle?.minHeight).toBe('0px');
+    // jsdom cannot re-serialize var()-bearing shorthands, so the compact numbers are
+    // asserted as the literals the prototype's own media block declares (8/16/8/48).
+    expect(headerStyle?.padding).toBe('8px 16px');
+    expect(headerStyle?.gap).toBe('8px');
+    expect(header?.style.padding).toBe('');
+    expect(header?.style.gap).toBe('');
+    expect(contentStyle?.padding).toBe('0px 16px 48px');
+    expect(content?.style.padding).toBe('');
+    expect(mobileStyle.minWidth).toBe('0px');
+    expect(mobileStyle.padding).toBe('12px 16px');
+    expect(mobile.style.padding).toBe('');
     expect(getComputedStyle(document.documentElement).overflowX).not.toBe('scroll');
   });
 });

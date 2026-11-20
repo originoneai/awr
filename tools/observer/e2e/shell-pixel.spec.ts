@@ -18,6 +18,7 @@ const THEME = {
     muted: 'rgb(107, 116, 135)',
     secondary: 'rgb(75, 85, 101)',
     raised: 'rgb(236, 239, 244)',
+    surface: 'rgb(255, 255, 255)',
   },
   dark: {
     page: [11, 13, 20],
@@ -26,6 +27,7 @@ const THEME = {
     muted: 'rgb(122, 130, 150)',
     secondary: 'rgb(163, 169, 184)',
     raised: 'rgb(26, 30, 40)',
+    surface: 'rgb(17, 20, 28)',
   },
 } as const;
 
@@ -109,6 +111,12 @@ test('the shell matches the prototype numbers at 1440x900', async ({ page }, tes
       themeIcon: box(q('.shell-theme button svg')),
       themeLabel: box(q('.shell-theme-label')),
       themeStyle: (() => { const s = style(q('.shell-theme button')); return s && { gap: s.columnGap, padding: s.padding, border: s.borderTopWidth, lineHeight: s.lineHeight, whiteSpace: s.whiteSpace, textAlign: s.textAlign }; })(),
+      demoNote: box(q('.shell-demo-note')),
+      demoNoteStyle: (() => { const s = style(q('.shell-demo-note')); return s && { size: s.fontSize, lineHeight: s.lineHeight, color: s.color, margin: s.margin }; })(),
+      tog: box(q('.shell-header .shell-data-source')),
+      togStyle: (() => { const s = style(q('.shell-header .shell-data-source')); return s && { padding: s.padding, color: s.color, fontSize: s.fontSize, borderTopColor: s.borderTopColor, radius: s.borderTopLeftRadius, background: s.backgroundColor }; })(),
+      togIcon: box(q('.shell-header .shell-data-source svg')),
+      togLabel: box(q('.shell-header .shell-data-source .shell-data-source-label')),
       topbar: box(q('.shell-header')),
       topbarStyle: (() => { const s = style(q('.shell-header')); return s && { padding: s.padding, backgroundColor: s.backgroundColor, backdropFilter: s.backdropFilter, borderBottom: s.borderBottomColor }; })(),
       crumbBuildingIcon: box(q('.shell-header nav.ant-breadcrumb svg:first-of-type')),
@@ -177,13 +185,38 @@ test('the shell matches the prototype numbers at 1440x900', async ({ page }, tes
   ]);
 
   // --- Theme button (prototype .side-foot button: full row, 36px, icon x 24, label x 50) ---
-  // The prototype's own button sits at y 792 because a prototype-only side note follows;
-  // without it the row is flush against the sidebar's 16px bottom padding: 900-16-36.
-  expect(metrics.themeButton).toMatchObject({ x: 12, w: 207, h: 36, y: expect.any(Number) });
-  expect(metrics.themeButton!.y).toBeGreaterThan(847);
+  // The prototype's own button sits at y 792 because its demo-only side note wraps three
+  // lines; the product's one-line demo note (示例数据，全部是合成的) keeps the identical
+  // bottom stack at 900 - 16 padding - 16 note - 8 note margin - 36 button.
+  expect(metrics.themeButton).toMatchObject({ x: 12, w: 207, h: 36 });
+  // The exact y carries a hair of subpixel rounding; the stack is pinned within half a pixel.
+  expect(metrics.themeButton!.y).toBeGreaterThan(823.5);
+  expect(metrics.themeButton!.y).toBeLessThan(824.5);
   expect(metrics.themeIcon).toMatchObject({ x: 24, w: 16, h: 16 });
   expect(metrics.themeLabel?.x).toBe(50);
   expect(metrics.themeStyle).toMatchObject({ gap: '10px', padding: '0px 12px', border: '0px', lineHeight: '20px', whiteSpace: 'normal', textAlign: 'left' });
+
+  // --- Demo note (prototype .side-foot .side-note: weak 12px/16px at the sider's text inset) ---
+  // The paragraph spans the sider's text column; one line of the product wording is 16px tall
+  // (a wrap would double it), which is what keeps the theme row at y 824 above.
+  expect(metrics.demoNote).toMatchObject({ x: 24, w: 183, h: 16 });
+  expect(metrics.demoNote!.y).toBeGreaterThan(867.5);
+  expect(metrics.demoNote!.y).toBeLessThan(868.5);
+  expect(metrics.demoNoteStyle).toEqual({ size: '12px', lineHeight: '16px', color: palette.muted, margin: '8px 12px 0px' });
+
+  // --- Data source control (prototype .top > .tog: 32px hairline field, layers glyph, 13px label) ---
+  expect(metrics.tog).toMatchObject({ y: 11.5, h: 32 });
+  expect(metrics.togStyle).toMatchObject({
+    padding: '0px 10px',
+    color: palette.secondary,
+    fontSize: '13px',
+    borderTopColor: palette.hairline,
+    radius: '8px',
+    background: palette.surface,
+  });
+  expect(metrics.togIcon).toMatchObject({ y: 19.5, w: 16, h: 16 });
+  expect(metrics.togLabel?.y).toBe(17.5);
+  expect(metrics.togLabel!.x - (metrics.togIcon!.x + metrics.togIcon!.w)).toBe(8);
 
   // --- Topbar (prototype .top: height 56, padding 0 32px, page tone at 88% + 8px blur) ---
   expect(metrics.topbar).toMatchObject({ x: 232, y: 0, w: 1208, h: 56 });
@@ -227,10 +260,11 @@ test('the shell matches the prototype numbers at 1440x900', async ({ page }, tes
   // --- Body type (prototype body: 400 14px/20px var(--font), antialiased) ---
   expect(metrics.htmlSmoothing).toBe('antialiased');
   expect(metrics.bodySmoothing).toBe('antialiased');
-  expect(metrics.bodyFont).toEqual({
-    // Chrome's computed serialization renames the bare BlinkMacSystemFont to "system-ui";
-    // both pages compute identically (the probe compares them directly and passes).
-    family: '-apple-system, "system-ui", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif',
+  // Chrome serializes the bare BlinkMacSystemFont as "system-ui" on macOS and keeps it verbatim on
+  // Linux; the page and the prototype compute identically either way, so compare the prototype's own
+  // declared stack after undoing that renaming.
+  expect({ ...metrics.bodyFont, family: metrics.bodyFont.family.replace('"system-ui"', 'BlinkMacSystemFont') }).toEqual({
+    family: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif',
     size: '14px',
     lineHeight: '20px',
     weight: '400',
@@ -256,4 +290,198 @@ test('the shell matches the prototype numbers at 1440x900', async ({ page }, tes
 
   // --- Weak ink token restored to the prototype --ink-3 ---
   expect(metrics.mutedVar).toBe(mode === 'light' ? '#6B7487' : '#7A8296');
+});
+
+test('the shell matches the prototype numbers at 390x844', async ({ page }, testInfo) => {
+  const mode = testInfo.project.name === 'desktop-dark' ? 'dark' : 'light';
+  const palette = THEME[mode];
+  const ink = mode === 'light' ? 'rgb(17, 24, 39)' : 'rgb(238, 240, 245)';
+  const side = mode === 'light' ? 'rgb(255, 255, 255)' : 'rgb(7, 8, 13)';
+  const surface = mode === 'light' ? 'rgb(255, 255, 255)' : 'rgb(17, 20, 28)';
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${baseUrl}/activity?project=P-001&kind=development`);
+  await page.locator('[data-testid="page-activity"]').waitFor();
+  await page.evaluate(() => document.fonts.ready);
+  await page.waitForTimeout(300);
+
+  const metrics = await page.evaluate(() => {
+    const q = (selector: string) => document.querySelector(selector);
+    const box = (el: Element | null) => {
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: Math.round(r.left * 100) / 100, y: Math.round(r.top * 100) / 100, w: Math.round(r.width * 100) / 100, h: Math.round(r.height * 100) / 100 };
+    };
+    const style = (el: Element | null) => (el ? getComputedStyle(el) : null);
+    const navigation = q('[data-testid="mobile-navigation"]');
+    const brand = q('.shell-brand-mobile');
+    const mark = [...document.querySelectorAll('.shell-brand-mobile .shell-brand-mark')].find((el) => el.getBoundingClientRect().width > 0) ?? null;
+    const wordmark = q('.shell-brand-wordmark');
+    const selector = q('[data-testid="page-selector"]');
+    const theme = q('[data-testid="mobile-theme-toggle"]');
+    const header = q('.shell-header');
+    const content = q('.shell-content');
+    const pageHeader = q('.obs-page-header');
+    const title = q('.obs-page-title');
+    return {
+      navigation: box(navigation),
+      navigationStyle: (() => { const s = style(navigation); return s && { padding: s.padding, lineHeight: s.lineHeight, background: s.backgroundColor, border: s.borderBottomColor, position: s.position }; })(),
+      brand: box(brand),
+      brandStyle: (() => { const s = style(brand); return s && { padding: s.padding, margin: s.margin, gap: s.columnGap, lineHeight: s.lineHeight }; })(),
+      mark: box(mark),
+      wordmark: box(wordmark),
+      wordmarkStyle: (() => { const s = style(wordmark); return s && { size: s.fontSize, lineHeight: s.lineHeight, weight: s.fontWeight, color: s.color }; })(),
+      selector: box(selector),
+      selectorStyle: (() => { const s = style(selector); return s && { padding: s.padding, size: s.fontSize, lineHeight: s.lineHeight, color: s.color, background: s.backgroundColor, border: s.borderTopColor, radius: s.borderTopLeftRadius }; })(),
+      theme: box(theme),
+      themeStyle: (() => { const s = style(theme); return s && { padding: s.padding, gap: s.columnGap, borderWidth: s.borderTopWidth, lineHeight: s.lineHeight, whiteSpace: s.whiteSpace, textAlign: s.textAlign, color: s.color, background: s.backgroundColor }; })(),
+      themeIcon: box(theme?.querySelector('svg')),
+      themeIconColor: style(theme?.querySelector('svg'))?.color,
+      header: box(header),
+      headerStyle: (() => { const s = style(header); return s && { padding: s.padding, gap: s.columnGap, size: s.fontSize, lineHeight: s.lineHeight, color: s.color, textAlign: s.textAlign, position: s.position, border: s.borderBottomColor, background: s.backgroundColor, backdrop: s.backdropFilter }; })(),
+      scopeStyle: (() => { const s = style(q('.shell-header .shell-scope')); return s && { size: s.fontSize, lineHeight: s.lineHeight, color: s.color, textAlign: s.textAlign }; })(),
+      buildingIcon: box(q('.shell-header nav.ant-breadcrumb svg:first-of-type')),
+      currentCrumb: box(q('.shell-header nav.ant-breadcrumb li:last-child .ant-breadcrumb-link span')),
+      currentCrumbStyle: (() => { const s = style(q('.shell-header nav.ant-breadcrumb li:last-child .ant-breadcrumb-link span')); return s && { size: s.fontSize, lineHeight: s.lineHeight, weight: s.fontWeight, color: s.color }; })(),
+      separator: box(q('.shell-header nav.ant-breadcrumb li.ant-breadcrumb-separator svg')),
+      avatarDisplay: style(q('[data-testid="avatar-menu-trigger"]'))?.display,
+      content: box(content),
+      contentStyle: (() => { const s = style(content); return s && { padding: s.padding, maxWidth: s.maxWidth }; })(),
+      pageHeader: box(pageHeader),
+      pageHeaderPadding: style(pageHeader)?.padding,
+      title: box(title),
+    };
+  });
+
+  // Prototype @media(max-width:860px) .side: static, 12px 16px, 8px gap, 61px resulting height.
+  expect(metrics.navigation).toEqual({ x: 0, y: 0, w: 390, h: 61 });
+  expect(metrics.navigationStyle).toEqual({ padding: '12px 16px', lineHeight: '20px', background: side, border: palette.hairline, position: 'static' });
+
+  // Prototype .brand: 32px row, no mobile inset/margin, 10px gap; mark() is 22x22.
+  // The wordmark's text width comes from the platform UI font (SF Pro on macOS, a fallback on
+  // Linux), so no absolute width of a content-sized box is a shared number: the position, the
+  // height and the structure (brand = mark + 10px gap + wordmark) are pinned, the width follows
+  // from the font that the style checks below already pin by family, size and weight.
+  expect(metrics.brand).toMatchObject({ x: 16, y: 14, h: 32 });
+  expect(metrics.brandStyle).toEqual({ padding: '0px', margin: '0px', gap: '10px', lineHeight: '20px' });
+  expect(metrics.mark).toEqual({ x: 16, y: 19, w: 22, h: 22 });
+
+  // Prototype .brand b: 17px/20px weight 600, beginning at x48 after the 22px mark and 10px gap.
+  expect(metrics.wordmark).toMatchObject({ x: 48, y: 20, h: 20 });
+  expect(metrics.wordmark!.w).toBeGreaterThan(0);
+  expect(metrics.brand!.w).toBeCloseTo(22 + 10 + metrics.wordmark!.w, 1);
+  expect(metrics.wordmarkStyle).toEqual({ size: '17px', lineHeight: '20px', weight: '600', color: ink });
+
+  // Prototype .mobile-pick and select.pick: fluid 32px field, 0 28px 0 12px, 13px with the native normal line height.
+  // It starts 8px after the brand and ends 8px before the 36px theme button at x338, so its
+  // right edge is 330 on every platform and only its left edge and width follow the wordmark.
+  expect(metrics.selector).toMatchObject({ y: 14, h: 32 });
+  expect(metrics.selector!.x).toBeCloseTo(metrics.brand!.x + metrics.brand!.w + 8, 1);
+  expect(metrics.selector!.x + metrics.selector!.w).toBeCloseTo(330, 1);
+  expect(metrics.selectorStyle).toEqual({ padding: '0px 28px 0px 12px', size: '13px', lineHeight: 'normal', color: ink, background: surface, border: palette.hairlineStrong, radius: '8px' });
+
+  // Prototype mobile .side-foot button: 36x36, no border, 20px line, ink-2; icon is 16x16.
+  expect(metrics.theme).toEqual({ x: 338, y: 12, w: 36, h: 36 });
+  expect(metrics.themeStyle).toEqual({ padding: '0px', gap: '10px', borderWidth: '0px', lineHeight: '20px', whiteSpace: 'normal', textAlign: 'left', color: palette.secondary, background: 'rgba(0, 0, 0, 0)' });
+  expect(metrics.themeIcon).toEqual({ x: 348, y: 22, w: 16, h: 16 });
+  expect(metrics.themeIconColor).toBe(palette.secondary);
+
+  // Prototype mobile .top: static, 8px 16px, 8px gap, page 88% + 8px blur, hairline.
+  // Its own color stays --ink for the zero-width border paint; .crumb owns the muted text color.
+  expect(metrics.header).toMatchObject({ x: 0, y: 61, w: 390 });
+  expect(metrics.headerStyle).toMatchObject({ padding: '8px 16px', gap: '8px', size: '13px', lineHeight: '20px', color: ink, textAlign: 'start', position: 'static', border: palette.hairline, backdrop: 'blur(8px)' });
+  const topMatch = /color\(srgb ([\d.]+) ([\d.]+) ([\d.]+) \/ ([\d.]+)\)/.exec(metrics.headerStyle?.background ?? '');
+  expect(topMatch, `mobile topbar background: ${metrics.headerStyle?.background}`).not.toBeNull();
+  expect(Number(topMatch![4])).toBeCloseTo(0.88, 2);
+  for (const [index, channel] of palette.page.entries()) expect(Number(topMatch![index + 1]) * 255).toBeCloseTo(channel, 0);
+
+  // Prototype .crumb: the first text owner is muted 13px/20px; building icon 16px,
+  // separator 14px, and the current page uses ink at weight 500.
+  expect(metrics.scopeStyle).toEqual({ size: '13px', lineHeight: '20px', color: palette.muted, textAlign: 'start' });
+  expect(metrics.buildingIcon).toMatchObject({ x: 16, y: 77, w: 16, h: 16 });
+  expect(metrics.currentCrumb).toMatchObject({ y: 75, h: 20 });
+  expect(metrics.currentCrumbStyle).toEqual({ size: '13px', lineHeight: '20px', weight: '500', color: ink });
+  expect(metrics.separator).toMatchObject({ y: 78, w: 14, h: 14 });
+  // Prototype mobile .top > .av: display none (account data stays in the DOM for existing tests).
+  expect(metrics.avatarDisplay).toBe('none');
+
+  // Prototype mobile .wrap: 0 16px 48px. The absolute y is not shared because the
+  // prototype-only four-identity .as row and its 8px gap add 40px to the second bar.
+  expect(metrics.content).toMatchObject({ x: 0, w: 390 });
+  expect(metrics.contentStyle).toEqual({ padding: '0px 16px 48px', maxWidth: '1480px' });
+  // Prototype mobile .head: 16px 0 12px; title remains 22px/28px.
+  expect(metrics.pageHeader).toMatchObject({ x: 16, w: 358, h: 56 });
+  expect(metrics.pageHeaderPadding).toBe('16px 0px 12px');
+  expect(metrics.title).toMatchObject({ x: 16, w: 110, h: 28 });
+});
+
+test('the shell changes at the same 860px breakpoint on both sides', async ({ page }) => {
+  await page.setViewportSize({ width: 859, height: 844 });
+  await page.goto(`${baseUrl}/activity?project=P-001&kind=development`);
+  await page.locator('[data-testid="page-activity"]').waitFor();
+  const read = () => page.evaluate(() => {
+    const q = (selector: string) => document.querySelector(selector);
+    const box = (el: Element | null) => {
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: r.left, y: r.top, w: r.width, h: r.height };
+    };
+    return {
+      mobileNavigation: box(q('[data-testid="mobile-navigation"]')),
+      selector: box(q('[data-testid="page-selector"]')),
+      mobileTheme: box(q('[data-testid="mobile-theme-toggle"]')),
+      sider: box(q('.shell-sider')),
+      header: box(q('.shell-header')),
+      contentPadding: q('.shell-content') ? getComputedStyle(q('.shell-content')!).padding : null,
+      avatarDisplay: q('[data-testid="avatar-menu-trigger"]') ? getComputedStyle(q('[data-testid="avatar-menu-trigger"]')!).display : null,
+    };
+  });
+
+  // Prototype @media(max-width:860px): at 859 the .side top bar and .mobile-pick replace the sider.
+  const narrow = await read();
+  expect(narrow.mobileNavigation).toEqual({ x: 0, y: 0, w: 859, h: 61 });
+  expect(narrow.selector).toMatchObject({ y: 14, h: 32 });
+  expect(narrow.mobileTheme).toMatchObject({ w: 36, h: 36 });
+  expect(narrow.sider).toBeNull();
+  expect(narrow.header).toMatchObject({ x: 0, y: 61, w: 859 });
+  expect(narrow.contentPadding).toBe('0px 16px 48px');
+  expect(narrow.avatarDisplay).toBe('none');
+
+  // The exact upper boundary remains compact too, pinning the CSS max-width rather than only the JS hook.
+  await page.setViewportSize({ width: 860, height: 844 });
+  const boundary = await read();
+  expect(boundary.mobileNavigation).toEqual({ x: 0, y: 0, w: 860, h: 61 });
+  expect(boundary.mobileTheme).toMatchObject({ w: 36, h: 36 });
+  expect(boundary.contentPadding).toBe('0px 16px 48px');
+  expect(boundary.sider).toBeNull();
+
+  // At 861 the prototype rule no longer applies: 232px sticky sider, 56px desktop top,
+  // no native page selector, visible avatar, and .wrap's 0 32px 64px content inset.
+  await page.setViewportSize({ width: 861, height: 844 });
+  await page.locator('.shell-sider').waitFor();
+  const wide = await read();
+  expect(wide.mobileNavigation).toBeNull();
+  expect(wide.selector).toBeNull();
+  expect(wide.mobileTheme).toBeNull();
+  expect(wide.sider).toEqual({ x: 0, y: 0, w: 232, h: 844 });
+  expect(wide.header).toEqual({ x: 232, y: 0, w: 629, h: 56 });
+  expect(wide.contentPadding).toBe('0px 32px 64px');
+  expect(wide.avatarDisplay).toBe('flex');
+});
+
+test('the native mobile selector and theme button keep keyboard focus order', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${baseUrl}/activity?project=P-001&kind=development`);
+  const selector = page.getByRole('combobox', { name: '页面' });
+  const theme = page.getByTestId('mobile-theme-toggle');
+  await selector.waitFor();
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press('Tab');
+  await expect(selector).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(theme).toBeFocused();
+  await page.keyboard.press('Space');
+  const expected = testInfo.project.name === 'desktop-dark' ? 'light' : 'dark';
+  await expect(page.locator('html')).toHaveAttribute('data-theme', expected);
+  await expect(theme).toBeFocused();
+  // Selection and direct navigation stay covered by shell-responsive.test.tsx's native-select cases.
 });

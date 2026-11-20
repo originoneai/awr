@@ -216,6 +216,15 @@
       ]
     ],
     [
+      "impact text",
+      ".sec p",
+      ".inbox-impact p",
+      [
+        "TEXT",
+        "margin-top"
+      ]
+    ],
+    [
       "basis list",
       ".ev",
       ".inbox-ev",
@@ -235,6 +244,14 @@
         "background-color",
         "min-height",
         "__h"
+      ]
+    ],
+    [
+      "basis item text",
+      ".ev li",
+      ".inbox-ev li",
+      [
+        "TEXT"
       ]
     ],
     [

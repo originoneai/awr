@@ -11,7 +11,6 @@ import {
   type MenuProps,
 } from 'antd';
 import {
-  ChevronDownIcon,
   ChevronRightIcon,
   FolderIcon,
   SunIcon,
@@ -23,16 +22,17 @@ import { Link, matchPath, NavLink, useLocation, useNavigate } from 'react-router
 import { readsAsName } from '../core/observation/owner';
 import { PerspectiveProvider } from '../lib/perspective/PerspectiveProvider';
 import { PerspectiveSwitcher } from '../lib/perspective/PerspectiveSwitcher';
-import { unknownPerspectiveFacts, type PerspectiveFacts, type PerspectiveId } from '../lib/perspective/types';
+import { PERSPECTIVE_IDS, unknownPerspectiveFacts, type PerspectiveFacts, type PerspectiveId } from '../lib/perspective/types';
 import { projectLabel } from '../lib/project-label';
 import { inboxPendingLabel } from '../lib/inbox-model';
 import { useInboxModel } from '../lib/inbox-queries';
-import { overviewQueryOptions, projectsQueryOptions } from '../lib/queries';
+import { overviewQueryOptions, projectsQueryOptions, shellQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
 import { useScope } from '../lib/scope';
-import type { TeamOverviewResponse } from '../lib/types';
+import type { TeamOverviewResponse, TeamShellResponse } from '../lib/types';
 import { craftTokens } from '../theme';
 import { useCraftTheme } from './CraftThemeProvider';
+import { DataSourceToggle, type ShellSource } from './DataSourceToggle';
 import { SearchPanel } from './SearchPanel';
 import {
   ActivityIcon,
@@ -105,6 +105,35 @@ function currentMemberName(overview: TeamOverviewResponse | undefined): string |
 
 function nameInitial(name: string) {
   return Array.from(name.trim())[0]?.toLocaleUpperCase() ?? '';
+}
+
+/** Fail closed on any incomplete shell reply: an unreadable fact stays unknown (null) and
+ * never opens a perspective, and a missing source or organization name reads as unknown. */
+function shellFactsFrom(reply: TeamShellResponse | undefined): {
+  source: ShellSource;
+  organizationName: string | null;
+  perspective: PerspectiveFacts | null;
+} {
+  if (!reply || reply.ok !== true) return { source: null, organizationName: null, perspective: null };
+  const source = reply.source === 'demo' || reply.source === 'live' ? reply.source : null;
+  const organizationName = typeof reply.organizationName === 'string' && reply.organizationName.trim() !== ''
+    ? reply.organizationName : null;
+  const raw = reply.perspective;
+  const count = (value: unknown): value is number | null => value === null
+    || (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0);
+  const flag = (value: unknown): value is boolean | null => value === null || typeof value === 'boolean';
+  const directory = raw?.directory;
+  const pending = raw?.pending;
+  const perspective = raw && typeof raw === 'object' && directory && typeof directory === 'object'
+    && pending && typeof pending === 'object'
+    && count(raw.supervisedGroupCount) && count(raw.memberGroupProjectCount)
+    && count(raw.visibleProjectGroupCount) && count(raw.visibleProjectDepartmentCount)
+    && flag(raw.canViewAllProjects)
+    && flag(directory.groupsRegistered) && flag(directory.departmentsRegistered)
+    && PERSPECTIVE_IDS.every((id) => count(pending[id]))
+    ? raw
+    : null;
+  return { source, organizationName, perspective };
 }
 
 function ShellNavigation({ selectedKey, pendingLabel }: { selectedKey: NavigationPath; pendingLabel: string | null }) {
@@ -195,6 +224,13 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
   const { projectKey, setProjectKey } = useScope();
   const { revoked } = useRevocation();
   const projects = useQuery(projectsQueryOptions(revoked));
+  // The shell's own fact read: where this deployment's pages read from and which perspective
+  // heights its directory establishes. It adds no page-level read; the shell cadence owns it,
+  // and revocation silences it with every other restricted read.
+  const shell = useQuery(shellQueryOptions(revoked));
+  // The source is the bridge's own fact, never guessed from the deployment URL: a failed
+  // or incomplete read leaves it unknown and the control says so instead of assuming.
+  const { source: shellSource, organizationName, perspective: shellPerspective } = shellFactsFrom(shell.data);
   // Shell indicators subscribe to reads the open page already owns; they never add another source.
   const overview = useQuery({ ...overviewQueryOptions(projectKey, revoked), enabled: false });
   // The pending pill, the bell dot and the inbox queue share this one read-model source
@@ -210,12 +246,16 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
   const selectedProjectLabel = selectedProject
     ? projectLabel(selectedProject, selectedProjectIndex)
     : t('shell.currentProject');
-  const scopeLabel = selectedProject ? selectedProjectLabel : t('shell.scope');
+  // The prototype's crumb root names the organization; at organization scope the button
+  // reads the bridge's organization name and falls back to the authorization wording
+  // when this deployment does not establish a name.
+  const organizationLabel = organizationName ?? t('shell.scope');
+  const scopeLabel = selectedProject ? selectedProjectLabel : organizationLabel;
   const scopeSearch = projectKey ? `?scope=${encodeURIComponent(projectKey)}` : '';
   const inboxPath = `/inbox${scopeSearch}`;
   const scopeMenu: MenuProps = {
     items: [
-      { key: '__org__', label: t('shell.scope') },
+      { key: '__org__', label: organizationLabel },
       ...projectItems.map((project, index) => ({ key: project.key, label: projectLabel(project, index + 1) })),
     ],
     selectedKeys: [projectKey ?? '__org__'],
@@ -240,9 +280,15 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
   const memberName = currentMemberName(overview.data) ?? t('shell.you');
   const MobileThemeIcon = mode === 'dark' ? SunIcon : MoonIcon;
   const mobileThemeLabel = t(mode === 'dark' ? 'shell.switchToLight' : 'shell.switchToDark');
+  // Pending counts stay the composition layer's facts: the shell read leaves them unknown,
+  // and the one count this shell already owns (the member's pending inbox) fills its own slot.
+  const factsFromShell: PerspectiveFacts | null = shellPerspective !== null ? {
+    ...shellPerspective,
+    pending: { ...shellPerspective.pending, me: shellPerspective.pending.me ?? pendingCount },
+  } : null;
   const perspectiveFacts = revoked
     ? unknownPerspectiveFacts()
-    : suppliedPerspectiveFacts ?? unknownPerspectiveFacts(pendingCount);
+    : suppliedPerspectiveFacts ?? factsFromShell ?? unknownPerspectiveFacts(pendingCount);
   const requestedPerspective = new URLSearchParams(location.search).get('perspective');
   const changePerspective = useCallback((next: PerspectiveId) => {
     const params = new URLSearchParams(location.search);
@@ -373,6 +419,10 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
             {brand()}
             <ShellNavigation selectedKey={selectedKey} pendingLabel={pendingLabel} />
             <ThemeToggle />
+            {/* Prototype .side-foot .side-note; only the demo variants carry the notice. */}
+            {shellSource === 'demo' ? (
+              <p className="shell-demo-note" data-testid="shell-demo-note">{t('shell.demoNote')}</p>
+            ) : null}
           </div>
         </Sider>
       ) : (
@@ -380,11 +430,6 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
           aria-label={t('shell.mobileNavigation')}
           data-testid="mobile-navigation"
           style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            minWidth: 0,
-            padding: '12px 16px',
             background: 'var(--craft-color-side)',
             borderBottom: `1px solid ${token.colorSplit}`,
           }}
@@ -419,7 +464,6 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
             data-testid="mobile-theme-toggle"
             onClick={toggle}
             icon={<MobileThemeIcon size={16} strokeWidth={1.5} aria-hidden />}
-            style={{ width: craftTokens.touchTarget, height: craftTokens.touchTarget, padding: 0, flex: '0 0 auto' }}
           />
         </nav>
       )}
@@ -430,14 +474,6 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
             position: compactNavigation ? 'static' : 'sticky',
             top: 0,
             zIndex: 20,
-            display: 'flex',
-            alignItems: 'center',
-            flexWrap: compactNavigation ? 'wrap' : 'nowrap',
-            gap: compactNavigation ? 8 : 16,
-            height: compactNavigation ? 'auto' : 56,
-            minHeight: 56,
-            padding: compactNavigation ? '8px 16px' : '0 32px',
-            lineHeight: 'normal',
             borderBottom: `1px solid ${token.colorSplit}`,
           }}
         >
@@ -445,7 +481,7 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
             aria-label={t('shell.breadcrumbs')}
             separator={<ChevronRightIcon size={14} strokeWidth={1.5} aria-hidden />}
             style={{
-              flex: compactNavigation ? '1 1 auto' : '0 1 auto',
+              flex: '0 1 auto',
               minWidth: 0,
               maxWidth: '100%',
               overflow: 'hidden',
@@ -463,10 +499,9 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
                         type="text"
                         data-testid="scope-switcher"
                         className="shell-scope"
-                        style={{ maxWidth: compactNavigation ? 160 : 300, height: 32, paddingInline: 4 }}
+                        style={{ maxWidth: compactNavigation ? 160 : 300, height: 32, paddingInline: 0 }}
                       >
                         <span className="shell-scope-label">{scopeLabel}</span>
-                        <ChevronDownIcon size={16} strokeWidth={1.5} aria-hidden />
                       </Button>
                     </Dropdown>
                   </span>
@@ -528,6 +563,7 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
               </Button>
             ) : null}
           />
+          <DataSourceToggle source={shellSource} />
           <PerspectiveSwitcher alignEnd={compactSearch} />
           {!compactNavigation ? (
             <>
@@ -547,7 +583,7 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
             </>
           ) : null}
         </Header>
-        <Content className="shell-content" style={compactNavigation ? { padding: 16 } : undefined}>{children}</Content>
+        <Content className="shell-content">{children}</Content>
       </Layout>
       </Layout>
     </PerspectiveProvider>

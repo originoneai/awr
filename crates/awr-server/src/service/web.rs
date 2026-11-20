@@ -190,6 +190,7 @@ pub fn router(state: Arc<StateData>) -> Router {
             "/v1/web/projects/{project}/connections/revoke",
             post(connections_revoke),
         )
+        .route("/v1/web/portfolio/overview", post(portfolio_overview))
         .route("/v1/web/projects", get(list_projects))
         .route(
             "/v1/web/projects/{project}/directory/read",
@@ -387,6 +388,15 @@ async fn login(State(state): State<Arc<StateData>>, headers: HeaderMap, body: By
         Err(PgError::Forbidden) => return with_cors(denied(), &origin),
         Err(error) => return with_cors(error_response(error), &origin),
     };
+    let tenant_id = authorized[0].tenant_id.clone();
+    if authorized
+        .iter()
+        .any(|project| project.tenant_id != tenant_id)
+    {
+        // A member credential is tenant-scoped. Refuse an ambiguous synthetic
+        // credential rather than choosing which tenant a cookie represents.
+        return with_cors(denied(), &origin);
+    }
     let project_keys: Vec<String> = authorized.iter().map(|p| p.key.clone()).collect();
     let session_id = match new_session_id() {
         Ok(id) => id,
@@ -397,6 +407,7 @@ async fn login(State(state): State<Arc<StateData>>, headers: HeaderMap, body: By
         connection_id: WebSession::reference(&session_id),
         id: session_id.clone(),
         bearer: parsed.bearer,
+        tenant_id,
         created_at_ms: now,
         expires_at_ms: now + SESSION_TTL_SECS * 1000,
         last_seen_ms: now,
@@ -701,6 +712,49 @@ async fn require_session(
     Ok((origin, session))
 }
 
+async fn portfolio_overview(
+    State(state): State<Arc<StateData>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let (origin, session) = match require_session(&state, &headers).await {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    if session.tenant_id.is_empty() {
+        return with_cors(denied(), &origin);
+    }
+    let request: Value = match serde_json::from_slice(&body) {
+        Ok(request) => request,
+        Err(_) => {
+            return with_cors(
+                response(StatusCode::BAD_REQUEST, json!({"code":"InvalidInput"})),
+                &origin,
+            );
+        }
+    };
+    if super::reject_forged_authority_fields(&request).is_err() {
+        return with_cors(denied(), &origin);
+    }
+    let Ok(_permit) = state.permits.try_acquire() else {
+        return with_cors(
+            response(StatusCode::SERVICE_UNAVAILABLE, json!({"code":"Busy"})),
+            &origin,
+        );
+    };
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        super::portfolio::overview(&state, &session.tenant_id, &session.bearer, request),
+    )
+    .await;
+    let response = match result {
+        Ok(Ok(data)) => response(StatusCode::OK, data),
+        Ok(Err(error)) => error_response(error),
+        Err(_) => super::unavailable(),
+    };
+    with_cors(response, &origin)
+}
+
 async fn web_query(
     State(state): State<Arc<StateData>>,
     Path(key): Path<String>,
@@ -924,6 +978,7 @@ mod tests {
                 connection_id: WebSession::reference("ws_a"),
                 id: "ws_a".into(),
                 bearer: "tok".into(),
+                tenant_id: "reader-tenant".into(),
                 created_at_ms: now,
                 expires_at_ms: now + 60_000,
                 last_seen_ms: now,
@@ -953,5 +1008,81 @@ mod tests {
             HeaderValue::from_static("awr_web_session=bad value"),
         );
         assert!(cookie_session_id(&headers).is_none());
+    }
+
+    // A state that never reaches Postgres: the store points at a closed port, so a request that
+    // is refused (or rejected as malformed) before the read never needs it.
+    fn portfolio_state(session_tenant: &str) -> Arc<StateData> {
+        let store = awr_team_pg::WorkstreamReadStore::new("host=127.0.0.1 port=1 dbname=unused");
+        let web_sessions = Arc::new(WebSessionStore::default());
+        let now = now_ms();
+        web_sessions
+            .insert(WebSession {
+                connection_id: WebSession::reference("ws_portfolio"),
+                id: "ws_portfolio".into(),
+                bearer: "synthetic-test-bearer".into(),
+                tenant_id: session_tenant.into(),
+                created_at_ms: now,
+                expires_at_ms: now + 60_000,
+                last_seen_ms: now,
+                revoked: false,
+            })
+            .unwrap();
+        Arc::new(StateData {
+            commands: store.commands(),
+            store,
+            projects: BTreeMap::new(),
+            hosts: vec!["awr.test".into()],
+            web_origins: vec!["https://observer.test".into()],
+            web_sessions,
+            oauth: None,
+            permits: Arc::new(tokio::sync::Semaphore::new(1)),
+        })
+    }
+
+    async fn portfolio_call(state: Arc<StateData>, body: &'static [u8]) -> (StatusCode, Value) {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, HeaderValue::from_static("awr.test"));
+        headers.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("https://observer.test"),
+        );
+        headers.insert(WEB_GUARD_HEADER, HeaderValue::from_static("1"));
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_static("awr_web_session=ws_portfolio"),
+        );
+        let response = portfolio_overview(State(state), headers, Bytes::from_static(body)).await;
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    #[tokio::test]
+    async fn a_session_without_a_bound_tenant_is_refused_before_the_request_is_read() {
+        // Encrypted sessions written before the tenant was stored decode with an empty tenant
+        // (`#[serde(default)]`). They must not read a portfolio, and the refusal must not
+        // depend on what the request body says.
+        let refused = (
+            StatusCode::FORBIDDEN,
+            json!({"code":"Forbidden","message":"access denied"}),
+        );
+        assert_eq!(
+            portfolio_call(portfolio_state(""), b"{}").await,
+            refused,
+            "a legacy session with a valid request"
+        );
+        assert_eq!(
+            portfolio_call(portfolio_state(""), b"not json").await,
+            refused,
+            "the refusal comes before the body is parsed"
+        );
+        // Control: the same session carrying a tenant passes the origin, guard, cookie and tenant
+        // checks and only then fails on the malformed body, so the refusal above is the tenant's.
+        let (status, body) = portfolio_call(portfolio_state("reader-tenant"), b"not json").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["code"], "InvalidInput");
     }
 }

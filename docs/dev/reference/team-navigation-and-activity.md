@@ -80,6 +80,16 @@ text or arbitrary tool input/output. Project audit authority is required to view
 other members; ordinary members see their own records, further restricted to
 current workstream visibility.
 
+Each item in both views also carries two identity objects beside the opaque
+`actor_id` and `client_id`. Neither is a new permission: rows are returned the
+same way when every identity field is null.
+
+| Field | Definition | Source | Why it does not leak |
+| --- | --- | --- | --- |
+| `actor.person_id` | Person behind the operation, or null | Agent actors resolve through an active `person_agent_bindings` row; human actors reuse the shared review resolver's person rule. Conflicting active bindings to different people, a stopped binding or a non-active person resolve to null | Only already-recorded relationships are joined; nothing is guessed, matched by name or string equality, or created during the read |
+| `actor.display_name` | That person's `display_name`, or null | The same active persons row as `actor.person_id` | Filled only when the reader separately passes the exact `directory.read` gate (membership covering `work.read` on every directory workstream; agent readers additionally need a live Project-scoped read delegation). Without it both `actor` fields are null and the audit rows still return |
+| `client.display_name` | Display name of the connected client, or null | No per-client display name is registered today — `credentials` stores no name and connection reads return actor names — so this is null until such a source exists | Absent data discloses nothing; the object keeps a stable shape for clients |
+
 Keyset cursors bind the caller, filters and grants. Use `next_cursor`; changing
 filters requires a fresh first page. A page does not provide an immutable export:
 request outcomes can settle and old request metadata can expire between pages.
