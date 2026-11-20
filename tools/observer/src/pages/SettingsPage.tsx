@@ -1,6 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from 'antd';
-import { Building2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
@@ -19,6 +18,7 @@ import {
   type DataTableRow,
   type HealthStatus,
 } from '../components/display';
+import { BuildingIcon } from '../components/icons/prototype-icons';
 import { ObservationForbidden } from '../components/states';
 import { readableNarrative } from '../core/observation';
 import type { DerivedTaskStatus } from '../core/overview/types';
@@ -245,7 +245,7 @@ export function SettingsPage() {
                 <ul>
                   <li>
                     <span className="nd settings-org-node">
-                      <DisplayIcon icon={Building2} />
+                      <DisplayIcon icon={BuildingIcon} />
                       <span className="settings-org-node-label" data-truncate={organizationName.length > 80 || undefined}>{organizationName}</span>
                     </span>
                     <ul>
