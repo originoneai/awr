@@ -12,7 +12,6 @@ import {
   type OverviewPart,
 } from '../../core/overview';
 import { readsAsName } from '../../core/observation/owner';
-import { workLabel } from '../../core/observation/labels';
 import type {
   DependencyListData,
   DependencyObservation,
@@ -105,17 +104,8 @@ export interface ProjectChainDisplay {
   impact: CountDetails<DerivedTask>;
   /** For commitment end nodes, verified / total progress across tasks bound to that commitment when known. */
   commitmentProgress: { done: number; total: number } | null;
-  /** True only when complete directory duty/role records confirm this reviewer is the sole reviewer on the project. */
-  soleReviewer: boolean;
   /** Open current decision explicitly tied to a task in this chain's queue, when recorded. */
   relatedOpenDecision: RelatedOpenDecision | null;
-}
-
-export interface ProjectDirectoryMemberRole {
-  personId: string | null;
-  available: boolean;
-  duty?: string | null;
-  businessRoles?: readonly string[] | null;
 }
 
 export interface ProjectDependenciesModel {
@@ -148,9 +138,6 @@ export const BLOCKER_KIND_PRIORITY: Readonly<Record<ProjectBlockerItem['kind'], 
   external: 2,
 };
 
-const OPAQUE_KEY_PATTERN = /^[A-Z]{1,8}-\d+$/i;
-const REVIEWER_DUTY_LABELS = new Set(['复核', 'reviewer']);
-
 function cleanText(value: string | null | undefined): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
@@ -175,8 +162,9 @@ function sameVersion(left: DependencyVersion | null | undefined, right: Dependen
 }
 
 /**
- * Returns true when a commitment carries a recorded human-readable title rather than
- * an omitted title or an opaque record key such as "P-001" or "GOAL-001".
+ * Returns true when a commitment carries a recorded title rather than an omitted title
+ * or a placeholder equal to the commitment ID or project key.
+ * Never rejects titles by regex shape (real titles such as "MVP-2" are kept as-is).
  */
 export function hasRecordedCommitmentTitle(
   commitment: OverviewCommitment | null | undefined,
@@ -186,44 +174,36 @@ export function hasRecordedCommitmentTitle(
   if (!title) return false;
   if (commitment?.id && title === commitment.id) return false;
   if (title === projectKey) return false;
-  if (OPAQUE_KEY_PATTERN.test(title)) return false;
-  return workLabel(title, { language: 'en-US', recordedTitle: false }).kind === 'named';
+  return true;
 }
 
 /**
- * Determine whether project directory records establish a single sole reviewer.
- * Only returns a personId when:
- * - at least one member is present,
- * - every member is available and carries an explicit recorded duty or businessRoles list, and
- * - exactly one member holds reviewer duty/role.
- * Never guesses from past review rounds or incomplete directory data.
+ * Resolve the sole allowed responder for a decision wait.
+ * Answer ("等X回答") vs decision ("等X决定") phrasing is distinguished ONLY when there is
+ * strictly one known allowed responder (`!waitingOnUnknown && waitingOn.length === 1`).
+ * When zero or multiple responders are allowed, returns null so callers render neutral wording
+ * without picking a person by list order.
  */
-export function findSoleReviewerPersonId(
-  directoryMembers: readonly ProjectDirectoryMemberRole[] | null | undefined,
-): string | null {
-  if (!directoryMembers || directoryMembers.length === 0) return null;
-  const reviewerIds = new Set<string>();
-  for (const member of directoryMembers) {
-    if (!member.available || !member.personId) return null;
-    const roles = Array.isArray(member.businessRoles) && member.businessRoles.length > 0
-      ? member.businessRoles.map((role) => role.trim().toLowerCase()).filter(Boolean)
-      : null;
-    const duty = cleanText(member.duty);
-    if (!roles && !duty) return null;
-    const isReviewer = (roles !== null && roles.includes('reviewer'))
-      || (duty !== null && REVIEWER_DUTY_LABELS.has(duty.toLowerCase()));
-    if (isReviewer) reviewerIds.add(member.personId);
+export function soleDecisionResponder(wait: DerivedWait | undefined): {
+  person: { id: string; displayName: string | null };
+  isOwnTask: boolean;
+} | null {
+  if (!wait || wait.kind !== 'decision' || wait.waitingOnUnknown || wait.waitingOn.length !== 1) {
+    return null;
   }
-  if (reviewerIds.size !== 1) return null;
-  return [...reviewerIds][0] ?? null;
+  const person = wait.waitingOn[0];
+  return {
+    person,
+    isOwnTask: wait.task.owner?.id != null && wait.task.owner.id === person.id,
+  };
 }
 
 /**
- * Deterministic project dependency chain selection rule (matches prototype pDeps()):
- * - Always include review-queue chains (cross-person review bottlenecks).
- * - Always include external-wait chains (blockers outside the project boundary).
- * - Include decision chains only when they hold up downstream dependent tasks (impact > 1).
- *   Standalone single-task decisions remain visible in the right-column "卡点" blocker list.
+ * Deterministic project dependency chain selection rule (approved by supervisor):
+ * - Always include review-queue chains and external-wait chains, because the wait is on a
+ *   party outside the task owner's direct control.
+ * - Include decision chains only when they block downstream tasks (impact > 1);
+ *   standalone single-task decisions remain visible in the right-column "卡点" blocker list.
  */
 export function isProjectBlockedChain(chain: DerivedChain): boolean {
   if (chain.root.kind === 'review' || chain.root.kind === 'external') return true;
@@ -376,11 +356,9 @@ export function deriveProjectBlockers(
       continue;
     }
 
-    const responder = !wait.waitingOnUnknown && wait.waitingOn.length >= 1 ? wait.waitingOn[0] : null;
-    const isOwnTaskAnswer = wait.kind === 'decision'
-      && responder !== null
-      && wait.task.owner?.id !== null
-      && wait.task.owner?.id === responder.id;
+    const soleResponder = soleDecisionResponder(wait);
+    const responder = soleResponder?.person ?? null;
+    const isOwnTaskAnswer = soleResponder?.isOwnTask ?? false;
     const behind: CountDetails<DerivedTask> = orderingIncomparable
       ? { count: null, items: wait.behind.items, unknownItems: [...wait.behind.unknownItems, { part: 'tasks', reason: 'ordering-incomparable' }] }
       : wait.behind;
@@ -670,13 +648,11 @@ export function deriveProjectDependencies({
   overview,
   model,
   dependencies,
-  directoryMembers,
 }: {
   projectKey: string;
   overview?: TeamOverviewResponse;
   model?: ProjectListModel;
   dependencies?: DependencyListData;
-  directoryMembers?: readonly ProjectDirectoryMemberRole[] | null;
 }): ProjectDependenciesModel {
   const usableModel = model?.project === projectKey && model.input && model.input.options ? model : undefined;
   const orderingIncomparable = usableModel?.ordering === 'incomparable';
@@ -720,8 +696,6 @@ export function deriveProjectDependencies({
     }
   }
 
-  const soleReviewerId = findSoleReviewerPersonId(directoryMembers);
-
   const openDecisions = usableModel && usableModel.input.decisions.coverage !== 'unread'
     ? usableModel.input.decisions.items.filter((decision) =>
       decision.state === 'open' && decision.current !== false && cleanText(decision.question) !== null)
@@ -739,10 +713,6 @@ export function deriveProjectDependencies({
       ? { count: null, items: chain.impact.items, unknownItems: [...chain.impact.unknownItems, { part: 'tasks', reason: 'ordering-incomparable' }] }
       : chain.impact;
 
-    const soleReviewer = chain.root.kind === 'review'
-      && soleReviewerId !== null
-      && chain.root.person?.id === soleReviewerId;
-
     let relatedOpenDecision: RelatedOpenDecision | null = null;
     if (chain.root.kind === 'review' && openDecisions.length > 0) {
       const queueTaskIds = new Set(
@@ -753,11 +723,12 @@ export function deriveProjectDependencies({
       const matched = openDecisions.find((decision) =>
         decision.taskId != null && queueTaskIds.has(decision.taskId));
       if (matched) {
-        const firstResponderId = matched.allowedResponderIds?.find((id) => cleanText(id) !== null);
+        const rawResponders = Array.isArray(matched.allowedResponderIds) ? matched.allowedResponderIds : [];
+        const soleResponderId = rawResponders.length === 1 ? cleanText(rawResponders[0]) : null;
         relatedOpenDecision = {
           id: cleanText(matched.id),
           question: cleanText(matched.question)!,
-          responderName: firstResponderId ? (memberNameById.get(firstResponderId) ?? null) : null,
+          responderName: soleResponderId ? (memberNameById.get(soleResponderId) ?? null) : null,
         };
       }
     }
@@ -768,7 +739,6 @@ export function deriveProjectDependencies({
       displayConnectors,
       impact,
       commitmentProgress,
-      soleReviewer,
       relatedOpenDecision,
     };
   });

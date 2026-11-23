@@ -119,7 +119,7 @@ function canonicalOverviewInput(data) {
       commitments: [
         { id: `project-${task.project_id}`, title: task.project_id, kind: 'project' },
         ...task.goal_ids.map((goalId) => ({ id: goalId, title: goalId, kind: 'goal' })),
-        ...(task.week_committed ? [{ id: `${task.project_id}-week-47`, title: 'Week 47 commitment', kind: 'project' }] : []),
+        ...(task.week_committed ? [{ id: `${task.project_id}-week-47`, title: '订单查询与提交闭环', kind: 'project' }] : []),
       ],
       verifiedAtUnixMs: task.verified_at_unix_ms,
       acceptance: task.acceptance_final ? task.acceptance.map((criterion) => ({

@@ -19,14 +19,14 @@ import {
   deriveProjectDependencies,
   hasRecordedCommitmentTitle,
   mergeDependenciesFreshness,
+  soleDecisionResponder,
   type DependencyAdoptedCell,
   type DependencyAvailableCell,
   type DependencyRowStatus,
   type ProjectBlockerItem,
   type ProjectChainDisplay,
-  type ProjectDirectoryMemberRole,
 } from '../components/projects/project-dependencies-model';
-import type { ProjectListEntry, ProjectListModel } from '../components/projects/project-list-model';
+import type { ProjectListModel } from '../components/projects/project-list-model';
 import { ObservationForbidden } from '../components/states';
 import { workbenchAgentName, workbenchDisplayText } from '../components/workbench/model';
 import { readableNarrative, readsAsName, workLabel } from '../core/observation';
@@ -37,13 +37,10 @@ import { humanText } from '../i18n/human-language';
 import { apiPost, isAuthError } from '../lib/api';
 import { dependenciesQueryOptions } from '../lib/collaboration';
 import { findForbiddenVisibleText } from '../lib/human-language-guard';
-import { projectLabel } from '../lib/project-label';
 import {
   overviewModelQueryOptions,
   overviewQueryOptions,
-  projectsQueryOptions,
   readQueryDefaults,
-  SHELL_POLL_INTERVAL_MS,
 } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
 import { taskPath } from '../lib/task-path';
@@ -74,19 +71,6 @@ type DetailSelection =
   | { kind: 'chains' }
   | { kind: 'blocker'; key: string }
   | { kind: 'chain-impact'; index: number };
-
-interface ProjectDirectoryResponse {
-  data?: {
-    configured?: boolean;
-    members?: Array<{
-      personId?: string | null;
-      member_ref?: { person_id?: string | null };
-      available?: boolean;
-      duty?: string | null;
-      business_roles?: string[] | null;
-    }>;
-  };
-}
 
 function asView(value: string | null): DependenciesView {
   return (VIEW_KEYS as readonly string[]).includes(value ?? '') ? (value as DependenciesView) : 'overview';
@@ -165,19 +149,6 @@ function projectHandoffsQueryOptions(project: string, cursor: string | null, rev
   } satisfies UseQueryOptions<TeamReadResponse<HandoffListData>>;
 }
 
-function projectDirectoryRolesQueryOptions(project: string, revoked: boolean) {
-  return {
-    queryKey: ['team', 'directory', 'roles', project],
-    meta: { failureScope: 'object' },
-    queryFn: ({ signal }: { signal: AbortSignal }) =>
-      apiPost<ProjectDirectoryResponse>('/api/team/directory', { project }, signal),
-    enabled: Boolean(project) && !revoked,
-    retry: false,
-    refetchInterval: SHELL_POLL_INTERVAL_MS,
-    refetchOnWindowFocus: false,
-  } satisfies UseQueryOptions<ProjectDirectoryResponse>;
-}
-
 function formatAdoptedCell(cell: DependencyAdoptedCell, t: TFunction): string {
   switch (cell.kind) {
     case 'matchesAvailable': return t('projectDependencies.table.adoptedMatchesAvailable');
@@ -244,12 +215,10 @@ function chainTabLabel(
       ? t('projectDependencies.chain.tabExternal', { party })
       : t('projectDependencies.chain.tabExternalUnknown');
   }
-  const firstWait = root.queue.items[0];
-  const responder = firstWait?.waitingOn[0];
-  const name = responder?.displayName ? safePersonName(responder.displayName, language, '') : '';
-  const isOwnTask = responder?.id != null && firstWait?.task.owner?.id === responder.id;
-  if (name) {
-    return isOwnTask
+  const sole = soleDecisionResponder(root.queue.items[0]);
+  const name = sole?.person.displayName ? safePersonName(sole.person.displayName, language, '') : '';
+  if (sole && name) {
+    return sole.isOwnTask
       ? t('projectDependencies.chain.tabDecisionAnswerNamed', { name })
       : t('projectDependencies.chain.tabDecisionDecideNamed', { name });
   }
@@ -437,44 +406,24 @@ export function ProjectDependencies({ project }: { project: string }) {
 
   const activeView = asView(searchParams.get('view'));
 
-  const projects = useQuery(projectsQueryOptions(revoked));
   const overview = useQuery(overviewQueryOptions(project, revoked));
   const modelQuery = useQuery(overviewModelQueryOptions(project || null, revoked));
   const dependencies = useQuery(dependenciesQueryOptions(project, null, cursors.at(-1) ?? null, revoked));
-  const directoryQuery = useQuery(projectDirectoryRolesQueryOptions(project, revoked));
-
-  const projectEntries = projects.data?.projects as ProjectListEntry[] | undefined;
-  const projectIndex = projectEntries ? projectEntries.findIndex((item) => item.key === project) : -1;
-  const projectEntry = projectIndex >= 0 && projectEntries ? projectEntries[projectIndex] : undefined;
-  const projectTitle = projectEntry ? projectLabel(projectEntry, projectIndex + 1) : t('projectDependencies.chain.commitmentProjectKicker');
 
   const modelData = modelQuery.data?.project === project && modelQuery.data.input && modelQuery.data.input.options
     ? (modelQuery.data as ProjectListModel)
     : undefined;
   const dependenciesData = dependencies.data?.result.data;
 
-  const directoryMembers = useMemo<ProjectDirectoryMemberRole[] | null>(() => {
-    const dir = directoryQuery.data?.data;
-    if (!dir?.configured || !Array.isArray(dir.members) || dir.members.length === 0) return null;
-    return dir.members.map((member) => ({
-      personId: member.personId ?? member.member_ref?.person_id ?? null,
-      available: member.available === true,
-      duty: member.duty ?? null,
-      businessRoles: member.business_roles ?? null,
-    }));
-  }, [directoryQuery.data]);
-
   const derived = useMemo(() => deriveProjectDependencies({
     projectKey: project,
     overview: overview.data,
     model: modelData,
     dependencies: dependenciesData,
-    directoryMembers,
-  }), [project, overview.data, modelData, dependenciesData, directoryMembers]);
+  }), [project, overview.data, modelData, dependenciesData]);
 
   if (
     revoked
-    || isAuthError(projects.error)
     || isAuthError(overview.error)
     || isAuthError(modelQuery.error)
     || isAuthError(dependencies.error)
@@ -666,11 +615,10 @@ export function ProjectDependencies({ project }: { project: string }) {
           open: Boolean(firstWait?.task.id),
         };
       }
-      const responder = firstWait?.waitingOn[0];
-      const responderName = responder?.displayName ? safePersonName(responder.displayName, language, '') : '';
-      const isOwnTask = responder?.id != null && firstWait?.task.owner?.id === responder.id;
-      const title = responderName
-        ? isOwnTask
+      const sole = soleDecisionResponder(firstWait);
+      const responderName = sole?.person.displayName ? safePersonName(sole.person.displayName, language, '') : '';
+      const title = sole && responderName
+        ? sole.isOwnTask
           ? t('projectDependencies.chain.rootDecisionAnswer', { name: responderName })
           : t('projectDependencies.chain.rootDecisionDecide', { name: responderName })
         : t('projectDependencies.chain.rootDecisionUnknown');
@@ -680,7 +628,7 @@ export function ProjectDependencies({ project }: { project: string }) {
         kicker: t('display.chain.rootKicker'),
         title,
         meta: cleanQuestion || null,
-        ownerName: responderName || null,
+        ownerName: sole && responderName ? responderName : null,
         open: Boolean(firstWait?.task.id),
       };
     }
@@ -730,7 +678,7 @@ export function ProjectDependencies({ project }: { project: string }) {
       : t('projectDependencies.chain.commitmentProjectKicker');
     const fallbackTitle = isGoal
       ? t('workbench.home.commitmentGoalFallback')
-      : projectTitle;
+      : t('workbench.home.commitmentProjectFallback');
     const title = hasRecordedCommitmentTitle(commitment, project)
       ? sanitizeHumanText(commitment?.title, language, fallbackTitle)
       : fallbackTitle;
@@ -780,11 +728,9 @@ export function ProjectDependencies({ project }: { project: string }) {
       const name = root.person?.displayName ? safePersonName(root.person.displayName, language, '') : '';
       sentence = impactCount === null
         ? t('projectDependencies.chain.footerReviewUnknownCount', { name: name || t('projectDependencies.chain.rootReviewUnknown') })
-        : name && entry.soleReviewer
-          ? t('projectDependencies.chain.footerReviewSole', { name, count: impactCount })
-          : name
-            ? t('projectDependencies.chain.footerReview', { name, count: impactCount })
-            : t('projectDependencies.chain.footerReviewUnknownPerson', { count: impactCount });
+        : name
+          ? t('projectDependencies.chain.footerReview', { name, count: impactCount })
+          : t('projectDependencies.chain.footerReviewUnknownPerson', { count: impactCount });
       if (entry.relatedOpenDecision) {
         const question = sanitizeHumanText(entry.relatedOpenDecision.question, language, '');
         if (question) {
@@ -1217,7 +1163,9 @@ export function ProjectDependencies({ project }: { project: string }) {
                     data-testid="project-deps-chain-count"
                     onClick={() => setDetail({ kind: 'chains' })}
                   >
-                    {t('projectDependencies.chain.blockedCount', { count: derived.chains.length })}
+                    {derived.chainsCount !== null
+                      ? t('projectDependencies.chain.blockedCount', { count: derived.chainsCount })
+                      : t('projectDependencies.chain.blockedCountAtLeast', { count: derived.chains.length })}
                   </button>
                 ) : null}
                 {derived.chains.length > 0 ? (

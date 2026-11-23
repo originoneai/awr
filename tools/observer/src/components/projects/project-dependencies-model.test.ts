@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   deriveProjectBlockers,
   deriveProjectDependencies,
-  findSoleReviewerPersonId,
+  hasRecordedCommitmentTitle,
   isProjectBlockedChain,
   mergeDependenciesFreshness,
+  soleDecisionResponder,
 } from './project-dependencies-model';
 import type { ProjectListModel } from './project-list-model';
 import type { DependencyListData, DependencyObservation, TeamFreshness } from '../../lib/types';
@@ -338,22 +339,7 @@ describe('deriveProjectDependencies', () => {
     expect(anonBlockers.items[1].destination).toEqual({ kind: 'task', id: 'T-2' });
   });
 
-  it('detects sole reviewer only from complete explicit directory duties and attaches related open review decisions', () => {
-    expect(findSoleReviewerPersonId([
-      { personId: 'M-001', available: true, duty: '小组负责人' },
-      { personId: 'M-004', available: true, duty: '复核' },
-    ])).toBe('M-004');
-    // Multiple reviewers -> null
-    expect(findSoleReviewerPersonId([
-      { personId: 'M-001', available: true, businessRoles: ['reviewer'] },
-      { personId: 'M-004', available: true, businessRoles: ['reviewer'] },
-    ])).toBeNull();
-    // Missing role/duty on any member -> null (never guess)
-    expect(findSoleReviewerPersonId([
-      { personId: 'M-001', available: true },
-      { personId: 'M-004', available: true, duty: '复核' },
-    ])).toBeNull();
-
+  it('attaches related open review decisions without inventing sole-reviewer claims, and only names responder when strictly one responder is allowed', () => {
     const model = makeModel();
     model.input.decisions = {
       coverage: 'complete',
@@ -362,22 +348,104 @@ describe('deriveProjectDependencies', () => {
         { id: 'Q-3', taskId: 'T-102', state: 'open', current: true, question: '能不能多一位复核人', allowedResponderIds: ['M-010'], createdAtUnixMs: NOW - DAY },
       ],
     };
-    const result = deriveProjectDependencies({
+    const singleResponderResult = deriveProjectDependencies({
       projectKey: 'P-001',
       model,
-      directoryMembers: [
-        { personId: 'M-001', available: true, duty: '小组负责人' },
-        { personId: 'M-002', available: true, duty: '开发' },
-        { personId: 'M-003', available: true, duty: '开发' },
-        { personId: 'M-004', available: true, duty: '复核' },
-      ],
     });
-    expect(result.chains[0].soleReviewer).toBe(true);
-    expect(result.chains[0].relatedOpenDecision).toEqual({
+    expect(singleResponderResult.chains[0].relatedOpenDecision).toEqual({
       id: 'Q-3',
       question: '能不能多一位复核人',
       responderName: '部门负责人',
     });
+
+    // When two responders are allowed, never pick list[0] by order.
+    const multiResponderModel = makeModel();
+    multiResponderModel.input.decisions = {
+      coverage: 'complete',
+      items: [
+        { id: 'Q-3', taskId: 'T-102', state: 'open', current: true, question: '能不能多一位复核人', allowedResponderIds: ['M-010', 'M-001'], createdAtUnixMs: NOW - DAY },
+      ],
+    };
+    const multiResponderResult = deriveProjectDependencies({
+      projectKey: 'P-001',
+      model: multiResponderModel,
+    });
+    expect(multiResponderResult.chains[0].relatedOpenDecision).toEqual({
+      id: 'Q-3',
+      question: '能不能多一位复核人',
+      responderName: null,
+    });
+  });
+
+  it('distinguishes answer vs decision only when there is strictly one allowed responder (1 owner, 1 non-owner, 2 responders, 0 responders)', () => {
+    const derived = deriveOverview(myWorkInput({
+      options: { nowUnixMs: NOW, stalledAfterDays: 2 },
+      members: {
+        coverage: 'complete',
+        items: [
+          { personId: 'M-001', displayName: '周宁' },
+          { personId: 'M-002', displayName: '林悦' },
+        ],
+      },
+      tasks: {
+        coverage: 'complete',
+        items: [
+          { id: 'T-1', title: '自答任务', ownerPersonId: 'M-002', started: true, externalWait: null, acceptance: [] },
+          { id: 'T-2', title: '他人决定任务', ownerPersonId: 'M-002', started: true, externalWait: null, acceptance: [] },
+          { id: 'T-3', title: '双人回复任务', ownerPersonId: 'M-002', started: true, externalWait: null, acceptance: [] },
+          { id: 'T-4', title: '无回复人任务', ownerPersonId: 'M-002', started: true, externalWait: null, acceptance: [] },
+        ],
+      },
+      decisions: {
+        coverage: 'complete',
+        items: [
+          { id: 'Q-own', taskId: 'T-1', state: 'open', current: true, question: '问题一', allowedResponderIds: ['M-002'], createdAtUnixMs: NOW - DAY },
+          { id: 'Q-other', taskId: 'T-2', state: 'open', current: true, question: '问题二', allowedResponderIds: ['M-001'], createdAtUnixMs: NOW - DAY },
+          { id: 'Q-two', taskId: 'T-3', state: 'open', current: true, question: '问题三', allowedResponderIds: ['M-001', 'M-002'], createdAtUnixMs: NOW - DAY },
+          { id: 'Q-none', taskId: 'T-4', state: 'open', current: true, question: '问题四', allowedResponderIds: [], createdAtUnixMs: NOW - DAY },
+        ],
+      },
+    }));
+
+    const byTask = new Map(derived.waits.map((w) => [w.task.id, w]));
+    expect(soleDecisionResponder(byTask.get('T-1'))).toEqual({
+      person: { id: 'M-002', displayName: '林悦' },
+      isOwnTask: true,
+    });
+    expect(soleDecisionResponder(byTask.get('T-2'))).toEqual({
+      person: { id: 'M-001', displayName: '周宁' },
+      isOwnTask: false,
+    });
+    expect(soleDecisionResponder(byTask.get('T-3'))).toBeNull();
+    expect(soleDecisionResponder(byTask.get('T-4'))).toBeNull();
+
+    const blockers = deriveProjectBlockers(derived, false).items;
+    const blockerByTask = new Map(blockers.map((b) => [b.destination?.id, b]));
+    expect(blockerByTask.get('T-1')).toMatchObject({ personId: 'M-002', personName: '林悦', isOwnTaskAnswer: true });
+    expect(blockerByTask.get('T-2')).toMatchObject({ personId: 'M-001', personName: '周宁', isOwnTaskAnswer: false });
+    expect(blockerByTask.get('T-3')).toMatchObject({ personId: null, personName: null, isOwnTaskAnswer: false });
+    expect(blockerByTask.get('T-4')).toMatchObject({ personId: null, personName: null, isOwnTaskAnswer: false });
+  });
+
+  it('keeps real commitment titles like MVP-2 and only treats empty, commitment.id, or projectKey titles as missing', () => {
+    expect(hasRecordedCommitmentTitle({ id: 'comm-mvp', title: 'MVP-2', kind: 'project' }, 'P-001')).toBe(true);
+    expect(hasRecordedCommitmentTitle({ id: 'P-001-week-47', title: '订单查询与提交闭环', kind: 'project' }, 'P-001')).toBe(true);
+    expect(hasRecordedCommitmentTitle({ id: 'comm-empty', title: '   ', kind: 'project' }, 'P-001')).toBe(false);
+    expect(hasRecordedCommitmentTitle({ id: 'GOAL-001', title: 'GOAL-001', kind: 'goal' }, 'P-001')).toBe(false);
+    expect(hasRecordedCommitmentTitle({ id: 'project-P-001', title: 'P-001', kind: 'project' }, 'P-001')).toBe(false);
+  });
+
+  it('marks chainsCount null when chain reads are incomplete even if confirmed chains exist', () => {
+    const model = makeModel();
+    model.input.decisions = { coverage: 'partial', items: [], reason: 'truncated' };
+    model.coverage = {
+      ...model.coverage,
+      decisions: { status: 'partial', missing: [{ op: 'decisions.list', reason: 'truncated' }] },
+    };
+    const result = deriveProjectDependencies({ projectKey: 'P-001', model });
+    expect(result.chains.length).toBeGreaterThanOrEqual(1);
+    expect(result.chainsComplete).toBe(false);
+    expect(result.chainsCount).toBeNull();
   });
 
   it('merges freshness conservatively: failed drops timestamps, and measured/stale keep the oldest timestamp', () => {

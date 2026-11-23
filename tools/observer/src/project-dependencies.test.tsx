@@ -344,14 +344,17 @@ describe('ProjectDependencies (AWR-PPO-043)', () => {
     // T-105 standalone decision stays in blockers only; top chains include review, multi-task decision (T-104), and external (T-111).
     expect(screen.getByTestId('project-deps-chain-count').textContent).toContain('3 条链路卡住');
 
-    // Commitment end node shows recorded commitment title ('订单查询与提交闭环') without invented '有风险'.
+    // Commitment end node shows recorded commitment title ('订单查询与提交闭环') without invented '有风险' or risk lamp (F13).
     const chainsBlock = screen.getByTestId('project-deps-chains');
-    expect(chainsBlock.textContent).toContain('订单查询与提交闭环');
-    expect(chainsBlock.textContent).toContain('还差 4 件');
-    expect(chainsBlock.textContent).not.toContain('有风险');
+    const commitmentEndNode = chainsBlock.querySelector('[data-node-kind="commitment"]');
+    expect(commitmentEndNode).not.toBeNull();
+    expect(commitmentEndNode!.textContent).toContain('订单查询与提交闭环');
+    expect(commitmentEndNode!.textContent).toContain('还差 4 件');
+    expect(commitmentEndNode!.textContent).not.toContain('有风险');
+    expect(commitmentEndNode!.querySelector('.obs-lamp')).toBeNull();
     // Exact review queue count in chain root node (catches off-by-one fault).
     expect(chainsBlock.textContent).toContain('2 件在排队，最久 2 天');
-    // Without directory duty records, footer does NOT fabricate "能复核的只有许宁一位".
+    // Footer reports factual queue impact without fabricating a sole-reviewer claim.
     expect(chainsBlock.textContent).toContain('许宁的复核队列压着 4 件事。');
     expect(chainsBlock.textContent).not.toContain('能复核的只有许宁一位');
 
@@ -410,15 +413,24 @@ describe('ProjectDependencies (AWR-PPO-043)', () => {
     expect(router.state.location.pathname).toBe('/people/M-004');
   });
 
-  it('shows sole-reviewer fact and related unanswered decision in chain footer when recorded, and distinguishes 回答 vs 决定 tab labels', async () => {
+  it('never infers sole-reviewer claims without structured roles, attaches related open decisions, and distinguishes 回答 vs 决定 only for a single responder', async () => {
+    const user = userEvent.setup();
     const model = makeRichModel();
-    // Make T-105 block T-106 so 周宁's decision chain appears in the switcher (impact > 1),
-    // and attach an open escalation decision to T-102.
+    // Add T-112 with a 2-responder open decision that blocks T-106 (impact > 1 -> appears in chain tabs AND blockers),
+    // and make T-105 block T-106 so 周宁's single non-owner decision also appears in the chain tabs.
+    model.input.tasks = {
+      coverage: 'complete',
+      items: [
+        ...(model.input.tasks.items ?? []),
+        { id: 'T-112', title: '多方确认项', projectId: 'demo', ownerPersonId: 'M-003', started: true, agentActive: false, acceptance: [{ evidence: [] }], submittedResultAtUnixMs: null, integrated: false, report: null, externalWait: null, commitments: [] },
+      ],
+    };
     model.input.dependencies = {
       coverage: 'complete',
       items: [
         ...(model.input.dependencies.items ?? []),
         { id: 'D-4', consumerTaskId: 'T-106', providerTaskId: 'T-105', satisfied: false, what: '已核验', sinceUnixMs: NOW - DAY },
+        { id: 'D-5', consumerTaskId: 'T-106', providerTaskId: 'T-112', satisfied: false, what: '已核验', sinceUnixMs: NOW - DAY },
       ],
     };
     model.input.decisions = {
@@ -426,6 +438,7 @@ describe('ProjectDependencies (AWR-PPO-043)', () => {
       items: [
         ...(model.input.decisions.items ?? []),
         { id: 'Q-3', taskId: 'T-102', state: 'open', current: true, question: '能不能多一位复核人', allowedResponderIds: ['M-010'], createdAtUnixMs: NOW - DAY },
+        { id: 'Q-4', taskId: 'T-112', state: 'open', current: true, question: '上线窗口选哪天', allowedResponderIds: ['M-001', 'M-002'], createdAtUnixMs: NOW - DAY },
       ],
     };
     stubDepsFetch({
@@ -435,15 +448,35 @@ describe('ProjectDependencies (AWR-PPO-043)', () => {
     renderApp('/projects/demo?tab=deps');
 
     const chainsBlock = await screen.findByTestId('project-deps-chains');
-    await waitFor(() => expect(chainsBlock.textContent).toContain('能复核的只有许宁一位，这个队列压着 4 件事。'));
-    expect(chainsBlock.textContent).toContain('相关问题“能不能多一位复核人”还在等部门负责人回答。');
+    await waitFor(() => expect(chainsBlock.textContent).toContain('相关问题“能不能多一位复核人”还在等部门负责人回答。'));
+    // Even when directory returns free-text duty '复核', never claim "能复核的只有许宁一位".
+    expect(chainsBlock.textContent).toContain('许宁的复核队列压着 4 件事。');
+    expect(chainsBlock.textContent).not.toContain('能复核的只有许宁一位');
 
-    // Tab switcher distinguishes own-task answer ('等林悦回答') vs non-owner decision ('等周宁决定').
-    expect(within(chainsBlock).getByRole('button', { name: '等林悦回答' })).toBeTruthy();
-    expect(within(chainsBlock).getByRole('button', { name: '等周宁决定' })).toBeTruthy();
+    // Tab switcher & root nodes: 1 owner -> 回答, 1 non-owner -> 决定, 2 responders -> neutral 等回复 (never picks list[0]).
+    const ownerAnswerTab = within(chainsBlock).getByRole('button', { name: '等林悦回答' });
+    const nonOwnerDecideTab = within(chainsBlock).getByRole('button', { name: '等周宁决定' });
+    const multiResponderTab = within(chainsBlock).getByRole('button', { name: '等回复' });
+
+    await user.click(ownerAnswerTab);
+    expect(chainsBlock.querySelector('.obs-chain-node-root .obs-chain-title')?.textContent).toBe('等林悦回答一个问题');
+
+    await user.click(nonOwnerDecideTab);
+    expect(chainsBlock.querySelector('.obs-chain-node-root .obs-chain-title')?.textContent).toBe('等周宁做一个决定');
+
+    await user.click(multiResponderTab);
+    expect(chainsBlock.querySelector('.obs-chain-node-root .obs-chain-title')?.textContent).toBe('等回复');
+    expect(chainsBlock.querySelector('.obs-chain-node-root .obs-chain-avatar')).toBeNull();
+
+    // Right-column blockers also distinguish 1 owner, 1 non-owner, and 2 responders neutrally.
+    const blockerTitles = screen.getAllByTestId('project-deps-blocker-row')
+      .map((row) => row.querySelector('.project-deps-blocker-title')?.textContent);
+    expect(blockerTitles).toContain('等林悦回答一个问题');
+    expect(blockerTitles).toContain('等周宁做一个决定');
+    expect(blockerTitles).toContain('等回复');
   });
 
-  it('pins fixed_delivery status protection and permission_restricted available cell protection in rendered table', async () => {
+  it('pins fixed_delivery status protection, permission_restricted available cell protection, and honest in-review cell wording (F12)', async () => {
     stubDepsFetch({
       deps: json({
         ok: true,
@@ -489,8 +522,25 @@ describe('ProjectDependencies (AWR-PPO-043)', () => {
                   adopted_version: 'permission_restricted',
                 },
               },
+              {
+                work_id: 'T-104',
+                work_title: '空状态检查',
+                provider_work_id: 'T-102',
+                provider_title: '接口第 3 版：提交与错误反馈',
+                dependency_position: 3,
+                version_policy: 'current_contract',
+                review_assurance: null,
+                required_version: { receipt_id: null, contract_hash: DIGEST, source_snapshot_id: 'snap-1' },
+                available_version: null,
+                adopted_version: { receipt_id: RECEIPT_V1, contract_hash: DIGEST, source_snapshot_id: 'snap-1' },
+                consumed_version: { receipt_id: RECEIPT_V1, contract_hash: DIGEST, source_snapshot_id: 'snap-1' },
+                adoption_valid: false,
+                validity: 'upstream_changed',
+                reason: 'upstream_changed',
+                missing: { available_version: 'not_recorded' },
+              },
             ],
-            total: 2,
+            total: 3,
             next_cursor: null,
             as_of: { at_unix_ms: NOW },
           },
@@ -513,6 +563,138 @@ describe('ProjectDependencies (AWR-PPO-043)', () => {
     // Column 3 (adopted) and Column 4 (available) must BOTH say '当前无权查看', even though T-102 is in overview-model!
     expect(cells[2].textContent).toBe('当前无权查看');
     expect(cells[3].textContent).toBe('当前无权查看');
+
+    // F12: when provider T-102 is in review (roundIndex 2 open) and available_version is not_recorded,
+    // column 4 must say '等复核' and NEVER fabricate '第 2 版，等复核'.
+    const inReviewRow = screen.getByTestId('dep-row-T-104-T-102');
+    const inReviewCells = within(inReviewRow).getAllByRole('cell');
+    expect(inReviewCells[3].textContent).toBe('等复核');
+    expect(inReviewCells[3].textContent).not.toMatch(/第\s*\d+\s*版/);
+  });
+
+  it('determines external avatar strictly from wait kind rather than party name suffixes (F15)', async () => {
+    const user = userEvent.setup();
+    const model = makeRichModel();
+    model.input.members = {
+      coverage: 'complete',
+      items: [
+        { personId: 'M-001', displayName: '平台小组' },
+        { personId: 'M-002', displayName: '林悦' },
+        { personId: 'M-003', displayName: '陈宇' },
+        { personId: 'M-004', displayName: '研发部' },
+      ],
+    };
+    model.input.tasks = {
+      coverage: 'complete',
+      items: [
+        { id: 'T-102', title: '接口开发', projectId: 'demo', ownerPersonId: 'M-003', started: true, agentActive: false, acceptance: [{ evidence: [{ passed: true, current: true }] }], submittedResultAtUnixMs: NOW - 2 * DAY, integrated: false, report: { completed: false, reportedAtUnixMs: NOW - 2 * DAY }, externalWait: null, commitments: [] },
+        { id: 'T-103', title: '联调任务', projectId: 'demo', ownerPersonId: 'M-002', started: true, agentActive: false, acceptance: [{ evidence: [] }], submittedResultAtUnixMs: null, integrated: false, report: null, externalWait: null, commitments: [] },
+        { id: 'T-111', title: '外部联调', projectId: 'demo', ownerPersonId: 'M-002', started: true, agentActive: false, acceptance: [{ evidence: [] }], submittedResultAtUnixMs: null, integrated: false, report: null, externalWait: { party: '王强', what: '确认接口参数', sinceUnixMs: NOW - 3 * DAY }, commitments: [] },
+      ],
+    };
+    model.input.dependencies = {
+      coverage: 'complete',
+      items: [
+        { id: 'D-1', consumerTaskId: 'T-103', providerTaskId: 'T-102', satisfied: false, what: '已核验', sinceUnixMs: NOW - DAY },
+      ],
+    };
+    model.input.decisions = {
+      coverage: 'complete',
+      items: [
+        { id: 'Q-dept', taskId: 'T-102', state: 'open', current: true, question: '字段是否兼容', allowedResponderIds: ['M-001'], createdAtUnixMs: NOW - DAY },
+      ],
+    };
+    model.input.reviewRounds = {
+      coverage: 'complete',
+      items: [
+        { id: 'R-dept', taskId: 'T-102', roundIndex: 1, state: 'open', current: true, independent: true, authorPersonId: 'M-003', reviewerPersonId: 'M-004', openedAtUnixMs: NOW - DAY },
+      ],
+    };
+    stubDepsFetch({ model: json(model) });
+    renderApp('/projects/demo?tab=deps');
+
+    const chainsBlock = await screen.findByTestId('project-deps-chains');
+    await waitFor(() => expect(within(chainsBlock).getByRole('button', { name: '复核排队' })).toBeTruthy());
+
+    // Review wait whose person name ends with '部' ('研发部') is NOT external.
+    await user.click(within(chainsBlock).getByRole('button', { name: '复核排队' }));
+    expect(chainsBlock.querySelector('.obs-chain-node-root .obs-chain-title')?.textContent).toBe('研发部的复核队列');
+    const reviewAvatar = chainsBlock.querySelector('.obs-chain-node-root .obs-chain-avatar');
+    expect(reviewAvatar).not.toBeNull();
+    expect(reviewAvatar!.getAttribute('data-external')).toBeNull();
+
+    // Decision wait whose responder name ends with '小组' ('平台小组') is NOT external.
+    await user.click(within(chainsBlock).getByRole('button', { name: '等平台小组决定' }));
+    expect(chainsBlock.querySelector('.obs-chain-node-root .obs-chain-title')?.textContent).toBe('等平台小组做一个决定');
+    const decisionAvatar = chainsBlock.querySelector('.obs-chain-node-root .obs-chain-avatar');
+    expect(decisionAvatar).not.toBeNull();
+    expect(decisionAvatar!.getAttribute('data-external')).toBeNull();
+
+    // External wait whose party is an ordinary name ('王强') IS external.
+    await user.click(within(chainsBlock).getByRole('button', { name: '王强没回复' }));
+    expect(chainsBlock.querySelector('.obs-chain-node-root .obs-chain-title')?.textContent).toBe('王强确认接口参数');
+    const externalAvatar = chainsBlock.querySelector('.obs-chain-node-root .obs-chain-avatar');
+    expect(externalAvatar).not.toBeNull();
+    expect(externalAvatar!.getAttribute('data-external')).toBe('true');
+  });
+
+  it('keeps real commitment titles like MVP-2, falls back to commitmentProjectFallback when title equals id/projectKey, and never sniffs -week- IDs (F14, F26)', async () => {
+    const modelWithMvp = makeRichModel();
+    if (modelWithMvp.input.tasks.coverage !== 'unread') {
+      modelWithMvp.input.tasks.items.forEach((task) => {
+        if (task.commitments && task.commitments.length > 0) {
+          task.commitments = [{ id: 'demo-week-47', title: 'MVP-2', kind: 'project' }];
+        }
+      });
+    }
+    stubDepsFetch({ model: json(modelWithMvp) });
+    renderApp('/projects/demo?tab=deps');
+
+    const chainsMvp = await screen.findByTestId('project-deps-chains');
+    await waitFor(() => expect(chainsMvp.querySelector('[data-node-kind="commitment"]')).not.toBeNull());
+    const mvpEnd = chainsMvp.querySelector('[data-node-kind="commitment"]')!;
+    // Real title 'MVP-2' is preserved; '-week-' ID does not invent '本周承诺' kicker (F14).
+    expect(mvpEnd.querySelector('.obs-chain-title')?.textContent).toBe('MVP-2');
+    expect(mvpEnd.querySelector('.obs-chain-kicker')?.textContent).toBe('项目承诺');
+    expect(mvpEnd.querySelector('.obs-chain-kicker')?.textContent).not.toContain('本周承诺');
+    cleanup();
+
+    // Title equal to projectKey ('demo') falls back to neutral commitmentProjectFallback ('项目（还没有名称）'), NOT project's own title ('订单协作平台').
+    const modelWithProjectKeyTitle = makeRichModel();
+    if (modelWithProjectKeyTitle.input.tasks.coverage !== 'unread') {
+      modelWithProjectKeyTitle.input.tasks.items.forEach((task) => {
+        if (task.commitments && task.commitments.length > 0) {
+          task.commitments = [{ id: 'project-demo', title: 'demo', kind: 'project' }];
+        }
+      });
+    }
+    stubDepsFetch({ model: json(modelWithProjectKeyTitle) });
+    renderApp('/projects/demo?tab=deps');
+
+    const chainsKey = await screen.findByTestId('project-deps-chains');
+    await waitFor(() => expect(chainsKey.querySelector('[data-node-kind="commitment"]')).not.toBeNull());
+    const keyEnd = chainsKey.querySelector('[data-node-kind="commitment"]')!;
+    expect(keyEnd.querySelector('.obs-chain-title')?.textContent).toBe('项目（还没有名称）');
+    expect(keyEnd.textContent).not.toContain('订单协作平台');
+    cleanup();
+
+    // Title equal to commitment.id ('P-001') falls back to neutral commitmentProjectFallback (F26).
+    const modelWithIdTitle = makeRichModel();
+    if (modelWithIdTitle.input.tasks.coverage !== 'unread') {
+      modelWithIdTitle.input.tasks.items.forEach((task) => {
+        if (task.commitments && task.commitments.length > 0) {
+          task.commitments = [{ id: 'P-001', title: 'P-001', kind: 'project' }];
+        }
+      });
+    }
+    stubDepsFetch({ model: json(modelWithIdTitle) });
+    renderApp('/projects/demo?tab=deps');
+
+    const chainsId = await screen.findByTestId('project-deps-chains');
+    await waitFor(() => expect(chainsId.querySelector('[data-node-kind="commitment"]')).not.toBeNull());
+    const idEnd = chainsId.querySelector('[data-node-kind="commitment"]')!;
+    expect(idEnd.querySelector('.obs-chain-title')?.textContent).toBe('项目（还没有名称）');
+    expect(idEnd.textContent).not.toContain('P-001');
   });
 
   it('never shows calm empty states per block while its own read is loading, failed, or partially covered', async () => {
@@ -573,6 +755,35 @@ describe('ProjectDependencies (AWR-PPO-043)', () => {
     expect(screen.getByTestId('project-deps-blockers-partial').textContent).toContain('等待回答的问题');
     expect(screen.queryByTestId('project-deps-calm')).toBeNull();
     expect(screen.queryByTestId('project-deps-blockers-empty')).toBeNull();
+    cleanup();
+
+    // Case E (F10): dependencies.list returns 0 items but still has next_cursor -> must show project-deps-table-partial, NOT "还没有登记依赖".
+    stubDepsFetch({
+      model: json(emptyOverviewModelResponse()),
+      deps: json({
+        ok: true,
+        result: { data: { work_id: null, items: [], total: 0, next_cursor: 'cursor-page-2', as_of: { at_unix_ms: NOW } } },
+        freshness: { report_received: { status: 'not_measured' }, authoritative: { status: 'measured', at_unix_ms: NOW }, page_read: { status: 'measured', at_unix_ms: NOW } },
+      }),
+    });
+    renderApp('/projects/demo?tab=deps');
+    expect(await screen.findByTestId('project-deps-table-partial')).toBeTruthy();
+    expect(screen.queryByTestId('project-deps-table-empty')).toBeNull();
+    expect(screen.getByTestId('project-deps-versions').textContent).not.toContain('还没有登记依赖');
+    cleanup();
+
+    // Case F (Item 3): when chain read is incomplete while confirmed chains exist, chain count tag must say "至少 N 条链路卡住" (not definite "N 条链路卡住").
+    const partialWithChains = makeRichModel();
+    partialWithChains.input.decisions = { coverage: 'partial', items: [], reason: 'truncated' };
+    partialWithChains.coverage = {
+      ...partialWithChains.coverage,
+      decisions: { status: 'partial', missing: [{ op: 'decisions.list', reason: 'truncated' }] },
+    };
+    stubDepsFetch({ model: json(partialWithChains) });
+    renderApp('/projects/demo?tab=deps');
+    const partialChainCount = await screen.findByTestId('project-deps-chain-count');
+    expect(partialChainCount.textContent).toBe('至少 2 条链路卡住');
+    expect(screen.getByTestId('project-deps-chains-partial-note').textContent).toContain('等待回答的问题');
   });
 
   it('navigates to task detail when clicking a dependency row', async () => {
@@ -673,7 +884,8 @@ describe('ProjectDependencies (AWR-PPO-043)', () => {
     expect(screen.queryByTestId('project-deps-versions')).toBeNull();
   });
 
-  it('sanitizes ALL human-facing free text fields (titles, requirements, decision questions, outside party names, commitments) and passes axe', async () => {
+  it('sanitizes ALL human-facing free text fields across every chain tab and detail panel (including review footer related decisions, F21) and passes axe', async () => {
+    const user = userEvent.setup();
     const realOverview = realShapedOverview();
     const dirtyModel = makeRichModel();
     dirtyModel.input.tasks = {
@@ -684,10 +896,25 @@ describe('ProjectDependencies (AWR-PPO-043)', () => {
           title: 'client[secret]=leak-task-title',
           projectId: 'demo',
           ownerPersonId: 'M-003',
+          agentName: 'payload={"secret":"leak-agent-name"}',
+          started: true,
+          agentActive: false,
+          acceptance: [{ evidence: [{ passed: true, current: true }] }],
+          submittedResultAtUnixMs: NOW - DAY,
+          integrated: false,
+          report: { completed: false, reportedAtUnixMs: NOW - DAY },
+          externalWait: null,
+          commitments: [{ id: 'comm-1', title: 'payload={"secret":"leak-commitment"}', kind: 'project' }],
+        },
+        {
+          id: 'issue-filter-mid',
+          title: 'client[secret]=leak-mid-title',
+          projectId: 'demo',
+          ownerPersonId: 'M-002',
           started: true,
           agentActive: false,
           acceptance: [{ evidence: [] }],
-          submittedResultAtUnixMs: NOW - DAY,
+          submittedResultAtUnixMs: null,
           integrated: false,
           report: null,
           externalWait: null,
@@ -717,11 +944,19 @@ describe('ProjectDependencies (AWR-PPO-043)', () => {
       coverage: 'complete',
       items: [
         {
-          id: 'D-dirty',
+          id: 'D-dirty-1',
           consumerTaskId: 'issue-filter-page',
           providerTaskId: 'issue-filter-api',
           satisfied: false,
           what: 'payload={"token":"leak-requirement"}',
+          sinceUnixMs: NOW - DAY,
+        },
+        {
+          id: 'D-dirty-2',
+          consumerTaskId: 'issue-filter-page',
+          providerTaskId: 'issue-filter-mid',
+          satisfied: false,
+          what: 'payload={"token":"leak-requirement-2"}',
           sinceUnixMs: NOW - DAY,
         },
       ],
@@ -730,8 +965,17 @@ describe('ProjectDependencies (AWR-PPO-043)', () => {
       coverage: 'complete',
       items: [
         {
-          id: 'Q-dirty',
+          id: 'Q-dirty-review-related',
           taskId: 'issue-filter-api',
+          state: 'open',
+          current: true,
+          question: 'client[secret]=leak-related-decision-question',
+          allowedResponderIds: ['M-010'],
+          createdAtUnixMs: NOW - DAY,
+        },
+        {
+          id: 'Q-dirty-decision',
+          taskId: 'issue-filter-mid',
           state: 'open',
           current: true,
           question: 'client[secret]=leak-decision-question',
@@ -740,7 +984,22 @@ describe('ProjectDependencies (AWR-PPO-043)', () => {
         },
       ],
     };
-    dirtyModel.input.reviewRounds = { coverage: 'complete', items: [] };
+    dirtyModel.input.reviewRounds = {
+      coverage: 'complete',
+      items: [
+        {
+          id: 'R-dirty-1',
+          taskId: 'issue-filter-api',
+          roundIndex: 1,
+          state: 'open',
+          current: true,
+          independent: true,
+          authorPersonId: 'M-003',
+          reviewerPersonId: 'M-004',
+          openedAtUnixMs: NOW - DAY,
+        },
+      ],
+    };
 
     stubDepsFetch({
       overview: json(realOverview),
@@ -777,15 +1036,51 @@ describe('ProjectDependencies (AWR-PPO-043)', () => {
     });
     const { container } = renderApp('/projects/demo?tab=deps');
     await waitFor(() => expect(screen.getByTestId('project-deps-versions-count').textContent).toBe('1'));
-    await waitFor(() => expect(screen.getByTestId('project-deps-blockers-count').textContent).toBe('2'));
+    await waitFor(() => expect(screen.getByTestId('project-deps-blockers-count').textContent).toBe('4'));
 
     const page = screen.getByTestId('page-project-dependencies');
-    const visible = defaultVisibleText(page);
-    expect(visible).not.toMatch(/undefined|null|NaN|leak-1|leak-2|leak-task-title|leak-commitment|leak-party|leak-ext-what|leak-requirement|leak-decision-question|contract_hash|receipt_id|current_contract/);
-    expect(findForbiddenVisibleText(visible)).toEqual([]);
-    expect(findHumanLanguageViolations(page)).toEqual([]);
+    const leakPattern = /undefined|null|NaN|leak-1|leak-2|leak-task-title|leak-mid-title|leak-agent-name|leak-commitment|leak-party|leak-ext-what|leak-requirement|leak-requirement-2|leak-decision-question|leak-related-decision-question|contract_hash|receipt_id|current_contract/;
+    const assertClean = () => {
+      const visible = defaultVisibleText(page);
+      expect(visible).not.toMatch(leakPattern);
+      expect(findForbiddenVisibleText(visible)).toEqual([]);
+      expect(findHumanLanguageViolations(page)).toEqual([]);
+    };
+
+    assertClean();
+
+    // Open EVERY chain tab (review with related open decision, decision, external) and its impact detail panel.
+    const chainTabs = within(screen.getByRole('group', { name: '链路' })).getAllByRole('button');
+    expect(chainTabs.length).toBeGreaterThanOrEqual(3);
+    for (const tab of chainTabs) {
+      await user.click(tab);
+      assertClean();
+      const impactBtn = screen.queryByTestId('project-deps-chain-impact-btn');
+      if (impactBtn) {
+        await user.click(impactBtn);
+        await screen.findByTestId('project-deps-detail');
+        assertClean();
+        await user.click(screen.getByTestId('project-deps-detail-back'));
+      }
+    }
+
+    // Open the chains count detail panel.
+    await user.click(screen.getByTestId('project-deps-chain-count'));
+    await screen.findByTestId('project-deps-detail');
+    assertClean();
+    await user.click(screen.getByTestId('project-deps-detail-back'));
+
+    // Open EVERY blocker behind-count detail panel.
+    const behindButtons = screen.getAllByTestId('project-deps-blocker-behind');
+    expect(behindButtons.length).toBeGreaterThanOrEqual(3);
+    for (const button of behindButtons) {
+      await user.click(button);
+      await screen.findByTestId('project-deps-detail');
+      assertClean();
+      await user.click(screen.getByTestId('project-deps-detail-back'));
+    }
 
     const results = await axe(container);
     expect(results).toHaveNoViolations();
-  });
+  }, 15_000);
 });
