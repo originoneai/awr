@@ -520,7 +520,7 @@ describe('StatusTag', () => {
       </>,
     );
     const words: Record<string, string> = {
-      verified: '核验过',
+      verified: '已核验',
       claimed: '标了完成，没核验',
       returned: '复核退回',
       review: '等复核',
