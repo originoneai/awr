@@ -36,6 +36,9 @@ impl Project {
         self.git(&["config", "user.name", "Fixture Author"]);
         self.git(&["config", "user.email", "fixture@example.invalid"]);
         self.git(&["config", "commit.gpgsign", "false"]);
+        // Commits otherwise detach Git maintenance whose lock files race the byte snapshots.
+        self.git(&["config", "gc.auto", "0"]);
+        self.git(&["config", "maintenance.auto", "0"]);
     }
 
     fn git(&self, args: &[&str]) -> String {
@@ -119,7 +122,7 @@ impl Project {
         let path = outcome["record"]["steps"]["preview"]["result"]["facts_path"]
             .as_str()
             .unwrap();
-        fs::read(path).unwrap()
+        fs::read(path).unwrap_or_else(|error| panic!("failed to read facts at {path}: {error}"))
     }
 
     fn snapshot(&self) -> BTreeMap<String, Vec<u8>> {
@@ -131,7 +134,14 @@ impl Project {
                     .unwrap()
                     .to_string_lossy()
                     .replace('\\', "/");
-                let kind = fs::symlink_metadata(&path).unwrap().file_type();
+                let kind = fs::symlink_metadata(&path)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "failed to inspect snapshot path {}: {error}",
+                            path.display()
+                        )
+                    })
+                    .file_type();
                 if kind.is_symlink() {
                     out.insert(
                         relative,
@@ -209,6 +219,14 @@ fn commit<'a>(facts: &'a Value, title: &str) -> &'a Value {
         .iter()
         .find(|commit| commit["title"] == title)
         .unwrap()
+}
+
+#[test]
+fn fixture_git_disables_background_maintenance() {
+    let p = Project::new("maintenance-disabled");
+    p.init();
+    assert_eq!(p.git(&["config", "--get", "gc.auto"]), "0");
+    assert_eq!(p.git(&["config", "--get", "maintenance.auto"]), "0");
 }
 
 #[test]
