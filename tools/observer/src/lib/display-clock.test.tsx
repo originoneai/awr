@@ -4,6 +4,7 @@ import i18n from '../i18n';
 import {
   DisplayTimeZoneProvider,
   readClockOffsetUnixMs,
+  readMomentUnixMs,
   referenceNowUnixMs,
   useDisplayTimeZone,
   validDisplayTimeZone,
@@ -38,6 +39,38 @@ describe('readClockOffsetUnixMs', () => {
     expect(readClockOffsetUnixMs(reply({ nowUnixMs: null, readAtUnixMs: 1_000 }))).toBeNull();
     expect(readClockOffsetUnixMs(reply({ nowUnixMs: 1_000, readAtUnixMs: null }))).toBeNull();
     expect(readClockOffsetUnixMs(reply({ nowUnixMs: Number.NaN, readAtUnixMs: 1_000 }))).toBeNull();
+  });
+});
+
+describe('readMomentUnixMs', () => {
+  it('is the derivation clock itself: the read time plus the reply\'s offset', () => {
+    expect(readMomentUnixMs(reply({ nowUnixMs: 1_000, readAtUnixMs: 400 }))).toBe(1_000);
+    expect(readMomentUnixMs(reply({ nowUnixMs: 400, readAtUnixMs: 1_000 }))).toBe(400);
+  });
+
+  it('keeps the read time when the reply carries no derivation clock', () => {
+    expect(readMomentUnixMs(reply({ nowUnixMs: null, readAtUnixMs: 1_000 }))).toBe(1_000);
+    expect(readMomentUnixMs(reply({ nowUnixMs: Number.NaN, readAtUnixMs: 1_000 }))).toBe(1_000);
+  });
+
+  it('is unknown without a usable read time', () => {
+    expect(readMomentUnixMs(null)).toBeUndefined();
+    expect(readMomentUnixMs(undefined)).toBeUndefined();
+    expect(readMomentUnixMs(reply({ nowUnixMs: 1_000, readAtUnixMs: null }))).toBeUndefined();
+  });
+
+  it('puts a displayed age at the real time since the read, whatever clock the reply derives against', () => {
+    // Real read at 10_000, fixture clock far behind at 3_000: the reference walks forward from the
+    // fixture clock, and the age counted from the read moment is the 250 real ms since the read.
+    const answered = reply({ nowUnixMs: 3_000, readAtUnixMs: 10_000 });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(10_250);
+      const reference = referenceNowUnixMs(readClockOffsetUnixMs(answered));
+      expect(reference - (readMomentUnixMs(answered) ?? Number.NaN)).toBe(250);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

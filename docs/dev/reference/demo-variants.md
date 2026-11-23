@@ -126,10 +126,14 @@ supplied by the reads the page already owns:
   page renders against `Date.now() + offset`, so the read's clock keeps walking forward
   with real time instead of freezing at the answer moment. The reply's `page_read.at_unix_ms`
   equals its read time and never serves as "now". When a page holds no reply clock (a
-  failed or absent overview read), the viewer's own clock is the fallback. The helpers live
-  in `tools/observer/src/lib/display-clock.tsx` (`readClockOffsetUnixMs`,
-  `referenceNowUnixMs`), and a guard test keeps every page and rendering component from
-  reading `Date.now()` on its own.
+  failed or absent overview read), the viewer's own clock is the fallback. An age counts
+  from the read's moment on that same clock (`read_at_unix_ms + offset`, which is the
+  derivation clock itself), so it is the real time since the read whatever clock the reply
+  derives against; the real read time sits after a fixture clock and would read as a date
+  in the future. The header's "today" is that clock's day in the display zone. The helpers
+  live in `tools/observer/src/lib/display-clock.tsx` (`readClockOffsetUnixMs`,
+  `readMomentUnixMs`, `referenceNowUnixMs`), and a guard test keeps every page and
+  rendering component from reading the browser clock on its own.
 - **Display zone.** `GET /api/team/shell` carries `displayTimeZone`. The `canonical`
   variant answers `'UTC'` because the fixture's clock times are the prototype's wall-clock
   times in UTC: with the reference clock above they make the activity ledger read exactly

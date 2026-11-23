@@ -14,7 +14,7 @@ import {
   type WorkbenchPeriodUpdate,
 } from '../components/workbench/model';
 import { isAuthError } from '../lib/api';
-import { readClockOffsetUnixMs, referenceNowUnixMs, useDisplayTimeZone } from '../lib/display-clock';
+import { readClockOffsetUnixMs, readMomentUnixMs, referenceNowUnixMs, useDisplayTimeZone } from '../lib/display-clock';
 import { usePerspective } from '../lib/perspective/PerspectiveProvider';
 import { overviewModelQueryOptions, projectsQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
@@ -130,7 +130,11 @@ export function WorkbenchPage() {
   const model = buildMyWorkModel(derived, i18n.language, {
     personId,
     projectId: effectiveProject,
-    readAtUnixMs: modelResponse.read_at_unix_ms,
+    // The model counts every age it derives (the source line, the oldest pending wait) from
+    // the read moment in the display clock's own time system: on a demo whose fixture clock
+    // sits behind the real read time, the real read time would print a date in the future
+    // and run durations a day long.
+    readAtUnixMs: readMomentUnixMs(modelResponse),
     referenceUnixMs,
     timeZone: displayTimeZone,
     latestPeriodUpdate: modelResponse.latestPeriodUpdate ?? null,

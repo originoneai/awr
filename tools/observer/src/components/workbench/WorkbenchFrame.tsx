@@ -11,6 +11,7 @@ import type {
   ViewAgentSummary,
 } from '../../core/overview';
 import { handbackVocabulary } from '../../lib/agent-handback';
+import { useDisplayTimeZone } from '../../lib/display-clock';
 import { PerspectiveLimitationNote } from '../../lib/perspective/PerspectiveLimitationNote';
 import type { TeamFreshness } from '../../lib/types';
 import { FreshnessBadge } from '../FreshnessBadge';
@@ -84,6 +85,20 @@ function validChain(value: string | null, count: number): number {
   return Number.isInteger(parsed) && parsed >= 0 && parsed < count ? parsed : 0;
 }
 
+/** The calendar day of a moment in a zone, the way the header words it: the month as a number
+ * in Chinese and as its English name otherwise. Null when the moment cannot be placed. */
+function zonedDay(unixMs: number, timeZone: string, language: string): { month: string | number; day: number } | null {
+  if (!Number.isFinite(unixMs)) return null;
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone, month: 'numeric', day: 'numeric' }).formatToParts(unixMs);
+  const month = Number(parts.find((part) => part.type === 'month')?.value);
+  const day = Number(parts.find((part) => part.type === 'day')?.value);
+  if (!Number.isFinite(month) || !Number.isFinite(day)) return null;
+  return {
+    month: language.startsWith('zh') ? month : new Intl.DateTimeFormat('en-US', { timeZone, month: 'long' }).format(unixMs),
+    day,
+  };
+}
+
 /** The four perspectives reuse this frame; this PR supplies only the My Work configuration. */
 export function WorkbenchFrame({ model, projectKey, projectName, projectTitles, freshness, readAtUnixMs, referenceUnixMs, state }: WorkbenchFrameProps) {
   const { t, i18n } = useTranslation();
@@ -92,6 +107,7 @@ export function WorkbenchFrame({ model, projectKey, projectName, projectTitles, 
   const handbackWords = handbackVocabulary(i18n.language);
   // Displayed ages ride the display clock; the read's answer moment stays readAtUnixMs.
   const ageClockUnixMs = referenceUnixMs ?? readAtUnixMs;
+  const displayTimeZone = useDisplayTimeZone();
   const activeChainIndex = validChain(searchParams.get('chain'), model.chains.length);
   const activeChain = model.chains[activeChainIndex];
   const activeTab = ['agents', 'waits', 'lessons'].includes(searchParams.get('tab') ?? '')
@@ -470,15 +486,16 @@ export function WorkbenchFrame({ model, projectKey, projectName, projectTitles, 
     );
   }
 
-  const date = readAtUnixMs === undefined ? null : new Date(readAtUnixMs);
+  // "Today" is the display clock's day in the display zone (the canonical demo rides its
+  // fixture clock in UTC, so it reads the prototype's day), not the real read moment in the
+  // viewer's zone. A reply with no usable read time keeps the unknown period.
+  const today = readAtUnixMs === undefined || ageClockUnixMs === undefined
+    ? null
+    : zonedDay(ageClockUnixMs, displayTimeZone, i18n.language);
   const viewerName = workbenchDisplayText(model.currentPerson?.person.displayName, '');
-  const subtitle = date === null ? t('workbench.home.periodUnknown') : t(
+  const subtitle = today === null ? t('workbench.home.periodUnknown') : t(
     viewerName ? 'workbench.home.periodMe' : 'workbench.home.periodMeUnnamed',
-    {
-      name: viewerName,
-      month: i18n.language.startsWith('zh') ? date.getMonth() + 1 : date.toLocaleString('en-US', { month: 'long' }),
-      day: date.getDate(),
-    },
+    { name: viewerName, month: today.month, day: today.day },
   );
 
   return (
