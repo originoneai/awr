@@ -382,6 +382,39 @@ export function humanText(key: HumanVocabularyKey, language: string): string {
   return HUMAN_VOCABULARY[locale][key];
 }
 
+export interface AllowedProductWord {
+  readonly word: string;
+  readonly language: HumanLanguage;
+  /** Why this word is ordinary product language rather than an internal protocol token. */
+  readonly rationale: string;
+  /** Prototype or product copy where the word appears. */
+  readonly example: string;
+  /** Related internal identifier, protocol field, hash, or raw status code that remains flagged. */
+  readonly forbiddenCounterexample: string;
+}
+
+/**
+ * Product words intentionally allowed by the shared visible-text scanner.
+ * Each entry records why the word belongs to user-facing copy rather than internal protocol vocabulary,
+ * together with a real internal token that remains rejected by FORBIDDEN_VISIBLE_PATTERNS.
+ */
+export const ALLOWED_PRODUCT_WORDS: ReadonlyArray<AllowedProductWord> = [
+  {
+    word: '绑定',
+    language: 'zh-CN',
+    rationale: '原型管理设置页「什么算依据」固定文案（「测试结果：绑定到代码版本」）中的常用中文动词，表达测试结果与代码版本的对应关系，不暴露内部对象、字段名或协议标识。',
+    example: '绑定到代码版本',
+    forbiddenCounterexample: 'current_binding',
+  },
+  {
+    word: 'completion',
+    language: 'en-US',
+    rationale: 'Ordinary English noun describing whether work is finished (for example, "The Agent reported completion" or "No completion record yet"). Internal fields, operations, and raw status codes such as selected_completion_id, completion_not_recorded, and completion.inspect remain flagged by snake_case and operation_name.',
+    example: 'The Agent reported completion, but did not submit it for review, so it is not complete',
+    forbiddenCounterexample: 'selected_completion_id',
+  },
+];
+
 export const FORBIDDEN_VISIBLE_PATTERNS: ReadonlyArray<{ id: string; pattern: RegExp }> = [
   { id: 'snake_case', pattern: /\b[a-z]+_[a-z_]+\b/ },
   { id: 'operation_name', pattern: /\b[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+\b/ },
@@ -390,7 +423,9 @@ export const FORBIDDEN_VISIBLE_PATTERNS: ReadonlyArray<{ id: string; pattern: Re
   { id: 'uuid', pattern: /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i },
   { id: 'sha256', pattern: /\bsha256:/i },
   { id: 'error_class', pattern: /\b[A-Z][A-Za-z0-9]*Error\b/ },
-  { id: 'engineering_word', pattern: /\b(?:claim|lease|digest|checkpoint|fence|epoch|payload|cursor|OAuth|client_id|request_id|snapshot|completion)\b/i },
-  { id: 'engineering_copy', pattern: /切片|占位|合同|回执|绑定|轮号|未测量|快照/ },
+  // Ordinary English word "completion" is allowed; see ALLOWED_PRODUCT_WORDS.
+  { id: 'engineering_word', pattern: /\b(?:claim|lease|digest|checkpoint|fence|epoch|payload|cursor|OAuth|client_id|request_id|snapshot)\b/i },
+  // Mandatory prototype word "绑定" is allowed; see ALLOWED_PRODUCT_WORDS.
+  { id: 'engineering_copy', pattern: /切片|占位|合同|回执|轮号|未测量|快照/ },
   { id: 'not_measured', pattern: /\bnot measured\b/i },
 ];
