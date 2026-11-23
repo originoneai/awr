@@ -75,6 +75,7 @@ pub(crate) const QUERIES: &[&str] = &[
     "planning.candidates",
     "sources.inspect",
     "documents.list",
+    "document.history",
     "decisions.list",
     "updates.list",
     "update.inspect",
@@ -143,6 +144,7 @@ impl WorkstreamQuery {
         "planning.candidates",
         "sources.inspect",
         "documents.list",
+        "document.history",
         "decisions.list",
         "updates.list",
         "work.prepare",
@@ -431,7 +433,7 @@ impl WorkstreamQuery {
             (
                 "source_path",
                 self.source_path.is_some(),
-                self.op == "source.content",
+                matches!(self.op.as_str(), "source.content" | "document.history"),
                 false,
             ),
         ] {
@@ -520,13 +522,15 @@ impl WorkstreamQuery {
                             self.op.as_str(),
                             "sources.inspect"
                                 | "documents.list"
+                                | "document.history"
                                 | "handoff.list"
                                 | "dependencies.list"
                         )),
             ),
             (
                 "workstream_id",
-                self.workstream_id.is_some() && (project_wide || activity_audit),
+                self.workstream_id.is_some()
+                    && (project_wide || activity_audit || self.op == "document.history"),
             ),
             ("change_id", self.change_id.is_some() && activity_audit),
             ("category", self.category.is_some() && activity_audit),
@@ -793,6 +797,33 @@ mod input_guidance_tests {
         let missing_search: WorkstreamQuery =
             serde_json::from_value(json!({"protocol_version":1,"op":"work.search"})).unwrap();
         assert!(missing_search.validate().is_err());
+    }
+
+    #[test]
+    fn document_history_requires_safe_source_path_and_rejects_unrelated_selectors() {
+        for input in [
+            json!({"protocol_version":1,"op":"document.history","source_path":"docs/guide.md"}),
+            json!({"protocol_version":1,"op":"document.history","source_path":"docs/guide.md","work_id":"work"}),
+            json!({"protocol_version":1,"op":"document.history","source_path":"docs/guide.md","max_context_bytes":262144}),
+        ] {
+            let query: WorkstreamQuery = serde_json::from_value(input.clone()).unwrap();
+            assert!(query.validate().is_ok(), "{input}");
+        }
+        for input in [
+            json!({"protocol_version":1,"op":"document.history"}),
+            json!({"protocol_version":1,"op":"document.history","source_path":"../secret.md"}),
+            json!({"protocol_version":1,"op":"document.history","source_path":"/etc/passwd"}),
+            json!({"protocol_version":1,"op":"document.history","source_path":"docs/guide.md","session_id":"session"}),
+            json!({"protocol_version":1,"op":"document.history","source_path":"docs/guide.md","workstream_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}),
+            json!({"protocol_version":1,"op":"document.history","source_path":"docs/guide.md","limit":10}),
+            json!({"protocol_version":1,"op":"document.history","source_path":"docs/guide.md","cursor":"opaque"}),
+            json!({"protocol_version":1,"op":"document.history","source_path":"docs/guide.md","search":"guide"}),
+            json!({"protocol_version":1,"op":"document.history","source_path":"docs/guide.md","expected_sha256":"a".repeat(64)}),
+            json!({"protocol_version":1,"op":"document.history","source_path":"docs/guide.md","max_context_bytes":262145}),
+        ] {
+            let query: WorkstreamQuery = serde_json::from_value(input.clone()).unwrap();
+            assert!(query.validate().is_err(), "{input}");
+        }
     }
 
     #[test]
@@ -1098,6 +1129,7 @@ mod input_guidance_tests {
                     input["expected_sha256"] = json!("a".repeat(64));
                 }
                 "work.search" => input["search"] = json!("example"),
+                "document.history" => input["source_path"] = json!("docs/spec.md"),
                 _ => {}
             }
             let query: WorkstreamQuery = serde_json::from_value(input).unwrap();
@@ -1302,8 +1334,11 @@ pub(crate) async fn authenticated_read(
     // unrestricted reader. `resolve_agent_read_delegation` below narrows `auth`
     // to the query's own delegation (one workstream for a stream-scoped grant);
     // the disclosure gate must not inherit that narrowing, nor escape it.
-    let directory_auth =
-        matches!(request.op.as_str(), "audit.requests" | "audit.development").then(|| auth.clone());
+    let directory_auth = matches!(
+        request.op.as_str(),
+        "audit.requests" | "audit.development" | "document.history"
+    )
+    .then(|| auth.clone());
     crate::delegation_auth::resolve_agent_read_delegation(tx, &mut auth, project, request, now_ms)
         .await?;
     // Keep shared read state off nested handoff and checkpoint command stacks.
@@ -1457,6 +1492,9 @@ pub(crate) async fn read(
     }
     if q.op == "documents.list" {
         return documents::read(tx, tenant, project, auth, q).await;
+    }
+    if q.op == "document.history" {
+        return documents::history(tx, tenant, project, auth, directory_auth, q).await;
     }
     if q.op == "decisions.list" {
         return decisions::read(tx, tenant, project, auth, q).await;
@@ -2540,6 +2578,41 @@ pub(crate) fn source_file_workstreams(
         return Err(PgError::Forbidden);
     }
     Ok(required)
+}
+
+/// Resolve the workstreams required to inspect a path's registered history and
+/// whether that path is registered in the active workstream catalog. An
+/// unregistered path requires full project read access before reporting
+/// absence, preventing partial-stream callers from probing hidden streams.
+pub(crate) fn document_history_workstreams(
+    auth: &ReaderAuthority,
+    path: &str,
+) -> PgResult<(std::collections::BTreeSet<awr_core::Id>, bool)> {
+    use awr_core::Id;
+    use std::collections::BTreeSet;
+
+    let mut required: BTreeSet<Id> = BTreeSet::new();
+    let registered = if path == "workstreams.json" || path.ends_with("/workstreams.json") {
+        required.extend(auth.catalog.workstreams.iter().map(|stream| stream.id));
+        !required.is_empty()
+    } else {
+        for stream in &auth.catalog.workstreams {
+            if stream.acceptance_contracts.iter().any(|p| p == path) {
+                required.insert(stream.id);
+            }
+        }
+        if required.is_empty() {
+            required.extend(auth.catalog.workstreams.iter().map(|stream| stream.id));
+            false
+        } else {
+            true
+        }
+    };
+
+    if required.is_empty() {
+        return Err(PgError::Forbidden);
+    }
+    Ok((required, registered))
 }
 
 fn authorize_source_file_streams(auth: &ReaderAuthority, path: &str) -> PgResult<()> {

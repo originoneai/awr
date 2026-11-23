@@ -65,6 +65,7 @@ The service's activity read selects request-audit actions and committed event ty
 | `delivery.source.write` | Delivery |
 | `delivery.submission.describe` | Delivery |
 | `delivery.submit_and_request_review` | Delivery |
+| `document.history` | All only |
 | `documents.list` | All only |
 | `events.list` | All only |
 | `evidence.inspect` | Delivery |
