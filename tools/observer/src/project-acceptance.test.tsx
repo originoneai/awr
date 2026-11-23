@@ -272,13 +272,13 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
   it('preserves the recorded software-task title in outcome names and selection', async () => {
     const title = 'Add last_event_at to graph nodes';
     setupAcceptance({ works: WORKS.map(work => work.key === WORK ? { ...work, title } : work) });
-    renderApp('/projects/demo?tab=acceptance');
+    renderApp(`/projects/demo?tab=acceptance&work=${WORK}`);
     await waitFor(() => expect(screen.getAllByText(title).length).toBeGreaterThanOrEqual(2));
   });
   it('polls only the selected outcome at the detail cadence and shares its initial read', async () => {
     const snapshotOptions = vi.spyOn(observationQueries, 'workSnapshotQueryOptions');
     const { calls } = setupAcceptance();
-    await renderAcceptance('/projects/demo?tab=acceptance');
+    await renderAcceptance(`/projects/demo?tab=acceptance&work=${WORK}`);
     expect(snapshotOptions).toHaveBeenCalledWith('demo', WORK, 'WS1', false, 'list');
     expect(snapshotOptions).toHaveBeenCalledWith('demo', PAGE, 'WS1', false, 'list');
     expect(snapshotOptions).toHaveBeenCalledWith('demo', WORK, 'WS1', false);
@@ -289,7 +289,7 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
   it('promotes the newly selected outcome to the detail cadence and refreshes it immediately', async () => {
     const snapshotOptions = vi.spyOn(observationQueries, 'workSnapshotQueryOptions');
     const { calls } = setupAcceptance();
-    const { queryClient } = await renderAcceptance('/projects/demo?tab=acceptance');
+    const { queryClient } = await renderAcceptance(`/projects/demo?tab=acceptance&work=${WORK}`);
     snapshotOptions.mockClear();
     await userEvent.setup().click(screen.getByTestId(`acceptance-work-${PAGE}`));
     await waitForAcceptanceReads(queryClient);
@@ -487,11 +487,14 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     expect(step?.textContent).not.toContain('还没准备');
   });
 
-  it('localizes review states in the outcome source list (review r1.4)', async () => {
+  it('localizes review states in the outcome table (prototype pDelivery wording)', async () => {
     setupAcceptance();
     await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
-    expect((await screen.findByTestId('acceptance-work-issue-filter-api')).textContent).toContain('已批准');
-    expect(screen.getByTestId('acceptance-work-issue-filter-page').textContent).toContain('待复核');
+    expect((await screen.findByTestId('acceptance-work-issue-filter-api')).textContent).toContain('通过');
+    expect(screen.getByTestId('acceptance-work-issue-filter-page').textContent).toContain('等结论');
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect(screen.getByTestId('acceptance-work-issue-filter-api').textContent).toContain('Passed');
+    expect(screen.getByTestId('acceptance-work-issue-filter-page').textContent).toContain('Awaiting decision');
   });
 
   it('uses a missing-receipt label instead of a runtime state in the completion step (review r1.6)', async () => {
@@ -592,7 +595,8 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     expect(screen.getByText(/Two requests overlap\./)).toBeTruthy();
     expect(screen.getByText(/The earlier request finishes last\./)).toBeTruthy();
     expect(screen.getByText(/The previous results replace the current selection\./)).toBeTruthy();
-    expect(screen.getByTestId(`acceptance-work-${PAGE}`).textContent).toContain('未通过');
+    expect(screen.getByTestId(`acceptance-work-${PAGE}`).textContent).toContain('退回');
+    expect(screen.getByTestId(`acceptance-work-${PAGE}`).className).toContain('obs-table-highlighted-row');
     expect(screen.queryByTestId('acceptance-review')).toBeNull();
   });
 
@@ -937,4 +941,284 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     await new Promise((resolve) => setTimeout(resolve, 6500));
     expect(calls.length).toBe(settled);
   }, 10000);
+});
+
+describe('project acceptance prototype parity and states (AWR-PPO-044)', () => {
+  function setupThreeStateOutcomes() {
+    const works = [
+      { key: 'T-APP', title: '订单查询接口', status: 'completed', owner_person: '陈宇', agent: null, next_step: null, detail_loaded: false, workstream_id: 'WS1', contract_hash: CONTRACT },
+      { key: 'T-OPEN', title: '接口第 3 版', status: 'claimed', owner_person: '陈宇', agent: null, next_step: null, detail_loaded: false, workstream_id: 'WS1', contract_hash: 'open-contract' },
+      { key: 'T-REJ', title: '登录异常处理', status: 'claimed', owner_person: '林悦', agent: null, next_step: null, detail_loaded: false, workstream_id: 'WS1', contract_hash: 'rej-contract' },
+      { key: 'T-NODEL', title: '导出功能', status: 'waiting', owner_person: '林悦', agent: null, next_step: null, detail_loaded: false, workstream_id: 'WS1', contract_hash: 'nodel-contract' },
+    ];
+    const now = 1795089600000;
+    const day = 86_400_000;
+    const snapshots: Record<string, unknown> = {
+      'T-APP': {
+        work_id: 'T-APP',
+        contract_hash: CONTRACT,
+        observation: {
+          responsibility: { owner_name: '陈宇', independent_reviewer: { person_id: 'M-004', display_name: '许宁' } },
+          collaboration: {
+            delivery_required: true,
+            candidate: { current: true, selection_version: '2', required_checks: ['单元测试', '压测'] },
+            review: { id: 'r-app', state: 'approved', current_candidate: true },
+            integration: { id: 'i-app', state: 'confirmed', current_binding: true },
+            verification: [{ check: '单元测试', outcome: 'passed' }, { check: '压测', outcome: 'passed' }],
+          },
+          runtime: { state: 'completed', selected_completion_id: null },
+        },
+      },
+      'T-OPEN': {
+        work_id: 'T-OPEN',
+        contract_hash: 'open-contract',
+        observation: {
+          responsibility: { owner_name: '陈宇', independent_reviewer: { person_id: 'M-004', display_name: '许宁' } },
+          collaboration: {
+            delivery_required: true,
+            candidate: { current: true, selection_version: '3', required_checks: ['单元测试'] },
+            review: { id: 'r-open', state: 'open', current_candidate: true },
+            integration: null,
+            verification: [{ check: '单元测试', outcome: 'passed' }],
+          },
+          runtime: { state: 'claimed', selected_completion_id: null },
+        },
+      },
+      'T-REJ': {
+        work_id: 'T-REJ',
+        contract_hash: 'rej-contract',
+        observation: {
+          responsibility: { owner_name: '林悦', independent_reviewer: { person_id: 'M-004', display_name: '许宁' } },
+          collaboration: {
+            delivery_required: true,
+            candidate: { current: true, selection_version: '1', required_checks: ['单元测试'] },
+            review: { id: 'r-rej', state: 'rejected', current_candidate: true },
+            integration: null,
+            verification: [{ check: '单元测试', outcome: 'passed' }],
+          },
+          runtime: { state: 'claimed', selected_completion_id: null },
+        },
+      },
+      'T-NODEL': {
+        work_id: 'T-NODEL',
+        contract_hash: 'nodel-contract',
+        observation: {
+          responsibility: { owner_name: '林悦' },
+          collaboration: { delivery_required: false, candidate: null, review: null, integration: null, verification: [] },
+          runtime: null,
+        },
+      },
+    };
+    const rounds: Record<string, unknown[]> = {
+      'T-APP': [{ round_id: 'r-app', round_index: 2, round_position: 2, readable: true, state: 'approved', contract_matches_current: true, reviewer_role: 'independent_reviewer', reviewer_actor_id: 'M-004-agent', reviewer_person_id: 'M-004', decided_at_unix_ms: now - day, reason_first_line: '加缓存层后达标' }],
+      'T-OPEN': [{ round_id: 'r-open', round_index: 1, round_position: 1, readable: true, state: 'open', contract_matches_current: true, reviewer_role: null, reviewer_actor_id: null, reviewer_person_id: null, decided_at_unix_ms: null, reason_first_line: null }],
+      'T-REJ': [{ round_id: 'r-rej', round_index: 1, round_position: 1, readable: true, state: 'rejected', contract_matches_current: true, reviewer_role: 'independent_reviewer', reviewer_actor_id: 'M-004-agent', reviewer_person_id: 'M-004', decided_at_unix_ms: now - day, reason_first_line: '错误提示分支没有验证' }],
+    };
+    const complete = <T,>(items: T[]) => ({ coverage: 'complete', items });
+    const part = { status: 'complete', missing: [] };
+    const model = {
+      ok: true,
+      project: 'demo',
+      read_at_unix_ms: Date.now(),
+      input: {
+        tasks: complete([]),
+        dependencies: complete([]),
+        decisions: complete([]),
+        reviewRounds: complete([
+          { id: 'r-open', taskId: 'T-OPEN', roundIndex: 1, state: 'open', current: true, independent: true, reviewerPersonId: 'M-004', openedAtUnixMs: now - 2 * day },
+        ]),
+        handoffs: complete([]),
+        approvals: complete([]),
+        members: complete([
+          { personId: 'M-003', displayName: '陈宇', groupId: 'G-1' },
+          { personId: 'M-002', displayName: '林悦', groupId: 'G-1' },
+          { personId: 'M-004', displayName: '许宁', groupId: 'G-2' },
+        ]),
+        activity: complete([]),
+        options: { nowUnixMs: now, stalledAfterDays: 1 },
+      },
+      coverage: {
+        tasks: part, dependencies: part, decisions: part, reviewRounds: part,
+        handoffs: part, approvals: part, members: part, activity: part,
+      },
+      freshness: {
+        report_received: { status: 'measured', at_unix_ms: now },
+        authoritative: { status: 'measured', at_unix_ms: now },
+        page_read: { status: 'measured', at_unix_ms: now },
+      },
+    };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/team/projects')) return json(DEMO_PROJECTS);
+      if (url.includes('/api/team/overview-model')) return json(model);
+      if (url.includes('/api/team/overview')) {
+        return json({ ...DEMO_OVERVIEW, works, freshness: model.freshness, workstreams: [{ id: 'WS1', title: '后端' }] });
+      }
+      if (url.includes('/api/team/activity')) {
+        return json({ ok: true, data: { items: [], scope: 'self', next_cursor: null, chat_text_collected: false, tool_io_collected: false } });
+      }
+      if (url.includes('/api/team/read')) {
+        const query = JSON.parse(String(init?.body)).query;
+        if (query.op === 'work.snapshot') return json({ ok: true, result: envelope(snapshots[query.work_id], query.work_id), freshness: model.freshness });
+        if (query.op === 'review.rounds') {
+          const items = rounds[query.work_id] ?? [];
+          return json({ ok: true, result: envelope({ work_id: query.work_id, items, total: items.length, next_cursor: null, as_of: { at_unix_ms: now } }, query.work_id), freshness: model.freshness });
+        }
+        return json({ ok: true, result: envelope({ work_id: query.work_id, items: [], delivery: { awr_acceptance: { complete: false, runtime_state: 'claimed', selected_completion_id: null } }, review: null }, query.work_id), freshness: model.freshness });
+      }
+      return json({ ok: false, error: { code: 'NoRoute', message: url } });
+    }));
+  }
+
+  it('renders lead sentence, 5-column table, rejected highlight, independent-review note, and click-to-detail count equality', async () => {
+    setupThreeStateOutcomes();
+    await renderAcceptance('/projects/demo?tab=acceptance');
+    const lead = await screen.findByTestId('acceptance-lead');
+    expect(lead.textContent).toBe('3 件任务交过成果，1 件通过复核，1 件在等复核，1 件被退回');
+    expect(screen.getByTestId('acceptance-section-count').textContent).toBe('3');
+    expect(screen.queryByTestId('acceptance-work-T-NODEL')).toBeNull();
+
+    // Verify table cells match prototype content
+    const appRow = screen.getByTestId('acceptance-work-T-APP');
+    expect(appRow.textContent).toContain('订单查询接口');
+    expect(appRow.textContent).toContain('陈宇 提交');
+    expect(appRow.textContent).toContain('第 2 版');
+    expect(appRow.textContent).toContain('单元测试');
+    expect(appRow.textContent).toContain('压测');
+    expect(appRow.textContent).toContain('通过');
+    expect(appRow.textContent).toContain('第 2 轮 · 许宁（独立复核）· 加缓存层后达标');
+    expect(appRow.textContent).toContain('已合入');
+    expect(appRow.className).not.toContain('obs-table-highlighted-row');
+
+    const openRow = screen.getByTestId('acceptance-work-T-OPEN');
+    expect(openRow.textContent).toContain('第 3 版');
+    expect(openRow.textContent).toContain('等结论');
+    expect(openRow.textContent).toContain('第 1 轮 · 许宁（独立复核）· 还没有结论，等了 2 天');
+    expect(openRow.textContent).toContain('复核通过后才能合入');
+
+    const rejRow = screen.getByTestId('acceptance-work-T-REJ');
+    expect(rejRow.textContent).toContain('退回');
+    expect(rejRow.textContent).toContain('第 1 轮 · 许宁（独立复核）· 错误提示分支没有验证');
+    expect(rejRow.textContent).toContain('没有合入');
+    expect(rejRow.className).toContain('obs-table-highlighted-row');
+
+    // Independent review footnote verbatim
+    expect(screen.getByTestId('acceptance-independent-note').textContent).toBe(
+      '“独立复核”指复核的人不是提交的人，也不是提交人自己的第二个 Agent。这个身份是服务端记录的，不是页面推断的。',
+    );
+
+    // Every summary number opens its matching detail list whose row count equals the number
+    const user = userEvent.setup();
+    const rowCount = () => screen.getByTestId('acceptance-table').querySelectorAll('tbody tr').length;
+    expect(rowCount()).toBe(3);
+
+    await user.click(screen.getByTestId('acceptance-summary-approved'));
+    expect(rowCount()).toBe(1);
+    expect(screen.getByTestId('acceptance-work-T-APP')).toBeTruthy();
+    expect(screen.queryByTestId('acceptance-work-T-OPEN')).toBeNull();
+
+    await user.click(screen.getByTestId('acceptance-summary-open'));
+    expect(rowCount()).toBe(1);
+    expect(screen.getByTestId('acceptance-work-T-OPEN')).toBeTruthy();
+    expect(screen.queryByTestId('acceptance-work-T-APP')).toBeNull();
+
+    await user.click(screen.getByTestId('acceptance-summary-rejected'));
+    expect(rowCount()).toBe(1);
+    expect(screen.getByTestId('acceptance-work-T-REJ')).toBeTruthy();
+
+    await user.click(screen.getByTestId('acceptance-summary-all'));
+    expect(rowCount()).toBe(3);
+
+    // Clicking a row opens the preserved delivery detail panel; back closes it
+    await user.click(screen.getByTestId('acceptance-work-T-APP'));
+    expect(await screen.findByTestId('acceptance-detail')).toBeTruthy();
+    expect(screen.getByTestId('acceptance-evidence-chain')).toBeTruthy();
+    await user.click(screen.getByTestId('acceptance-detail-back'));
+    expect(screen.queryByTestId('acceptance-detail')).toBeNull();
+  });
+
+  it.each(['zh-CN', 'en-US'] as const)('renders all 7 states cleanly in %s with coverage and freshness', async (language) => {
+    await act(async () => { await i18n.changeLanguage(language); });
+
+    // 1. Loading
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+    const loadingView = renderApp('/projects/demo?tab=acceptance');
+    expect(await screen.findByTestId('acceptance-loading')).toBeTruthy();
+    expect(screen.getByTestId('acceptance-loading').textContent).toBe(
+      language === 'zh-CN' ? '正在读取成果与验收记录' : 'Loading outcomes and acceptance records',
+    );
+    loadingView.unmount();
+
+    // 2. Empty (0 delivered outcomes)
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/team/projects')) return json(DEMO_PROJECTS);
+      if (url.includes('/api/team/overview')) return json({ ...DEMO_OVERVIEW, works: [] });
+      return json({ ok: true, result: envelope({ items: [] }), freshness: freshness() });
+    }));
+    const emptyView = await renderAcceptance('/projects/demo?tab=acceptance');
+    expect(await screen.findByTestId('acceptance-empty')).toBeTruthy();
+    expect(screen.getByTestId('acceptance-empty').textContent).toBe(
+      language === 'zh-CN' ? '还没有任务交过成果。' : 'No tasks have delivered outcomes yet.',
+    );
+    expect(screen.getByTestId('acceptance-coverage')).toBeTruthy();
+    emptyView.unmount();
+
+    // 3. Failed
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/team/projects')) return json(DEMO_PROJECTS);
+      return json({ ok: false, error: { code: 'ReadTimeout', message: 'slow' } });
+    }));
+    const failView = await renderAcceptance('/projects/demo?tab=acceptance', { expand: false });
+    expect(await screen.findByTestId('acceptance-failed')).toBeTruthy();
+    expect(screen.getByTestId('acceptance-coverage')).toBeTruthy();
+    failView.unmount();
+
+    // 4. Partial failure (1 snapshot succeeds, 1 fails)
+    setupAcceptance();
+    const baseFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/team/read')) {
+        const query = JSON.parse(String(init?.body)).query;
+        if (query.op === 'work.snapshot' && query.work_id === PAGE) {
+          return json({ ok: false, error: { code: 'ReadTimeout', message: 'partial' } });
+        }
+      }
+      return baseFetch(input, init);
+    }));
+    const partialView = await renderAcceptance('/projects/demo?tab=acceptance');
+    expect(await screen.findByTestId('acceptance-partial')).toBeTruthy();
+    expect(screen.getByTestId(`acceptance-work-${WORK}`)).toBeTruthy();
+    expect(screen.getByTestId('acceptance-section-count').textContent).toBe('—');
+    partialView.unmount();
+
+    // 5. Unknown (incomparable / unknown state)
+    const { payloads: unknownPayloads } = setupAcceptance();
+    unknownPayloads.snapshots[WORK].observation.collaboration.review.state = 'mystery_state';
+    const unknownView = await renderAcceptance('/projects/demo?tab=acceptance');
+    expect(await screen.findByTestId('acceptance-unknown')).toBeTruthy();
+    expect(screen.getByTestId(`acceptance-work-${WORK}`).textContent).toContain(
+      language === 'zh-CN' ? '结果未知' : 'Outcome unknown',
+    );
+    unknownView.unmount();
+
+    // 6. Revoked / Forbidden
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('/api/team/projects')) return json(DEMO_PROJECTS);
+      return json({ ok: false, error: { code: 'Forbidden', message: 'denied' } });
+    }));
+    const forbiddenView = renderApp('/projects/demo?tab=acceptance');
+    expect(await screen.findByTestId('state-forbidden')).toBeTruthy();
+    forbiddenView.unmount();
+
+    // 7. Data
+    setupThreeStateOutcomes();
+    const dataView = await renderAcceptance('/projects/demo?tab=acceptance');
+    expect(await screen.findByTestId('acceptance-table')).toBeTruthy();
+    expect(screen.getByTestId('acceptance-coverage')).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/\bundefined\b|\bnull\b|\bNaN\b/);
+    dataView.unmount();
+  });
 });
