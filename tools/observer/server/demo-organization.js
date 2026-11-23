@@ -427,7 +427,7 @@ function canonicalDepartmentFacts(data) {
       behind: wait.work_id ? behindCount(wait.work_id) : null,
       task_id: wait.work_id ?? null,
       task_title: task?.title ?? null,
-      project_key: proj?.key ?? 'P-001',
+      project_key: proj?.key ?? null,
     };
   }).sort((a, b) => (b.behind ?? -1) - (a.behind ?? -1) || (b.days ?? -1) - (a.days ?? -1));
 

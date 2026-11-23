@@ -211,7 +211,7 @@ const DEPT_VOCABULARY: Record<'zh-CN' | 'en-US', DepartmentVocabulary> = {
       projectOffTrack: '最新一期状态偏离',
     },
     usage: {
-      partialGroups: '投入只采集到{{collected}}的用量，{{missing}}缺失，所以这里不显示费用。',
+      partialGroups: '投入只采集到{{collected}}的用量，另外{{missingCount}}个小组的缺失，所以这里不显示费用。',
       missingOnly: '{{missing}}尚未采集用量，这里不显示费用。',
       noneCollected: '还没有采集各小组的用量，这里不显示费用。',
       separator: '、',
@@ -267,7 +267,7 @@ const DEPT_VOCABULARY: Record<'zh-CN' | 'en-US', DepartmentVocabulary> = {
       projectOffTrack: 'Latest update is off track',
     },
     usage: {
-      partialGroups: 'Usage was collected only for {{collected}}; usage is missing for {{missing}}, so no cost figures are shown here.',
+      partialGroups: 'Usage was collected only for {{collected}}; usage is missing for {{missingCount}}, so no cost figures are shown here.',
       missingOnly: 'Usage has not been collected for {{missing}}, so no cost figures are shown here.',
       noneCollected: 'Usage has not been collected for any group yet, so no cost figures are shown here.',
       separator: ', ',
@@ -651,9 +651,13 @@ function buildUsageNote(
   }
 
   if (collected.length > 0 && missing.length > 0) {
+    // The prototype counts the other groups ("另外两个小组的缺失") instead of naming them.
     return fill(vocab.usage.partialGroups, {
       collected: collected.join(vocab.usage.separator),
       missing: missing.join(vocab.usage.separator),
+      missingCount: language.startsWith('zh')
+        ? chineseCount(missing.length)
+        : missing.length === 1 ? 'one other group' : `${missing.length} other groups`,
     });
   }
   if (missing.length > 0) {
@@ -663,6 +667,12 @@ function buildUsageNote(
     return vocab.usage.noneCollected;
   }
   return null;
+}
+
+/** A small count in Chinese prose: 两 for two, as the prototype writes it; digits beyond ten. */
+function chineseCount(count: number): string {
+  const words = ['零', '一', '两', '三', '四', '五', '六', '七', '八', '九', '十'];
+  return Number.isInteger(count) && count >= 0 && count <= 10 ? words[count] : String(count);
 }
 
 export interface DepartmentModelOptions {

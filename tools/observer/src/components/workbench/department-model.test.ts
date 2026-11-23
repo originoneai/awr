@@ -350,8 +350,21 @@ describe('department workbench model derivation', () => {
     expect(partialUsage.hasAnyProjectUsage).toBe(true);
     expect(partialUsage.projects[0].usageDisplayText).toBe('14 小时');
     expect(partialUsage.projects[1].usageDisplayText).toBeNull();
-    expect(partialUsage.usageNote).toContain('Group Alpha');
-    expect(partialUsage.usageNote).toContain('Group Beta');
+    expect(partialUsage.usageNote).toBe('投入只采集到Group Alpha的用量，另外一个小组的缺失，所以这里不显示费用。');
+  });
+
+  it('treats a blank usage text as no usage, never as a cost figure', () => {
+    const model = buildDepartmentWorkbenchModel(portfolioResponse([completeProject('p-1'), completeProject('p-2')], {
+      department_facts: {
+        usage: {
+          collected_groups: ['Group Alpha'],
+          missing_groups: [],
+          by_project: { 'p-1': { display_text: '   ' }, 'p-2': { display_text: '' } },
+        },
+      },
+    }), 'zh-CN', { referenceUnixMs: NOW, timeZone: 'UTC' });
+    expect(model.projects.map((project) => project.usageDisplayText)).toEqual([null, null]);
+    expect(model.hasAnyProjectUsage).toBe(false);
   });
 
   it('derives live blocker chains from portfolio waits without inventing task names', () => {

@@ -271,7 +271,7 @@ describe('Department Projects workbench (AWR-PPO-021)', () => {
     await waitFor(() => expect(queryClient.getQueryState(queryKeys.portfolio)?.status).toBe('success'));
     expect(screen.queryByRole('columnheader', { name: '投入' })).toBeNull();
     expect(screen.getByTestId('dept-usage-note').textContent).toContain('应用小组');
-    expect(screen.getByTestId('dept-usage-note').textContent).toContain('平台小组、交付小组');
+    expect(screen.getByTestId('dept-usage-note').textContent).toBe('投入只采集到应用小组的用量，另外两个小组的缺失，所以这里不显示费用。');
 
     // Overdue project marks 该更新了
     expect(screen.getByText('该更新了')).toBeTruthy();
@@ -340,7 +340,22 @@ describe('Department Projects workbench (AWR-PPO-021)', () => {
     expect(screen.getByRole('columnheader', { name: '投入' })).toBeTruthy();
     expect(screen.getByText('24 小时')).toBeTruthy();
     expect(screen.getAllByText('未采集')).toHaveLength(2);
-    expect(screen.getByTestId('dept-usage-note').textContent).toContain('平台小组、交付小组');
+    expect(screen.getByTestId('dept-usage-note').textContent).toBe('投入只采集到应用小组的用量，另外两个小组的缺失，所以这里不显示费用。');
+  });
+
+  it('shows the live portfolio KPIs it cannot know as a dash, never as zero', async () => {
+    const live = canonicalPortfolio() as TeamPortfolioResponse & { department_facts?: unknown };
+    delete live.department_facts;
+    stubFetch({ '/api/team/portfolio': live });
+    const { container } = renderDeptPage();
+    await screen.findByTestId('workbench-frame');
+    await waitFor(() => expect(container.querySelectorAll('.obs-kpi-value')).toHaveLength(4));
+    const values = [...container.querySelectorAll('.obs-kpi-value')].map((value) => value.textContent?.trim() ?? '');
+    expect(values[0]).toMatch(/^\d/);
+    for (const value of values.slice(1)) {
+      expect(value.startsWith('—')).toBe(true);
+      expect(value).not.toMatch(/^0/);
+    }
   });
 
   it('issues only one portfolio read for 40 projects and zero per-project requests', async () => {

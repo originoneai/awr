@@ -353,3 +353,19 @@ test('portfolio bridge serves demo organization variants and stays within 60 ups
     await upstream.close();
   }
 });
+
+test('department facts are a canonical-demo fact only: every other demo variant answers without them', async () => {
+  const portfolio = async (demoVariant) => {
+    const bridge = createTeamBridge({ demo: true, port: 0, demoVariant, demoTimestampShiftMs: 0 });
+    return bridge.routes['GET /api/team/portfolio'](new URL('http://127.0.0.1/api/team/portfolio'), null,
+      { headers: {}, method: 'GET' }, { setHeader() {} });
+  };
+  const canonical = await portfolio('canonical');
+  assert.equal(canonical.ok, true);
+  assert.ok(canonical.department_facts, 'the canonical demo carries its department facts');
+  for (const variant of ['full', 'partial', 'empty']) {
+    const reply = await portfolio(variant);
+    assert.equal(reply.ok, true, variant);
+    assert.equal('department_facts' in reply, false, `${variant} must not carry the canonical department facts`);
+  }
+});
