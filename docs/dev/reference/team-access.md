@@ -159,7 +159,11 @@ credential and an explicit current manage grant, not only an admin label.
 Capabilities and member directories expose `business_roles` and the computed
 `membership_action_ceiling`. These are policy metadata; the selected resource
 and current delegation must still authorize each action. All HTTP/MCP/store
-paths use the same calculation. Legacy template names and omitted request
+paths use the same calculation. Since AWR-PPD-061 the capabilities reply also
+publishes `business_role_presets.action_ceilings`, one stable-identifier list
+per duty, taken from the same `BusinessRole::action_ceiling` call the
+enforcement path intersects; `business-duty-actions.md` maps the identifiers to
+the page wording. Legacy template names and omitted request
 serialization remain compatible. Deployments must migrate through the owner
 path before a schema-39 service is started.
 
