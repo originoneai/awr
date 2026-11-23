@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
+  allKnownRouteNames,
+  assertRegisteredModulesMatchDirectory,
   buildPageRegistry,
+  discoverPageModuleNames,
+  isDirectEntrypoint,
   loadPageModules,
   registeredPageModules,
 } from './demo-organization-check.mjs';
@@ -103,22 +112,73 @@ function validMembersMetric(compact = false) {
   };
 }
 
-test('registered page modules load cleanly and preserve report and canonical ordering', async () => {
+test('registered page modules match e2e/geometry/*.mjs (excluding shared.mjs) and derive registry lists without hardcoding', async () => {
+  assertRegisteredModulesMatchDirectory(registeredPageModules);
+  const discovered = discoverPageModuleNames();
+  assert.ok(discovered.length > 0, 'expected page modules under e2e/geometry/');
+  assert.deepEqual([...registeredPageModules].sort(), discovered);
+
   const modules = await loadPageModules(registeredPageModules);
+  assert.equal(modules.length, registeredPageModules.length);
+  for (let i = 0; i < registeredPageModules.length; i += 1) {
+    assert.equal(modules[i].name, registeredPageModules[i], `module ${registeredPageModules[i]} should declare matching name`);
+  }
+
+  const expectedGeometryKeys = modules.filter((mod) => mod.reportKey).map((mod) => mod.reportKey);
+  const expectedCanonicalKeys = modules.filter((mod) => mod.canonical).map((mod) => mod.canonical.reportKey);
+  const expectedRouteActionKeys = modules.flatMap((mod) => Object.keys(mod.routeActions ?? {}));
+
   const registry = buildPageRegistry(modules);
 
+  assert.ok(expectedGeometryKeys.length > 0);
+  assert.ok(expectedCanonicalKeys.length > 0);
+  assert.ok(expectedRouteActionKeys.length > 0);
   assert.deepEqual(
     registry.geometryModules.map((mod) => mod.reportKey),
-    ['activityGeometry', 'inboxGeometry', 'projectsGeometry', 'membersGeometry'],
+    expectedGeometryKeys,
   );
   assert.deepEqual(
     registry.canonicalModules.map((mod) => mod.canonical.reportKey),
-    ['canonicalWorkbenchRecords', 'canonicalProjectsRecords', 'canonicalMembersRecords'],
+    expectedCanonicalKeys,
   );
   assert.deepEqual(
     [...registry.routeActions.keys()],
-    ['workbench', 'project-plan', 'project-acceptance', 'project-knowledge'],
+    expectedRouteActionKeys,
   );
+});
+
+test('assertRegisteredModulesMatchDirectory rejects unregistered files, missing files and duplicates', () => {
+  const withoutInbox = registeredPageModules.filter((name) => name !== 'inbox');
+  assert.throws(
+    () => assertRegisteredModulesMatchDirectory(withoutInbox),
+    /unregistered geometry modules in e2e\/geometry\/: inbox/,
+  );
+
+  assert.throws(
+    () => assertRegisteredModulesMatchDirectory([...registeredPageModules, 'missing-page']),
+    /registeredPageModules entries missing from e2e\/geometry\/: missing-page/,
+  );
+
+  assert.throws(
+    () => assertRegisteredModulesMatchDirectory([...registeredPageModules, 'inbox']),
+    /duplicate registered page modules: inbox/,
+  );
+
+  const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'observer-geometry-dir-'));
+  try {
+    writeFileSync(path.join(tmpDir, 'shared.mjs'), 'export {};\n');
+    writeFileSync(path.join(tmpDir, 'README.md'), '# docs\n');
+    writeFileSync(path.join(tmpDir, 'alpha.mjs'), 'export default { name: "alpha" };\n');
+    assertRegisteredModulesMatchDirectory(['alpha'], tmpDir);
+
+    writeFileSync(path.join(tmpDir, 'unregistered.mjs'), 'export default { name: "unregistered" };\n');
+    assert.throws(
+      () => assertRegisteredModulesMatchDirectory(['alpha'], tmpDir),
+      /unregistered geometry modules in e2e\/geometry\/: unregistered/,
+    );
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
 });
 
 test('a newly registered page module plugs into geometry, route actions and canonical without runner edits', async () => {
@@ -135,27 +195,77 @@ test('a newly registered page module plugs into geometry, route actions and cano
       route: { name: 'synthetic-canonical', path: '/synthetic', run: async () => {} },
     },
   };
-  const registry = buildPageRegistry([...modules, synthetic]);
+  const validRouteNames = new Set([...allKnownRouteNames(), 'synthetic']);
+  const registry = buildPageRegistry([...modules, synthetic], { validRouteNames });
 
   assert.equal(registry.geometryModules.at(-1)?.reportKey, 'syntheticGeometry');
   assert.equal(registry.canonicalModules.at(-1)?.canonical.reportKey, 'canonicalSyntheticRecords');
   assert.equal(registry.routeActions.has('synthetic'), true);
 });
 
-test('buildPageRegistry rejects duplicate module names, report keys, route actions and canonical keys', () => {
+test('buildPageRegistry rejects duplicate names, keys, route actions and unknown route action keys', () => {
   assert.throws(() => buildPageRegistry([activityModule, activityModule]), /duplicate page module name/);
   assert.throws(() => buildPageRegistry([
     activityModule,
     { ...activityModule, name: 'activity-dup' },
   ]), /duplicate geometry reportKey/);
   assert.throws(() => buildPageRegistry([
-    { name: 'a', routeActions: { shared: async () => {} } },
-    { name: 'b', routeActions: { shared: async () => {} } },
+    { name: 'a', routeActions: { workbench: async () => {} } },
+    { name: 'b', routeActions: { workbench: async () => {} } },
   ]), /duplicate route action/);
+  assert.throws(() => buildPageRegistry([
+    { name: 'typo', routeActions: { 'nonexistent-route': async () => {} } },
+  ]), /does not match any route in fullRoutes or variantRoutes/);
   assert.throws(() => buildPageRegistry([
     { name: 'a', canonical: { reportKey: 'same', route: { name: 'r1', path: '/1', run: async () => {} } } },
     { name: 'b', canonical: { reportKey: 'same', route: { name: 'r2', path: '/2', run: async () => {} } } },
   ]), /duplicate canonical reportKey/);
+});
+
+test('demo-organization-check runs instead of silently exiting 0 when invoked through a symlinked directory', () => {
+  const e2eDir = path.dirname(fileURLToPath(import.meta.url));
+  const observerRoot = path.resolve(e2eDir, '..');
+  const scriptPath = path.join(e2eDir, 'demo-organization-check.mjs');
+  const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'observer-e2e-symlink-'));
+  try {
+    const symlinkObserver = path.join(tmpDir, 'linked-observer');
+    symlinkSync(observerRoot, symlinkObserver, 'dir');
+    const symlinkScript = path.join(symlinkObserver, 'e2e', 'demo-organization-check.mjs');
+
+    assert.equal(
+      isDirectEntrypoint(symlinkScript, pathToFileURL(scriptPath).href),
+      true,
+      'realpath comparison should recognize symlinked invocation paths',
+    );
+
+    const blockingFile = path.join(tmpDir, 'not-a-dir');
+    writeFileSync(blockingFile, 'block mkdir before launching browser');
+    const result = spawnSync(process.execPath, [symlinkScript], {
+      cwd: observerRoot,
+      env: { ...process.env, OBSERVER_EVIDENCE_DIR: path.join(blockingFile, 'evidence') },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+
+    assert.equal(result.error, undefined, `unexpected spawn error: ${result.error}`);
+    assert.notEqual(
+      result.status,
+      0,
+      'invoking demo-organization-check.mjs via a symlinked directory must not silently exit 0',
+    );
+    assert.match(
+      result.stderr,
+      /ENOTDIR|EEXIST/,
+      `expected runner mkdir failure proving entrypoint executed; stderr was:\n${result.stderr}`,
+    );
+    assert.match(
+      result.stderr,
+      /runDemoOrganizationCheck/,
+      `expected stack trace inside runDemoOrganizationCheck; stderr was:\n${result.stderr}`,
+    );
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
 });
 
 test('route matchers target the exact routes from the monolithic script', () => {

@@ -2,13 +2,16 @@
 // Screenshots and the report are evidence only and stay in .local/.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { readdirSync, realpathSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
 import { settle } from './geometry/shared.mjs';
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const moduleFilePath = realpathSync(fileURLToPath(import.meta.url));
+const root = path.resolve(path.dirname(moduleFilePath), '..');
+export const geometryDirectory = path.join(path.dirname(moduleFilePath), 'geometry');
 
 // Register each page module here: adding a new page check takes one module under
 // e2e/geometry/<page>.mjs and one line in this list.
@@ -77,6 +80,50 @@ export const variantRoutes = {
   ],
 };
 
+export function discoverPageModuleNames(dir = geometryDirectory) {
+  return readdirSync(dir)
+    .filter((entry) => entry.endsWith('.mjs') && entry !== 'shared.mjs')
+    .map((entry) => entry.slice(0, -'.mjs'.length))
+    .sort();
+}
+
+export function assertRegisteredModulesMatchDirectory(
+  moduleNames = registeredPageModules,
+  dir = geometryDirectory,
+) {
+  const seen = new Set();
+  const duplicates = [];
+  for (const name of moduleNames) {
+    if (seen.has(name)) duplicates.push(name);
+    seen.add(name);
+  }
+  assert.deepEqual(duplicates, [], `duplicate registered page modules: ${duplicates.join(', ')}`);
+
+  const discovered = discoverPageModuleNames(dir);
+  const discoveredSet = new Set(discovered);
+  const unregistered = discovered.filter((name) => !seen.has(name));
+  const missingFiles = [...seen].filter((name) => !discoveredSet.has(name)).sort();
+  assert.deepEqual(
+    unregistered,
+    [],
+    `unregistered geometry modules in e2e/geometry/: ${unregistered.join(', ')}`,
+  );
+  assert.deepEqual(
+    missingFiles,
+    [],
+    `registeredPageModules entries missing from e2e/geometry/: ${missingFiles.join(', ')}`,
+  );
+}
+
+export function allKnownRouteNames(full = fullRoutes, variants = variantRoutes) {
+  const names = new Set();
+  for (const route of full) names.add(route.name);
+  for (const routes of Object.values(variants)) {
+    for (const route of routes) names.add(route.name);
+  }
+  return names;
+}
+
 export async function loadPageModules(moduleNames = registeredPageModules) {
   return Promise.all(moduleNames.map(async (id) => {
     const loaded = await import(`./geometry/${id}.mjs`);
@@ -84,7 +131,7 @@ export async function loadPageModules(moduleNames = registeredPageModules) {
   }));
 }
 
-export function buildPageRegistry(modules) {
+export function buildPageRegistry(modules, { validRouteNames = allKnownRouteNames() } = {}) {
   const names = new Set();
   const reportKeys = new Set();
   const canonicalKeys = new Set();
@@ -110,6 +157,10 @@ export function buildPageRegistry(modules) {
     if (mod.routeActions) {
       for (const [routeName, action] of Object.entries(mod.routeActions)) {
         assert.equal(typeof action, 'function', `${mod.name}: route action ${routeName} must be a function`);
+        assert.ok(
+          validRouteNames.has(routeName),
+          `${mod.name}: route action ${routeName} does not match any route in fullRoutes or variantRoutes`,
+        );
         assert.ok(!routeActions.has(routeName), `duplicate route action for ${routeName}`);
         routeActions.set(routeName, action);
       }
@@ -153,7 +204,9 @@ async function firstLoadGeometry(page) {
 export async function runDemoOrganizationCheck({
   evidenceDir = path.resolve(process.env.OBSERVER_EVIDENCE_DIR ?? path.join(root, '../../.local/ppo-057/browser')),
   moduleNames = registeredPageModules,
+  geometryDir = geometryDirectory,
 } = {}) {
+  assertRegisteredModulesMatchDirectory(moduleNames, geometryDir);
   const registry = buildPageRegistry(await loadPageModules(moduleNames));
   const results = [];
   const failures = [];
@@ -370,7 +423,16 @@ export async function runDemoOrganizationCheck({
   return report;
 }
 
-const isEntrypoint = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-if (isEntrypoint) {
+export function isDirectEntrypoint(argv1 = process.argv[1], moduleUrl = import.meta.url) {
+  if (!argv1) return false;
+  const resolvedModule = realpathSync(fileURLToPath(moduleUrl));
+  try {
+    return realpathSync(path.resolve(argv1)) === resolvedModule;
+  } catch {
+    return path.resolve(argv1) === resolvedModule;
+  }
+}
+
+if (isDirectEntrypoint()) {
   await runDemoOrganizationCheck();
 }
