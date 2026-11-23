@@ -134,7 +134,7 @@ struct End {
 enum Action {
     Admission(admission::Action),
     Decision(decisions::Action),
-    Lesson(lessons::Action),
+    Lesson(Box<lessons::Action>),
     Start(Start),
     Checkpoint(Checkpoint),
     End(End),
@@ -220,10 +220,10 @@ impl WorkstreamCommand {
             ));
         }
         if self.op.starts_with("lesson.") {
-            return Ok(Action::Lesson(lessons::Action::parse(
+            return Ok(Action::Lesson(Box::new(lessons::Action::parse(
                 &self.op,
                 self.args.clone(),
-            )?));
+            )?)));
         }
         match self.op.as_str() {
             "decision.request" | "decision.respond" | "decision.cancel" => Ok(Action::Decision(
@@ -739,7 +739,7 @@ impl WorkstreamCommandStore {
             }
             Action::Lesson(a) => {
                 Box::pin(lessons::apply(
-                    &tx, tenant, project, &auth, &command, ownership, a,
+                    &tx, tenant, project, &auth, &command, ownership, *a,
                 ))
                 .await?
             }

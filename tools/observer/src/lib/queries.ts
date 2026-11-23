@@ -8,6 +8,7 @@ import type {
   TeamIdentity,
   TeamOverviewResponse,
   TeamOverviewModelResponse,
+  TeamPortfolioResponse,
   TeamProjectsResponse,
   TeamReadResponse,
   TeamShellResponse,
@@ -47,6 +48,7 @@ export const readQueryDefaults = {
 export const queryKeys = {
   shell: ['team', 'shell'] as const,
   projects: ['team', 'projects'] as const,
+  portfolio: ['team', 'portfolio'] as const,
   overview: (project: string | null) => ['team', 'overview', project] as const,
   overviewModel: (project: string | null) => ['team', 'overview-model', project] as const,
   capabilities: (project: string | null) => ['team', 'capabilities', project] as const,
@@ -142,6 +144,44 @@ export function overviewModelQueryOptions(project: string | null, revoked = fals
     ...readQueryDefaults,
     refetchInterval: POLL_INTERVAL_MS,
   } satisfies UseQueryOptions<TeamOverviewModelResponse>;
+}
+
+/**
+ * Single member-scoped portfolio composition (AWR-PPD-060): one read summarizes every
+ * visible project without N per-project calls. Applies the same authoritative ordering
+ * and revocation guards as overviewModelQueryOptions.
+ */
+export function portfolioQueryOptions(revoked = false, enabled = true) {
+  return {
+    queryKey: queryKeys.portfolio,
+    queryFn: async ({ signal, client }: { signal: AbortSignal; client: QueryClient }) => {
+      const state = revocationState(client);
+      if (revoked || state.revoked) throw new DOMException('Observation access revoked', 'AbortError');
+      signal.throwIfAborted();
+      const incoming = await apiGet<TeamPortfolioResponse>('/api/team/portfolio');
+      signal.throwIfAborted();
+      if (state.revoked) throw new DOMException('Observation access revoked', 'AbortError');
+      const result = incoming?.result;
+      const data = result?.data;
+      if (incoming?.ok !== true || result?.protocol_version !== 1 || result?.op !== 'portfolio.overview'
+        || result?.selection_basis !== 'member' || data?.execution_authorized !== false
+        || !Array.isArray(data?.projects) || !Number.isSafeInteger(data?.total_projects)
+        || data.total_projects < data.projects.length || typeof data?.truncated !== 'boolean') {
+        throw new ApiError('InvalidResponse', 'Portfolio observations are incomplete');
+      }
+      const held = state.portfolio.held;
+      if (held && incoming.freshness?.authoritative && held.freshness?.authoritative) {
+        const verdict = compareAuthoritative(held.freshness.authoritative, incoming.freshness.authoritative);
+        if (verdict === 'keep') return held;
+        if (verdict === 'incomparable') return { ...held, ordering: 'incomparable' as const };
+      }
+      state.portfolio.held = incoming;
+      return incoming;
+    },
+    enabled: enabled && !revoked,
+    ...readQueryDefaults,
+    refetchInterval: POLL_INTERVAL_MS,
+  } satisfies UseQueryOptions<TeamPortfolioResponse>;
 }
 
 /** Capabilities is the flat discovery response; object reads carry a data envelope. */
@@ -424,10 +464,15 @@ interface OverviewModelOrdering {
   held?: TeamOverviewModelResponse;
 }
 
+interface PortfolioOrdering {
+  held?: TeamPortfolioResponse;
+}
+
 interface RevocationState {
   revoked: boolean;
   listeners: Set<() => void>;
   overviewModels: Map<string, OverviewModelOrdering>;
+  portfolio: PortfolioOrdering;
 }
 
 const revocationStates = new WeakMap<QueryClient, RevocationState>();
@@ -435,7 +480,7 @@ const revocationStates = new WeakMap<QueryClient, RevocationState>();
 function revocationState(queryClient: QueryClient) {
   let state = revocationStates.get(queryClient);
   if (!state) {
-    state = { revoked: false, listeners: new Set(), overviewModels: new Map() };
+    state = { revoked: false, listeners: new Set(), overviewModels: new Map(), portfolio: {} };
     revocationStates.set(queryClient, state);
   }
   return state;
@@ -458,6 +503,7 @@ export function subscribeToObservationRevocation(queryClient: QueryClient, liste
 export function revokeObservationReads(queryClient: QueryClient) {
   const state = revocationState(queryClient);
   state.overviewModels.clear();
+  state.portfolio.held = undefined;
   if (!state.revoked) {
     state.revoked = true;
     notifyRevocation(queryClient);

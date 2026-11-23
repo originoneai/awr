@@ -1,0 +1,39 @@
+{
+  "page": "project-overview",
+  "proto": "#p=project&id=orders&tab=overview",
+  "app": "/projects/P-001?tab=overview",
+  "ready": "[data-testid=\"project-instrument\"]",
+  "protoReady": ".inst .kpis",
+  "notes": {
+    "geometryExclusions": [
+      "Probe coordinates are anchored at the project page title (.hero h1 / [data-testid=\"project-title\"]), excluding the mobile shell offset.",
+      "Canonical demo returns 2 open decisions and 1 period update, and /api/team/activity returns structured operation verbs; container heights (__h) and downstream vertical positions (__y) that depend on item count or wrapped text length are skipped with zero style skips.",
+      "At 390px the workstream legend hides (matching prototype .legend { display: none } at <=860px) and the blocked-tasks column hides (hideOnSmall: true); hidden legend geometry is omitted."
+    ]
+  },
+  "pairs": [
+    ["project title", ".hero h1", "[data-testid=\"project-title\"]", ["TEXT", "margin-top", "margin-bottom"]],
+    ["back button", ".back", "[data-testid=\"project-back\"]", ["BOX", "TEXT", "margin-top"], {"skip": ["__y"]}],
+    ["hero meta", ".hero .meta", "[data-testid=\"project-meta\"]", ["BOX", "TEXT", "margin-top"], {"skip": ["__w", "__h"]}],
+    ["hero status tag", ".hero .meta .tag", "[data-testid=\"project-meta\"] .obs-tag", ["BOX", "TEXT", "background-color"]],
+    ["tabs bar", ".tabs2", ".project-tabs .ant-tabs-nav", ["BOX", "border-bottom-color", "margin-bottom"], {"skip": ["__w", "__y"]}],
+    ["active tab", ".tabs2 button[aria-selected=\"true\"]", ".project-tabs .ant-tabs-tab-active .ant-tabs-tab-btn", ["TEXT"], {"skip": ["__h", "__y"]}],
+    ["instrument panel", ".inst", "[data-testid=\"project-instrument\"]", ["BOX", "PAINT"], {"skip": ["__h", "__w", "__y"]}],
+    ["verdict top", ".inst-top", "[data-testid=\"project-verdict\"]", ["BOX", "background-color"], {"skip": ["__h", "__w", "__y"]}],
+    ["verdict word pill", ".inst-top .word", "[data-testid=\"project-verdict-word\"]", ["BOX", "TEXT", "background-color"], {"skip": ["__y"]}],
+    ["verdict sentence", ".inst-top .say", "[data-testid=\"project-verdict-sentence\"]", ["TEXT", "margin-top"], {"skip": ["__w", "__h", "__y"]}],
+    ["verdict byline", ".inst-top .by", "[data-testid=\"project-verdict-byline\"]", ["TEXT", "margin-top"], {"skip": ["__w", "__h", "__y"]}],
+    ["verdict basis button", ".inst-acts .btn", "[data-testid=\"project-verdict-basis-btn\"]", ["BOX", "PAINT", "TEXT"], {"skip": ["__x", "__y", "__w"]}],
+    ["kpi strip", ".kpis", ".obs-kpis", ["BOX", "border-top-color", "border-bottom-color"], {"skip": ["__y", "__w", "__h"]}],
+    ["kpi cell 1", ".kpis .kpi:nth-child(1)", ".obs-kpis .obs-kpi:nth-child(1)", ["BOX", "TEXT"], {"skip": ["__y", "__w", "__h"]}],
+    ["kpi value 1", ".kpis .kpi:nth-child(1) .v", ".obs-kpis .obs-kpi:nth-child(1) .obs-kpi-value", ["TEXT", "margin-top"], {"skip": ["__y", "__w"]}],
+    ["workstreams block", ".inst-body .why", "[data-testid=\"project-workstreams\"]", ["BOX", "background-color"], {"skip": ["__y", "__w", "__h"]}],
+    ["workstreams heading", ".why-head h2", "[data-testid=\"project-workstreams-title\"]", ["TEXT", "margin-top", "margin-bottom"], {"skip": ["__y"]}],
+    ["waiting rail", ".inst-body .rail", "[data-testid=\"project-waiting-answers\"]", ["BOX", "background-color", "border-top-color"], {"skip": ["__x", "__y", "__w", "__h"]}],
+    ["waiting rail count", ".rail-head .n", "[data-testid=\"project-waiting-answers-count\"]", ["BOX", "TEXT", "background-color"], {"skip": ["__x", "__y"]}],
+    ["waiting rail card", ".rail .todo.min:nth-of-type(1)", "[data-testid=\"project-waiting-answer-item\"]:nth-of-type(1)", ["BOX", "PAINT", "TEXT"], {"skip": ["__x", "__y", "__w", "__h"]}],
+    ["activity block", ".cols2 > .stackv:first-child .block", "[data-testid=\"project-activity\"] .obs-section", ["BOX", "PAINT"], {"skip": ["__y", "__w", "__h"]}],
+    ["updates block", ".cols2 > .stackv:last-child .block:nth-child(1)", "[data-testid=\"project-updates\"] .obs-section", ["BOX", "PAINT"], {"skip": ["__x", "__y", "__w", "__h"]}],
+    ["reconciliation block", ".cols2 > .stackv:last-child .block:nth-child(2)", "[data-testid=\"project-reconciliation\"] .obs-section", ["BOX", "PAINT"], {"skip": ["__x", "__y", "__w", "__h"]}]
+  ]
+}
