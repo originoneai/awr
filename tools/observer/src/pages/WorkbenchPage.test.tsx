@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { OVERVIEW_PARTS, type OverviewInput } from '../core/overview';
 import i18n from '../i18n';
 import { CraftThemeProvider } from '../components/CraftThemeProvider';
+import { DisplayTimeZoneProvider } from '../lib/display-clock';
 import { PerspectiveProvider } from '../lib/perspective/PerspectiveProvider';
 import { unknownPerspectiveFacts } from '../lib/perspective/types';
 import { createAppQueryClient, revokeObservationReads } from '../lib/queries';
@@ -47,7 +48,7 @@ function emptyInput() {
   });
 }
 
-function renderWorkbench(queryClient = createAppQueryClient({ retry: false })) {
+function renderWorkbench(queryClient = createAppQueryClient({ retry: false }), pinnedZone: string | null = null) {
   const utils = render(
     <QueryClientProvider client={queryClient}>
       <CraftThemeProvider>
@@ -55,7 +56,9 @@ function renderWorkbench(queryClient = createAppQueryClient({ retry: false })) {
           <MemoryRouter initialEntries={['/workbench']}>
             <ScopeProvider>
               <PerspectiveProvider facts={unknownPerspectiveFacts()}>
-                <WorkbenchPage />
+                <DisplayTimeZoneProvider timeZone={pinnedZone}>
+                  <WorkbenchPage />
+                </DisplayTimeZoneProvider>
               </PerspectiveProvider>
             </ScopeProvider>
           </MemoryRouter>
@@ -121,6 +124,64 @@ describe('WorkbenchPage seven read states in Chinese and English', () => {
       renderWorkbench();
       expect(await screen.findByTestId('workbench-frame')).toBeTruthy();
       expect(screen.getByText(`按你名下的任务和 Agent 的报告算出 · ${expected}`)).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ages the read against its own derivation clock walked forward, not the wall clock', async () => {
+    const input = myWorkInput();
+    // The read answered ten minutes after the fixture clock it carries (options.nowUnixMs).
+    // The display clock keeps riding that fixture clock: ten real minutes later the byline
+    // reads thirty minutes old — the wall clock alone would say ten, the reply's own read
+    // moment would freeze it at zero.
+    stubModel(input, { read_at_unix_ms: input.options.nowUnixMs - 10 * 60_000 });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(input.options.nowUnixMs + 10 * 60_000 + 20_000);
+      renderWorkbench();
+      expect(await screen.findByTestId('workbench-frame')).toBeTruthy();
+      expect(screen.getByText('按你名下的任务和 Agent 的报告算出 · 30 分钟前')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('formats the generated source line in the deployment\'s pinned display zone', async () => {
+    const input = myWorkInput();
+    // Three hours after the read the byline is a same-day calendar time, and its wall-clock
+    // reading depends on the zone: UTC+14 and UTC-11 read twenty-five hours apart.
+    stubModel(input);
+    const wallClock = (zone: string) => new Intl.DateTimeFormat('en-GB', {
+      timeZone: zone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).format(input.options.nowUnixMs);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(input.options.nowUnixMs + 3 * 60 * 60_000);
+      for (const zone of ['Pacific/Kiritimati', 'Pacific/Pago_Pago']) {
+        const view = renderWorkbench(createAppQueryClient({ retry: false }), zone);
+        expect(await screen.findByTestId('workbench-frame')).toBeTruthy();
+        expect(screen.getByText(`按你名下的任务和 Agent 的报告算出 · 今天 ${wallClock(zone)}`)).toBeTruthy();
+        view.unmount();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ages the frame\'s rows against the display clock, not the read\'s answer moment', async () => {
+    const input = myWorkInput();
+    // The read answered three days after the derivation clock it carries, and real time is twenty
+    // seconds past the answer. The display clock is the fixture clock plus those twenty seconds, so
+    // the fixture's minute-old report reads 1 分钟前; against the answer moment it would read 3 天前.
+    stubModel(input, { read_at_unix_ms: input.options.nowUnixMs + 3 * 86_400_000 });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(input.options.nowUnixMs + 3 * 86_400_000 + 20_000);
+      renderWorkbench();
+      expect(await screen.findByTestId('workbench-frame')).toBeTruthy();
+      expect(screen.getAllByText('1 分钟前').length).toBeGreaterThan(0);
+      expect(screen.queryByText('3 天前')).toBeNull();
     } finally {
       vi.useRealTimers();
     }

@@ -4,6 +4,7 @@ import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from './i18n';
+import { compactTimeText } from './core/observation';
 import { defaultVisibleText, findForbiddenVisibleText } from './lib/human-language-guard';
 import { revokeObservationReads } from './lib/queries';
 import type { TeamActivityItem } from './lib/types';
@@ -91,6 +92,8 @@ function overviewModel(overrides: {
   memberCoverage?: string;
   tasks?: Array<Record<string, unknown>>;
   members?: Array<Record<string, unknown>>;
+  /** The reply's own clock pair; defaults to the fixture NOW for both fields. */
+  clock?: { nowUnixMs?: number; readAtUnixMs?: number };
 } = {}) {
   const taskCoverage = overrides.taskCoverage ?? 'complete';
   const memberCoverage = overrides.memberCoverage ?? 'complete';
@@ -99,7 +102,7 @@ function overviewModel(overrides: {
   return {
     ok: true,
     project: 'demo',
-    read_at_unix_ms: NOW,
+    read_at_unix_ms: overrides.clock?.readAtUnixMs ?? NOW,
     input: {
       tasks: slice(taskCoverage, overrides.tasks ?? [
         { id: WORK_A, title: 'Synthetic task alpha' },
@@ -111,7 +114,7 @@ function overviewModel(overrides: {
       dependencies: slice('unread', []), decisions: slice('unread', []), reviewRounds: slice('unread', []),
       handoffs: slice('unread', []), approvals: slice('unread', []), activity: slice('unread', []),
       options: {
-        nowUnixMs: NOW,
+        nowUnixMs: overrides.clock?.nowUnixMs ?? NOW,
         stalledAfterDays: 7,
         views: { me: { personId: KNOWN_PERSON, projectId: 'demo' } },
       },
@@ -138,6 +141,8 @@ type SetupOptions = {
   overview?: unknown;
   overviewFailure?: { current: boolean };
   secondPageFailure?: boolean;
+  /** The shell read's reply; defaults to an unpinned deployment (viewer zone). */
+  shell?: unknown;
 };
 
 function setupActivity(options: SetupOptions = {}) {
@@ -147,6 +152,9 @@ function setupActivity(options: SetupOptions = {}) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.includes('/api/team/projects')) return json(DEMO_PROJECTS);
+    if (url.includes('/api/team/shell')) {
+      return json(options.shell ?? { ok: true, source: 'demo', organizationName: null, perspective: null });
+    }
     if (url.includes('/api/team/overview-model')) {
       if (options.overviewFailure?.current) return json({ ok: false, error: { code: 'Unavailable', message: 'synthetic failure' } });
       return json(options.overview ?? overviewModel());
@@ -552,6 +560,102 @@ describe.each([
     await new Promise((resolve) => setTimeout(resolve, 5_300));
     expect(calls.length).toBe(settled);
   }, 10_000);
+});
+
+describe('display clock: the read\'s own clock in the shell-pinned zone', () => {
+  // The canonical fixture's own timestamps: its derivation "now" is 2026-11-19 12:00 UTC
+  // and the prototype's ledger rows read exactly these wall-clock times in UTC.
+  const FIXTURE_NOW = Date.UTC(2026, 10, 19, 12, 0);
+  const at = (unixMs: number): TeamActivityItem => ({
+    id: `clock-${unixMs}`,
+    action: 'execution.report',
+    actor_id: KNOWN_ACTOR,
+    client_id: null,
+    actor: { person_id: KNOWN_PERSON, display_name: 'Alex Example' },
+    client: { display_name: null },
+    created_at_unix_ms: unixMs,
+    credential_id: null,
+    result: 'committed',
+    work_id: WORK_A,
+  });
+  const CANONICAL_ITEMS = [
+    at(FIXTURE_NOW - 12 * 60_000),
+    at(Date.UTC(2026, 10, 19, 9, 40)),
+    at(Date.UTC(2026, 10, 18, 15, 20)),
+    at(Date.UTC(2026, 10, 18, 10, 2)),
+  ];
+
+  it('rides the fixture clock answered right now, so the times read like the prototype', async () => {
+    // The overview reply carries the fixture derivation clock and was read at the real
+    // present; the shell pins the display zone to UTC like the canonical demo does.
+    setupActivity({
+      shell: { ok: true, source: 'demo', organizationName: null, perspective: null, displayTimeZone: 'UTC' },
+      development: activityPayload(CANONICAL_ITEMS),
+      overview: overviewModel({ clock: { nowUnixMs: FIXTURE_NOW, readAtUnixMs: Date.now() } }),
+    });
+    renderApp('/activity?project=demo');
+    await waitFor(() => expect(tableRows()).toHaveLength(4));
+    const times = tableRows().map((row) => row.querySelector('.activity-time')?.textContent);
+    expect(times).toEqual(['12 分钟前', '今天 09:40', '昨天 15:20', '11 月 18 日 10:02']);
+  });
+
+  it('falls back to the viewer clock while no overview read has answered', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true });
+    try {
+      vi.setSystemTime(FIXTURE_NOW + 20 * 60_000);
+      setupActivity({
+        overviewFailure: { current: true },
+        development: activityPayload(CANONICAL_ITEMS),
+      });
+      renderApp('/activity?project=demo');
+      await waitFor(() => expect(tableRows()).toHaveLength(4));
+      // No read clock exists, so the viewer clock (faked here) is the reference; the zone
+      // is whatever the viewer runs in, so the calendar rows are asserted through the same
+      // shared formatter against that zone rather than hardcoded strings.
+      const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const expected = CANONICAL_ITEMS.map((item) => compactTimeText(item.created_at_unix_ms, {
+        language: 'zh-CN', nowUnixMs: FIXTURE_NOW + 20 * 60_000, timeZone: zone,
+      }));
+      expect(tableRows().map((row) => row.querySelector('.activity-time')?.textContent)).toEqual(expected);
+      expect(expected[0]).toBe('32 分钟前');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the viewer\'s own zone when the shell pins none', async () => {
+    setupActivity({
+      development: activityPayload(CANONICAL_ITEMS),
+      overview: overviewModel({ clock: { nowUnixMs: FIXTURE_NOW, readAtUnixMs: Date.now() } }),
+    });
+    renderApp('/activity?project=demo');
+    await waitFor(() => expect(tableRows()).toHaveLength(4));
+    // The reference clock still rides the read's (fixture) clock; only the zone differs, so
+    // the calendar rows read the viewer zone's own wording through the same formatter.
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const expected = CANONICAL_ITEMS.map((item) => compactTimeText(item.created_at_unix_ms, {
+      language: 'zh-CN', nowUnixMs: FIXTURE_NOW, timeZone: zone,
+    }));
+    expect(tableRows().map((row) => row.querySelector('.activity-time')?.textContent)).toEqual(expected);
+    expect(expected[0]).toBe('12 分钟前');
+  });
+
+  it('reads a zone the runtime cannot resolve as unpinned', async () => {
+    // The pinned zone is a fact from the bridge; a bogus value fails closed to the
+    // viewer's own zone instead of throwing or being trusted verbatim.
+    setupActivity({
+      shell: { ok: true, source: 'demo', organizationName: null, perspective: null, displayTimeZone: 'Not/AZone' },
+      development: activityPayload(CANONICAL_ITEMS),
+      overview: overviewModel({ clock: { nowUnixMs: FIXTURE_NOW, readAtUnixMs: Date.now() } }),
+    });
+    renderApp('/activity?project=demo');
+    await waitFor(() => expect(tableRows()).toHaveLength(4));
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const expected = CANONICAL_ITEMS.map((item) => compactTimeText(item.created_at_unix_ms, {
+      language: 'zh-CN', nowUnixMs: FIXTURE_NOW, timeZone: zone,
+    }));
+    expect(tableRows().map((row) => row.querySelector('.activity-time')?.textContent)).toEqual(expected);
+  });
 });
 
 describe('verbatim live activity replies', () => {

@@ -8,7 +8,7 @@ import i18n from './i18n';
 import { defaultVisibleText, findHumanLanguageViolations } from './lib/human-language-guard';
 import { buildInboxModel } from './lib/inbox-model';
 import { inboxProjectReadQueryOptions } from './lib/inbox-queries';
-import { revokeObservationReads } from './lib/queries';
+import { queryKeys, revokeObservationReads } from './lib/queries';
 import { expectSvgDrawsPrototypeGlyph } from './components/icons/expect-prototype-glyph';
 import type { PrototypeIconName } from './components/icons/prototype-icons';
 import type { TeamOverviewModelResponse } from './lib/types';
@@ -111,11 +111,14 @@ function setup({
   modelPayload,
   projectsPayload = PROJECTS,
   initialPath = '/inbox',
+  shell,
 }: {
   input?: OverviewInput;
   modelPayload?: unknown;
   projectsPayload?: unknown;
   initialPath?: string;
+  /** The shell read's reply; unset keeps the unrouted default (an unpinned deployment). */
+  shell?: unknown;
 } = {}) {
   let currentModel: unknown = modelPayload === undefined ? response(input) : modelPayload;
   const calls: Array<{ method: string; url: string }> = [];
@@ -125,6 +128,7 @@ function setup({
     if (url.includes('/api/team/projects')) return json(projectsPayload);
     if (url.includes('/api/team/overview-model')) return json(currentModel);
     if (url.includes('/api/team/overview')) return json(DEMO_OVERVIEW);
+    if (shell !== undefined && url.includes('/api/team/shell')) return json(shell);
     return json({ ok: false, error: { code: 'NoRoute', message: 'Synthetic missing read' } });
   });
   vi.stubGlobal('fetch', fetchMock);
@@ -276,6 +280,43 @@ describe('prototype inbox page', () => {
     expect(answer.querySelector('.inbox-qrow-age')?.textContent).toBe('不知道等了多久');
     await userEvent.click(answer);
     expect(within(page).getByTestId('inbox-basis').textContent).toContain('Agent 最后一次报告的时间还没有读到');
+  });
+
+  it('counts an age\'s calendar days in the deployment\'s pinned display zone', async () => {
+    // A plan approval was recorded a few hours before the derivation clock. Whether the two
+    // moments sit on the same calendar day depends on the zone, so one zone reads 今天 and the
+    // other counts a day. Two zones twelve hours apart guarantee an hour count after which
+    // exactly one of them has crossed midnight.
+    const HOUR = 60 * 60 * 1000;
+    const dayKey = (unixMs: number, zone: string) => new Intl.DateTimeFormat('en-CA', {
+      timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(unixMs);
+    const zones = ['Pacific/Kiritimati', 'Africa/Maputo'] as const;
+    const crosses = (hours: number, zone: string) => dayKey(NOW - hours * HOUR, zone) !== dayKey(NOW, zone);
+    const hoursBack = Array.from({ length: 23 }, (_, index) => index + 1)
+      .find((hours) => crosses(hours, zones[0]) !== crosses(hours, zones[1]));
+    expect(hoursBack).toBeDefined();
+    const [crossing, sameDay] = crosses(hoursBack ?? 1, zones[0]) ? zones : [zones[1], zones[0]];
+    const planAge = async (zone: string, expectation: (age: string) => void) => {
+      const source = pageInput();
+      if (source.approvals.coverage === 'complete') {
+        source.approvals.items.find((item) => item.id === 'plan-record')!.sinceUnixMs = NOW - (hoursBack ?? 1) * HOUR;
+      }
+      const rendered = setup({
+        input: source,
+        shell: { ok: true, source: 'demo', organizationName: null, perspective: null, displayTimeZone: zone },
+      });
+      const queue = await within(await screen.findByTestId('page-inbox')).findByTestId('inbox-queue');
+      await waitFor(() => expect(rendered.queryClient.getQueryState(queryKeys.shell)?.status).toBe('success'));
+      await waitFor(() => {
+        const row = within(queue).getAllByTestId('inbox-queue-row')
+          .find((item) => item.textContent?.includes('Recovery work breakdown'));
+        expectation(row?.querySelector('.inbox-qrow-age')?.textContent ?? '');
+      });
+      rendered.unmount();
+    };
+    await planAge(sameDay, (age) => expect(age).toBe('今天'));
+    await planAge(crossing, (age) => expect(age).not.toBe('今天'));
   });
 
   it('uses the PPO-012 sentence and browser-only copy with a selection fallback', async () => {
