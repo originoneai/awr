@@ -1159,7 +1159,7 @@ const zhCN = {
       openTitle: '点开看是哪几件',
     },
     taskStatus: {
-      verified: { label: '核验过', meaning: '每条完成标准都有对应的依据，独立复核已通过，成果已经合入' },
+      verified: { label: '已核验', meaning: '每条完成标准都有对应的依据，独立复核已通过，成果已经合入' },
       claimed: { label: '标了完成，没核验', meaning: '报告说做完了，但还没有提交复核，不算完成' },
       returned: { label: '复核退回', meaning: '最近一轮复核指出了必须修改的问题' },
       review: { label: '等复核', meaning: '成果已经提交，在等一位不是提交人来复核' },
