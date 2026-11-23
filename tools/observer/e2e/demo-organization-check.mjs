@@ -129,6 +129,13 @@ async function documentDetail(page) {
   await settle(page);
 }
 
+async function taskDetail(page) {
+  await page.getByTestId('page-task').waitFor();
+  await page.getByTestId('task-title').waitFor();
+  await page.getByTestId('task-section-lessons').waitFor();
+  await settle(page);
+}
+
 const fullRoutes = [
   { name: 'workbench', path: '/workbench?scope=P-001', action: workbenchQueue },
   { name: 'projects', path: '/projects' },
@@ -148,7 +155,7 @@ const fullRoutes = [
   { name: 'agent-connect', path: '/agent-connect?scope=P-001' },
   { name: 'lessons-pending', path: '/lessons', pending: true },
   { name: 'settings', path: '/settings?scope=P-001' },
-  { name: 'task-pending', path: '/tasks/T-101', pending: true },
+  { name: 'task', path: '/tasks/T-101', action: taskDetail },
   { name: 'goal-pending', path: '/goals/GOAL-001', pending: true },
   { name: 'document-pending', path: '/documents/DOC-001', pending: true },
   { name: 'update-pending', path: '/updates/U-001', pending: true },
@@ -791,6 +798,53 @@ function checkMembersGeometry(metric, compact) {
   return failures;
 }
 
+async function taskGeometry(page) {
+  await page.getByTestId('page-task').waitFor();
+  return page.evaluate(() => {
+    const title = document.querySelector('[data-testid="task-title"]');
+    const cols = document.querySelector('.task-cols');
+    const section = document.querySelector('.task-section');
+    const titleStyle = title ? getComputedStyle(title) : null;
+    const colsStyle = cols ? getComputedStyle(cols) : null;
+    const sectionStyle = section ? getComputedStyle(section) : null;
+    return {
+      titleText: title?.textContent?.trim() ?? '',
+      titleSize: titleStyle?.fontSize ?? null,
+      titleLeading: titleStyle?.lineHeight ?? null,
+      columns: colsStyle ? colsStyle.gridTemplateColumns.split(' ').filter(Boolean).length : 0,
+      sectionRadius: sectionStyle?.borderTopLeftRadius ?? null,
+      leftHeadings: [...document.querySelectorAll('[data-testid="task-col-left"] .obs-section-title')].map((el) => el.textContent?.trim()),
+      rightHeadings: [...document.querySelectorAll('[data-testid="task-col-right"] .obs-section-title')].map((el) => el.textContent?.trim()),
+      detailsCount: document.querySelectorAll('details').length,
+      freshness: Boolean(document.querySelector('[data-testid="task-coverage"] [data-testid="freshness-badge"]')),
+    };
+  });
+}
+
+function checkTaskGeometry(metric, compact) {
+  const failures = [];
+  const number = (value) => typeof value === 'number' ? value : Number.parseFloat(value ?? '');
+  const equal = (actual, expected, label) => {
+    if (Math.abs(number(actual) - expected) > 0.01) failures.push(`${label}: expected ${expected}, got ${actual}`);
+  };
+  if (!metric.titleText) failures.push('task title is empty');
+  equal(metric.titleSize, 24, 'task title font size');
+  equal(metric.titleLeading, 32, 'task title line height');
+  equal(metric.columns, compact ? 1 : 2, 'task grid column count');
+  equal(metric.sectionRadius, 16, 'task section border radius');
+  const expectedLeft = ['完成标准', '最近一次报告', '交付与复核', '经过'];
+  const expectedRight = ['现在卡在哪', '为什么做', '上下游', '要读的资料', '用到的经验'];
+  if (JSON.stringify(metric.leftHeadings) !== JSON.stringify(expectedLeft)) {
+    failures.push(`task left headings differ: ${JSON.stringify(metric.leftHeadings)}`);
+  }
+  if (JSON.stringify(metric.rightHeadings) !== JSON.stringify(expectedRight)) {
+    failures.push(`task right headings differ: ${JSON.stringify(metric.rightHeadings)}`);
+  }
+  if (metric.detailsCount !== 0) failures.push(`task page rendered ${metric.detailsCount} <details> elements (technical details must be omitted)`);
+  if (!metric.freshness) failures.push('task freshness badge is missing');
+  return failures;
+}
+
 async function visit(baseUrl, variant, route, viewport) {
   const context = await browser.newContext({
     viewport,
@@ -835,6 +889,7 @@ async function visit(baseUrl, variant, route, viewport) {
     const inboxMetric = route.name === 'inbox' ? await inboxGeometry(page) : null;
     const projectMetric = route.name === 'projects' ? await projectsGeometry(page) : null;
     const membersMetric = route.name === 'members' ? await membersGeometry(page) : null;
+    const taskMetric = route.name === 'task' ? await taskGeometry(page) : null;
     const state = await page.evaluate(() => ({
       width: document.documentElement.clientWidth,
       scrollWidth: document.documentElement.scrollWidth,
@@ -869,6 +924,7 @@ async function visit(baseUrl, variant, route, viewport) {
       inboxGeometry: inboxMetric,
       projectsGeometry: projectMetric,
       membersGeometry: membersMetric,
+      taskGeometry: taskMetric,
       pageErrors,
       requestFailures,
       apiErrors,
@@ -897,6 +953,11 @@ async function visit(baseUrl, variant, route, viewport) {
     }
     if (membersMetric) {
       for (const failure of checkMembersGeometry(membersMetric, viewport.width <= 860)) {
+        failures.push(`${variant} ${route.path} ${viewport.width}: ${failure}`);
+      }
+    }
+    if (taskMetric) {
+      for (const failure of checkTaskGeometry(taskMetric, viewport.width <= 1100)) {
         failures.push(`${variant} ${route.path} ${viewport.width}: ${failure}`);
       }
     }

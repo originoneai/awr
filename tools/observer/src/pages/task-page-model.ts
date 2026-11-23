@@ -26,6 +26,8 @@ import type {
 import { humanText } from '../i18n/human-language';
 import { mergeProjectFreshness } from '../components/projects/project-overview-model';
 import type {
+  AcceptanceEvidenceItem,
+  AcceptanceEvidenceStatus,
   DependencyObservation,
   HandoffListData,
   ProjectDocument,
@@ -94,7 +96,7 @@ export interface TaskTimelineViewItem {
 }
 
 export interface TaskBlockerWaitView {
-  kind: WaitKind;
+  kind: WaitKind | 'reported';
   waitingOnName: string;
   waitingOnPersonId: string | null;
   waitingOnExternal: boolean;
@@ -228,11 +230,52 @@ function cleanNarrative(value: unknown, language: string): string | null {
   return readableNarrative(raw, language);
 }
 
-function mapEvidenceState(state: 'ok' | 'bad' | 'wait' | 'none'): AcceptanceItemStatus {
-  if (state === 'ok') return 'supported';
-  if (state === 'bad') return 'failed';
-  if (state === 'wait') return 'waiting';
+function mapAcceptanceEvidenceStatus(status: AcceptanceEvidenceStatus): AcceptanceItemStatus {
+  if (status === 'supported') return 'supported';
+  if (status === 'failed') return 'failed';
+  if (status === 'waiting') return 'waiting';
   return 'notStarted';
+}
+
+function formatCriterionEvidence(item: AcceptanceEvidenceItem, language: string, t: TFunction): string | undefined {
+  const checkNames = item.checks.map((c, i) => checkLabel(c.check, { language, position: i + 1 }).text);
+  const passedChecks = item.checks
+    .filter((c) => c.outcome === 'passed')
+    .map((c, i) => checkLabel(c.check, { language, position: i + 1 }).text);
+  const failedChecks = item.checks
+    .filter((c) => c.outcome === 'failed')
+    .map((c, i) => checkLabel(c.check, { language, position: i + 1 }).text);
+  const sep = t('common.listSeparator');
+
+  if (item.status === 'supported') {
+    return passedChecks.length > 0
+      ? t('taskPage.acceptance.evidence.supportedChecks', { checks: passedChecks.join(sep) })
+      : t('taskPage.acceptance.evidence.supported');
+  }
+  if (item.status === 'failed') {
+    if (item.reason === 'review_returned') return t('taskPage.acceptance.evidence.reviewReturned');
+    if (failedChecks.length > 0) {
+      return t('taskPage.acceptance.evidence.checkFailed', { checks: failedChecks.join(sep) });
+    }
+    return t('taskPage.acceptance.evidence.checkFailedGeneric');
+  }
+  if (item.status === 'waiting') {
+    if (item.reason === 'awaiting_review_approval') {
+      return passedChecks.length > 0
+        ? t('taskPage.acceptance.evidence.awaitingReviewChecks', { checks: passedChecks.join(sep) })
+        : t('taskPage.acceptance.evidence.awaitingReview');
+    }
+    if (item.reason === 'awaiting_current_candidate') {
+      return t('taskPage.acceptance.evidence.awaitingCandidate');
+    }
+    return checkNames.length > 0
+      ? t('taskPage.acceptance.evidence.awaitingChecksNamed', { checks: checkNames.join(sep) })
+      : t('taskPage.acceptance.evidence.awaitingChecks');
+  }
+  if (item.status === 'no_bound_check') {
+    return t('taskPage.acceptance.evidence.noBoundCheck');
+  }
+  return t('taskPage.acceptance.evidence.notStarted');
 }
 
 function taskTitleFor(
@@ -386,10 +429,6 @@ function parseDocIdFromPath(path: string | null | undefined): string | null {
   return match ? match[1] : null;
 }
 
-function isExternalParty(name: string): boolean {
-  return name === '甲方' || name.endsWith('小组') || name.endsWith('改造');
-}
-
 function inboxKeyForDecision(decisionId: string | null, responderId: string | null): string | null {
   if (!decisionId || !responderId) return null;
   return `decision:${decisionId}:${responderId}`;
@@ -411,6 +450,7 @@ export function deriveTaskPageModel(input: TaskPageDeriveInput): TaskPageModel {
   const derivation: OverviewDerivation | null = model?.input && model.input.options
     ? deriveOverview(model.input)
     : null;
+  const refNowUnixMs = model?.input?.options?.nowUnixMs ?? nowUnixMs;
   const derivedTask: DerivedTask | undefined = derivation?.tasks.find((task) => task.id === workId);
   const modelRawTask = (model?.input.tasks.items ?? []).find((task) => task.id === workId);
 
@@ -426,11 +466,12 @@ export function deriveTaskPageModel(input: TaskPageDeriveInput): TaskPageModel {
   const status: DerivedTaskStatus = derivedTask?.status ?? deriveStatusFallback(overviewWork, snapshot);
   const liveRunning = status === 'running' || (status === 'waiting' && derivedTask?.agentActive === true);
 
-  // Owner
+  // Owner: strictly use explicit person IDs from the read; never treat an unspaced display name as an ID.
   const resp = asRecord(snapshot?.observation?.responsibility);
   const ownerPersonId = derivedTask?.owner?.id
-    ?? (typeof resp?.owner_person_id === 'string' ? resp.owner_person_id : null)
-    ?? (typeof resp?.owner === 'string' && !resp.owner.includes(' ') ? resp.owner : null);
+    ?? (typeof resp?.owner_person_id === 'string' && resp.owner_person_id.trim().length > 0
+      ? resp.owner_person_id.trim()
+      : null);
   const derivedOwnerInfo = deriveOwner({
     rowOwner: overviewWork?.owner_person ?? null,
     snapshot,
@@ -463,18 +504,24 @@ export function deriveTaskPageModel(input: TaskPageDeriveInput): TaskPageModel {
       : workState.next.text;
   const nextStepReporterText = workState.next.kind === 'reported';
 
-  // Acceptance criteria (PPD-040 per-criterion evidence if present; else explicit "尚无逐条依据")
+  // Acceptance criteria: strictly read verbatim PPD-040 acceptance_evidence object shape;
+  // when absent or status === 'not_provided', fall back to the contract criteria with explicit "尚无逐条依据".
   const contract = snapshot?.visible_contract ?? snapshot?.published_contract;
-  const evidenceItems = Array.isArray(snapshot?.acceptance_evidence) && snapshot.acceptance_evidence.length > 0
-    ? snapshot.acceptance_evidence
+  const rawEvidence = snapshot?.acceptance_evidence;
+  const evidenceItems = rawEvidence
+    && !Array.isArray(rawEvidence)
+    && rawEvidence.status === 'provided'
+    && Array.isArray(rawEvidence.items)
+    && rawEvidence.items.length > 0
+    ? rawEvidence.items
     : null;
   const hasPerCriterionEvidence = evidenceItems !== null;
   const criteria: TaskCriterionView[] = evidenceItems
     ? evidenceItems.map((item, idx) => ({
-      key: item.criterion_id ?? `crit-${idx}`,
-      title: cleanNarrative(item.text, language) ?? humanText('contentUnavailable', language),
-      evidence: item.detail ? (cleanNarrative(item.detail, language) ?? undefined) : undefined,
-      status: mapEvidenceState(item.state),
+      key: `crit-${idx}`,
+      title: cleanNarrative(item.criterion, language) ?? humanText('contentUnavailable', language),
+      evidence: formatCriterionEvidence(item, language, t),
+      status: mapAcceptanceEvidenceStatus(item.status),
     }))
     : (contract?.acceptance ?? []).flatMap((raw, idx): TaskCriterionView[] => {
       if (!hasObservationValue(raw)) return [];
@@ -580,8 +627,8 @@ export function deriveTaskPageModel(input: TaskPageDeriveInput): TaskPageModel {
             ? round.state
             : 'unknown';
         const openedAt = matchingModelRound?.openedAtUnixMs ?? null;
-        const waitDays = verdict === 'open' && typeof openedAt === 'number' && Number.isFinite(openedAt) && openedAt <= nowUnixMs
-          ? Math.floor((nowUnixMs - openedAt) / DAY_MS)
+        const waitDays = verdict === 'open' && typeof openedAt === 'number' && Number.isFinite(openedAt) && openedAt <= refNowUnixMs
+          ? Math.floor((refNowUnixMs - openedAt) / DAY_MS)
           : null;
         const reason = round.reason_first_line ? cleanNarrative(round.reason_first_line, language) : null;
         sourceRounds.push({
@@ -605,8 +652,8 @@ export function deriveTaskPageModel(input: TaskPageDeriveInput): TaskPageModel {
           mr.state === 'open' || mr.state === 'approved' || mr.state === 'rejected' || mr.state === 'invalidated'
             ? mr.state
             : 'unknown';
-        const waitDays = verdict === 'open' && typeof mr.openedAtUnixMs === 'number' && Number.isFinite(mr.openedAtUnixMs) && mr.openedAtUnixMs <= nowUnixMs
-          ? Math.floor((nowUnixMs - mr.openedAtUnixMs) / DAY_MS)
+        const waitDays = verdict === 'open' && typeof mr.openedAtUnixMs === 'number' && Number.isFinite(mr.openedAtUnixMs) && mr.openedAtUnixMs <= refNowUnixMs
+          ? Math.floor((refNowUnixMs - mr.openedAtUnixMs) / DAY_MS)
           : null;
         sourceRounds.push({
           key: mr.id ?? `round-${mr.roundIndex ?? sourceRounds.length + 1}`,
@@ -654,8 +701,8 @@ export function deriveTaskPageModel(input: TaskPageDeriveInput): TaskPageModel {
               ? 'notMerged'
               : 'unknown';
 
-    const versionLabel = snapshot?.delivery_version_label
-      ?? (sourceRounds.length > 0 ? t('taskPage.delivery.versionFallback', { count: sourceRounds.length }) : null);
+    // No current Team read records a human-facing delivery version label; never guess from review round count.
+    const versionLabel: string | null = null;
 
     delivery = {
       versionLabel,
@@ -666,35 +713,18 @@ export function deriveTaskPageModel(input: TaskPageDeriveInput): TaskPageModel {
     };
   }
 
-  // Timeline (canonical snapshot.timeline if present, otherwise folded audit.development)
+  // Timeline: built exclusively from real audit.development activity for this task, sorted newest-first by timestamp.
   const timeline: TaskTimelineViewItem[] = [];
-  if (Array.isArray(snapshot?.timeline) && snapshot.timeline.length > 0) {
-    for (const [idx, entry] of snapshot.timeline.entries()) {
-      const timeText = Number.isFinite(entry.at_unix_ms)
-        ? compactTimeText(entry.at_unix_ms, { language, nowUnixMs, timeZone })
-        : humanText('notProvided', language);
-      const tone: TaskTimelineViewItem['tone'] = entry.tone === 'now'
-        ? 'current'
-        : entry.tone === 'ok'
-          ? 'positive'
-          : entry.tone === 'bad'
-            ? 'negative'
-            : 'default';
-      timeline.push({
-        key: entry.id ?? `tl-${idx}`,
-        timeText,
-        who: safeAttributionName(entry.who) ?? humanText('operatorMissing', language),
-        what: cleanNarrative(entry.what, language) ?? humanText('contentUnavailable', language),
-        next: entry.next ? cleanNarrative(entry.next, language) : null,
-        note: entry.note ? cleanNarrative(entry.note, language) : null,
-        tone,
-        reporterText: true,
-      });
-    }
-  } else if (activity && activity.length > 0) {
-    const folded = foldOperations(activity, { language, gapThresholdMs: 30 * 60 * 1000 });
+  const taskActivity = (activity ?? []).filter((item) => item.work_id == null || item.work_id === workId);
+  if (taskActivity.length > 0) {
+    const folded = foldOperations(taskActivity, {
+      language,
+      gapThresholdMs: 30 * 60 * 1000,
+      order: 'newest-first',
+    });
     for (const [idx, event] of folded.uniqueEvents.entries()) {
-      const timeText = Number.isFinite(event.created_at_unix_ms)
+      const hasFiniteTime = typeof event.created_at_unix_ms === 'number' && Number.isFinite(event.created_at_unix_ms);
+      const timeText = hasFiniteTime
         ? compactTimeText(event.created_at_unix_ms, { language, nowUnixMs, timeZone })
         : humanText('notProvided', language);
       const actorBase = safeAttributionName(event.actor?.display_name)
@@ -702,11 +732,14 @@ export function deriveTaskPageModel(input: TaskPageDeriveInput): TaskPageModel {
         ?? humanText('operatorMissing', language);
       const clientName = safeName(event.client?.display_name);
       const who = clientName
-        ? (event.client_id ? `${clientName}（${actorBase}）` : `${actorBase}（${clientName}）`)
+        ? (event.client_id
+          ? t('taskPage.timeline.actorClient', { client: clientName, actor: actorBase })
+          : t('taskPage.timeline.actorThroughClient', { actor: actorBase, client: clientName }))
         : actorBase;
       const actionKey = typeof event.action === 'string' ? event.action : '';
       const action = operationWord(actionKey, { language }).text;
-      const tone: TaskTimelineViewItem['tone'] = idx === 0
+      // Only mark the newest timestamped event as current after explicit newest-first sorting.
+      const tone: TaskTimelineViewItem['tone'] = idx === 0 && hasFiniteTime
         ? 'current'
         : actionKey.includes('approve')
           ? 'positive'
@@ -726,11 +759,18 @@ export function deriveTaskPageModel(input: TaskPageDeriveInput): TaskPageModel {
     }
   }
 
-  // Blocker (Waits from deriveOverview + pending handoffs)
+  // Blocker (Waits from deriveOverview + verbatim PPD-050 structured_waits + pending handoffs)
   const taskWaits: DerivedWait[] = (derivation?.waits ?? []).filter((w) => w.task.id === workId);
   // Prioritize: decision > review > external > dependency
   const waitPriority: Record<WaitKind, number> = { decision: 0, review: 1, external: 2, dependency: 3 };
   const primaryWait = [...taskWaits].sort((a, b) => waitPriority[a.kind] - waitPriority[b.kind])[0] ?? null;
+
+  const structuredWaitsObs = snapshot?.observation?.structured_waits;
+  const primaryStructuredWait = structuredWaitsObs?.status === 'provided'
+    && Array.isArray(structuredWaitsObs.items)
+    && structuredWaitsObs.items.length > 0
+    ? structuredWaitsObs.items[0]
+    : null;
 
   const pendingHandoff = (handoffs?.items ?? []).find((h) => h.pending)
     ?? (model?.input.handoffs.items ?? []).find((h) => h.taskId === workId && h.pending);
@@ -741,23 +781,17 @@ export function deriveTaskPageModel(input: TaskPageDeriveInput): TaskPageModel {
 
   if (primaryWait) {
     const firstPerson = primaryWait.waitingOn[0] ?? null;
-    const isExt = primaryWait.kind === 'external';
-    const waitingOnName = isExt
+    const waitingOnExternal = primaryWait.kind === 'external';
+    const waitingOnName = waitingOnExternal
       ? (primaryWait.externalParty ?? t('taskPage.blocker.kind.external'))
       : (safeName(firstPerson?.displayName)
         ?? memberNameFor(firstPerson?.id, overview, model)
         ?? (primaryWait.kind === 'review' ? t('taskPage.delivery.reviewerFallback') : humanText('operatorMissing', language)));
-    const waitingOnExternal = isExt || isExternalParty(waitingOnName);
     const waitingOnPersonId = waitingOnExternal ? null : (firstPerson?.id ?? null);
 
-    let whatText: string | null = primaryWait.what ? cleanNarrative(primaryWait.what, language) : null;
-    if (!whatText && primaryWait.kind === 'review') {
-      whatText = delivery?.versionLabel
-        ? (language.toLowerCase().startsWith('zh') ? `复核${delivery.versionLabel}` : `Review ${delivery.versionLabel}`)
-        : t('taskPage.blocker.kind.review');
-    } else if (whatText && primaryWait.kind === 'review' && /^round\b/i.test(whatText) && delivery?.versionLabel) {
-      whatText = language.toLowerCase().startsWith('zh') ? `复核${delivery.versionLabel}` : `Review ${delivery.versionLabel}`;
-    }
+    const whatText: string | null = primaryWait.what
+      ? cleanNarrative(primaryWait.what, language)
+      : (primaryWait.kind === 'review' ? t('taskPage.blocker.kind.review') : null);
 
     const behindItems = primaryWait.behind.items
       .filter((item): item is DerivedTask & { id: string } => typeof item.id === 'string' && item.id.length > 0)
@@ -765,7 +799,10 @@ export function deriveTaskPageModel(input: TaskPageDeriveInput): TaskPageModel {
         id: item.id,
         title: taskTitleFor(item.id, overview, derivation, language, item.title),
       }));
-    const behindCount = primaryWait.behind.count !== null ? behindItems.length : null;
+    // Use the reported count directly rather than the filtered list length; null remains unknown.
+    const behindCount = typeof primaryWait.behind.count === 'number' && Number.isFinite(primaryWait.behind.count)
+      ? primaryWait.behind.count
+      : null;
 
     let inboxDetailKey: string | null = null;
     if (primaryWait.kind === 'decision' && primaryWait.sourceId && firstPerson?.id) {
@@ -785,6 +822,26 @@ export function deriveTaskPageModel(input: TaskPageDeriveInput): TaskPageModel {
       behindCount,
       behindItems,
       inboxDetailKey,
+    };
+    blocker = { kind: 'wait', wait: blockerWaitView };
+  } else if (primaryStructuredWait) {
+    const waitingOnExternal = primaryStructuredWait.waiting_on.kind === 'external_party';
+    const waitingOnName = cleanNarrative(primaryStructuredWait.waiting_on.name, language)
+      ?? (waitingOnExternal ? t('taskPage.blocker.kind.external') : humanText('operatorMissing', language));
+    const days = Number.isSafeInteger(primaryStructuredWait.since_unix_ms)
+      && primaryStructuredWait.since_unix_ms <= refNowUnixMs
+      ? Math.floor((refNowUnixMs - primaryStructuredWait.since_unix_ms) / DAY_MS)
+      : null;
+    blockerWaitView = {
+      kind: waitingOnExternal ? 'external' : 'reported',
+      waitingOnName,
+      waitingOnPersonId: null,
+      waitingOnExternal,
+      days,
+      what: cleanNarrative(primaryStructuredWait.what, language),
+      behindCount: null,
+      behindItems: [],
+      inboxDetailKey: null,
     };
     blocker = { kind: 'wait', wait: blockerWaitView };
   } else if (pendingHandoff) {
@@ -818,9 +875,10 @@ export function deriveTaskPageModel(input: TaskPageDeriveInput): TaskPageModel {
     blocker = { kind: 'none' };
   }
 
-  // Why (Goal + Project + Workstream + Week commitment)
+  // Why (Goal + Project + Workstream): never fabricate a goal from goals[0] when unlinked,
+  // and never infer weekly commitment membership from commitment ID substrings.
   const firstGoalId = derivedTask?.goalIds?.[0] ?? null;
-  const matchedGoal = firstGoalId ? goals?.find((g) => g.goal_id === firstGoalId) : goals?.[0];
+  const matchedGoal = firstGoalId ? goals?.find((g) => g.goal_id === firstGoalId) : undefined;
   const contractGoalText = contract?.goals && contract.goals.length > 0
     ? cleanNarrative(contract.goals[0], language)
     : null;
@@ -836,12 +894,7 @@ export function deriveTaskPageModel(input: TaskPageDeriveInput): TaskPageModel {
     ? workLabel(rawStreamTitle, { language, recordedTitle: true, fallback: humanText('workstreamUnnamed', language) }).text
     : null;
 
-  const projectHasWeekCommitments = (model?.input.tasks.items ?? []).some((task) =>
-    (task.commitments ?? []).some((c) => c.id?.includes('-week-')));
-  const taskInWeekCommitment = (derivedTask?.commitments ?? []).some((c) => c.id?.includes('-week-'));
-  const weekCommitment: TaskWhyView['weekCommitment'] = projectHasWeekCommitments
-    ? (taskInWeekCommitment ? 'in' : 'out')
-    : null;
+  const weekCommitment: TaskWhyView['weekCommitment'] = null;
 
   const why: TaskWhyView = {
     goalId,
@@ -851,27 +904,21 @@ export function deriveTaskPageModel(input: TaskPageDeriveInput): TaskPageModel {
     weekCommitment,
   };
 
-  // Dependencies (upstreams + downstreams)
+  // Dependencies (upstreams + downstreams) strictly from dependencies.list and overview-model.
   const depItems: TaskDependencyItemView[] = [];
-  const detailByProvider = new Map(
-    (snapshot?.dependency_details ?? []).map((d) => [d.provider_work_id, d]),
-  );
   const seenUpstreams = new Set<string>();
 
   for (const dep of dependencies ?? []) {
     if (dep.work_id !== workId) continue;
     seenUpstreams.add(dep.provider_work_id);
     const providerTitle = taskTitleFor(dep.provider_work_id, overview, derivation, language, dep.provider_title);
-    const detail = detailByProvider.get(dep.provider_work_id);
-    const need = detail?.required_version_label ?? t('taskPage.deps.needApproved');
-    const have = detail?.adopted_version_label
-      ?? (dep.adopted_version ? t('collaboration.acceptedDelivery') : t('taskPage.deps.haveNone'));
-    const avail = detail?.available_version_label
-      ?? (dep.validity === 'upstream_changed'
-        ? t('taskPage.deps.availChanged')
-        : dep.validity === 'valid'
-          ? t('taskPage.deps.availReady')
-          : t('taskPage.deps.availUnavailable'));
+    const need = t('taskPage.deps.needApproved');
+    const have = dep.adopted_version ? t('collaboration.acceptedDelivery') : t('taskPage.deps.haveNone');
+    const avail = dep.validity === 'upstream_changed'
+      ? t('taskPage.deps.availChanged')
+      : dep.validity === 'valid'
+        ? t('taskPage.deps.availReady')
+        : t('taskPage.deps.availUnavailable');
     depItems.push({
       key: `up-${dep.provider_work_id}`,
       direction: 'upstream',
@@ -884,11 +931,9 @@ export function deriveTaskPageModel(input: TaskPageDeriveInput): TaskPageModel {
     if (dep.consumerTaskId !== workId || !dep.providerTaskId || seenUpstreams.has(dep.providerTaskId)) continue;
     seenUpstreams.add(dep.providerTaskId);
     const providerTitle = taskTitleFor(dep.providerTaskId, overview, derivation, language);
-    const detail = detailByProvider.get(dep.providerTaskId);
-    const need = detail?.required_version_label ?? dep.what ?? t('taskPage.deps.needApproved');
-    const have = detail?.adopted_version_label ?? t('taskPage.deps.haveNone');
-    const avail = detail?.available_version_label
-      ?? (dep.satisfied === true ? t('taskPage.deps.availReady') : t('taskPage.deps.availUnavailable'));
+    const need = dep.what ? (cleanNarrative(dep.what, language) ?? t('taskPage.deps.needApproved')) : t('taskPage.deps.needApproved');
+    const have = t('taskPage.deps.haveNone');
+    const avail = dep.satisfied === true ? t('taskPage.deps.availReady') : t('taskPage.deps.availUnavailable');
     depItems.push({
       key: `up-${dep.providerTaskId}`,
       direction: 'upstream',

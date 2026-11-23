@@ -1175,6 +1175,34 @@ function createDemoOrganization({ variant = 'full',
       client: { product: work.agent_name, version: null, model: null,
         capabilities: { model: 'unknown', progress: work.report ? 'supported' : 'unsupported', usage: 'unsupported' } },
       adopted_dependencies: [],
+      // Verbatim AWR-PPD-050 observation.structured_waits shape (matches crates/awr-server/tests/samples/work-snapshot-structured-waits.json
+      // and work-snapshot-legacy-waits.json). Omitted outside canonical so non-canonical variants keep legacy behavior.
+      ...(variant === 'canonical' ? {
+        structured_waits: work.wait?.kind === 'ext'
+          ? {
+            status: 'provided',
+            items: [{
+              waiting_on: { kind: 'external_party', name: work.wait.waiting_on_name },
+              what: work.wait.what,
+              since_unix_ms: work.wait.started_at_unix_ms,
+              release_condition: work.next_step || work.wait.what,
+            }],
+            provenance: 'caller_declared',
+            grants_authority: false,
+            checkpoint_id: report?.checkpoint_id ?? null,
+            reported_at_unix_ms: report?.reported_at_unix_ms ?? null,
+            contract_matches_current: report ? true : null,
+          }
+          : {
+            status: 'not_provided',
+            items: null,
+            provenance: 'caller_declared',
+            grants_authority: false,
+            checkpoint_id: report?.checkpoint_id ?? null,
+            reported_at_unix_ms: report?.reported_at_unix_ms ?? null,
+            contract_matches_current: report ? true : null,
+          },
+      } : {}),
     };
     const visibleContract = {
       codec: 'awr-team-contract-v4', work_id: work.work_id, external_key: work.external_key,
@@ -1218,32 +1246,68 @@ function createDemoOrganization({ variant = 'full',
         version: 1, consistency: 'repeatable_read', queried_at_unix_ms: data.now_unix_ms,
         project_revision: '47', source_snapshot_id: sourceSnapshot(projectId), coordinator_epoch: `epoch-${projectId}-47`,
       },
-      // Canonical demo-only task facts mirroring future reads (PPD-040 per-criterion evidence,
-      // checkpoint timeline, delivery version label, dependency version labels); live and
-      // other demo variants omit these so the page renders its honest fallback wording.
+      // Verbatim AWR-PPD-040 acceptance_evidence shape (matches tools/observer/test/fixtures/ppd040/work-snapshot-supported.json
+      // and work-snapshot-legacy.json). Omitted outside canonical so non-canonical variants keep legacy fallback behavior.
       ...(variant === 'canonical' ? {
-        acceptance_evidence: work.acceptance.map((criterion) => ({
-          criterion_id: criterion.criterion_id,
-          text: criterion.text,
-          state: criterion.evidence_state,
-          detail: criterion.evidence_detail,
-        })),
-        delivery_version_label: work.delivery?.version_label ?? null,
-        timeline: work.timeline.map((entry) => ({
-          id: entry.activity_id,
-          at_unix_ms: entry.at_unix_ms,
-          who: entry.who,
-          what: entry.what,
-          next: entry.next,
-          note: entry.note,
-          tone: entry.tone,
-        })),
-        dependency_details: work.dependencies.map((dependency) => ({
-          provider_work_id: dependency.provider_work_id,
-          required_version_label: dependency.required_version_label,
-          adopted_version_label: dependency.adopted_version_label,
-          available_version_label: dependency.available_version_label,
-        })),
+        acceptance_evidence: work.acceptance.length > 0
+          ? {
+            status: 'provided',
+            basis: 'contract_examples_and_current_candidate',
+            candidate_digest: collaboration.candidate?.digest ?? null,
+            candidate_current: collaboration.candidate?.current === true,
+            review_state: collaboration.review?.state ?? null,
+            review_current_candidate: collaboration.review?.current_candidate === true,
+            facts_truncated: false,
+            items: work.acceptance.map((criterion, idx) => {
+              const boundCheck = work.report?.tests?.[idx]?.name
+                ?? work.delivery?.checks?.[0]?.check
+                ?? null;
+              const runId = boundCheck ? `check-${work.work_id.toLowerCase()}-${idx + 1}` : null;
+              const isRejected = collaboration.review?.state === 'rejected';
+              let evStatus = 'not_started';
+              let reason = 'work_not_started';
+              let checkOutcome = 'not_recorded';
+              let checkRunId = null;
+              if (!boundCheck) {
+                evStatus = 'no_bound_check';
+                reason = 'no_bound_check';
+              } else if (criterion.evidence_state === 'ok') {
+                evStatus = 'supported';
+                reason = 'bound_checks_passed_and_review_approved';
+                checkOutcome = 'passed';
+                checkRunId = runId;
+              } else if (criterion.evidence_state === 'bad') {
+                evStatus = 'failed';
+                reason = isRejected ? 'review_returned' : 'bound_check_failed';
+                checkOutcome = isRejected ? 'passed' : 'failed';
+                checkRunId = runId;
+              } else if (criterion.evidence_state === 'wait') {
+                evStatus = 'waiting';
+                reason = collaboration.candidate?.current ? 'awaiting_review_approval' : 'awaiting_bound_checks';
+                checkOutcome = collaboration.candidate?.current ? 'passed' : 'not_recorded';
+                checkRunId = collaboration.candidate?.current ? runId : null;
+              }
+              return {
+                criterion: criterion.text,
+                status: evStatus,
+                reason,
+                bound_checks: boundCheck ? [boundCheck] : [],
+                checks: boundCheck ? [{ check: boundCheck, outcome: checkOutcome, run_id: checkRunId }] : [],
+                examples_count: 1,
+                positive_examples: 1,
+                negative_examples: 0,
+              };
+            }),
+          }
+          : {
+            status: 'not_provided',
+            basis: 'contract_examples_absent',
+            candidate_digest: collaboration.candidate?.digest ?? null,
+            candidate_current: collaboration.candidate?.current === true,
+            review_state: collaboration.review?.state ?? null,
+            review_current_candidate: collaboration.review?.current_candidate === true,
+            items: null,
+          },
       } : {}),
     });
   }

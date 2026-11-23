@@ -67,7 +67,7 @@ function roundVerdictHealth(verdict: TaskDeliveryRoundView['verdict']): HealthSt
 
 function AvatarSmall({ name, external = false }: { name: string; external?: boolean }) {
   const { t } = useTranslation();
-  const initial = external && name === '甲方'
+  const initial = external
     ? t('taskPage.blocker.externalBadge')
     : Array.from(name.trim())[0] ?? '';
   return (
@@ -209,6 +209,8 @@ export function TaskPage() {
     void handoffs.refetch();
     void activity.refetch();
     void documents.refetch();
+    void goals.refetch();
+    void lessons.refetch();
   }
 
   const discovering = !projectKey && (projects.isPending || discoveryOverviews.some((q) => q.isPending && !q.data));
@@ -224,27 +226,34 @@ export function TaskPage() {
 
   const isEmpty = !primaryLoading && !primaryFailed && !viewModel.found;
 
+  const goalsUnsupported = isUnsupportedError(goals.error);
+  const goalsFailed = goals.isError && !goalsUnsupported;
+  const lessonsUnsupported = isUnsupportedError(lessons.error);
+  const lessonsFailed = lessons.isError && !lessonsUnsupported;
+  const activityUnsupported = isUnsupportedError(activity.error);
+
   const secondaryErrors = [
     snapshot.isError && !snapshotData,
     reviewRounds.isError && !isUnsupportedError(reviewRounds.error),
     reviewInspect.isError && !isUnsupportedError(reviewInspect.error),
     dependencies.isError && !isUnsupportedError(dependencies.error),
     handoffs.isError && !isUnsupportedError(handoffs.error),
-    activity.isError && !isUnsupportedError(activity.error),
+    activity.isError && !activityUnsupported,
     documents.isError && !isUnsupportedError(documents.error),
+    goalsFailed,
+    lessonsFailed,
   ].some(Boolean);
 
   const overviewHasFailedStreams = Boolean(overview.data && overview.data.coverage.failed > 0);
   const modelHasPartialParts = Boolean(
     modelData && Object.values(modelData.coverage).some((part) => part.status === 'partial'),
   );
-  const partialFailure = !primaryLoading && !primaryFailed && !isEmpty && (
-    overview.isError
+  const anyPartialReadError = overview.isError
     || modelQuery.isError
     || overviewHasFailedStreams
     || modelHasPartialParts
-    || secondaryErrors
-  );
+    || secondaryErrors;
+  const partialFailure = !primaryLoading && !primaryFailed && !isEmpty && anyPartialReadError;
 
   const showUnknownNotice = !primaryLoading && !primaryFailed && !isEmpty && !partialFailure && viewModel.hasUnknownFacts;
 
@@ -284,7 +293,7 @@ export function TaskPage() {
         </div>
         <footer className="task-coverage-footer" data-testid="task-coverage">
           <FreshnessBadge freshness={FAILED_FRESHNESS} />
-          <div>{t('taskPage.coverage.failed')}</div>
+          <div data-testid="task-coverage-summary">{t('taskPage.coverage.failed')}</div>
         </footer>
       </div>
     );
@@ -310,7 +319,9 @@ export function TaskPage() {
         </div>
         <footer className="task-coverage-footer" data-testid="task-coverage">
           {viewModel.freshness ? <FreshnessBadge freshness={viewModel.freshness} /> : null}
-          <div>{t('taskPage.coverage.complete')}</div>
+          <div data-testid="task-coverage-summary">
+            {anyPartialReadError ? t('taskPage.coverage.notFoundPartial') : t('taskPage.coverage.notFound')}
+          </div>
         </footer>
       </div>
     );
@@ -376,8 +387,6 @@ export function TaskPage() {
   }));
 
   const statusLabelOverride = viewModel.status === 'verified' ? t('taskPage.status.verified') : undefined;
-  const lessonsUnsupported = isUnsupportedError(lessons.error);
-  const activityUnsupported = isUnsupportedError(activity.error);
 
   const scrollToRef = (ref: React.RefObject<HTMLDivElement | null>) => {
     ref.current?.scrollIntoView({ block: 'start' });
@@ -794,7 +803,7 @@ export function TaskPage() {
                       {behindOpen ? (
                         <div className="task-behind-detail" data-testid="task-behind-detail">
                           <div className="task-behind-detail-title">
-                            {t('taskPage.blocker.behindDetailTitle', { count: viewModel.blocker.wait.behindItems.length })}
+                            {t('taskPage.blocker.behindDetailTitle', { count: viewModel.blocker.wait.behindCount })}
                           </div>
                           <ul className="task-behind-list">
                             {viewModel.blocker.wait.behindItems.map((item) => (
@@ -902,7 +911,14 @@ export function TaskPage() {
             <Section title={t('taskPage.why.title')} className="task-section">
               <ul className="task-rows">
                 <li>
-                  {viewModel.why.goalId && viewModel.why.goalTitle ? (
+                  {goalsFailed && !goals.data ? (
+                    <div className="task-row-static" data-testid="task-why-goal-failed">
+                      <div className="task-row-body">
+                        <div className="task-row-meta">{t('taskPage.why.goalKicker')}</div>
+                        <div className="task-dim">{t('taskPage.why.goalFailed')}</div>
+                      </div>
+                    </div>
+                  ) : viewModel.why.goalId && viewModel.why.goalTitle ? (
                     <button
                       type="button"
                       className="task-row-btn"
@@ -1066,6 +1082,10 @@ export function TaskPage() {
               {lessonsUnsupported && viewModel.lessons.length === 0 ? (
                 <div className="task-empty-block" data-testid="task-lessons-unsupported">
                   {t('taskPage.lessons.unsupported')}
+                </div>
+              ) : lessonsFailed && viewModel.lessons.length === 0 ? (
+                <div className="task-empty-block" data-testid="task-lessons-failed">
+                  {t('taskPage.states.sectionFailed')}
                 </div>
               ) : viewModel.lessons.length > 0 ? (
                 <ul className="task-rows">

@@ -642,28 +642,83 @@ export interface ProjectDocumentsData {
   as_of: { at_unix_ms: number; source_snapshot_id: string; project_revision: string };
 }
 
-export interface TaskAcceptanceEvidenceItem {
-  criterion_id?: string | null;
-  text: string;
-  state: 'ok' | 'bad' | 'wait' | 'none';
-  detail?: string | null;
+export type AcceptanceEvidenceStatus =
+  | 'supported'
+  | 'failed'
+  | 'waiting'
+  | 'no_bound_check'
+  | 'not_started';
+
+export type AcceptanceEvidenceCheckOutcome =
+  | 'passed'
+  | 'failed'
+  | 'running'
+  | 'unknown'
+  | 'not_recorded';
+
+export interface AcceptanceEvidenceCheck {
+  check: string;
+  outcome: AcceptanceEvidenceCheckOutcome;
+  run_id: string | null;
 }
 
-export interface TaskTimelineEntry {
-  id?: string | null;
-  at_unix_ms: number;
-  who: string;
+/** Verbatim AWR-PPD-040 per-criterion evidence item from work.snapshot. */
+export interface AcceptanceEvidenceItem {
+  criterion: string;
+  status: AcceptanceEvidenceStatus;
+  reason: string | null;
+  bound_checks: string[];
+  checks: AcceptanceEvidenceCheck[];
+  examples_count: number;
+  positive_examples: number;
+  negative_examples: number;
+}
+
+/** Verbatim AWR-PPD-040 work.snapshot.data.acceptance_evidence shape. */
+export type WorkSnapshotAcceptanceEvidence =
+  | {
+    status: 'provided';
+    basis: string;
+    candidate_digest: string | null;
+    candidate_current: boolean;
+    review_state: string | null;
+    review_current_candidate: boolean;
+    facts_truncated?: boolean;
+    items: AcceptanceEvidenceItem[];
+  }
+  | {
+    status: 'not_provided';
+    basis: string;
+    candidate_digest?: string | null;
+    candidate_current?: boolean;
+    review_state?: string | null;
+    review_current_candidate?: boolean;
+    items: null;
+  };
+
+/** Verbatim AWR-PPD-050 structured wait party kind. */
+export type StructuredWaitPartyKind = 'person' | 'group' | 'external_party';
+
+/** Verbatim AWR-PPD-050 structured wait entry from work.snapshot.data.observation.structured_waits. */
+export interface StructuredWaitItem {
+  waiting_on: {
+    kind: StructuredWaitPartyKind;
+    name: string;
+  };
   what: string;
-  next?: string | null;
-  note?: string | null;
-  tone?: 'now' | 'ok' | 'bad' | null;
+  since_unix_ms: number;
+  release_condition: string;
 }
 
-export interface TaskDependencyVersionDetail {
-  provider_work_id: string;
-  required_version_label?: string | null;
-  adopted_version_label?: string | null;
-  available_version_label?: string | null;
+/** Verbatim AWR-PPD-050 work.snapshot.data.observation.structured_waits shape. */
+export interface StructuredWaitsObservation {
+  status: 'provided' | 'not_provided' | 'unknown';
+  items: StructuredWaitItem[] | null;
+  provenance?: 'caller_declared';
+  grants_authority?: false;
+  checkpoint_id?: string | null;
+  reported_at_unix_ms?: number | null;
+  contract_matches_current?: boolean | null;
 }
 
 export interface ProjectGoalRecord {
@@ -719,6 +774,8 @@ export interface WorkSnapshotData {
     claim?: Record<string, unknown> | null;
     execution?: { claim_id?: string; execution_id?: string };
     collaboration?: WorkCollaboration | null;
+    /** Verbatim AWR-PPD-050 caller-declared structured waits; absent on older services. */
+    structured_waits?: StructuredWaitsObservation | null;
   };
   visible_contract?: WorkContract | null;
   published_contract?: WorkContract | null;
@@ -742,14 +799,8 @@ export interface WorkSnapshotData {
     action?: { op?: string; note?: string };
   } | null;
   next_step?: string | null;
-  /** Per-criterion evidence (PPD-040 / canonical demo); absent until the read supplies it. */
-  acceptance_evidence?: TaskAcceptanceEvidenceItem[] | null;
-  /** Optional delivery version label (canonical demo); live derives from delivery rounds. */
-  delivery_version_label?: string | null;
-  /** Optional checkpoint timeline entries (canonical demo); live uses audit.development. */
-  timeline?: TaskTimelineEntry[] | null;
-  /** Optional dependency version labels (canonical demo); live uses dependencies.list. */
-  dependency_details?: TaskDependencyVersionDetail[] | null;
+  /** Verbatim AWR-PPD-040 per-criterion evidence evaluation; absent on older services. */
+  acceptance_evidence?: WorkSnapshotAcceptanceEvidence | null;
 }
 
 export interface ReviewDecision {
