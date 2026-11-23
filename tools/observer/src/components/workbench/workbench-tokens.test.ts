@@ -54,7 +54,7 @@ describe('workbench named prototype tokens', () => {
   });
 
   it('keeps raw colors and one-off absolute dimensions out of workbench production source', () => {
-    const files = ['AgentHandback.tsx', 'WorkbenchFrame.tsx', 'model.ts', 'workbench.css'];
+    const files = ['AgentHandback.tsx', 'WorkbenchFrame.tsx', 'DepartmentWorkbench.tsx', 'model.ts', 'department-model.ts', 'workbench.css'];
     for (const file of files) {
       const source = readFileSync(`src/components/workbench/${file}`, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
       expect(source, `${file} has a raw color`).not.toMatch(/#[\da-f]{3,8}\b|\b(?:rgba?|hsla?)\s*\(/i);
@@ -68,7 +68,7 @@ describe('workbench named prototype tokens', () => {
   });
 
   it('keeps the workbench read-only and has no hidden technical disclosure', () => {
-    const source = ['AgentHandback.tsx', 'WorkbenchFrame.tsx']
+    const source = ['AgentHandback.tsx', 'WorkbenchFrame.tsx', 'DepartmentWorkbench.tsx']
       .map((file) => readFileSync(`src/components/workbench/${file}`, 'utf8')).join('\n');
     expect(source).not.toMatch(/\b(?:fetch|axios|mutate|mutateAsync)\s*\(/);
     expect(source).not.toMatch(/<(?:details|summary)\b/);
