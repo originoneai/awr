@@ -819,3 +819,91 @@ export interface HandoffListData {
   next_cursor: string | null;
   as_of: { at_unix_ms: number };
 }
+
+export type PeriodUpdateKind = 'week' | 'month';
+export type PeriodUpdateStatus = 'ok' | 'risk' | 'off';
+export type PeriodUpdateWaitKind = 'decision' | 'dependency' | 'review' | 'external' | 'unknown';
+
+export interface PeriodUpdateAuthor {
+  person_id: string;
+  display_name: string;
+}
+
+export interface PeriodUpdateRecord {
+  update_id: string;
+  period_kind: PeriodUpdateKind;
+  period_key: string;
+  starts_on: string;
+  ends_on: string;
+  status: PeriodUpdateStatus;
+  summary: string;
+  author: PeriodUpdateAuthor;
+  recorded_at_unix_ms: number;
+  version: string;
+  supersedes_update_id: string | null;
+  fact_snapshot_ref: string | null;
+  current: boolean;
+}
+
+export interface PeriodUpdateCountedWorkIds {
+  count: number;
+  work_ids: string[];
+}
+
+export interface PeriodUpdateWaitKindCount {
+  kind: PeriodUpdateWaitKind;
+  count: number;
+  work_ids: string[];
+}
+
+export interface PeriodUpdateWaitMetric {
+  count: number;
+  kinds: PeriodUpdateWaitKindCount[];
+}
+
+export interface PeriodUpdateFactSnapshot {
+  verified: PeriodUpdateCountedWorkIds;
+  completed_without_independent_review: PeriodUpdateCountedWorkIds;
+  waits_opened: PeriodUpdateWaitMetric;
+  waits_cleared: PeriodUpdateWaitMetric;
+  review_returned: PeriodUpdateCountedWorkIds;
+  delivered_unverified: PeriodUpdateCountedWorkIds;
+  decisions_made: PeriodUpdateCountedWorkIds;
+}
+
+export interface PeriodUpdateFactSnapshotCoverage {
+  complete: boolean;
+  hidden_work_count: number;
+}
+
+export interface PeriodUpdateAsOf {
+  at_unix_ms: number;
+  source_snapshot_id: string;
+  project_revision: string;
+}
+
+export interface PeriodUpdatesListData {
+  project_id: string;
+  items: PeriodUpdateRecord[];
+  next_cursor: string | null;
+  truncated: boolean;
+  as_of: PeriodUpdateAsOf;
+  execution_authorized: false;
+}
+
+export interface PeriodUpdateInspectData {
+  project_id: string;
+  update: PeriodUpdateRecord;
+  fact_snapshot: PeriodUpdateFactSnapshot | null;
+  fact_snapshot_coverage: PeriodUpdateFactSnapshotCoverage | null;
+  as_of: PeriodUpdateAsOf;
+  execution_authorized: false;
+}
+
+export interface TeamPeriodUpdatesResponse extends TeamReadResponse<PeriodUpdatesListData> {
+  ordering?: 'incomparable';
+}
+
+export interface TeamPeriodUpdateResponse extends TeamReadResponse<PeriodUpdateInspectData> {
+  ordering?: 'incomparable';
+}

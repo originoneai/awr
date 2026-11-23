@@ -18,7 +18,7 @@ import {
   type DataTableRow,
   type HealthStatus,
 } from '../components/display';
-import { BuildingIcon } from '../components/icons/prototype-icons';
+import { BuildingIcon, CheckIcon } from '../components/icons/prototype-icons';
 import { ObservationForbidden } from '../components/states';
 import { readableNarrative } from '../core/observation';
 import type { DerivedTaskStatus } from '../core/overview/types';
@@ -31,9 +31,11 @@ import './SettingsPage.css';
 interface DirectoryDepartment {
   key: string;
   name: string;
+  parentKey?: string | null;
 }
 
 interface DirectoryMember {
+  personId?: string;
   name: string | null;
   available: boolean;
   departments: DirectoryDepartment[];
@@ -43,6 +45,7 @@ interface Directory {
   configured: boolean;
   organization: string | null;
   departments: DirectoryDepartment[];
+  allDepartments?: DirectoryDepartment[];
   updated_at_ms: number | null;
   members: DirectoryMember[];
 }
@@ -50,7 +53,130 @@ interface Directory {
 interface DutyCapabilities {
   business_role_presets?: {
     roles?: unknown;
+    action_ceilings?: unknown;
   };
+}
+
+interface DutyAbilityRowDefinition {
+  key: 'readWork' | 'executeAndSubmit' | 'reviewOthers' | 'assignAndPlan' | 'confirmIntegration' | 'manageAccess' | 'readAudit';
+  actions: readonly string[];
+}
+
+/** Product rows and their server action identifiers from docs/dev/reference/business-duty-actions.md. */
+const DUTY_ABILITY_ROWS: readonly DutyAbilityRowDefinition[] = [
+  { key: 'readWork', actions: ['work.read'] },
+  {
+    key: 'executeAndSubmit',
+    actions: ['claim.manage_own', 'execution.request_and_report_own', 'delivery.submit_and_request_review'],
+  },
+  { key: 'reviewOthers', actions: ['review.decide'] },
+  {
+    key: 'assignAndPlan',
+    actions: ['work.assign', 'planning.propose', 'planning.edit_draft', 'planning.approve', 'planning.publish'],
+  },
+  { key: 'confirmIntegration', actions: ['delivery.finalize'] },
+  { key: 'manageAccess', actions: ['access.manage_project', 'directory.manage_project'] },
+  { key: 'readAudit', actions: ['audit.read_project'] },
+];
+
+type DutyPresetsStatus = 'empty' | 'missing' | 'malformed' | 'partial' | 'complete';
+
+interface ParsedDutyPresets {
+  roles: string[];
+  ceilings: Map<string, ReadonlySet<string>>;
+  status: DutyPresetsStatus;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function parseDutyPresets(presets: DutyCapabilities['business_role_presets'] | undefined): ParsedDutyPresets {
+  const emptyCeilings = new Map<string, ReadonlySet<string>>();
+  if (!presets || !isPlainObject(presets)) return { roles: [], ceilings: emptyCeilings, status: 'missing' };
+  if (!Array.isArray(presets.roles)) return { roles: [], ceilings: emptyCeilings, status: 'missing' };
+  const roles = presets.roles.filter((role): role is string => typeof role === 'string' && role.length > 0);
+  if (roles.length === 0) return { roles: [], ceilings: emptyCeilings, status: 'empty' };
+  if (presets.action_ceilings === undefined) return { roles, ceilings: emptyCeilings, status: 'missing' };
+  if (!isPlainObject(presets.action_ceilings)) return { roles: [], ceilings: emptyCeilings, status: 'malformed' };
+
+  const ceilings = new Map<string, ReadonlySet<string>>();
+  for (const role of roles) {
+    if (!Object.hasOwn(presets.action_ceilings, role)) continue;
+    const raw = presets.action_ceilings[role];
+    if (!Array.isArray(raw) || !raw.every((action): action is string => typeof action === 'string' && action.length > 0)) {
+      return { roles: [], ceilings: emptyCeilings, status: 'malformed' };
+    }
+    ceilings.set(role, new Set(raw));
+  }
+  if (ceilings.size === 0) return { roles, ceilings, status: 'missing' };
+  if (ceilings.size < roles.length) return { roles, ceilings, status: 'partial' };
+  return { roles, ceilings, status: 'complete' };
+}
+
+interface DepartmentTreeNode {
+  department: DirectoryDepartment;
+  orderIndex: number;
+  children: DepartmentTreeNode[];
+}
+
+interface BuiltDepartmentTree {
+  roots: DepartmentTreeNode[];
+  hasHierarchy: boolean;
+  invalidHierarchy: boolean;
+}
+
+function collectDepartments(directory: Directory | undefined): DirectoryDepartment[] {
+  if (!directory) return [];
+  const byKey = new Map<string, DirectoryDepartment>();
+  const raw = [
+    ...(directory.allDepartments ?? []),
+    ...(directory.departments ?? []),
+    ...(directory.members.flatMap((member) => member.departments) ?? []),
+  ];
+  for (const department of raw) {
+    if (!department || typeof department.key !== 'string' || !department.key) continue;
+    const parentKey = typeof department.parentKey === 'string' && department.parentKey.length > 0
+      ? department.parentKey : null;
+    const existing = byKey.get(department.key);
+    if (!existing) {
+      byKey.set(department.key, { key: department.key, name: department.name, parentKey });
+    } else if (existing.parentKey === null && parentKey !== null) {
+      byKey.set(department.key, { ...existing, parentKey });
+    }
+  }
+  return [...byKey.values()];
+}
+
+function buildDepartmentTree(departments: readonly DirectoryDepartment[]): BuiltDepartmentTree {
+  const byKey = new Map(departments.map((department) => [department.key, department]));
+  for (const department of departments) {
+    const visited = new Set<string>([department.key]);
+    let parentKey = department.parentKey ?? null;
+    if (parentKey === department.key) return { roots: [], hasHierarchy: false, invalidHierarchy: true };
+    while (parentKey !== null && byKey.has(parentKey)) {
+      if (visited.has(parentKey)) return { roots: [], hasHierarchy: false, invalidHierarchy: true };
+      visited.add(parentKey);
+      parentKey = byKey.get(parentKey)?.parentKey ?? null;
+    }
+  }
+  const nodes = new Map<string, DepartmentTreeNode>(
+    departments.map((department, orderIndex) => [department.key, { department, orderIndex, children: [] }]),
+  );
+  const roots: DepartmentTreeNode[] = [];
+  let hasHierarchy = false;
+  for (const department of departments) {
+    const node = nodes.get(department.key);
+    if (!node) continue;
+    const parentKey = department.parentKey ?? null;
+    if (parentKey !== null && nodes.has(parentKey)) {
+      nodes.get(parentKey)?.children.push(node);
+      hasHierarchy = true;
+    } else {
+      roots.push(node);
+    }
+  }
+  return { roots, hasHierarchy, invalidHierarchy: false };
 }
 
 type SettingsReadState = 'data' | 'loading' | 'empty' | 'failed' | 'partial' | 'unknown';
@@ -117,13 +243,35 @@ export function SettingsPage() {
     return <ObservationForbidden />;
   }
 
-  const directory = directoryQuery.isFetchedAfterMount && !isAuthError(directoryQuery.error)
+  const directory = directoryQuery.isFetchedAfterMount && !directoryQuery.isError && !isAuthError(directoryQuery.error)
     ? directoryQuery.data?.data : undefined;
   const noProjects = projects.data?.projects.length === 0;
   const loading = projects.isPending || Boolean(project) && (capabilities.isPending || model.isPending || directoryQuery.isPending);
-  const anyFailure = projects.isError || capabilities.isError || model.isError || directoryQuery.isError;
+
+  const dutyPending = Boolean(project) && capabilities.isPending;
+  const dutyResult = capabilities.isSuccess && capabilities.isFetchedAfterMount && !capabilities.isError
+    ? capabilities.data?.result as DutyCapabilities | undefined : undefined;
+  const parsedDuties = parseDutyPresets(dutyResult?.business_role_presets);
+  const dutyMalformed = Boolean(dutyResult) && parsedDuties.status === 'malformed';
+  const dutyFailed = projects.isError || capabilities.isError
+    || (!dutyPending && Boolean(project) && !capabilities.data)
+    || dutyMalformed;
+  const dutyEmpty = !dutyFailed && (noProjects || (!dutyPending && parsedDuties.status === 'empty'));
+  const dutyMissing = !dutyFailed && !dutyEmpty && !dutyPending && parsedDuties.status === 'missing';
+  const dutyPartial = !dutyFailed && !dutyEmpty && !dutyMissing && !dutyPending && parsedDuties.status === 'partial';
+  const dutyRoles = dutyFailed ? [] : parsedDuties.roles;
+
+  const departments = collectDepartments(directory);
+  const departmentTree = buildDepartmentTree(departments);
+  const organizationFailed = projects.isError || directoryQuery.isError
+    || (!directoryQuery.isPending && Boolean(project) && !directory)
+    || departmentTree.invalidHierarchy;
+
+  const anyFailure = projects.isError || capabilities.isError || model.isError || directoryQuery.isError
+    || dutyMalformed || dutyPartial || departmentTree.invalidHierarchy;
   const totalFailure = !loading && (projects.isError && !project
-    || Boolean(project) && capabilities.isError && model.isError && directoryQuery.isError);
+    || Boolean(project) && (capabilities.isError || dutyMalformed) && model.isError
+    && (directoryQuery.isError || departmentTree.invalidHierarchy));
   const unknown = !loading && !totalFailure && model.data?.ordering === 'incomparable';
   const empty = !anyFailure && (noProjects || directory?.configured === false);
   const state: SettingsReadState = loading ? 'loading'
@@ -132,13 +280,6 @@ export function SettingsPage() {
         : anyFailure ? 'partial'
           : empty ? 'empty' : 'data';
 
-  const dutyResult = capabilities.data?.result as DutyCapabilities | undefined;
-  const roleValues = dutyResult?.business_role_presets?.roles;
-  const dutyRoles = capabilities.isSuccess && capabilities.isFetchedAfterMount && !capabilities.isError && Array.isArray(roleValues)
-    ? roleValues.filter((role): role is string => typeof role === 'string' && role.length > 0)
-    : [];
-  const dutyFailed = projects.isError || capabilities.isError || (!capabilities.isPending && Boolean(project) && !capabilities.data);
-  const dutyMissing = !dutyFailed && !capabilities.isPending && !noProjects;
   const dutyColumns = [
     { key: 'ability', title: <span aria-hidden="true" /> },
     ...dutyRoles.map((role) => ({
@@ -147,12 +288,60 @@ export function SettingsPage() {
       width: 'var(--settings-duty-column)',
     })),
   ];
-  const dutyRows: DataTableRow[] = [];
-  const dutyState = noProjects ? (
+  const dutyRows: DataTableRow[] = !dutyFailed && !dutyEmpty && !dutyMissing && !dutyPending
+    ? DUTY_ABILITY_ROWS.map((ability) => ({
+      key: ability.key,
+      testId: `settings-duty-row-${ability.key}`,
+      cells: [
+        t(`settings.duties.abilities.${ability.key}`),
+        ...dutyRoles.map((role) => {
+          const ceiling = parsedDuties.ceilings.get(role);
+          if (!ceiling) {
+            return (
+              <span
+                key={role}
+                className="settings-duty-unknown"
+                data-testid={`settings-duty-cell-${ability.key}-${role}`}
+                data-allowed="unknown"
+              >
+                {t('settings.duties.cellUnknown')}
+              </span>
+            );
+          }
+          const allowed = ability.actions.every((action) => ceiling.has(action));
+          if (allowed) {
+            return (
+              <span
+                key={role}
+                className="settings-duty-allowed"
+                data-testid={`settings-duty-cell-${ability.key}-${role}`}
+                data-allowed="true"
+                aria-label={t('settings.duties.allowed')}
+              >
+                <DisplayIcon icon={CheckIcon} />
+              </span>
+            );
+          }
+          return (
+            <span
+              key={role}
+              className="settings-duty-denied"
+              data-testid={`settings-duty-cell-${ability.key}-${role}`}
+              data-allowed="false"
+              aria-label={t('settings.duties.notIncluded')}
+            >
+              —
+            </span>
+          );
+        }),
+      ],
+    }))
+    : [];
+  const dutyState = dutyEmpty ? (
     <TableReadState testId="settings-duty-empty">{t('settings.dutiesEmpty')}</TableReadState>
   ) : dutyFailed ? (
     <TableReadState testId="settings-duty-read-failed">{t('settings.dutyReadFailed')}</TableReadState>
-  ) : capabilities.isPending ? (
+  ) : dutyPending ? (
     <TableReadState testId="settings-loading">{t('settings.loading')}</TableReadState>
   ) : dutyMissing ? (
     <TableReadState testId="settings-duty-definitions-missing">{t('settings.dutyDefinitionsMissing')}</TableReadState>
@@ -160,13 +349,34 @@ export function SettingsPage() {
 
   const name = (value: string | null, fallback: string) => value ? readableNarrative(value, i18n.language) ?? fallback : fallback;
   const organizationName = name(directory?.organization ?? null, t('settings.organizationUnknown'));
-  const departments = [...new Map([
-    ...(directory?.departments ?? []),
-    ...(directory?.members.flatMap((member) => member.departments) ?? []),
-  ].map((department) => [department.key, department])).values()];
   const departmentCount = (key: string) => directory?.members.filter((member) => (
     member.departments.some((department) => department.key === key)
   )).length ?? 0;
+
+  const renderDepartmentNodes = (nodes: readonly DepartmentTreeNode[]): ReactNode => {
+    if (nodes.length === 0) return null;
+    return (
+      <ul>
+        {nodes.map(({ department, orderIndex, children }) => {
+          const displayName = name(department.name, t('settings.departmentUnknown', { number: orderIndex + 1 }));
+          const count = departmentCount(department.key);
+          const label = count > 0
+            ? t('settings.departmentMembers', { name: displayName, count })
+            : displayName;
+          return (
+            <li key={department.key}>
+              <span className="nd settings-org-node">
+                <span className="settings-org-node-label" data-truncate={department.name.length > 80 || undefined}>
+                  {label}
+                </span>
+              </span>
+              {renderDepartmentNodes(children)}
+            </li>
+          );
+        })}
+      </ul>
+    );
+  };
 
   const statusRows: DataTableRow[] = [
     ...TASK_STATUSES.map((status) => ({
@@ -188,7 +398,7 @@ export function SettingsPage() {
   const activeTag = <span className="obs-tag" data-tone="info">{t('settings.inUse')}</span>;
   const reservedTag = <span className="obs-tag">{t('settings.reserved')}</span>;
   const coverage = state === 'loading' ? t('settings.coverageUnread')
-    : state === 'partial' || state === 'failed' || dutyMissing ? t('settings.coveragePartial')
+    : state === 'partial' || state === 'failed' || dutyMissing || dutyPartial ? t('settings.coveragePartial')
       : t('settings.coverageComplete');
   const retry = () => {
     void Promise.all([
@@ -232,43 +442,38 @@ export function SettingsPage() {
         </div>
         <div className="settings-right" data-testid="settings-right">
           <Section title={t('settings.organizationTitle')} className="settings-organization">
-            {empty ? (
+            {noProjects || directory?.configured === false ? (
               <div className="settings-org-state" data-testid="settings-organization-empty">{t('settings.organizationEmpty')}</div>
             ) : projects.isError && !directory ? (
               <div className="settings-org-state" data-testid="settings-organization-read-failed">{t('settings.organizationReadFailed')}</div>
             ) : directoryQuery.isPending && !directory ? (
               <div className="settings-org-state" data-testid="settings-loading">{t('settings.loading')}</div>
-            ) : directoryQuery.isError && !directory ? (
+            ) : organizationFailed || !directory ? (
               <div className="settings-org-state" data-testid="settings-organization-read-failed">{t('settings.organizationReadFailed')}</div>
-            ) : directory ? (
-              <div className="settings-org" data-testid="settings-organization-tree">
+            ) : (
+              <div
+                className="settings-org"
+                data-testid="settings-organization-tree"
+                data-hierarchy={departmentTree.hasHierarchy ? 'true' : 'false'}
+              >
                 <ul>
                   <li>
                     <span className="nd settings-org-node">
                       <DisplayIcon icon={BuildingIcon} />
                       <span className="settings-org-node-label" data-truncate={organizationName.length > 80 || undefined}>{organizationName}</span>
                     </span>
-                    <ul>
-                      {departments.map((department, index) => (
-                        <li key={department.key}>
-                          <span className="nd settings-org-node">
-                            <span className="settings-org-node-label" data-truncate={department.name.length > 80 || undefined}>
-                              {t('settings.departmentMembers', {
-                                name: name(department.name, t('settings.departmentUnknown', { number: index + 1 })),
-                                count: departmentCount(department.key),
-                              })}
-                            </span>
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
+                    {renderDepartmentNodes(departmentTree.roots)}
                   </li>
                 </ul>
               </div>
-            ) : (
-              <div className="settings-org-state" data-testid="settings-organization-read-failed">{t('settings.organizationReadFailed')}</div>
             )}
-            <div className="settings-pnote settings-organization-note" data-testid="settings-organization-note">{t('settings.organizationNote')}</div>
+            <div className="settings-pnote settings-organization-note" data-testid="settings-organization-note">
+              {directory && !organizationFailed && departmentTree.hasHierarchy
+                ? t('settings.organizationHierarchyNote')
+                : directory && !organizationFailed && departmentTree.roots.length === 0
+                  ? t('settings.organizationNoDepartments')
+                  : t('settings.organizationNote')}
+            </div>
           </Section>
           <div data-testid="settings-vocabulary">
             <Section title={t('settings.vocabularyTitle')} className="settings-vocabulary">

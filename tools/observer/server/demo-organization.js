@@ -5,7 +5,7 @@ const completeOrganization = require('../fixtures/demo-organization.json');
 
 const DEMO_VARIANTS = new Set(['full', 'empty', 'single', 'restricted', 'partial', 'canonical']);
 const DEMO_FUTURE_READ_OPS = new Set([
-  'updates.list', 'update.inspect', 'goals.list', 'goal.inspect', 'lessons.list', 'lesson.inspect',
+  'goals.list', 'goal.inspect', 'lessons.list', 'lesson.inspect',
 ]);
 const DAY = 86_400_000;
 const WEEK = 7 * DAY;
@@ -336,12 +336,77 @@ function canonicalPeriodUpdates(data, projectId) {
   return completeSlice(items);
 }
 
+/** Verbatim AWR-PPD-061 business duty presets matching Rust BusinessRole::action_ceiling. */
+const DEMO_BUSINESS_ROLE_PRESETS = {
+  action_ceilings: {
+    administrator: [
+      'work.read',
+      'access.manage_project',
+      'audit.read_project',
+      'directory.manage_project',
+    ],
+    deliverer: [
+      'work.read',
+      'session.maintain_own',
+      'delivery.finalize',
+    ],
+    developer: [
+      'work.read',
+      'session.maintain_own',
+      'claim.manage_own',
+      'execution.request_and_report_own',
+      'planning.propose',
+      'delivery.submit_and_request_review',
+    ],
+    observer: [
+      'work.read',
+    ],
+    reviewer: [
+      'work.read',
+      'session.maintain_own',
+      'review.decide',
+    ],
+    supervisor: [
+      'work.read',
+      'work.assign',
+      'session.maintain_own',
+      'planning.propose',
+      'planning.edit_draft',
+      'planning.approve',
+      'planning.publish',
+      'audit.read_project',
+      'directory.manage_project',
+    ],
+  },
+  explicit_combined_duties: true,
+  omitted_on_update: 'preserve_existing_declaration',
+  role_names_grant_authority: false,
+  roles: [
+    'observer',
+    'developer',
+    'reviewer',
+    'supervisor',
+    'deliverer',
+    'administrator',
+  ],
+  semantics: 'membership_grants_intersect_declared_ceiling_then_one_live_delegation',
+};
+
 /** Demo-only organization projection for the canonical Members page. The synthetic fixture
  * deliberately uses one stable person ID per person across its three projects; real person IDs
  * remain project-scoped and no live organization directory is inferred from them. Duties and
  * project memberships are recorded fixture facts, not page-side guesses. */
 function canonicalOrganizationDirectory(data) {
   const memberIds = new Set(data.people.map((member) => member.person_id));
+  const visibleDepartmentIds = new Set([
+    ...data.projects.flatMap((project) => [project.group_id, project.parent_department_id]),
+    ...data.people.map((member) => member.group_id),
+  ]);
+  const allDepartments = data.organization.departments
+    .filter((department) => visibleDepartmentIds.has(department.id))
+    .map((department) => ({
+      key: department.id, name: department.name, parentKey: department.parent_id ?? null,
+    }));
   const departments = data.organization.departments.filter((department) =>
     data.people.some((member) => member.group_id === department.id));
   const departmentById = new Map(departments.map((department) => [department.id, {
@@ -351,6 +416,7 @@ function canonicalOrganizationDirectory(data) {
     configured: true,
     organization: data.organization.name,
     departments: [...departmentById.values()],
+    allDepartments,
     updated_at_ms: data.now_unix_ms,
     members: data.people.filter((member) => memberIds.has(member.person_id)).map((member) => ({
       personId: member.person_id,
@@ -1863,21 +1929,67 @@ function createDemoOrganization({ variant = 'full',
     });
   }
 
+  function compareCodePoints(left, right) {
+    return left < right ? -1 : left > right ? 1 : 0;
+  }
+
   function updatesList(projectId, query) {
     const updates = data.updates.filter((update) => update.project_id === projectId)
-      .sort((left, right) => right.starts_on.localeCompare(left.starts_on)
-        || right.ends_on.localeCompare(left.ends_on) || right.period_key.localeCompare(left.period_key)
-        || right.update_id.localeCompare(left.update_id));
+      .sort((left, right) => compareCodePoints(right.starts_on, left.starts_on)
+        || compareCodePoints(right.ends_on, left.ends_on)
+        || compareCodePoints(right.period_key, left.period_key)
+        || compareCodePoints(right.update_id, left.update_id));
     const result = page(updates, query);
     return reply(projectId, query, {
       project_id: projectId,
       items: result.items.map((update) => updateRecord(update)),
-      total: result.total,
       next_cursor: result.next_cursor,
       truncated: result.truncated,
       execution_authorized: false,
       as_of: asOf(projectId),
     });
+  }
+
+  function updateFactSnapshot(update) {
+    const facts = update.fact_snapshot?.facts || [];
+    const idsFor = (label) => facts.find((fact) => fact.label === label)?.item_ids || [];
+    const sortedUnique = (ids) => [...new Set(ids)].sort(compareCodePoints);
+    const countedSet = (ids) => {
+      const work_ids = sortedUnique(ids);
+      return { count: work_ids.length, work_ids };
+    };
+    const countedList = (ids) => {
+      const work_ids = [...ids].sort(compareCodePoints);
+      return { count: work_ids.length, work_ids };
+    };
+    const decisionById = new Map(data.decisions.map((item) => [item.decision_id, item]));
+    const waitMetric = (ids) => {
+      const byKind = new Map();
+      for (const workId of ids) {
+        const rawKind = taskById.get(workId)?.wait?.kind;
+        const kind = rawKind === 'ext' ? 'external'
+          : ['decision', 'dependency', 'review', 'external'].includes(rawKind) ? rawKind : 'unknown';
+        const list = byKind.get(kind) || [];
+        list.push(workId);
+        byKind.set(kind, list);
+      }
+      const order = ['decision', 'dependency', 'review', 'external', 'unknown'];
+      const kinds = order.filter((kind) => byKind.has(kind)).map((kind) => {
+        const work_ids = byKind.get(kind).sort(compareCodePoints);
+        return { kind, count: work_ids.length, work_ids };
+      });
+      return { count: kinds.reduce((sum, entry) => sum + entry.count, 0), kinds };
+    };
+    const decisionWorkIds = idsFor('做出的决定').map((id) => decisionById.get(id)?.work_id ?? id);
+    return {
+      verified: countedSet(idsFor('通过核验')),
+      completed_without_independent_review: { count: 0, work_ids: [] },
+      waits_opened: waitMetric(idsFor('新出现的等待')),
+      waits_cleared: waitMetric(idsFor('解除的等待')),
+      review_returned: countedSet(idsFor('复核退回')),
+      delivered_unverified: countedSet(idsFor('标了完成但没核验')),
+      decisions_made: countedList(decisionWorkIds),
+    };
   }
 
   function updateRecord(update) {
@@ -1950,6 +2062,7 @@ function createDemoOrganization({ variant = 'full',
     switch (query.op) {
       case 'capabilities': return {
         protocol: 'awr-team-workstream', protocol_version: 1,
+        business_role_presets: clone(DEMO_BUSINESS_ROLE_PRESETS),
         identity: { ...viewerIdentity(), can_manage_members: false, can_read_project_audit: true,
           membership_action_ceiling: ['work.read'] },
         queries: ['capabilities', 'workstreams.list', 'work.list', 'work.graph', 'work.search', 'work.next', 'work.inbox',
@@ -1960,6 +2073,7 @@ function createDemoOrganization({ variant = 'full',
           'delivery.neutral.inspect', 'delivery.submission.describe', 'delivery.integration.inspect',
           'delivery.source.status', 'delivery.exports', 'artifact.content', 'artifact.segment',
           'audit.development', 'audit.requests', 'task.assignees', 'session.inspect', 'command.inspect',
+          'updates.list', 'update.inspect',
           ...DEMO_FUTURE_READ_OPS],
         controlled_content_reads: true,
         artifact_content: true,
@@ -2093,8 +2207,15 @@ function createDemoOrganization({ variant = 'full',
       case 'update.inspect': {
         const update = updateById.get(query.update_id);
         if (!update || update.project_id !== projectId) throw new DemoReadError('Forbidden', 'access denied', 403);
-        return reply(projectId, query, { project_id: projectId, update: updateRecord(update),
-          execution_authorized: false, as_of: asOf(projectId) });
+        const hasSnapshot = update.fact_snapshot?.fact_snapshot_ref != null;
+        return reply(projectId, query, {
+          project_id: projectId,
+          update: updateRecord(update),
+          fact_snapshot: hasSnapshot ? updateFactSnapshot(update) : null,
+          fact_snapshot_coverage: hasSnapshot ? { complete: true, hidden_work_count: 0 } : null,
+          execution_authorized: false,
+          as_of: asOf(projectId),
+        });
       }
       case 'goals.list': {
         const goals = data.goals.filter((goal) => goal.project_id === projectId);
