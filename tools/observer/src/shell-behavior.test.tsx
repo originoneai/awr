@@ -73,13 +73,13 @@ describe('prototype shell behavior', () => {
     expect(screen.getByTestId('scope-switcher').textContent).toContain('全部授权范围');
   });
 
-  it('keeps future project settings disabled while search opens and perspective falls back safely', async () => {
+  it('omits legacy project settings while search opens and perspective falls back safely', async () => {
     setup('/projects/demo');
+    await screen.findByTestId('project-title');
     const search = screen.getByRole('button', { name: /搜索/ });
     const notifications = screen.getByRole('button', { name: '待处理' });
-    const settings = await screen.findByRole('button', { name: '项目设置' });
     expect(search).toHaveProperty('disabled', false);
-    expect(settings).toHaveProperty('disabled', true);
+    expect(screen.queryByRole('button', { name: '项目设置' })).toBeNull();
     expect(screen.queryByTestId('perspective-switcher')).toBeNull();
     expect(document.querySelector('.shell-header .shell-perspective')).toBeNull();
     expect(notifications).toHaveProperty('disabled', false);
