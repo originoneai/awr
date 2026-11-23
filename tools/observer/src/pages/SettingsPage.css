@@ -71,6 +71,10 @@
   border-top: var(--ant-line-width) solid var(--craft-color-hairline);
 }
 
+.settings-page .obs-row-trailing {
+  padding-top: 0;
+}
+
 .settings-page .obs-data-table table {
   border-collapse: collapse;
 }
@@ -85,6 +89,20 @@
 
 .settings-duty-table .ant-table-cell:first-child {
   font-weight: 400;
+}
+
+.settings-duty-table .ant-table-tbody > tr > td {
+  background: transparent;
+}
+
+.settings-duty-allowed {
+  display: inline-flex;
+  color: var(--craft-color-positive);
+}
+
+.settings-duty-denied,
+.settings-duty-unknown {
+  color: var(--craft-color-muted);
 }
 
 .settings-org {
