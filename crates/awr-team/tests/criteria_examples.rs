@@ -161,6 +161,36 @@ fn legacy_codecs_reject_examples_and_v7_rejects_invalid_examples() {
         Some("  "),
     )]);
     assert!(bad_check.validate().is_err());
+
+    // Setting check_id without id is refused on both WorkContract and TaskDraft
+    // (A-evidence §3: examples that bind a check require an explicit id).
+    let check_without_id = example(
+        None,
+        "Filter matches status and keyword",
+        ExampleKind::Positive,
+        Some("unit.filter.pos"),
+    );
+    assert!(
+        v7_contract(vec![check_without_id.clone()])
+            .validate()
+            .is_err()
+    );
+    assert!(task_draft(Some(vec![check_without_id])).validate().is_err());
+
+    // Unbound examples may still omit id, and an explicit empty V7 examples list is valid.
+    let unbound_without_id = example(
+        None,
+        "Empty query returns all records",
+        ExampleKind::Positive,
+        None,
+    );
+    v7_contract(vec![unbound_without_id.clone()])
+        .validate()
+        .unwrap();
+    task_draft(Some(vec![unbound_without_id]))
+        .validate()
+        .unwrap();
+    v7_contract(vec![]).validate().unwrap();
 }
 
 #[test]

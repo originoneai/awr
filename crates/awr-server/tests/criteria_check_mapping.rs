@@ -212,21 +212,122 @@ fn verification_envelope(
     }
 }
 
-fn save_verbatim(name: &str, body: &Value) {
-    if std::env::var("AWR_SAVE_VERBATIM_SAMPLES").as_deref() != Ok("1") {
-        return;
+fn normalize_snapshot(body: &Value) -> Value {
+    let mut normalized = body.clone();
+    assert!(
+        normalized["source_snapshot_id"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty()),
+        "source_snapshot_id must be a nonempty string"
+    );
+    assert_eq!(
+        normalized["data"]["snapshot"]["source_snapshot_id"], normalized["source_snapshot_id"],
+        "snapshot metadata source_snapshot_id must match envelope"
+    );
+    normalized["source_snapshot_id"] = json!("<snapshot_id>");
+    normalized["data"]["snapshot"]["source_snapshot_id"] = json!("<snapshot_id>");
+    assert!(normalized["data"]["snapshot"]["queried_at_unix_ms"].is_i64());
+    normalized["data"]["snapshot"]["queried_at_unix_ms"] = json!(0);
+
+    if let Some(obs) = normalized["data"]["observation"].as_object_mut() {
+        assert!(obs.get("observed_at_unix_ms").is_some_and(Value::is_i64));
+        obs.insert("observed_at_unix_ms".into(), json!(0));
+        if obs
+            .get("last_activity_at_unix_ms")
+            .is_some_and(Value::is_i64)
+        {
+            obs.insert("last_activity_at_unix_ms".into(), json!(0));
+        }
+        if let Some(cp) = obs.get_mut("checkpoint").and_then(Value::as_object_mut) {
+            if cp.get("created_at_unix_ms").is_some_and(Value::is_i64) {
+                cp.insert("created_at_unix_ms".into(), json!(0));
+            }
+        }
+        if let Some(claim) = obs.get_mut("claim").and_then(Value::as_object_mut) {
+            assert!(
+                claim
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|s| !s.is_empty())
+            );
+            claim.insert("id".into(), json!("<claim_id>"));
+            if claim.get("expires_at_unix_ms").is_some_and(Value::is_i64) {
+                claim.insert("expires_at_unix_ms".into(), json!(0));
+            }
+        }
+        if let Some(lp) = obs
+            .get_mut("last_participation")
+            .and_then(Value::as_object_mut)
+        {
+            if lp.get("at_unix_ms").is_some_and(Value::is_i64) {
+                lp.insert("at_unix_ms".into(), json!(0));
+            }
+            if lp.get("session_id").is_some_and(Value::is_string) {
+                lp.insert("session_id".into(), json!("<session_id>"));
+            }
+        }
+        if let Some(collab) = obs.get_mut("collaboration").and_then(Value::as_object_mut) {
+            if let Some(rev) = collab.get_mut("review").and_then(Value::as_object_mut) {
+                assert!(
+                    rev.get("id")
+                        .and_then(Value::as_str)
+                        .is_some_and(|s| !s.is_empty())
+                );
+                rev.insert("id".into(), json!("<review_id>"));
+                if rev.get("bundle_hash").is_some_and(Value::is_string) {
+                    rev.insert("bundle_hash".into(), json!("<bundle_hash>"));
+                }
+            }
+            if let Some(src) = collab
+                .get_mut("source_state")
+                .and_then(Value::as_object_mut)
+            {
+                if src
+                    .get("query_started_at_unix_ms")
+                    .is_some_and(Value::is_i64)
+                {
+                    src.insert("query_started_at_unix_ms".into(), json!(0));
+                }
+            }
+        }
     }
+    normalized
+}
+
+fn verify_or_save_verbatim(name: &str, body: &Value) {
     let dir =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tools/observer/test/fixtures/ppd040");
-    std::fs::create_dir_all(&dir).unwrap();
-    let pretty = serde_json::to_string_pretty(body).unwrap();
+    let path = dir.join(name);
+    if std::env::var("AWR_SAVE_VERBATIM_SAMPLES").as_deref() == Ok("1") {
+        std::fs::create_dir_all(&dir).unwrap();
+        let pretty = serde_json::to_string_pretty(body).unwrap();
+        for banned in ["awr1.", "secret", "password"] {
+            assert!(
+                !pretty.to_lowercase().contains(banned),
+                "{banned} must never appear in verbatim sample {name}"
+            );
+        }
+        std::fs::write(&path, format!("{pretty}\n")).unwrap();
+    }
+    let committed_bytes = std::fs::read(&path)
+        .unwrap_or_else(|e| panic!("missing committed verbatim sample {}: {e}", path.display()));
+    let committed_text = std::str::from_utf8(&committed_bytes).unwrap();
     for banned in ["awr1.", "secret", "password"] {
         assert!(
-            !pretty.to_lowercase().contains(banned),
-            "{banned} must never appear in verbatim sample {name}"
+            !committed_text.to_lowercase().contains(banned),
+            "{banned} leaked into committed sample {name}"
         );
     }
-    std::fs::write(dir.join(name), format!("{pretty}\n")).unwrap();
+    let committed: Value = serde_json::from_slice(&committed_bytes).unwrap();
+    assert_eq!(
+        committed["data"]["acceptance_evidence"], body["data"]["acceptance_evidence"],
+        "committed sample {name} acceptance_evidence drifted from live awr-server reply"
+    );
+    assert_eq!(
+        normalize_snapshot(&committed),
+        normalize_snapshot(body),
+        "committed sample {name} drifted from live awr-server reply"
+    );
 }
 
 #[tokio::test]
@@ -343,7 +444,7 @@ async fn criteria_examples_planning_publish_and_snapshot_evidence_lifecycle() {
         legacy_snap["data"]["acceptance_evidence"]["items"].is_null(),
         "legacy task must report items=null, not an empty list"
     );
-    save_verbatim("work-snapshot-legacy.json", &legacy_snap);
+    verify_or_save_verbatim("work-snapshot-legacy.json", &legacy_snap);
 
     // 2. Planning draft adds V7 examples (positive + negative with check_id on CRITERION_BOUND;
     //    positive without check_id on CRITERION_UNBOUND), then preview -> approve -> publish & activate.
@@ -843,7 +944,7 @@ async fn criteria_examples_planning_publish_and_snapshot_evidence_lifecycle() {
         snap_supported["data"]["acceptance_evidence"]["items"][1]["status"],
         "no_bound_check"
     );
-    save_verbatim("work-snapshot-supported.json", &snap_supported);
+    verify_or_save_verbatim("work-snapshot-supported.json", &snap_supported);
 
     // 8. Candidate version change (v1 -> v2) immediately invalidates v1's supported status!
     let p = call(
@@ -897,7 +998,7 @@ async fn criteria_examples_planning_publish_and_snapshot_evidence_lifecycle() {
         snap_v2_waiting["data"]["acceptance_evidence"]["review_current_candidate"],
         false
     );
-    save_verbatim("work-snapshot-candidate-changed.json", &snap_v2_waiting);
+    verify_or_save_verbatim("work-snapshot-candidate-changed.json", &snap_v2_waiting);
 
     // 9. Review returned on v2 (after both bound checks pass on v2) -> status becomes failed (review_returned)!
     let p = call(
@@ -1045,7 +1146,7 @@ async fn criteria_examples_planning_publish_and_snapshot_evidence_lifecycle() {
         snap_returned["data"]["acceptance_evidence"]["items"][0]["reason"],
         "review_returned"
     );
-    save_verbatim("work-snapshot-review-returned.json", &snap_returned);
+    verify_or_save_verbatim("work-snapshot-review-returned.json", &snap_returned);
 
     // 10. Binding change via planning draft: re-bind CRITERION_BOUND to `unit.filter.strict`.
     //     First approve a fresh round on v2 so v2 is supported, then activate the binding change
@@ -1201,7 +1302,47 @@ async fn criteria_examples_planning_publish_and_snapshot_evidence_lifecycle() {
         "not_recorded"
     );
 
-    // 11. Permission & cross-project isolation: unauthenticated, unscoped, cross-project, revoked.
+    // 11. Permission, cross-workstream & cross-project isolation:
+    //     unauthenticated, unscoped, cross-workstream (reader B), cross-project, revoked.
+    let (b_own_status, b_own_snap) = post_project(
+        &server,
+        "one",
+        Some(B),
+        "query",
+        &json!({"protocol_version":1,"op":"work.snapshot","work_id":"b-private","max_context_bytes":262144}),
+    )
+    .await;
+    assert_eq!(b_own_status, reqwest::StatusCode::OK, "{b_own_snap}");
+    assert_eq!(
+        b_own_snap["data"]["acceptance_evidence"]["status"],
+        "not_provided"
+    );
+
+    for query in [
+        json!({"protocol_version":1,"op":"work.snapshot","work_id":"a"}),
+        json!({"protocol_version":1,"op":"work.snapshot","work_id":"a","workstream_id":"00000000000000000000000001"}),
+        json!({"protocol_version":1,"op":"work.snapshot","work_id":"a","workstream_id":"00000000000000000000000002"}),
+    ] {
+        let (status, cross_ws) = post_project(&server, "one", Some(B), "query", &query).await;
+        assert_eq!(
+            status,
+            reqwest::StatusCode::FORBIDDEN,
+            "{query}: {cross_ws}"
+        );
+        let body_text = cross_ws.to_string();
+        for forbidden in [
+            "acceptance_evidence",
+            CRITERION_BOUND,
+            "unit.filter",
+            "filter-pos",
+        ] {
+            assert!(
+                !body_text.contains(forbidden),
+                "cross-workstream refusal leaked {forbidden}: {body_text}"
+            );
+        }
+    }
+
     let (status, unauth) = post_project(
         &server,
         "one",
@@ -1267,6 +1408,581 @@ async fn criteria_examples_planning_publish_and_snapshot_evidence_lifecycle() {
     .await;
     assert_eq!(status, reqwest::StatusCode::FORBIDDEN);
     assert!(!revoked.to_string().contains("acceptance_evidence"));
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+    let _ = server.base;
+}
+
+#[tokio::test]
+async fn truncated_facts_and_conflicting_connectors_fail_closed_end_to_end() {
+    let (_guard, admin, _db, store) = setup().await;
+    enable_writes(&admin).await;
+    let reviewer_hash = workstream_credential_hash(REVIEWER_TOKEN).unwrap();
+    admin
+        .batch_execute(&format!(
+            "UPDATE awr_team.workstream_grants SET can_manage=true, grant_version=grant_version+1
+             WHERE client_id='cli-a';
+             UPDATE awr_team.project_memberships SET role='developer', independent_review=true, membership_version=membership_version+1
+             WHERE actor_id='reviewer';
+             INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status) VALUES
+               ('{TENANT}','{PROJECT}','person-author','Author','active'),
+               ('{TENANT}','{PROJECT}','reviewer','Reviewer','active')
+             ON CONFLICT DO NOTHING;
+             INSERT INTO awr_team.person_agent_bindings(tenant_id,project_id,id,person_id,agent_id,status) VALUES
+               ('{TENANT}','{PROJECT}','bind-agent','person-author','agent','active')
+             ON CONFLICT DO NOTHING;
+             INSERT INTO awr_team.credentials(tenant_id,id,actor_id,client_id,secret_hash)
+             VALUES ('{TENANT}','reviewer-1','reviewer','cli-reviewer','{reviewer_hash}');
+             INSERT INTO awr_team.workstream_grants(
+                tenant_id,project_id,actor_id,client_id,workstream_id,authority_version,can_read,can_write,can_manage,grant_version)
+             VALUES ('{TENANT}','{PROJECT}','reviewer','cli-reviewer','00000000000000000000000001',1,true,true,false,1);"
+        ))
+        .await
+        .unwrap();
+
+    let tmp_dir = std::env::temp_dir().join(format!(
+        "awr-ppd040-trunc-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+    let tmp_dir = std::fs::canonicalize(&tmp_dir).unwrap();
+    let definitions = json!([
+        {"id":"00000000000000000000000001","external_key":"alpha","title":"alpha","state":"active","authority_version":1,"goal_keys":["alpha"],"acceptance_contracts":[]},
+        {"id":"00000000000000000000000002","external_key":"private-beta","title":"private-beta","state":"active","authority_version":1,"goal_keys":["private-beta"],"acceptance_contracts":[]}
+    ]);
+    let ledger_json = json!({
+        "workstreams": {"version": 1, "definitions": definitions},
+        "goals": [
+            {"id":"alpha","title":"Alpha","status":"active"},
+            {"id":"private-beta","title":"Private","status":"active"}
+        ],
+        "work_items": [
+            {"id":"a","title":"a","status":"planned","workstream":"alpha","goals":["alpha"],"acceptance":["verified"],"paths":["src"],"depends_on":[],"completion_policy":"independent_review"},
+            {"id":"b-private","title":"b-private","status":"planned","workstream":"private-beta","goals":["private-beta"],"acceptance":["verified"],"paths":["src"],"depends_on":[],"completion_policy":"independent_review"},
+            {"id":"c","title":"c","status":"planned","workstream":"alpha","goals":["alpha"],"acceptance":["verified"],"paths":["src"],"depends_on":["b-private"],"completion_policy":"independent_review"}
+        ]
+    });
+    std::fs::write(
+        tmp_dir.join("ledger.yaml"),
+        serde_json::to_vec(&ledger_json).unwrap(),
+    )
+    .unwrap();
+    let binding = json!({
+        "kind": "server_directory",
+        "locator": tmp_dir.to_string_lossy(),
+        "ledger_relative_path": "ledger.yaml"
+    });
+    admin
+        .execute(
+            "UPDATE awr_team.source_snapshots s
+             SET source_ref_json=jsonb_set(s.source_ref_json,'{sole_source}',$3)
+             FROM awr_team.projects p
+             WHERE p.tenant_id=$1 AND p.id=$2
+               AND s.tenant_id=p.tenant_id AND s.project_id=p.id AND s.id=p.active_snapshot_id",
+            &[&TENANT, &PROJECT, &binding],
+        )
+        .await
+        .unwrap();
+
+    let server = start(store).await;
+    let client = connect(&server, A).await;
+    let reviewer = connect(&server, REVIEWER_TOKEN).await;
+
+    // Publish V7 examples for work `a` binding CRITERION_BOUND to `z.unit.filter.pos`.
+    let before_a = TaskDraft {
+        work_id: "a".into(),
+        external_key: "a".into(),
+        title: "a".into(),
+        goals: vec!["alpha".into()],
+        scope_paths: vec!["src".into()],
+        acceptance: vec!["verified".into()],
+        required_dependencies: vec![],
+        completion_policy: "independent_review".into(),
+        dependency_acceptance: None,
+        hard_rules: None,
+        verification_requirements: None,
+        execution_settlement: None,
+        examples: None,
+        definition_state: DraftDefinitionState::Enabled,
+        workstream: Some("alpha".into()),
+        split_from: None,
+        split_children: vec![],
+    };
+    let after_a = TaskDraft {
+        acceptance: vec![CRITERION_BOUND.into()],
+        verification_requirements: Some(vec!["z.unit.filter.pos".into()]),
+        examples: Some(vec![ContractExample {
+            id: Some("filter-pos".into()),
+            criterion: CRITERION_BOUND.into(),
+            kind: ExampleKind::Positive,
+            given: "issues exist".into(),
+            when: "filter runs".into(),
+            then: "matching issues return".into(),
+            check_id: Some("z.unit.filter.pos".into()),
+        }]),
+        ..before_a.clone()
+    };
+    let drafted = call(
+        &client,
+        "awr_team_planning_draft",
+        json!({
+            "protocol_version": 1,
+            "request_id": "trunc-draft-1",
+            "mode": "create",
+            "changes": [{"op": "edit_fields", "before": before_a, "after": after_a}],
+            "allowed_spec_roots": ["src"],
+            "project_goal_keys": ["alpha"],
+            "self_approve_policy": OrdinaryPlanningSelfApprovePolicy::ordinary_default()
+        }),
+        false,
+    )
+    .await;
+    let cand_id = drafted["result"]["candidate_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let cand_digest = drafted["result"]["candidate_digest"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    call(
+        &client,
+        "awr_team_planning_approve",
+        json!({"protocol_version":1,"request_id":"trunc-approve-1","candidate_id":cand_id,"candidate_digest":cand_digest}),
+        false,
+    )
+    .await;
+    call(
+        &client,
+        "awr_team_planning_publish",
+        json!({"protocol_version":1,"request_id":"trunc-publish-1","candidate_id":cand_id,"candidate_digest":cand_digest,"activate":true,"impact_proven":true}),
+        false,
+    )
+    .await;
+
+    // Claim, select candidate v1, configure two connectors.
+    let prepared = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"work.prepare","work_id":"a"}),
+        false,
+    )
+    .await;
+    let claim = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared,
+            "trunc-claim-1",
+            "task.claim_available",
+            json!({
+                "session_id": "session-a",
+                "expected_session_version": "1",
+                "expected_work_version": "0",
+                "expected_responsibility_version": prepared["data"]["responsibility"]["version"],
+                "ttl_seconds": 3600
+            }),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await["receipt"]["data"]
+        .clone();
+
+    let p = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"work.prepare","work_id":"a"}),
+        false,
+    )
+    .await;
+    let body_v1 = b"candidate v1 conflict";
+    let cand_v1 = make_candidate(&p, "1", vec!["z.unit.filter.pos"], body_v1);
+    let digest_v1 = cand_v1.binding.digest().unwrap();
+    call(
+        &client,
+        "awr_team_command",
+        neutral(
+            &p,
+            "trunc-select-v1",
+            "delivery.candidate.select",
+            json!({
+                "expected_selected_digest": null,
+                "session_id": "session-a",
+                "claim_id": claim["claim_id"],
+                "fence": claim["fence"],
+                "lease_version": claim["lease_version"],
+                "candidate": cand_v1
+            }),
+        ),
+        false,
+    )
+    .await;
+
+    for (req_id, conn_id) in [("trunc-conn-a", "conn-a"), ("trunc-conn-b", "conn-b")] {
+        let p = call(
+            &client,
+            "awr_team_query",
+            json!({"protocol_version":1,"op":"work.prepare","work_id":"a"}),
+            false,
+        )
+        .await;
+        call(
+            &client,
+            "awr_team_command",
+            neutral(
+                &p,
+                req_id,
+                "delivery.connector.configure",
+                json!({
+                    "expected_connector_version": "0",
+                    "mapping": {
+                        "connector_id": conn_id,
+                        "provider": "reference",
+                        "resource": "fixture://ppd040-artifacts",
+                        "principal_actor_id": "agent",
+                        "principal_client_id": "cli-a",
+                        "fact_source": "caller_declared",
+                        "enabled": true
+                    }
+                }),
+            ),
+            false,
+        )
+        .await;
+    }
+
+    // 1. Conflicting connectors on v1: conn-a reports passed, conn-b reports failed for z.unit.filter.pos,
+    //    and reviewer approves v1. Criterion must remain failed (never supported).
+    for (res_req, ing_req, conn_id, evt_id, run_id, outcome) in [
+        (
+            "trunc-res-a",
+            "trunc-ing-a",
+            "conn-a",
+            "evt-conn-a",
+            "run-a-pass",
+            VerificationOutcome::Passed,
+        ),
+        (
+            "trunc-res-b",
+            "trunc-ing-b",
+            "conn-b",
+            "evt-conn-b",
+            "run-b-fail",
+            VerificationOutcome::Failed,
+        ),
+    ] {
+        let p = call(
+            &client,
+            "awr_team_query",
+            json!({"protocol_version":1,"op":"work.prepare","work_id":"a"}),
+            false,
+        )
+        .await;
+        let res = call(
+            &client,
+            "awr_team_command",
+            neutral(
+                &p,
+                res_req,
+                "delivery.inspection.reserve",
+                json!({"connector_id":conn_id,"connector_version":"1","candidate_digest":digest_v1,"lease_seconds":60}),
+            ),
+            false,
+        )
+        .await;
+        call(
+            &client,
+            "awr_team_command",
+            neutral(
+                &p,
+                ing_req,
+                "delivery.facts.ingest",
+                json!({
+                    "connector_id": conn_id,
+                    "inspection_id": res["receipt"]["data"]["inspection_id"],
+                    "event_id": evt_id,
+                    "records": [verification_envelope(&cand_v1.binding, run_id, "z.unit.filter.pos", outcome)]
+                }),
+            ),
+            false,
+        )
+        .await;
+    }
+    let p = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"work.prepare","work_id":"a"}),
+        false,
+    )
+    .await;
+    let ev_v1 = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &p,
+            "trunc-ev-v1",
+            "delivery.evidence.submit",
+            json!({
+                "session_id": "session-a",
+                "expected_session_version": "1",
+                "dirty_tree": false,
+                "artifact_text": std::str::from_utf8(body_v1).unwrap(),
+                "delivery_payload": {
+                    "delivery_candidate_digest": digest_v1,
+                    "passed": true,
+                    "output_digest": sha256_hex(body_v1)
+                }
+            }),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    let p = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"work.prepare","work_id":"a"}),
+        false,
+    )
+    .await;
+    let round_v1 = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &p,
+            "trunc-open-v1",
+            "review.open",
+            json!({
+                "session_id": "session-a",
+                "expected_session_version": "1",
+                "evidence_id": ev_v1["receipt"]["data"]["evidence_id"]
+            }),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await["receipt"]["data"]["round_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let p_rev = call(
+        &reviewer,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"work.prepare","work_id":"a"}),
+        false,
+    )
+    .await;
+    let rev_session = call(
+        &reviewer,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &p_rev,
+            "trunc-rev-session",
+            "session.start",
+            json!({"conversation_id": "ppd040-trunc-review"}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await["receipt"]["data"]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let p_rev = call(
+        &reviewer,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"work.prepare","work_id":"a"}),
+        false,
+    )
+    .await;
+    call(
+        &reviewer,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &p_rev,
+            "trunc-approve-v1",
+            "review.decide",
+            json!({
+                "session_id": rev_session,
+                "expected_session_version": "1",
+                "round_id": round_v1,
+                "decision": "approve",
+                "reason": "Review approval does not override failing connector"
+            }),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+
+    let snap_conflict = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"work.snapshot","work_id":"a","max_context_bytes":262144}),
+        false,
+    )
+    .await;
+    assert_eq!(
+        snap_conflict["data"]["acceptance_evidence"]["items"][0]["status"], "failed",
+        "conflicting connectors (passed + failed) must never read as supported: {snap_conflict}"
+    );
+    assert_eq!(
+        snap_conflict["data"]["acceptance_evidence"]["items"][0]["reason"],
+        "bound_check_failed"
+    );
+    assert_eq!(
+        snap_conflict["data"]["acceptance_evidence"]["items"][0]["checks"][0]["outcome"],
+        "failed"
+    );
+
+    // 2. Truncated delivery facts on candidate v2: ingest 33 checks (a.pad.00..a.pad.31 + z.unit.filter.pos)
+    //    so SQL `LIMIT 33` sets facts_truncated=true and truncates z.unit.filter.pos past row 32.
+    let p = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"work.prepare","work_id":"a"}),
+        false,
+    )
+    .await;
+    let body_v2 = b"candidate v2 truncated";
+    let cand_v2 = make_candidate(&p, "2", vec!["z.unit.filter.pos"], body_v2);
+    let digest_v2 = cand_v2.binding.digest().unwrap();
+    call(
+        &client,
+        "awr_team_command",
+        neutral(
+            &p,
+            "trunc-select-v2",
+            "delivery.candidate.select",
+            json!({
+                "expected_selected_digest": digest_v1,
+                "session_id": "session-a",
+                "claim_id": claim["claim_id"],
+                "fence": claim["fence"],
+                "lease_version": claim["lease_version"],
+                "candidate": cand_v2
+            }),
+        ),
+        false,
+    )
+    .await;
+    let p = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"work.prepare","work_id":"a"}),
+        false,
+    )
+    .await;
+    let res_v2 = call(
+        &client,
+        "awr_team_command",
+        neutral(
+            &p,
+            "trunc-res-v2",
+            "delivery.inspection.reserve",
+            json!({"connector_id":"conn-a","connector_version":"1","candidate_digest":digest_v2,"lease_seconds":60}),
+        ),
+        false,
+    )
+    .await;
+    let pad_records: Vec<DeliveryEnvelope> = (0..32)
+        .map(|i| {
+            verification_envelope(
+                &cand_v2.binding,
+                &format!("run-pad-{i:02}"),
+                &format!("a.pad.{i:02}"),
+                VerificationOutcome::Passed,
+            )
+        })
+        .collect();
+    call(
+        &client,
+        "awr_team_command",
+        neutral(
+            &p,
+            "trunc-ing-v2-a",
+            "delivery.facts.ingest",
+            json!({
+                "connector_id": "conn-a",
+                "inspection_id": res_v2["receipt"]["data"]["inspection_id"],
+                "event_id": "evt-trunc-v2-a",
+                "records": pad_records
+            }),
+        ),
+        false,
+    )
+    .await;
+    let p = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"work.prepare","work_id":"a"}),
+        false,
+    )
+    .await;
+    let res_v2_b = call(
+        &client,
+        "awr_team_command",
+        neutral(
+            &p,
+            "trunc-res-v2-b",
+            "delivery.inspection.reserve",
+            json!({"connector_id":"conn-b","connector_version":"1","candidate_digest":digest_v2,"lease_seconds":60}),
+        ),
+        false,
+    )
+    .await;
+    call(
+        &client,
+        "awr_team_command",
+        neutral(
+            &p,
+            "trunc-ing-v2-b",
+            "delivery.facts.ingest",
+            json!({
+                "connector_id": "conn-b",
+                "inspection_id": res_v2_b["receipt"]["data"]["inspection_id"],
+                "event_id": "evt-trunc-v2-b",
+                "records": [verification_envelope(
+                    &cand_v2.binding,
+                    "run-bound-pos",
+                    "z.unit.filter.pos",
+                    VerificationOutcome::Passed,
+                )]
+            }),
+        ),
+        false,
+    )
+    .await;
+
+    let snap_truncated = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"work.snapshot","work_id":"a","max_context_bytes":262144}),
+        false,
+    )
+    .await;
+    assert_eq!(
+        snap_truncated["data"]["acceptance_evidence"]["facts_truncated"], true,
+        "{snap_truncated}"
+    );
+    assert_eq!(
+        snap_truncated["data"]["acceptance_evidence"]["items"][0]["status"],
+        "waiting"
+    );
+    assert_eq!(
+        snap_truncated["data"]["acceptance_evidence"]["items"][0]["reason"], "facts_truncated",
+        "truncated delivery facts must report facts_truncated rather than awaiting_bound_checks"
+    );
+    assert_eq!(
+        snap_truncated["data"]["acceptance_evidence"]["items"][0]["checks"][0]["outcome"],
+        "unknown",
+        "bound check cut off by the 32-row cap must report unknown rather than not_recorded"
+    );
 
     let _ = std::fs::remove_dir_all(&tmp_dir);
     let _ = server.base;

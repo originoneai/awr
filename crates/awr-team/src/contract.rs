@@ -88,6 +88,11 @@ pub(crate) fn validate_examples(
             )));
         }
         if let Some(check_id) = &example.check_id {
+            if example.id.is_none() {
+                return Err(TeamError::InvalidContract(format!(
+                    "examples[{index}].id is required when check_id is set"
+                )));
+            }
             if !valid_check_id(check_id) {
                 return Err(TeamError::InvalidContract(format!(
                     "examples[{index}].check_id must be a trimmed nonblank string of 1..=128 bytes without control characters"

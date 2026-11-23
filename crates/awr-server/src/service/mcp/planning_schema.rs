@@ -47,14 +47,14 @@ pub(super) fn add(schema: &mut Value) {
                 "type":"object","additionalProperties":false,
                 "required":["criterion","kind","given","when","then"],
                 "properties":{
-                    "id":{"type":["string","null"],"pattern":"^[a-z0-9][a-z0-9-]{0,31}$"},
+                    "id":{"type":["string","null"],"pattern":"^[a-z0-9][a-z0-9-]{0,31}$","description":"Required when check_id is set."},
                     "criterion":{"type":"string"},
                     "kind":{"type":"string","enum":["positive","negative"]},
                     "given":{"type":"string"},
                     "when":{"type":"string"},
                     "then":{"type":"string"},
                     "check_id":{"type":["string","null"],"minLength":1,"maxLength":128}
-                }},"description":"Omission retains source examples; a list replaces them. Null is rejected."},
+                }},"description":"Omission retains source examples; a list replaces them. Null is rejected. Entries with check_id require id."},
             "workstream":{"type":["string","null"],"description":"Owning workstream external key; required for creating source-backed tasks."},
             "split_from":{"type":["string","null"]},
             "split_children":strings
@@ -578,6 +578,22 @@ mod tests {
             .unwrap()
             .validate()
             .unwrap();
+        let mut check_without_id = task();
+        check_without_id["examples"] = json!([{
+            "criterion": "Tests pass",
+            "kind": "positive",
+            "given": "input",
+            "when": "run",
+            "then": "ok",
+            "check_id": "unit.api"
+        }]);
+        assert!(
+            serde_json::from_value::<TaskDraft>(check_without_id)
+                .unwrap()
+                .validate()
+                .is_err(),
+            "check_id without id must be rejected"
+        );
         let mut bad_kind = task();
         bad_kind["examples"][0]["kind"] = json!("neutral");
         assert!(serde_json::from_value::<TaskDraft>(bad_kind).is_err());

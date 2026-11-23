@@ -12,15 +12,27 @@ use awr_team::WorkContract;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
+/// Normalize raw verification run outcome strings into the closed outcome set.
+/// Any missing or unrecognized value maps to `"unknown"` so it never passes.
+fn normalize_outcome(raw: Option<&str>) -> &'static str {
+    match raw {
+        Some("failed") => "failed",
+        Some("running") => "running",
+        Some("unknown") => "unknown",
+        Some("passed") => "passed",
+        _ => "unknown",
+    }
+}
+
 /// Outcome precedence when multiple connectors report runs for the same check
-/// on the current candidate. Fail-closed: `failed` beats `running`/`unknown`/`passed`.
+/// on the current candidate. Fail-closed: `failed` beats `running`, `unknown`
+/// (and any unrecognized outcome) beats `passed`.
 fn outcome_rank(outcome: &str) -> u8 {
     match outcome {
         "failed" => 4,
         "running" => 3,
-        "unknown" => 2,
         "passed" => 1,
-        _ => 0,
+        _ => 2,
     }
 }
 
@@ -66,17 +78,14 @@ pub(super) fn evaluate(contract: &WorkContract, observation: &Value) -> Value {
     };
 
     // Only verification runs belonging to the current selected candidate count.
-    let mut check_results: BTreeMap<&str, (&str, Option<&str>)> = BTreeMap::new();
+    let mut check_results: BTreeMap<&str, (&'static str, Option<&str>)> = BTreeMap::new();
     if candidate_current {
         if let Some(runs) = collab.get("verification").and_then(Value::as_array) {
             for run in runs {
                 let Some(check) = run.get("check").and_then(Value::as_str) else {
                     continue;
                 };
-                let outcome = run
-                    .get("outcome")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown");
+                let outcome = normalize_outcome(run.get("outcome").and_then(Value::as_str));
                 let run_id = run.get("run_id").and_then(Value::as_str);
                 check_results
                     .entry(check)
@@ -96,10 +105,13 @@ pub(super) fn evaluate(contract: &WorkContract, observation: &Value) -> Value {
         None
     };
 
+    let definition_state = observation.get("definition_state").and_then(Value::as_str);
     let runtime_state = observation
         .get("runtime")
         .and_then(|r| r.get("state"))
         .and_then(Value::as_str);
+    let work_inactive = matches!(definition_state, Some("cancelled" | "archived"))
+        || matches!(runtime_state, Some("cancelled" | "archived"));
     let current_execution = observation
         .get("execution")
         .and_then(|e| e.get("contract_matches_current"))
@@ -113,7 +125,16 @@ pub(super) fn evaluate(contract: &WorkContract, observation: &Value) -> Value {
     let work_started = candidate_current
         || current_execution
         || current_progress
-        || runtime_state.is_some_and(|s| s != "unclaimed");
+        || runtime_state.is_some_and(|s| !matches!(s, "unclaimed" | "cancelled" | "archived"));
+
+    // When delivery facts hit the 32-row read cap, a bound check missing from
+    // the truncated slice may exist beyond row 32; report `unknown` rather than
+    // fabricating `not_recorded`.
+    let missing_outcome = if candidate_current && facts_truncated {
+        "unknown"
+    } else {
+        "not_recorded"
+    };
 
     let mut items = Vec::with_capacity(contract.acceptance.len());
     for criterion in &contract.acceptance {
@@ -143,7 +164,7 @@ pub(super) fn evaluate(contract: &WorkContract, observation: &Value) -> Value {
                 let (outcome, run_id) = check_results
                     .get(check)
                     .copied()
-                    .unwrap_or(("not_recorded", None));
+                    .unwrap_or((missing_outcome, None));
                 json!({
                     "check": check,
                     "outcome": outcome,
@@ -156,7 +177,9 @@ pub(super) fn evaluate(contract: &WorkContract, observation: &Value) -> Value {
             // Never infer check coverage for an unbound criterion.
             ("no_bound_check", "no_bound_check")
         } else if !candidate_current {
-            if work_started {
+            if work_inactive {
+                ("not_started", "work_inactive")
+            } else if work_started {
                 ("waiting", "awaiting_current_candidate")
             } else {
                 ("not_started", "work_not_started")
@@ -178,6 +201,8 @@ pub(super) fn evaluate(contract: &WorkContract, observation: &Value) -> Value {
                 ("failed", "bound_check_failed")
             } else if active_review_state == Some("rejected") {
                 ("failed", "review_returned")
+            } else if facts_truncated {
+                ("waiting", "facts_truncated")
             } else if all_passed && active_review_state == Some("approved") {
                 ("supported", "bound_checks_passed_and_review_approved")
             } else if all_passed {
@@ -470,5 +495,314 @@ mod tests {
         let res = evaluate(&contract, &fresh_obs);
         assert_eq!(res["items"][0]["status"], "not_started");
         assert_eq!(res["items"][1]["status"], "no_bound_check");
+    }
+
+    #[test]
+    fn v7_empty_examples_list_is_provided_with_no_bound_check_not_not_provided() {
+        let contract = v7_contract(vec![]);
+        let obs = json!({
+            "definition_state": "enabled",
+            "runtime": {"state": "claimed"},
+            "collaboration": {
+                "candidate": {"digest": "cand-v1", "current": true},
+                "verification": [
+                    {"check": "unit.filter", "run_id": "r1", "outcome": "passed"}
+                ],
+                "review": {"id": "rev-1", "state": "approved", "current_candidate": true},
+                "facts_truncated": false
+            }
+        });
+        let res = evaluate(&contract, &obs);
+        assert_eq!(
+            res["status"], "provided",
+            "V7 contract with explicit empty examples: [] must report provided, never not_provided"
+        );
+        assert_eq!(res["basis"], "contract_examples_and_current_candidate");
+        let items = res["items"].as_array().expect("items must be an array");
+        assert_eq!(items.len(), 2);
+        for item in items {
+            assert_eq!(item["status"], "no_bound_check");
+            assert_eq!(item["reason"], "no_bound_check");
+            assert_eq!(item["examples_count"], 0);
+            assert_eq!(item["bound_checks"], json!([]));
+            assert_eq!(item["checks"], json!([]));
+        }
+    }
+
+    #[test]
+    fn conflicting_connector_outcomes_for_same_check_fail_closed() {
+        let contract = v7_contract(vec![example(
+            "filter-pos",
+            "Filter returns matching records",
+            ExampleKind::Positive,
+            Some("unit.filter.pos"),
+        )]);
+        for (runs, expected_status, expected_reason, expected_outcome) in [
+            (
+                json!([
+                    {"check": "unit.filter.pos", "run_id": "conn-a", "outcome": "passed"},
+                    {"check": "unit.filter.pos", "run_id": "conn-b", "outcome": "failed"}
+                ]),
+                "failed",
+                "bound_check_failed",
+                "failed",
+            ),
+            (
+                json!([
+                    {"check": "unit.filter.pos", "run_id": "conn-b", "outcome": "failed"},
+                    {"check": "unit.filter.pos", "run_id": "conn-a", "outcome": "passed"}
+                ]),
+                "failed",
+                "bound_check_failed",
+                "failed",
+            ),
+            (
+                json!([
+                    {"check": "unit.filter.pos", "run_id": "conn-a", "outcome": "passed"},
+                    {"check": "unit.filter.pos", "run_id": "conn-b", "outcome": "running"}
+                ]),
+                "waiting",
+                "awaiting_bound_checks",
+                "running",
+            ),
+            (
+                json!([
+                    {"check": "unit.filter.pos", "run_id": "conn-b", "outcome": "running"},
+                    {"check": "unit.filter.pos", "run_id": "conn-a", "outcome": "passed"}
+                ]),
+                "waiting",
+                "awaiting_bound_checks",
+                "running",
+            ),
+            (
+                json!([
+                    {"check": "unit.filter.pos", "run_id": "conn-a", "outcome": "passed"},
+                    {"check": "unit.filter.pos", "run_id": "conn-b", "outcome": "unknown"}
+                ]),
+                "waiting",
+                "awaiting_bound_checks",
+                "unknown",
+            ),
+            (
+                json!([
+                    {"check": "unit.filter.pos", "run_id": "conn-b", "outcome": "unknown"},
+                    {"check": "unit.filter.pos", "run_id": "conn-a", "outcome": "passed"}
+                ]),
+                "waiting",
+                "awaiting_bound_checks",
+                "unknown",
+            ),
+        ] {
+            let obs = json!({
+                "definition_state": "enabled",
+                "runtime": {"state": "claimed"},
+                "collaboration": {
+                    "candidate": {"digest": "cand-v1", "current": true},
+                    "verification": runs,
+                    "review": {"id": "rev-1", "state": "approved", "current_candidate": true},
+                    "facts_truncated": false
+                }
+            });
+            let res = evaluate(&contract, &obs);
+            assert_eq!(res["items"][0]["status"], expected_status, "{res}");
+            assert_eq!(res["items"][0]["reason"], expected_reason, "{res}");
+            assert_eq!(
+                res["items"][0]["checks"][0]["outcome"], expected_outcome,
+                "{res}"
+            );
+            assert_ne!(res["items"][0]["status"], "supported");
+        }
+    }
+
+    #[test]
+    fn unrecognized_check_outcome_is_treated_as_unknown_and_never_supported() {
+        assert!(
+            outcome_rank("errored") > outcome_rank("passed"),
+            "unrecognized outcomes must outrank passed"
+        );
+        let contract = v7_contract(vec![example(
+            "filter-pos",
+            "Filter returns matching records",
+            ExampleKind::Positive,
+            Some("unit.filter.pos"),
+        )]);
+        for runs in [
+            json!([
+                {"check": "unit.filter.pos", "run_id": "r1", "outcome": "errored"}
+            ]),
+            json!([
+                {"check": "unit.filter.pos", "run_id": "r1", "outcome": "passed"},
+                {"check": "unit.filter.pos", "run_id": "r2", "outcome": "errored"}
+            ]),
+            json!([
+                {"check": "unit.filter.pos", "run_id": "r2", "outcome": "cancelled"},
+                {"check": "unit.filter.pos", "run_id": "r1", "outcome": "passed"}
+            ]),
+        ] {
+            let obs = json!({
+                "definition_state": "enabled",
+                "runtime": {"state": "claimed"},
+                "collaboration": {
+                    "candidate": {"digest": "cand-v1", "current": true},
+                    "verification": runs,
+                    "review": {"id": "rev-1", "state": "approved", "current_candidate": true},
+                    "facts_truncated": false
+                }
+            });
+            let res = evaluate(&contract, &obs);
+            assert_eq!(res["items"][0]["status"], "waiting", "{res}");
+            assert_eq!(res["items"][0]["reason"], "awaiting_bound_checks", "{res}");
+            assert_eq!(res["items"][0]["checks"][0]["outcome"], "unknown", "{res}");
+        }
+
+        // Known failure still beats an unrecognized outcome.
+        let mixed_fail = json!({
+            "definition_state": "enabled",
+            "runtime": {"state": "claimed"},
+            "collaboration": {
+                "candidate": {"digest": "cand-v1", "current": true},
+                "verification": [
+                    {"check": "unit.filter.pos", "run_id": "r1", "outcome": "errored"},
+                    {"check": "unit.filter.pos", "run_id": "r2", "outcome": "failed"}
+                ],
+                "review": {"id": "rev-1", "state": "approved", "current_candidate": true},
+                "facts_truncated": false
+            }
+        });
+        let res = evaluate(&contract, &mixed_fail);
+        assert_eq!(res["items"][0]["status"], "failed");
+        assert_eq!(res["items"][0]["checks"][0]["outcome"], "failed");
+    }
+
+    #[test]
+    fn truncated_facts_report_facts_truncated_reason_and_unknown_missing_checks() {
+        let contract = v7_contract(vec![
+            example(
+                "filter-pos",
+                "Filter returns matching records",
+                ExampleKind::Positive,
+                Some("unit.filter.pos"),
+            ),
+            example(
+                "filter-neg",
+                "Filter returns matching records",
+                ExampleKind::Negative,
+                Some("unit.filter.neg"),
+            ),
+        ]);
+
+        // Missing bound check under truncation reports outcome="unknown" (not not_recorded)
+        // and reason="facts_truncated" (not awaiting_bound_checks).
+        let truncated_missing = json!({
+            "definition_state": "enabled",
+            "runtime": {"state": "claimed"},
+            "collaboration": {
+                "candidate": {"digest": "cand-v1", "current": true},
+                "verification": [
+                    {"check": "unit.filter.pos", "run_id": "r1", "outcome": "passed"}
+                ],
+                "review": {"id": "rev-1", "state": "approved", "current_candidate": true},
+                "facts_truncated": true
+            }
+        });
+        let res = evaluate(&contract, &truncated_missing);
+        assert_eq!(res["facts_truncated"], true);
+        assert_eq!(res["items"][0]["status"], "waiting");
+        assert_eq!(res["items"][0]["reason"], "facts_truncated");
+        assert_eq!(res["items"][0]["checks"][0]["outcome"], "passed");
+        assert_eq!(
+            res["items"][0]["checks"][1]["outcome"], "unknown",
+            "missing check under truncated facts must be unknown, never not_recorded"
+        );
+
+        // Even if all bound checks appear passed in the first 32 rows, truncation prevents
+        // claiming supported because another connector's failing run could be beyond row 32.
+        let truncated_all_observed_passed = json!({
+            "definition_state": "enabled",
+            "runtime": {"state": "claimed"},
+            "collaboration": {
+                "candidate": {"digest": "cand-v1", "current": true},
+                "verification": [
+                    {"check": "unit.filter.pos", "run_id": "r1", "outcome": "passed"},
+                    {"check": "unit.filter.neg", "run_id": "r2", "outcome": "passed"}
+                ],
+                "review": {"id": "rev-1", "state": "approved", "current_candidate": true},
+                "facts_truncated": true
+            }
+        });
+        let res = evaluate(&contract, &truncated_all_observed_passed);
+        assert_eq!(res["items"][0]["status"], "waiting");
+        assert_eq!(res["items"][0]["reason"], "facts_truncated");
+
+        // Definite observed failure still reports failed even when facts are truncated.
+        let truncated_failed = json!({
+            "definition_state": "enabled",
+            "runtime": {"state": "claimed"},
+            "collaboration": {
+                "candidate": {"digest": "cand-v1", "current": true},
+                "verification": [
+                    {"check": "unit.filter.pos", "run_id": "r1", "outcome": "failed"}
+                ],
+                "review": {"id": "rev-1", "state": "approved", "current_candidate": true},
+                "facts_truncated": true
+            }
+        });
+        let res = evaluate(&contract, &truncated_failed);
+        assert_eq!(res["items"][0]["status"], "failed");
+        assert_eq!(res["items"][0]["reason"], "bound_check_failed");
+    }
+
+    #[test]
+    fn cancelled_and_archived_work_without_current_candidate_is_not_started_not_waiting() {
+        let contract = v7_contract(vec![example(
+            "filter-pos",
+            "Filter returns matching records",
+            ExampleKind::Positive,
+            Some("unit.filter.pos"),
+        )]);
+        for (def_state, rt_state) in [
+            ("cancelled", Some("claimed")),
+            ("archived", Some("claimed")),
+            ("enabled", Some("cancelled")),
+            ("enabled", Some("archived")),
+            ("cancelled", None),
+            ("archived", None),
+        ] {
+            let obs = json!({
+                "definition_state": def_state,
+                "runtime": rt_state.map(|s| json!({"state": s})),
+                "collaboration": {
+                    "candidate": null,
+                    "verification": [],
+                    "review": null,
+                    "facts_truncated": false
+                }
+            });
+            let res = evaluate(&contract, &obs);
+            assert_eq!(
+                res["items"][0]["status"], "not_started",
+                "def={def_state} rt={rt_state:?}: {res}"
+            );
+            assert_eq!(
+                res["items"][0]["reason"], "work_inactive",
+                "def={def_state} rt={rt_state:?}: {res}"
+            );
+        }
+
+        // An archived task that retains a current verified candidate keeps its recorded evidence.
+        let archived_with_candidate = json!({
+            "definition_state": "archived",
+            "runtime": {"state": "completed"},
+            "collaboration": {
+                "candidate": {"digest": "cand-v1", "current": true},
+                "verification": [
+                    {"check": "unit.filter.pos", "run_id": "r1", "outcome": "passed"}
+                ],
+                "review": {"id": "rev-1", "state": "approved", "current_candidate": true},
+                "facts_truncated": false
+            }
+        });
+        let res = evaluate(&contract, &archived_with_candidate);
+        assert_eq!(res["items"][0]["status"], "supported");
     }
 }

@@ -220,22 +220,38 @@ Team contracts reuse the personal-edition `examples` shape under contract codec 
 and planning codec `awr-team-planning-v7`. Each entry declares `criterion` (matching an entry of
 `acceptance`), `kind` (`positive` or `negative`), `given`, `when`, `then`, an optional `id`
 matching `[a-z0-9][a-z0-9-]{0,31}` and an optional `check_id` (1–128 trimmed bytes) matching a
-Team candidate `VerificationRun.check` identifier. Planning drafts (`awr_team_planning_draft`)
-carry `examples` through preview, approval and guarded source writeback; omitting `examples` on an
-edit retains existing source entries, while explicit replacement requires the exact prior list in
-`before`.
+Team candidate `VerificationRun.check` identifier. Any entry that sets `check_id` requires an explicit
+`id`. Planning drafts (`awr_team_planning_draft`) carry `examples` through preview, approval and
+guarded source writeback; omitting `examples` on an edit retains existing source entries, while
+explicit replacement requires the exact prior list in `before`.
 
 `work.snapshot` evaluates `data.acceptance_evidence` deterministically in the same `RepeatableRead`
 transaction while keeping `context_hash` compatible with `work.prepare`:
 
-| Field / Status | Meaning |
+| Top-level field | Meaning |
 | --- | --- |
-| `status: "not_provided"` (`items: null`) | Legacy contract (V1–V6) without `examples` mapping |
-| `supported` | Every check bound to the criterion passed on the current delivery candidate and the latest review round on that current candidate is `approved` |
-| `failed` | A bound check failed on the current candidate, or the latest review round on the current candidate is `rejected` (returned) |
-| `waiting` | Work has started or has a current candidate, with bound checks still pending/missing or review awaiting approval |
-| `no_bound_check` | Contract declares `examples`, while this criterion binds zero check identifiers (coverage is explicitly reported as unbound) |
-| `not_started` | Bound checks are declared while the work remains unclaimed with no current candidate or active execution on the current contract |
+| `status` | `not_provided` (`items: null`) for legacy V1–V6 contracts without `examples`; `provided` (`items: [...]`) for V7 contracts (including an explicit empty `examples: []`) |
+| `basis` | `contract_examples_absent` on legacy V1–V6 contracts, `contract_examples_and_current_candidate` on V7 contracts, and `upstream_omitted` in the Observer bridge when an older server omits `acceptance_evidence` |
+| `candidate_digest`, `candidate_current` | Selected delivery candidate digest and whether that selection is current for the active contract and epoch |
+| `review_state`, `review_current_candidate` | Latest review round state on the current contract and whether it belongs to the current candidate. Pages display review status only when `review_current_candidate` is `true` |
+| `facts_truncated` | Present on `provided` snapshots; `true` when delivery facts hit the 32-row read cap, making verification coverage incomplete |
+
+Each entry in `items` reports `criterion`, `status`, `reason`, `bound_checks`, `checks`,
+`examples_count`, `positive_examples` and `negative_examples`:
+
+| Item `status` | Item `reason` values | Meaning |
+| --- | --- | --- |
+| `supported` | `bound_checks_passed_and_review_approved` | Facts are untruncated, every bound check passed on the current delivery candidate and the latest review round on that current candidate is `approved` |
+| `failed` | `bound_check_failed`, `review_returned` | A bound check failed on the current candidate, or the latest review round on the current candidate is `rejected` (returned) |
+| `waiting` | `awaiting_current_candidate`, `awaiting_bound_checks`, `awaiting_review_approval`, `facts_truncated` | Active work awaits a current candidate, bound checks await passing runs, passing bound checks await review approval, or `facts_truncated` marks an incomplete 32-row verification read |
+| `no_bound_check` | `no_bound_check` | Contract declares `examples`, while this criterion binds zero check identifiers (coverage is explicitly reported as unbound) |
+| `not_started` | `work_not_started`, `work_inactive` | Bound checks are declared while active work remains unclaimed with zero current candidate (`work_not_started`), or cancelled/archived work holds zero current candidate (`work_inactive`). Archived work that retains a current verified candidate keeps its recorded candidate evidence |
+
+Each element of `checks` records `check`, `run_id` and `outcome` (`passed`, `failed`, `running`,
+`unknown`, or `not_recorded`). `not_recorded` indicates that an untruncated read found zero runs for
+that check on the current candidate; when `facts_truncated` is `true`, absent checks report `unknown`
+instead. Multiple connector runs for one check combine conservatively (`failed` > `running` > `unknown`
+> `passed`), and any unrecognized outcome normalizes to `unknown`.
 
 Changing a criterion's `check_id` updates `contract_hash`, invalidating prior candidates and review
 rounds. Selecting a new delivery candidate invalidates prior candidate check results and review
