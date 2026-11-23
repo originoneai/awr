@@ -129,19 +129,71 @@ describe('WorkbenchPage seven read states in Chinese and English', () => {
     }
   });
 
-  it('ages the read against its own derivation clock walked forward, not the wall clock', async () => {
+  it.each([
+    ['a derivation clock ten minutes ahead of the read', -10 * 60_000],
+    ['a fixture clock a day and a half behind the read, like the canonical demo', 36 * 60 * 60_000],
+  ])('counts the source line from the read itself with %s', async (_case, readAfterNowMs) => {
     const input = myWorkInput();
-    // The read answered ten minutes after the fixture clock it carries (options.nowUnixMs).
-    // The display clock keeps riding that fixture clock: ten real minutes later the byline
-    // reads thirty minutes old — the wall clock alone would say ten, the reply's own read
-    // moment would freeze it at zero.
-    stubModel(input, { read_at_unix_ms: input.options.nowUnixMs - 10 * 60_000 });
+    // The display clock rides the reply's derivation clock, so a displayed age is the real time
+    // since the read: five minutes after the read the byline says five minutes, whichever side of
+    // the read the derivation clock sits. A fixture clock behind the read must not turn the read
+    // moment into a date in the future (it printed the real clock's date instead of 刚刚).
+    const readAt = input.options.nowUnixMs + readAfterNowMs;
+    stubModel(input, { read_at_unix_ms: readAt });
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
-      vi.setSystemTime(input.options.nowUnixMs + 10 * 60_000 + 20_000);
+      vi.setSystemTime(readAt + 5 * 60_000);
       renderWorkbench();
       expect(await screen.findByTestId('workbench-frame')).toBeTruthy();
-      expect(screen.getByText('按你名下的任务和 Agent 的报告算出 · 30 分钟前')).toBeTruthy();
+      expect(screen.getByText('按你名下的任务和 Agent 的报告算出 · 5 分钟前')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ['zh-CN', (day: number) => `Owner One · 今天，11 月 ${day} 日`],
+    ['en-US', (day: number) => `Owner One · Today, November ${day}`],
+  ] as const)('words the header day on the display clock in the display zone, not the real read moment, in %s', async (language, subtitle) => {
+    await i18n.changeLanguage(language);
+    const input = myWorkInput();
+    // A fixture clock a day and a half behind the read, like the canonical demo: the reference clock
+    // sits on the fixture day (2026-11-19 12:00 UTC) and the header reads that day in the pinned zone.
+    // UTC-11 is still the 19th and UTC+14 is already the 20th; the real read moment would say the
+    // 20th and the 21st.
+    const readAt = input.options.nowUnixMs + 36 * 60 * 60_000;
+    stubModel(input, { read_at_unix_ms: readAt });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(readAt + 5 * 60_000);
+      for (const [zone, day] of [['Pacific/Pago_Pago', 19], ['Pacific/Kiritimati', 20]] as const) {
+        const view = renderWorkbench(createAppQueryClient({ retry: false }), zone);
+        expect(await screen.findByTestId('workbench-frame')).toBeTruthy();
+        expect(screen.getByText(subtitle(day))).toBeTruthy();
+        view.unmount();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('words the English header month in the display zone at a month edge', async () => {
+    await i18n.changeLanguage('en-US');
+    const input = myWorkInput();
+    // The reference clock sits at 2026-11-30 20:00 UTC: still November 30th at UTC-11, already
+    // December 1st at UTC+14, so the month name follows the zone too.
+    const reference = Date.UTC(2026, 10, 30, 20, 0);
+    const readAfterNowMs = 36 * 60 * 60_000;
+    stubModel(input, { read_at_unix_ms: input.options.nowUnixMs + readAfterNowMs });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(reference + readAfterNowMs);
+      for (const [zone, month, day] of [['Pacific/Pago_Pago', 'November', 30], ['Pacific/Kiritimati', 'December', 1]] as const) {
+        const view = renderWorkbench(createAppQueryClient({ retry: false }), zone);
+        expect(await screen.findByTestId('workbench-frame')).toBeTruthy();
+        expect(screen.getByText(`Owner One · Today, ${month} ${day}`)).toBeTruthy();
+        view.unmount();
+      }
     } finally {
       vi.useRealTimers();
     }

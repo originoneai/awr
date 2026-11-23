@@ -25,6 +25,20 @@ export function readClockOffsetUnixMs(model: ClockedReply | null | undefined): n
 }
 
 /**
+ * The moment the read answered, in the display clock's own time system: the reply's
+ * derivation clock (`read_at + offset`). A displayed age counts from it, so it is the real
+ * time since the read whatever clock the reply derives against. The real read time itself
+ * would sit after a demo's fixture clock and read as a date in the future, and a duration
+ * counted from it would run a day long. A reply without a derivation clock keeps its read
+ * time (offset 0); undefined when the reply has no usable read time.
+ */
+export function readMomentUnixMs(model: ClockedReply | null | undefined): number | undefined {
+  const readAtUnixMs = model?.read_at_unix_ms;
+  if (typeof readAtUnixMs !== 'number' || !Number.isFinite(readAtUnixMs)) return undefined;
+  return readAtUnixMs + (readClockOffsetUnixMs(model) ?? 0);
+}
+
+/**
  * The reference clock every page formats times against: the reply's derivation clock
  * walked forward (`Date.now() + offset`), or the viewer's own clock when no reply clock
  * exists. This is the only read of the clock the pages go through; pages themselves never
