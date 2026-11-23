@@ -1683,6 +1683,25 @@ pub(crate) async fn read(
             "semantics":"membership_grants_intersect_declared_ceiling_then_one_live_delegation",
             "omitted_on_update":"preserve_existing_declaration", "role_names_grant_authority":false
         });
+        // AWR-PPD-061: publish each duty's ceiling from the same
+        // BusinessRole::action_ceiling the authorization path intersects, so
+        // the listed definitions stay identical to the enforced policy; a
+        // second copy would drift. Stable identifiers only — pages own the
+        // human wording (docs/dev/reference/business-duty-actions.md).
+        let ceilings: serde_json::Map<String, Value> = awr_team::BusinessRole::all()
+            .into_iter()
+            .map(|role| {
+                let name = serde_json::to_value(role)
+                    .expect("business role serializes to its snake_case name");
+                (
+                    name.as_str()
+                        .expect("business role serializes to a string")
+                        .to_owned(),
+                    json!(role.action_ceiling()),
+                )
+            })
+            .collect();
+        caps["business_role_presets"]["action_ceilings"] = Value::Object(ceilings);
         caps["project_entry"] = json!("work.next");
         // WS-014: explicit scope=main / old-client / local-file boundaries.
         if let Some(obj) = caps.as_object_mut() {

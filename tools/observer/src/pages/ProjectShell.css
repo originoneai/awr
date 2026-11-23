@@ -1,0 +1,196 @@
+.project-shell {
+  width: 100%;
+  min-width: 0;
+  font-family: var(--craft-font-interface);
+  font-size: var(--ant-font-size);
+  line-height: var(--craft-leading-body);
+  color: var(--craft-color-ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+.project-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--craft-gap-tag);
+  margin-top: var(--ant-padding-md);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--craft-color-muted);
+  font: inherit;
+  font-size: var(--craft-text-small);
+  line-height: var(--craft-leading-body);
+  cursor: pointer;
+  transition: color var(--craft-motion-feedback) var(--craft-motion-easing);
+}
+
+.project-back:hover {
+  color: var(--craft-color-ink);
+}
+
+.project-back:focus-visible,
+.project-lead-link:focus-visible,
+.project-tabs .ant-tabs-tab-btn:focus-visible {
+  outline: var(--ant-control-outline-width) solid var(--craft-color-accent);
+  outline-offset: var(--ant-line-width-bold);
+  border-radius: var(--craft-radius-nested);
+}
+
+.project-back .obs-display-icon {
+  width: var(--ant-font-size);
+  height: var(--ant-font-size);
+}
+
+.project-hero {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ant-padding-lg);
+  padding: calc(var(--ant-padding-xs) + var(--ant-padding-xxs)) 0 var(--ant-padding-sm);
+}
+
+.project-hero-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.project-title.ant-typography {
+  margin: 0;
+  color: var(--craft-color-ink);
+  font-size: var(--ant-font-size-heading-3);
+  line-height: var(--craft-leading-hero);
+  font-weight: var(--ant-font-weight-strong);
+  overflow-wrap: anywhere;
+}
+
+.project-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ant-padding-xs) var(--ant-padding-sm);
+  margin-top: calc(var(--ant-padding-xs) + var(--ant-padding-xxs));
+  color: var(--craft-color-secondary);
+  font-size: var(--craft-text-small);
+  line-height: var(--craft-leading-body);
+}
+
+.project-meta > span,
+.project-meta > button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ant-padding-xs);
+}
+
+.project-lead-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--craft-text-small);
+  cursor: pointer;
+}
+
+.project-lead-link:hover {
+  text-decoration: underline;
+  text-underline-offset: calc(var(--ant-line-width-bold) + var(--ant-line-width));
+}
+
+.project-avatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--ant-padding-md);
+  height: var(--ant-padding-md);
+  border-radius: 50%;
+  background: var(--craft-color-raised);
+  color: var(--craft-color-secondary);
+  font-size: calc(var(--craft-text-small) - var(--ant-line-width-bold));
+  font-weight: var(--ant-font-weight-strong);
+}
+
+/* Prototype .tabs2: 40px tab row, 28px gap, 0 inline padding, 2px accent bar, 24px bottom margin. */
+.project-tabs.ant-tabs {
+  font-family: var(--craft-font-interface);
+  font-size: var(--ant-font-size);
+  line-height: var(--craft-leading-body);
+}
+
+.project-tabs .ant-tabs-nav {
+  box-sizing: border-box;
+  height: calc(var(--ant-padding-lg) + var(--ant-padding-sm));
+  margin: 0 0 var(--ant-padding-lg);
+  border-bottom: var(--ant-line-width) solid var(--craft-color-hairline);
+}
+
+.project-tabs .ant-tabs-nav::before {
+  display: none;
+}
+
+.project-tabs .ant-tabs-nav-wrap,
+.project-tabs .ant-tabs-nav-list {
+  height: calc(var(--ant-padding-lg) + var(--ant-padding-sm) - var(--ant-line-width));
+}
+
+.project-tabs .ant-tabs-nav-list {
+  gap: calc(var(--ant-padding-md) + var(--ant-padding-xs));
+}
+
+.project-tabs .ant-tabs-tab {
+  flex: none;
+  height: calc(var(--ant-padding-lg) + var(--ant-padding-sm));
+  margin: 0 0 calc(var(--ant-line-width) * -1) 0;
+  padding: 0;
+  color: var(--craft-color-secondary);
+  font-size: var(--ant-font-size);
+  line-height: var(--craft-leading-body);
+  white-space: nowrap;
+  transition:
+    color var(--craft-motion-feedback) var(--craft-motion-easing),
+    border-color var(--craft-motion-feedback) var(--craft-motion-easing);
+}
+
+.project-tabs .ant-tabs-tab + .ant-tabs-tab {
+  margin-inline-start: 0;
+}
+
+.project-tabs .ant-tabs-tab-btn {
+  display: flex;
+  align-items: center;
+  height: calc(var(--ant-padding-lg) + var(--ant-padding-sm));
+  padding: 0;
+  color: inherit;
+  text-align: center;
+  text-shadow: none;
+}
+
+.project-tabs.ant-tabs .ant-tabs-tab:hover .ant-tabs-tab-btn,
+.project-tabs.ant-tabs .ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: var(--craft-color-ink);
+}
+
+.project-tabs.ant-tabs .ant-tabs-tab-active .ant-tabs-tab-btn {
+  font-weight: var(--ant-font-weight-strong);
+}
+
+.project-tabs .ant-tabs-ink-bar {
+  height: var(--ant-line-width-bold);
+  background: var(--craft-color-accent);
+}
+
+@media (max-width: 860px) {
+  .project-hero {
+    flex-direction: column;
+    gap: calc(var(--ant-padding-xs) + var(--ant-padding-xxs));
+  }
+
+  .project-tabs .ant-tabs-nav-list {
+    gap: var(--ant-padding-md);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-back,
+  .project-tabs .ant-tabs-tab {
+    transition: none;
+  }
+}

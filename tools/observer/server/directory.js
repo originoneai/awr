@@ -54,6 +54,7 @@ function projectDirectory(value) {
     configured: value.configured,
     organization: plan.organization?.name ?? null,
     departments: plan.project_department_ids.map((id) => departments.get(id)),
+    allDepartments: [...departments.values()],
     updated_at_ms: value.updated_at_ms,
     members: value.members.map((member) => ({
       personId: member.member_ref.person_id,

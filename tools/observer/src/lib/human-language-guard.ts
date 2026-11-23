@@ -1,8 +1,9 @@
-import { FORBIDDEN_VISIBLE_PATTERNS } from '../i18n/human-language';
+import { ALLOWED_PRODUCT_WORDS, FORBIDDEN_VISIBLE_PATTERNS, type AllowedProductWord } from '../i18n/human-language';
 import { IDENTIFIER_PATTERN_IDS } from '../core/observation/owner';
 import { containsDiagnosticContent } from '../core/observation/readable';
 
-export { IDENTIFIER_PATTERN_IDS };
+export { ALLOWED_PRODUCT_WORDS, IDENTIFIER_PATTERN_IDS };
+export type { AllowedProductWord };
 export interface VisibleTextViolation {
   id: string;
   match: string;

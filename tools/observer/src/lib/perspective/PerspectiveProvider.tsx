@@ -13,6 +13,8 @@ const PerspectiveContext = createContext<PerspectiveContextValue | null>(null);
 
 interface PerspectiveProviderProps {
   facts: PerspectiveFacts;
+  /** True while the shell fact read is still pending; keeps the URL request until facts settle. */
+  loading?: boolean;
   /** The URL value is a request, never an authorization fact. */
   requestedPerspective?: string | null;
   /** Reflects an accepted selection into the URL without writing to a service. */
@@ -22,6 +24,7 @@ interface PerspectiveProviderProps {
 
 export function PerspectiveProvider({
   facts,
+  loading = false,
   requestedPerspective = null,
   onChange,
   children,
@@ -32,10 +35,10 @@ export function PerspectiveProvider({
     if (persistSelection(next)) onChange?.(next);
   }, [onChange, persistSelection]);
 
-  // The safe fallback is already visible in this render; clean the stale request afterwards.
+  // The safe fallback is already visible in this render; clean a stale URL request once facts settle.
   useEffect(() => {
-    if (requestedPerspective !== null && requestedPerspective !== selected) onChange?.(selected);
-  }, [onChange, requestedPerspective, selected]);
+    if (!loading && requestedPerspective !== null && requestedPerspective !== selected) onChange?.(selected);
+  }, [loading, onChange, requestedPerspective, selected]);
 
   const value = useMemo(() => ({ selected, available, limitations, select }), [available, limitations, selected, select]);
   return <PerspectiveContext.Provider value={value}>{children}</PerspectiveContext.Provider>;
