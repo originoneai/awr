@@ -32,7 +32,6 @@ describe('router configuration', () => {
     ['/members/synthetic-member', 'page-person', '成员'],
     ['/goals/synthetic-goal', 'page-goal', '目标'],
     ['/documents/synthetic-document', 'page-document', '资料'],
-    ['/updates/synthetic-update', 'page-update', '一期更新'],
     ['/takeover', 'page-takeover', '接管结果'],
     ['/takeover/synthetic-result', 'page-takeover', '接管结果'],
   ])('routes %s to its readable pending page', async (path, testId, title) => {
@@ -42,6 +41,15 @@ describe('router configuration', () => {
     const page = await screen.findByTestId(testId);
     expect(page.textContent).toContain(title);
     expect(page.textContent).not.toContain('synthetic-');
+  });
+
+  it('routes /updates/:update to the period update page', async () => {
+    const { renderApp, stubFetch, DEMO_PROJECTS } = await import('./test-utils');
+    stubFetch({ '/api/team/projects': DEMO_PROJECTS });
+    renderApp('/updates/U-001');
+    const page = await screen.findByTestId('page-update');
+    expect(page).toBeTruthy();
+    expect(page.textContent).not.toContain('U-001');
   });
 
   it.each([

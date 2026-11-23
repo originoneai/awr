@@ -8,10 +8,11 @@ import { PlaceholderPage, type PlaceholderPageKey } from './pages/PlaceholderPag
 import { AgentConnectPage } from './pages/AgentConnectPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { ProjectShell } from './pages/ProjectShell';
+import { UpdatePage } from './pages/UpdatePage';
 import { WorkbenchPage } from './pages/WorkbenchPage';
 import { RootLayout } from './RootLayout';
 
-type NewPlaceholderKey = 'lessons' | 'task' | 'person' | 'goal' | 'document' | 'update' | 'takeover';
+type NewPlaceholderKey = 'lessons' | 'task' | 'person' | 'goal' | 'document' | 'takeover';
 
 /** The shared placeholder resolves nav labels at runtime; this adapter adds only keys declared above. */
 function placeholder(pageKey: NewPlaceholderKey) {
@@ -39,7 +40,8 @@ export const routes: RouteObject[] = [
       { path: 'members/:member', element: placeholder('person') },
       { path: 'goals/:goal', element: placeholder('goal') },
       { path: 'documents/:document', element: placeholder('document') },
-      { path: 'updates/:update', element: placeholder('update') },
+      { path: 'updates', element: <UpdatePage /> },
+      { path: 'updates/:update', element: <UpdatePage /> },
       { path: 'inbox', element: <InboxPage /> },
       { path: 'lessons', element: placeholder('lessons') },
       { path: 'members', element: <MembersPage /> },

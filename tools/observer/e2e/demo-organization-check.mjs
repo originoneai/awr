@@ -151,7 +151,7 @@ const fullRoutes = [
   { name: 'task-pending', path: '/tasks/T-101', pending: true },
   { name: 'goal-pending', path: '/goals/GOAL-001', pending: true },
   { name: 'document-pending', path: '/documents/DOC-001', pending: true },
-  { name: 'update-pending', path: '/updates/U-001', pending: true },
+  { name: 'update', path: '/updates/U-001?scope=P-001' },
   { name: 'person-pending', path: '/members/M-002', pending: true },
   { name: 'takeover-pending', path: '/takeover', pending: true },
 ];

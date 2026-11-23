@@ -1,0 +1,34 @@
+{
+  "page": "update-mobile",
+  "proto": "#p=update&id=o47",
+  "app": "/updates/U-001?scope=P-001",
+  "ready": "[data-testid=\"update-facts\"] [data-testid=\"update-fact-row-verified\"]",
+  "protoReady": ".cols2 .block table.t",
+  "notes": {
+    "geometryExclusions": [
+      "Probe coordinates are anchored at the page title (.hero h1 / [data-testid=\"update-title\"]), excluding shell-only header/sidebar offsets.",
+      "Text-width-dependent boxes and wrapping row heights on 390px phone viewport skip only geometry (__w, __h, __x, __y).",
+      "Zero style properties are skipped on any pair."
+    ]
+  },
+  "pairs": [
+    ["update title", ".hero h1", "[data-testid=\"update-title\"]", ["TEXT", "margin-top", "margin-bottom"], {"skip": ["__w", "__h"]}],
+    ["back button", ".back", "[data-testid=\"update-back\"]", ["BOX", "TEXT", "margin-top"], {"skip": ["__y"]}],
+    ["hero container", ".hero", "[data-testid=\"update-hero\"]", ["BOX"], {"skip": ["__w", "__h"]}],
+    ["hero summary", ".hero .sum", "[data-testid=\"update-summary\"]", ["TEXT", "margin-top"], {"skip": ["__y", "__w", "__h"]}],
+    ["hero meta", ".hero .meta", "[data-testid=\"update-meta\"]", ["BOX", "TEXT", "margin-top"], {"skip": ["__y", "__w", "__h"]}],
+    ["hero status tag", ".hero .meta .tag", "[data-testid=\"update-meta\"] .obs-tag", ["BOX", "TEXT", "background-color"], {"skip": ["__y"]}],
+    ["hero author avatar", ".hero .meta .av.s", "[data-testid=\"update-author\"] .update-avatar", ["BOX", "TEXT", "background-color"], {"skip": ["__x", "__y"]}],
+    ["single column stack", ".cols2", "[data-testid=\"update-columns\"]", ["BOX"], {"skip": ["__y", "__w", "__h"]}],
+    ["facts block", ".cols2 > .stackv:first-child .block:nth-child(1)", "[data-testid=\"update-facts\"] .obs-section", ["BOX", "PAINT"], {"skip": ["__y", "__w", "__h"]}],
+    ["facts block head", ".cols2 > .stackv:first-child .block:nth-child(1) .block-head", "[data-testid=\"update-facts\"] .ant-card-head", ["BOX", "border-bottom-color"], {"skip": ["__y", "__w"]}],
+    ["facts table head 1", ".cols2 > .stackv:first-child .block:nth-child(1) table.t th:nth-child(1)", "[data-testid=\"update-facts\"] thead th:nth-child(1)", ["TEXT", "padding-top", "padding-bottom", "padding-left", "border-bottom-color"], {"skip": ["__y", "__w"]}],
+    ["facts row 1 col 1", ".cols2 > .stackv:first-child .block:nth-child(1) table.t tbody tr:nth-child(1) td:nth-child(1)", "[data-testid=\"update-fact-row-verified\"] td:nth-child(1)", ["TEXT", "padding-top", "padding-bottom", "padding-left", "border-top-color"], {"skip": ["__y", "__w", "__h"]}],
+    ["facts pnote", ".cols2 > .stackv:first-child .block:nth-child(1) .pnote", "[data-testid=\"update-facts-note\"]", ["BOX", "TEXT", "border-top-color"], {"skip": ["__y", "__w", "__h"]}],
+    ["rollup block", ".cols2 > .stackv:first-child .block:nth-child(2)", "[data-testid=\"update-rollup\"] .obs-section", ["BOX", "PAINT"], {"skip": ["__y", "__w", "__h"]}],
+    ["rollup row 1 icon box", ".cols2 > .stackv:first-child .block:nth-child(2) .rows > div:nth-child(1) .ki", "[data-testid=\"update-rollup\"] .obs-row-item:nth-child(1) .update-ki", ["BOX", "background-color", "color"], {"skip": ["__y"]}],
+    ["previous block", ".cols2 > .stackv:last-child .block:nth-child(1)", "[data-testid=\"update-previous\"] .obs-section", ["BOX", "PAINT"], {"skip": ["__y", "__w", "__h"]}],
+    ["all updates block", ".cols2 > .stackv:last-child .block:nth-child(2)", "[data-testid=\"update-all\"] .obs-section", ["BOX", "PAINT"], {"skip": ["__y", "__w", "__h"]}],
+    ["all updates current row", ".cols2 > .stackv:last-child .block:nth-child(2) .rows > button[aria-current=\"true\"]", "[data-testid=\"update-all\"] .obs-row-control[aria-current=\"true\"]", ["BOX", "background-color"], {"skip": ["__y", "__w", "__h"]}]
+  ]
+}
