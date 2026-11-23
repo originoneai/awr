@@ -97,6 +97,7 @@ const VALID_QUERIES = {
   'sources.inspect': { work_id: 'WORK', workstream_id: 'stream', limit: 5, max_context_bytes: 65536 },
   'documents.list': { work_id: 'WORK', workstream_id: 'stream', search: 'guide', limit: 5, max_context_bytes: 65536 },
   'decisions.list': { work_id: 'WORK', workstream_id: 'stream', decision_id: 'question', decision_state: 'all', limit: 5, max_context_bytes: 65536 },
+  'usage.summary': { work_id: 'WORK', workstream_id: 'stream', max_context_bytes: 65536 },
   'review.rounds': { work_id: 'WORK', workstream_id: 'stream', limit: 5, max_context_bytes: 65536 },
   'handoff.list': { work_id: 'WORK', workstream_id: 'stream', recipient_person_id: 'recipient', handoff_state: 'all', limit: 5, max_context_bytes: 65536 },
   'work.search': { search: 'observation', workstream_id: 'stream', limit: 25, cursor: 'opaque-cursor' },
@@ -179,6 +180,38 @@ test('read adapter forwards every registered read op with its exact selectors, u
           items: [], next_cursor: null, truncated: false, execution_authorized: false,
           as_of: { at_unix_ms: 1793534400000, source_snapshot_id: ENVELOPE.source_snapshot_id,
             project_revision: ENVELOPE.project_revision },
+        } }));
+        return;
+      }
+      if (parsed.op === 'usage.summary') {
+        response.end(JSON.stringify({ ...ENVELOPE, selection_basis: parsed.work_id ? 'work' : 'project', data: {
+          project_id: 'demo',
+          scope: parsed.work_id ? 'work' : 'project',
+          work_id: parsed.work_id ?? null,
+          workstream_id: parsed.workstream_id ?? null,
+          collection: {
+            personal_ledger_collected: false, billing_collected: false, cost_status: 'not_collected',
+            usage_scope: 'host_session', usage_provenance: 'caller_declared',
+            duration_basis: 'recorded_session_events',
+            is_historical_observation: true, is_not_estimated_remaining_time: true,
+          },
+          project: {
+            session_count: 0, active_session_count: 0,
+            duration: { status: 'not_collected', summed_ms: null, wall_clock_ms: null, sessions_with_duration: 0, sessions_without_duration: 0 },
+            tokens: { status: 'not_collected', input_tokens: null, output_tokens: null, cached_input_tokens: null, sessions_with_usage: 0, sessions_without_usage: 0 },
+            cost: { status: 'not_collected', amount_micros: null, currency: null },
+          },
+          by_task: [], by_member: [],
+          member_scope: 'self', member_ordering: 'identifier_asc', personal_comparison_ranking: false,
+          coverage: {
+            status: 'not_collected', cost_status: 'not_collected', usage_status: 'not_collected',
+            duration_status: 'not_collected', hidden_work_count: 0,
+            groups: { registered: false, collected: [], missing: [] },
+            members: { scope: 'self', collected: [], missing: [], hidden_member_count: 0 },
+          },
+          as_of: { at_unix_ms: 1793534400000, source_snapshot_id: ENVELOPE.source_snapshot_id,
+            project_revision: ENVELOPE.project_revision },
+          execution_authorized: false,
         } }));
         return;
       }

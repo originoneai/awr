@@ -198,6 +198,65 @@ latest_updates AS (
 directories AS (
     SELECT project_id,plan_json FROM awr_team.project_directories
     WHERE tenant_id=$1 AND project_id=ANY($3)
+),
+usage_sessions_base AS (
+    SELECT o.project_id,s.id AS session_id,o.work_id,o.workstream_id,s.actor_id,s.state
+    FROM scope sc
+    JOIN awr_team.workstream_snapshot_ownership o ON o.tenant_id=$1
+      AND o.project_id=sc.project_id AND o.snapshot_id=sc.snapshot_id AND o.scope_id='main'
+    JOIN awr_team.sessions s ON s.tenant_id=o.tenant_id AND s.project_id=o.project_id
+      AND s.scope_id=o.scope_id AND s.work_id=o.work_id
+      AND s.workstream_id=o.workstream_id AND s.ownership_version=o.ownership_version
+),
+usage_session_times AS (
+    SELECT usb.project_id,usb.session_id,
+        MIN(CASE WHEN e.event_type IN ('session.start','task.accept_assignment','task.claim_available')
+            THEN (extract(epoch FROM e.created_at)*1000)::bigint END) AS start_ms,
+        MAX(CASE WHEN e.event_type='session.end'
+            THEN (extract(epoch FROM e.created_at)*1000)::bigint END) AS ended_ms
+    FROM usage_sessions_base usb
+    LEFT JOIN awr_team.events e ON e.tenant_id=$1 AND e.project_id=usb.project_id
+      AND e.work_id=usb.work_id AND e.workstream_id=usb.workstream_id
+      AND e.payload_json->>'session_id'=usb.session_id
+    GROUP BY usb.project_id,usb.session_id
+),
+usage_counter_peaks AS (
+    SELECT usb.project_id,usb.session_id,
+        c.usage_json->>'source' AS source,
+        c.usage_json->>'counter_id' AS counter_id,
+        MAX((c.usage_json->>'input_tokens')::bigint) AS input_tokens,
+        MAX((c.usage_json->>'output_tokens')::bigint) AS output_tokens,
+        MAX((c.usage_json->>'cached_input_tokens')::bigint) AS cached_input_tokens,
+        BOOL_AND(c.usage_json->>'coverage'='complete') AS all_complete
+    FROM usage_sessions_base usb
+    JOIN awr_team.checkpoints c ON c.tenant_id=$1 AND c.project_id=usb.project_id
+      AND c.session_id=usb.session_id AND c.usage_json IS NOT NULL
+    GROUP BY usb.project_id,usb.session_id,c.usage_json->>'source',c.usage_json->>'counter_id'
+),
+usage_session_counters AS (
+    SELECT project_id,session_id,TRUE AS has_usage,BOOL_AND(all_complete) AS usage_complete,
+        SUM(input_tokens)::bigint AS input_tokens,
+        SUM(output_tokens)::bigint AS output_tokens,
+        SUM(cached_input_tokens)::bigint AS cached_input_tokens
+    FROM usage_counter_peaks
+    GROUP BY project_id,session_id
+),
+usage_actor_people AS (
+    SELECT usb.project_id,usb.actor_id,
+        CASE
+            WHEN COUNT(DISTINCT b.person_id)=1 AND MIN(p.status)='active' THEN MIN(b.person_id)
+            WHEN COUNT(b.person_id)=0 AND MIN(a.kind)='human' AND MIN(ph.status)='active' THEN usb.actor_id
+            ELSE NULL
+        END AS person_id
+    FROM (SELECT DISTINCT project_id,actor_id FROM usage_sessions_base) usb
+    JOIN awr_team.actors a ON a.tenant_id=$1 AND a.id=usb.actor_id
+    LEFT JOIN awr_team.person_agent_bindings b ON b.tenant_id=$1 AND b.project_id=usb.project_id
+      AND b.agent_id=usb.actor_id AND b.status='active'
+    LEFT JOIN awr_team.persons p ON p.tenant_id=$1 AND p.project_id=usb.project_id
+      AND p.id=b.person_id
+    LEFT JOIN awr_team.persons ph ON ph.tenant_id=$1 AND ph.project_id=usb.project_id
+      AND ph.id=usb.actor_id
+    GROUP BY usb.project_id,usb.actor_id
 )
 SELECT sc.project_id,
     (SELECT COALESCE(jsonb_agg(jsonb_build_object(
@@ -224,7 +283,24 @@ SELECT sc.project_id,
             'recorded_at_unix_ms',lu.recorded_ms)
         FROM latest_updates lu WHERE lu.project_id=sc.project_id),
     (SELECT plan_json FROM directories d WHERE d.project_id=sc.project_id),
-    (extract(epoch FROM transaction_timestamp())*1000)::bigint AS as_of_ms
+    (extract(epoch FROM transaction_timestamp())*1000)::bigint AS as_of_ms,
+    (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+            'w',usb.work_id,'s',usb.workstream_id,'a',usb.actor_id,'st',usb.state,
+            'p',uap.person_id,'t0',ust.start_ms,
+            't1',CASE
+                WHEN usb.state='ended' THEN ust.ended_ms
+                WHEN usb.state='active' AND ust.start_ms IS NOT NULL
+                    THEN GREATEST(ust.start_ms,(extract(epoch FROM transaction_timestamp())*1000)::bigint)
+                ELSE NULL
+            END,
+            'u',COALESCE(usc.has_usage,FALSE),'uc',COALESCE(usc.usage_complete,FALSE),
+            'in',usc.input_tokens,'out',usc.output_tokens,'cache',usc.cached_input_tokens)
+            ORDER BY usb.work_id,usb.session_id),'[]'::jsonb)
+        FROM usage_sessions_base usb
+        LEFT JOIN usage_session_times ust ON ust.project_id=usb.project_id AND ust.session_id=usb.session_id
+        LEFT JOIN usage_session_counters usc ON usc.project_id=usb.project_id AND usc.session_id=usb.session_id
+        LEFT JOIN usage_actor_people uap ON uap.project_id=usb.project_id AND uap.actor_id=usb.actor_id
+        WHERE usb.project_id=sc.project_id)
 FROM scope sc";
 
 /// One member project as resolved by the admission statement.
@@ -827,7 +903,8 @@ impl WorkstreamReadStore {
             })
             .collect();
         let scope_ids: Vec<String> = readable.iter().map(|project| project.id.clone()).collect();
-        let mut facts: BTreeMap<String, (Value, Option<Value>, Option<Value>)> = BTreeMap::new();
+        let mut facts: BTreeMap<String, (Value, Option<Value>, Option<Value>, Value)> =
+            BTreeMap::new();
         let mut as_of_ms: Option<i64> = None;
         if !scope.is_empty() {
             for row in tx
@@ -841,6 +918,7 @@ impl WorkstreamReadStore {
                         row.get::<_, Option<Value>>(1).unwrap_or_else(|| json!([])),
                         row.get(2),
                         row.get(3),
+                        row.get::<_, Option<Value>>(5).unwrap_or_else(|| json!([])),
                     ),
                 );
                 as_of_ms = Some(row.get::<_, i64>(4));
@@ -850,7 +928,7 @@ impl WorkstreamReadStore {
         let mut items = Vec::with_capacity(page.len());
         for project in page {
             let Some(_) = project.denial else {
-                let (works_json, update_json, directory_json) = facts
+                let (works_json, update_json, directory_json, usage_sessions_json) = facts
                     .get(&project.id)
                     .cloned()
                     .ok_or(PgError::SourceDivergence)?;
@@ -865,6 +943,14 @@ impl WorkstreamReadStore {
                     fold_work(&mut counts, work, visible, task_allowed)?;
                 }
                 if !project.streams.is_empty() || !project.tasks.is_empty() && counts.task_covered {
+                    let usage_summary = super::usage::portfolio_project_usage(
+                        &usage_sessions_json,
+                        directory_json.as_ref(),
+                        &project.streams,
+                        &project.grant_streams,
+                        &project.tasks,
+                        counts.hidden,
+                    );
                     items.push(json!({
                         "project_id":project.id,"project_key":project.key,
                         "project_status":project.status,"coordinator_epoch":project.epoch,
@@ -887,6 +973,7 @@ impl WorkstreamReadStore {
                         } else {
                             Value::Null
                         },
+                        "usage":usage_summary,
                         "read":{"status":"complete"}}));
                     continue;
                 }

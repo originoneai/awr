@@ -9,7 +9,9 @@ import type {
   PortfolioPendingItem,
   PortfolioProjectComplete,
   PortfolioProjectItem,
+  PortfolioProjectUsageSummary,
   TeamPortfolioResponse,
+  UsageSummaryData,
 } from '../../lib/types';
 import type { CompletionCounts, HealthStatus } from '../display';
 import { workbenchDisplayText, type WorkbenchMetricNote, type WorkbenchVerdict } from './model';
@@ -89,6 +91,14 @@ export interface DepartmentCoverage {
   hiddenWorkTotal: number;
 }
 
+export interface DepartmentUsageCoverage {
+  showCost: boolean;
+  status: 'complete' | 'partial' | 'not_collected';
+  costStatus: 'collected' | 'not_collected';
+  collectedGroups: string[];
+  missingGroups: string[];
+}
+
 export interface DepartmentWorkbenchModel {
   departmentName: string | null;
   subtitle: string;
@@ -108,6 +118,7 @@ export interface DepartmentWorkbenchModel {
   waits: PortfolioCrossGroupWait[] | null;
   lessons: PortfolioLessonFact[] | null;
   hasAnyProjectUsage: boolean;
+  usageCoverage: DepartmentUsageCoverage;
   usageNote: string | null;
   coverage: DepartmentCoverage;
 }
@@ -156,6 +167,7 @@ interface DepartmentVocabulary {
     partialGroups: string;
     missingOnly: string;
     noneCollected: string;
+    costNotCollected: string;
     separator: string;
   };
   monthFormat: { zhSuffix: string; unknown: string };
@@ -214,6 +226,7 @@ const DEPT_VOCABULARY: Record<'zh-CN' | 'en-US', DepartmentVocabulary> = {
       partialGroups: '投入只采集到{{collected}}的用量，另外{{missingCount}}个小组的缺失，所以这里不显示费用。',
       missingOnly: '{{missing}}尚未采集用量，这里不显示费用。',
       noneCollected: '还没有采集各小组的用量，这里不显示费用。',
+      costNotCollected: '已采集各小组的会话用量，但团队版尚未采集费用账单，所以这里不显示费用。',
       separator: '、',
     },
     monthFormat: { zhSuffix: '月', unknown: '本月' },
@@ -270,6 +283,7 @@ const DEPT_VOCABULARY: Record<'zh-CN' | 'en-US', DepartmentVocabulary> = {
       partialGroups: 'Usage was collected only for {{collected}}; usage is missing for {{missingCount}}, so no cost figures are shown here.',
       missingOnly: 'Usage has not been collected for {{missing}}, so no cost figures are shown here.',
       noneCollected: 'Usage has not been collected for any group yet, so no cost figures are shown here.',
+      costNotCollected: 'Session usage was collected for all groups, but Team edition does not collect billing costs, so no cost figures are shown here.',
       separator: ', ',
     },
     monthFormat: { zhSuffix: '', unknown: 'This month' },
@@ -633,40 +647,171 @@ function deriveLivePortfolioChains(
   return chains;
 }
 
-function buildUsageNote(
+function usageSummaryToProjectCoverage(summary: UsageSummaryData): PortfolioProjectUsageSummary {
+  return {
+    status: summary.coverage.status,
+    cost_status: summary.coverage.cost_status,
+    usage_status: summary.coverage.usage_status,
+    duration_status: summary.coverage.duration_status,
+    groups: {
+      registered: summary.coverage.groups.registered,
+      collected: summary.coverage.groups.collected,
+      missing: summary.coverage.groups.missing,
+    },
+  };
+}
+
+function deriveDepartmentUsage(
+  rawProjects: readonly PortfolioProjectItem[],
   projects: readonly DepartmentProjectRow[],
   response: TeamPortfolioResponse,
+  usageSummaries: Readonly<Record<string, UsageSummaryData | null | undefined>> | undefined,
   language: string,
-): string | null {
+): { usageCoverage: DepartmentUsageCoverage; usageNote: string | null; suppressCostColumn: boolean } {
   const vocab = departmentVocabulary(language);
+  const perProject: Array<{ item: PortfolioProjectItem; usage: PortfolioProjectUsageSummary | null }> = rawProjects.map((item) => {
+    const fromSummary = usageSummaries?.[item.project_key] ?? usageSummaries?.[item.project_id];
+    if (fromSummary) return { item, usage: usageSummaryToProjectCoverage(fromSummary) };
+    if (isCompleteProject(item) && item.usage) return { item, usage: item.usage };
+    return { item, usage: null };
+  });
+  const hasStructuredUsage = perProject.some((entry) => entry.usage !== null);
+
+  if (hasStructuredUsage) {
+    const groupNames = new Map<string, string>();
+    const collectedIds = new Set<string>();
+    const missingIds = new Set<string>();
+    let anyCollectedProject = false;
+    let allComplete = rawProjects.length > 0;
+    let allCostCollected = rawProjects.length > 0;
+
+    for (const { item, usage } of perProject) {
+      if (!isCompleteProject(item) || !usage) {
+        allComplete = false;
+        allCostCollected = false;
+        continue;
+      }
+      if (usage.status !== 'complete') allComplete = false;
+      if (usage.cost_status !== 'collected') allCostCollected = false;
+      if (usage.status === 'complete' || usage.status === 'partial') anyCollectedProject = true;
+
+      if (usage.groups.registered) {
+        for (const group of usage.groups.collected) {
+          const name = group.name.trim();
+          if (name) {
+            groupNames.set(group.id, name);
+            collectedIds.add(group.id);
+          }
+        }
+        for (const group of usage.groups.missing) {
+          const name = group.name.trim();
+          if (name) {
+            groupNames.set(group.id, name);
+            missingIds.add(group.id);
+          }
+        }
+      } else if (item.directory.group?.name?.trim()) {
+        const g = item.directory.group;
+        groupNames.set(g.id, g.name.trim());
+        if (usage.status === 'complete' || usage.status === 'partial') collectedIds.add(g.id);
+        else missingIds.add(g.id);
+      }
+    }
+
+    // Any group missing on any project remains missing (never dropped from coverage).
+    const sortedIds = [...groupNames.keys()].sort();
+    const collectedGroups: string[] = [];
+    const missingGroups: string[] = [];
+    for (const id of sortedIds) {
+      const name = groupNames.get(id)!;
+      if (missingIds.has(id)) {
+        missingGroups.push(name);
+      } else if (collectedIds.has(id)) {
+        collectedGroups.push(name);
+      }
+    }
+    if (missingGroups.length > 0) {
+      allComplete = false;
+      allCostCollected = false;
+    }
+
+    const status: DepartmentUsageCoverage['status'] = allComplete
+      ? 'complete'
+      : anyCollectedProject || collectedGroups.length > 0
+        ? 'partial'
+        : 'not_collected';
+    const costStatus: DepartmentUsageCoverage['costStatus'] = allCostCollected ? 'collected' : 'not_collected';
+    const showCost = allComplete && allCostCollected;
+
+    let usageNote: string | null = null;
+    if (!showCost) {
+      if (collectedGroups.length > 0 && missingGroups.length > 0) {
+        usageNote = fill(vocab.usage.partialGroups, {
+          collected: collectedGroups.join(vocab.usage.separator),
+          missing: missingGroups.join(vocab.usage.separator),
+          missingCount: language.startsWith('zh')
+            ? chineseCount(missingGroups.length)
+            : missingGroups.length === 1 ? 'one other group' : `${missingGroups.length} other groups`,
+        });
+      } else if (missingGroups.length > 0) {
+        usageNote = fill(vocab.usage.missingOnly, { missing: missingGroups.join(vocab.usage.separator) });
+      } else if (status === 'complete') {
+        usageNote = vocab.usage.costNotCollected;
+      } else if (projects.length > 0) {
+        usageNote = vocab.usage.noneCollected;
+      }
+    }
+
+    return {
+      usageCoverage: { showCost, status, costStatus, collectedGroups, missingGroups },
+      usageNote,
+      suppressCostColumn: !showCost,
+    };
+  }
+
+  // Fallback for legacy/canonical fixtures without structured usage.summary coverage.
   const usage = response.department_facts?.usage;
   const collected = (usage?.collected_groups ?? []).map((g) => g.trim()).filter(Boolean);
   let missing = (usage?.missing_groups ?? []).map((g) => g.trim()).filter(Boolean);
 
-  // When usage facts are not supplied at all, infer missing group names from visible projects.
   if (!usage) {
     const allGroups = [...new Set(projects.map((p) => p.groupName).filter((g): g is string => Boolean(g)))];
     const projectsWithUsage = new Set(projects.filter((p) => p.usageDisplayText !== null).map((p) => p.groupName));
     missing = allGroups.filter((g) => !projectsWithUsage.has(g));
   }
 
+  let usageNote: string | null = null;
   if (collected.length > 0 && missing.length > 0) {
-    // The prototype counts the other groups ("另外两个小组的缺失") instead of naming them.
-    return fill(vocab.usage.partialGroups, {
+    usageNote = fill(vocab.usage.partialGroups, {
       collected: collected.join(vocab.usage.separator),
       missing: missing.join(vocab.usage.separator),
       missingCount: language.startsWith('zh')
         ? chineseCount(missing.length)
         : missing.length === 1 ? 'one other group' : `${missing.length} other groups`,
     });
+  } else if (missing.length > 0) {
+    usageNote = fill(vocab.usage.missingOnly, { missing: missing.join(vocab.usage.separator) });
+  } else if (projects.length > 0 && projects.every((p) => p.usageDisplayText === null)) {
+    usageNote = vocab.usage.noneCollected;
   }
-  if (missing.length > 0) {
-    return fill(vocab.usage.missingOnly, { missing: missing.join(vocab.usage.separator) });
-  }
-  if (projects.length > 0 && projects.every((p) => p.usageDisplayText === null)) {
-    return vocab.usage.noneCollected;
-  }
-  return null;
+
+  const hasText = projects.some((p) => p.usageDisplayText !== null);
+  const status: DepartmentUsageCoverage['status'] = missing.length === 0 && collected.length > 0 && hasText
+    ? 'complete'
+    : collected.length > 0 || hasText
+      ? 'partial'
+      : 'not_collected';
+  return {
+    usageCoverage: {
+      showCost: false,
+      status,
+      costStatus: 'not_collected',
+      collectedGroups: collected,
+      missingGroups: missing,
+    },
+    usageNote,
+    suppressCostColumn: false,
+  };
 }
 
 /** A small count in Chinese prose: 两 for two, as the prototype writes it; digits beyond ten. */
@@ -679,6 +824,7 @@ export interface DepartmentModelOptions {
   readAtUnixMs?: number;
   referenceUnixMs?: number;
   timeZone?: string;
+  usageSummaries?: Readonly<Record<string, UsageSummaryData | null | undefined>>;
 }
 
 /** Build the complete read-only Department Projects model from a single portfolio response. */
@@ -818,6 +964,11 @@ export function buildDepartmentWorkbenchModel(
     ?? projects.find((p) => p.departmentName)?.departmentName
     ?? null;
 
+  const usageResult = deriveDepartmentUsage(rawProjects, projects, response, options.usageSummaries, language);
+  const normalizedProjects = usageResult.suppressCostColumn
+    ? projects.map((project) => ({ ...project, usageDisplayText: null }))
+    : projects;
+
   return {
     departmentName,
     subtitle: zonedMonthLabel(referenceUnixMs, timeZone, language),
@@ -828,11 +979,12 @@ export function buildDepartmentWorkbenchModel(
       count: pendingItems ? pendingItems.length : null,
       items: pendingItems ?? [],
     },
-    projects,
+    projects: normalizedProjects,
     waits,
     lessons: facts?.lessons ?? null,
-    hasAnyProjectUsage: projects.some((p) => p.usageDisplayText !== null),
-    usageNote: buildUsageNote(projects, response, language),
+    hasAnyProjectUsage: !usageResult.suppressCostColumn && normalizedProjects.some((p) => p.usageDisplayText !== null),
+    usageCoverage: usageResult.usageCoverage,
+    usageNote: usageResult.usageNote,
     coverage,
   };
 }

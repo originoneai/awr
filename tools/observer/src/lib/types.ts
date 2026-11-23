@@ -178,6 +178,104 @@ export interface PortfolioLatestUpdate {
   recorded_at_unix_ms: number;
 }
 
+export interface UsageGroupRef {
+  id: string;
+  name: string;
+}
+
+export interface PortfolioProjectUsageSummary {
+  status: 'complete' | 'partial' | 'not_collected';
+  cost_status: 'collected' | 'not_collected';
+  usage_status: 'complete' | 'partial' | 'not_collected';
+  duration_status: 'complete' | 'partial' | 'not_collected';
+  groups: {
+    registered: boolean;
+    collected: UsageGroupRef[];
+    missing: UsageGroupRef[];
+  };
+}
+
+export interface UsageDurationRollup {
+  status: 'collected' | 'partial' | 'not_collected';
+  summed_ms: number | null;
+  wall_clock_ms: number | null;
+  sessions_with_duration: number;
+  sessions_without_duration: number;
+}
+
+export interface UsageTokensRollup {
+  status: 'collected' | 'partial' | 'not_collected';
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cached_input_tokens: number | null;
+  sessions_with_usage: number;
+  sessions_without_usage: number;
+}
+
+export interface UsageCostRollup {
+  status: 'collected' | 'not_collected';
+  amount_micros: number | null;
+  currency: string | null;
+}
+
+export interface UsageRollupSummary {
+  session_count: number;
+  active_session_count: number;
+  duration: UsageDurationRollup;
+  tokens: UsageTokensRollup;
+  cost: UsageCostRollup;
+}
+
+export interface UsageSummaryData {
+  project_id: string;
+  scope: 'project' | 'workstream' | 'work';
+  work_id: string | null;
+  workstream_id: string | null;
+  collection: {
+    personal_ledger_collected: false;
+    billing_collected: false;
+    cost_status: 'not_collected';
+    usage_scope: string;
+    usage_provenance: string;
+    duration_basis: string;
+    is_historical_observation: true;
+    is_not_estimated_remaining_time: true;
+  };
+  project: UsageRollupSummary;
+  by_task: Array<UsageRollupSummary & { work_id: string; workstream_id: string }>;
+  by_member: Array<UsageRollupSummary & {
+    member_id: string;
+    member_kind: 'person' | 'actor';
+    person_id: string | null;
+    actor_ids: string[];
+    display_name: string | null;
+    group_ids: string[];
+  }>;
+  member_scope: 'self' | 'project';
+  member_ordering: 'identifier_asc';
+  personal_comparison_ranking: false;
+  coverage: {
+    status: 'complete' | 'partial' | 'not_collected';
+    cost_status: 'collected' | 'not_collected';
+    usage_status: 'complete' | 'partial' | 'not_collected';
+    duration_status: 'complete' | 'partial' | 'not_collected';
+    hidden_work_count: number;
+    groups: {
+      registered: boolean;
+      collected: UsageGroupRef[];
+      missing: UsageGroupRef[];
+    };
+    members: {
+      scope: 'self' | 'project';
+      collected: Array<{ member_id: string; member_kind: 'person' | 'actor'; person_id: string | null; display_name: string | null; group_ids: string[] }>;
+      missing: Array<{ member_id: string; member_kind: 'person' | 'actor'; person_id: string | null; display_name: string | null; group_ids: string[] }>;
+      hidden_member_count: number;
+    };
+  };
+  as_of: { at_unix_ms: number; source_snapshot_id: string; project_revision: string };
+  execution_authorized: false;
+}
+
 export interface PortfolioProjectComplete {
   project_id: string;
   project_key: string;
@@ -192,6 +290,7 @@ export interface PortfolioProjectComplete {
   works: PortfolioProjectWorks;
   waits: PortfolioProjectWaits;
   latest_update: PortfolioLatestUpdate | null;
+  usage?: PortfolioProjectUsageSummary | null;
   read: { status: 'complete' };
 }
 

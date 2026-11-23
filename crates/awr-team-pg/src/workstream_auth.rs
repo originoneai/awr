@@ -636,6 +636,7 @@ pub fn query_business_action(op: &str) -> Option<awr_team::Action> {
         "decisions.list",
         "updates.list",
         "update.inspect",
+        "usage.summary",
         "audit.history",
         "audit.export",
         "audit.count",

@@ -2000,6 +2000,7 @@ function createDemoOrganization({ variant = 'full',
           'delivery.neutral.inspect', 'delivery.submission.describe', 'delivery.integration.inspect',
           'delivery.source.status', 'delivery.exports', 'artifact.content', 'artifact.segment',
           'audit.development', 'audit.requests', 'task.assignees', 'session.inspect', 'command.inspect',
+          'usage.summary',
           ...DEMO_FUTURE_READ_OPS],
         controlled_content_reads: true,
         artifact_content: true,
@@ -2038,6 +2039,7 @@ function createDemoOrganization({ variant = 'full',
       case 'source.content': return sourceContent(projectId, query);
       case 'sources.inspect': return sourcesInspect(projectId, query);
       case 'decisions.list': return decisionsList(projectId, query);
+      case 'usage.summary': return usageSummary(projectId, query);
       case 'review.rounds': return reviewRounds(projectId, query);
       case 'review.inspect': return reviewInspect(projectId, query);
       case 'evidence.inspect': return evidenceInspect(projectId, query);
@@ -2241,6 +2243,93 @@ function createDemoOrganization({ variant = 'full',
     return { status: 200, json: { data: {
       connection_id: body.connection_id, state: 'revoked', ends_current: false,
     } }, setCookie: [] };
+  }
+
+  function usageSummary(projectId, query = {}) {
+    const proj = project(projectId);
+    const units = new Map(data.organization.departments.map((department) => [department.id, department]));
+    const group = units.get(proj.group_id);
+    const tasks = data.tasks.filter((item) => item.project_id === proj.project_id
+      && (!query.work_id || item.work_id === query.work_id)
+      && (!query.workstream_id || item.workstream_id === query.workstream_id));
+    if (query.work_id && tasks.length === 0) throw new DemoReadError('Forbidden', 'access denied', 403);
+    const notCollectedRollup = {
+      session_count: 0,
+      active_session_count: 0,
+      duration: { status: 'not_collected', summed_ms: null, wall_clock_ms: null, sessions_with_duration: 0, sessions_without_duration: 0 },
+      tokens: { status: 'not_collected', input_tokens: null, output_tokens: null, cached_input_tokens: null, sessions_with_usage: 0, sessions_without_usage: 0 },
+      cost: { status: 'not_collected', amount_micros: null, currency: null },
+    };
+    const collectedGroup = proj.project_id === 'P-001' && group;
+    const byTask = [...tasks].sort((a, b) => a.work_id.localeCompare(b.work_id)).map((t) => ({
+      work_id: t.work_id,
+      workstream_id: t.workstream_id,
+      ...structuredClone(notCollectedRollup),
+    }));
+    const projectMembers = data.people
+      .filter((p) => proj.member_person_ids.includes(p.person_id))
+      .sort((a, b) => a.person_id.localeCompare(b.person_id));
+    const collectedMembers = collectedGroup && projectMembers.length > 0 ? [projectMembers[0]] : [];
+    const missingMembers = collectedGroup && projectMembers.length > 0 ? projectMembers.slice(1) : projectMembers;
+    const toMemberCov = (m) => ({
+      member_id: m.person_id, member_kind: 'person', person_id: m.person_id,
+      display_name: m.display_name, group_ids: m.group_id ? [m.group_id] : [],
+    });
+    const projectRollup = collectedGroup ? {
+      session_count: 1,
+      active_session_count: 0,
+      duration: { status: 'collected', summed_ms: 1_800_000, wall_clock_ms: 1_800_000, sessions_with_duration: 1, sessions_without_duration: 0 },
+      tokens: { status: 'collected', input_tokens: 6_400, output_tokens: 1_200, cached_input_tokens: 800, sessions_with_usage: 1, sessions_without_usage: 0 },
+      cost: { status: 'not_collected', amount_micros: null, currency: null },
+    } : structuredClone(notCollectedRollup);
+    const byMember = projectMembers.map((m, idx) => ({
+      ...toMemberCov(m),
+      actor_ids: [m.person_id],
+      ...(collectedGroup && idx === 0 ? structuredClone(projectRollup) : structuredClone(notCollectedRollup)),
+    }));
+    const usageStatus = collectedGroup ? (missingMembers.length === 0 ? 'complete' : 'partial') : 'not_collected';
+    return reply(projectId, query, {
+      project_id: proj.project_id,
+      scope: query.work_id ? 'work' : query.workstream_id ? 'workstream' : 'project',
+      work_id: query.work_id ?? null,
+      workstream_id: query.workstream_id ?? null,
+      collection: {
+        personal_ledger_collected: false,
+        billing_collected: false,
+        cost_status: 'not_collected',
+        usage_scope: 'host_session',
+        usage_provenance: 'caller_declared',
+        duration_basis: 'recorded_session_events',
+        is_historical_observation: true,
+        is_not_estimated_remaining_time: true,
+      },
+      project: projectRollup,
+      by_task: byTask,
+      by_member: byMember,
+      member_scope: 'project',
+      member_ordering: 'identifier_asc',
+      personal_comparison_ranking: false,
+      coverage: {
+        status: usageStatus,
+        cost_status: 'not_collected',
+        usage_status: usageStatus,
+        duration_status: collectedGroup ? 'complete' : 'not_collected',
+        hidden_work_count: 0,
+        groups: {
+          registered: Boolean(group),
+          collected: collectedGroup ? [{ id: group.id, name: group.name }] : [],
+          missing: !collectedGroup && group ? [{ id: group.id, name: group.name }] : [],
+        },
+        members: {
+          scope: 'project',
+          collected: collectedMembers.map(toMemberCov),
+          missing: missingMembers.map(toMemberCov),
+          hidden_member_count: 0,
+        },
+      },
+      as_of: { at_unix_ms: data.now_unix_ms, source_snapshot_id: `snapshot-${proj.project_id}-47`, project_revision: '47' },
+      execution_authorized: false,
+    });
   }
 
   function portfolioOverview(query = {}) {
