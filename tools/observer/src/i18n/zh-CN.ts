@@ -227,6 +227,18 @@ const zhCN = {
       roles: {
         observer: '只读', developer: '开发', reviewer: '复核', supervisor: '主管', deliverer: '交付', administrator: '管理员',
       },
+      abilities: {
+        readWork: '看项目和任务',
+        executeAndSubmit: '接任务、推进、提交成果',
+        reviewOthers: '复核别人的成果',
+        assignAndPlan: '派工，批准和发布拆解',
+        confirmIntegration: '确认通过复核的成果已经合入',
+        manageAccess: '管理成员和权限',
+        readAudit: '看项目的审计记录',
+      },
+      allowed: '包含',
+      notIncluded: '不包含',
+      cellUnknown: '未提供',
     },
     statusTitle: '状态怎么读', statusLabelHeader: '页面上写的', statusMeaningHeader: '意思',
     taskStatus: {
@@ -248,6 +260,8 @@ const zhCN = {
     },
     organizationTitle: '组织和部门',
     organizationNote: '现在的成员目录里，部门是平铺的一层。“小组属于哪个部门”还没有，部门和最高层那两页的汇总要靠它。',
+    organizationHierarchyNote: '这里按项目目录登记的部门上下级画出层级。部门和最高层那两页的汇总也按这套上下级关系来算。',
+    organizationNoDepartments: '这个组织还没有登记下属部门',
     vocabularyTitle: '页面用词', vocabularyName: '软件研发', vocabularyMeta: '任务、完成标准、复核、工作线',
     vocabularyNote: '其他行业只留了这个位置：换一套词，页面结构不变。现在不做。',
     evidenceTitle: '什么算依据',

@@ -23,6 +23,7 @@ test('the real directory projection joins people by stable ID, including same na
     configured: true,
     organization: 'Example company',
     departments: [engineering, research],
+    allDepartments: [engineering, research],
     updated_at_ms: identities.data.updated_at_ms,
     members: [
       { personId: 'directory-person', name: 'Project coordinator', available: true, departments: [engineering, research] },
@@ -37,16 +38,21 @@ test('the real directory projection joins people by stable ID, including same na
 });
 
 test('real hierarchical, flat and unconfigured replies retain their parent relationships', () => {
+  const engineeringNode = { key: 'engineering', name: 'Engineering', parentKey: null };
+  const platform = { key: 'platform', name: 'Platform', parentKey: 'engineering' };
+  const runtime = { key: 'runtime', name: 'Runtime', parentKey: 'platform' };
   const scheduling = { key: 'scheduling', name: 'Scheduling', parentKey: 'runtime' };
   const hierarchicalResult = projectDirectory(hierarchy.data);
   assert.deepEqual(hierarchicalResult.departments, [scheduling]);
+  assert.deepEqual(hierarchicalResult.allDepartments, [engineeringNode, platform, runtime, scheduling]);
   assert.deepEqual(hierarchicalResult.members, [{
     personId: 'directory-person', name: 'Project coordinator', available: true, departments: [scheduling],
   }]);
   const engineering = { key: 'engineering', name: 'Engineering', parentKey: null };
   assert.deepEqual(projectDirectory(flat.data).departments, [engineering]);
+  assert.deepEqual(projectDirectory(flat.data).allDepartments, [engineering]);
   assert.deepEqual(projectDirectory(unconfigured.data), {
-    configured: false, organization: null, departments: [], updated_at_ms: null, members: [],
+    configured: false, organization: null, departments: [], allDepartments: [], updated_at_ms: null, members: [],
   });
 });
 
