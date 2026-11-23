@@ -428,12 +428,11 @@ describe('settings vocabulary and source craft guards', () => {
     setupSettings();
     renderApp('/settings?scope=demo');
     await screen.findByTestId('settings-organization-tree');
-    // The legacy scanner calls the mandatory prototype word “绑定” engineering copy and the
-    // ordinary English word “completion” an engineering token. Neither is an internal identifier.
-    const violations = findHumanLanguageViolations(document.body)
-      .filter((violation) => violation.match !== '绑定' && violation.match !== 'completion');
-    expect(violations).toEqual([]);
-    expect(defaultVisibleText(document.body)).not.toMatch(/\b(?:undefined|null|NaN|business_role_presets|membership_action_ceiling|protocol_version|parent_id|project_id)\b/);
+    await screen.findByTestId('settings-duty-definitions-missing');
+    const visible = defaultVisibleText(document.body);
+    expect(visible).toContain(language === 'zh-CN' ? '绑定到代码版本' : 'reported completion');
+    expect(findHumanLanguageViolations(document.body)).toEqual([]);
+    expect(visible).not.toMatch(/\b(?:undefined|null|NaN|business_role_presets|membership_action_ceiling|protocol_version|parent_id|project_id)\b/);
   });
 
   it('keeps inline styles, raw colors and non-token dimensions out of production source', () => {
