@@ -251,6 +251,31 @@ afterEach(() => {
 });
 
 describe('Department Projects workbench (AWR-PPO-021)', () => {
+  it('shares department chain focus navigation, Tab order and activation', async () => {
+    const user = userEvent.setup();
+    stubFetch({ '/api/team/portfolio': canonicalPortfolio() });
+    const { queryClient } = renderDeptPage();
+    await waitFor(() => expect(queryClient.getQueryState(queryKeys.portfolio)?.status).toBe('success'));
+    const group = screen.getByRole('group', { name: '链路' });
+    expect(group.classList.contains('obs-segmented-control')).toBe(true);
+    const buttons = within(group).getAllByRole('button');
+    buttons[0].focus();
+    await user.keyboard('{End}');
+    expect(document.activeElement).toBe(buttons[1]);
+    expect(buttons[0].getAttribute('aria-pressed')).toBe('true');
+    await user.tab();
+    expect(group.contains(document.activeElement)).toBe(false);
+    await user.tab({ shift: true });
+    expect(document.activeElement).toBe(buttons[1]);
+    await user.keyboard('{Home}{ArrowLeft}{ArrowRight}');
+    expect(document.activeElement).toBe(buttons[0]);
+    await user.tab();
+    expect(document.activeElement).toBe(buttons[1]);
+    await user.keyboard('{Enter}');
+    expect(buttons[1].getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('location').getAttribute('data-search')).toContain('chain=1');
+  }, 15_000);
+
   it('renders prototype blocks, four KPIs, two chains, rail, three tabs, overdue mark and missing-usage note', async () => {
     const user = userEvent.setup();
     stubFetch({ '/api/team/portfolio': canonicalPortfolio() });
