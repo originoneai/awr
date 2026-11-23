@@ -752,7 +752,13 @@ export function TaskPage() {
           <div data-testid="task-section-blocker">
             <Section title={t('taskPage.blocker.title')} className="task-section">
               {viewModel.blocker.kind === 'wait' ? (
-                <div className="task-block-body">
+                <>
+                  {viewModel.blocker.wait.contractMismatch ? (
+                    <div className="task-report-contract-note" data-testid="task-blocker-contract-note">
+                      {t('taskPage.blocker.contractMismatch')}
+                    </div>
+                  ) : null}
+                  <div className="task-block-body">
                   <div className="task-to-wrap">
                     <span className="obs-tag" data-tone="risk" data-testid="task-blocker-kind">
                       <StatusLamp lamp={healthLampState('risk')} />
@@ -828,6 +834,11 @@ export function TaskPage() {
                       {t('taskPage.blocker.behindUnknown')}
                     </p>
                   )}
+                  {viewModel.blocker.wait.moreWaitsCount > 0 ? (
+                    <p className="task-report-attr" data-testid="task-blocker-more-waits">
+                      {t('taskPage.blocker.moreWaits', { count: viewModel.blocker.wait.moreWaitsCount })}
+                    </p>
+                  ) : null}
                   {viewModel.blocker.wait.inboxDetailKey ? (
                     <div className="task-blocker-link-wrap">
                       <button
@@ -842,6 +853,7 @@ export function TaskPage() {
                     </div>
                   ) : null}
                 </div>
+                </>
               ) : viewModel.blocker.kind === 'assignment' ? (
                 <div className="task-block-body">
                   <div className="task-to-wrap">
@@ -1128,7 +1140,11 @@ export function TaskPage() {
       <footer className="task-coverage-footer" data-testid="task-coverage">
         {viewModel.freshness ? <FreshnessBadge freshness={viewModel.freshness} /> : null}
         <div data-testid="task-coverage-summary">
-          {partialFailure ? t('taskPage.coverage.partial') : t('taskPage.coverage.complete')}
+          {partialFailure
+            ? t('taskPage.coverage.partial')
+            : showUnknownNotice
+              ? t('taskPage.coverage.unknown')
+              : t('taskPage.coverage.complete')}
         </div>
       </footer>
     </div>

@@ -712,7 +712,7 @@ export interface StructuredWaitItem {
 
 /** Verbatim AWR-PPD-050 work.snapshot.data.observation.structured_waits shape. */
 export interface StructuredWaitsObservation {
-  status: 'provided' | 'not_provided' | 'unknown';
+  status: 'provided' | 'not_provided';
   items: StructuredWaitItem[] | null;
   provenance?: 'caller_declared';
   grants_authority?: false;

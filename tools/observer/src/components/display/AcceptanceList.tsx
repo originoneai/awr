@@ -4,19 +4,32 @@ import {
   CircleIcon,
   CircleXIcon,
   ClockIcon,
+  InfoIcon,
   type LucideIcon,
 } from '../icons/prototype-icons';
 import { DisplayIcon } from './DisplayIcon';
 import { EmptyState } from './EmptyState';
 import './display.css';
 
-/** The four states of one completion criterion (.acc data-s in the prototype). */
-export type AcceptanceItemStatus = 'supported' | 'failed' | 'waiting' | 'notStarted';
+/**
+ * The states of one completion criterion: the prototype's four (.acc data-s) plus
+ * PPD-040's distinct neutral states for unbound criteria (`noBoundCheck`) and
+ * truncated delivery facts (`incomplete`).
+ */
+export type AcceptanceItemStatus =
+  | 'supported'
+  | 'failed'
+  | 'waiting'
+  | 'noBoundCheck'
+  | 'incomplete'
+  | 'notStarted';
 
 const STATUS_ICONS: Record<AcceptanceItemStatus, LucideIcon> = {
   supported: CircleCheckIcon,
   failed: CircleXIcon,
   waiting: ClockIcon,
+  noBoundCheck: CircleIcon,
+  incomplete: InfoIcon,
   notStarted: CircleIcon,
 };
 

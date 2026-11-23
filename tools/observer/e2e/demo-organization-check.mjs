@@ -817,6 +817,10 @@ async function taskGeometry(page) {
       rightHeadings: [...document.querySelectorAll('[data-testid="task-col-right"] .obs-section-title')].map((el) => el.textContent?.trim()),
       detailsCount: document.querySelectorAll('details').length,
       freshness: Boolean(document.querySelector('[data-testid="task-coverage"] [data-testid="freshness-badge"]')),
+      hasUnknownBanner: Boolean(document.querySelector('[data-testid="task-unknown"]')),
+      hasPartialBanner: Boolean(document.querySelector('[data-testid="task-partial"]')),
+      statusTagText: document.querySelector('[data-testid="task-meta"] .obs-tag')?.textContent?.trim() ?? '',
+      coverageSummaryText: document.querySelector('[data-testid="task-coverage-summary"]')?.textContent?.trim() ?? '',
     };
   });
 }
@@ -842,6 +846,10 @@ function checkTaskGeometry(metric, compact) {
   }
   if (metric.detailsCount !== 0) failures.push(`task page rendered ${metric.detailsCount} <details> elements (technical details must be omitted)`);
   if (!metric.freshness) failures.push('task freshness badge is missing');
+  const claimsComplete = /任务详情、报告、复核、依赖与动态已读取|task details, report, reviews, dependencies and activity read/i.test(metric.coverageSummaryText);
+  if ((metric.hasUnknownBanner || metric.hasPartialBanner || metric.statusTagText === '未知' || metric.statusTagText === 'Unknown') && claimsComplete) {
+    failures.push(`task page shows unknown/partial state (unknownBanner=${metric.hasUnknownBanner}, partialBanner=${metric.hasPartialBanner}, status=${metric.statusTagText}) but coverage footer claims complete read: ${metric.coverageSummaryText}`);
+  }
   return failures;
 }
 

@@ -48,6 +48,7 @@ export interface TaskCriterionView {
   title: string;
   evidence?: string;
   status: AcceptanceItemStatus | null;
+  reason?: string | null;
 }
 
 export interface TaskReportView {
@@ -105,6 +106,8 @@ export interface TaskBlockerWaitView {
   behindCount: number | null;
   behindItems: Array<{ id: string; title: string }>;
   inboxDetailKey: string | null;
+  moreWaitsCount: number;
+  contractMismatch: boolean;
 }
 
 export interface TaskBlockerAssignmentView {
@@ -230,14 +233,29 @@ function cleanNarrative(value: unknown, language: string): string | null {
   return readableNarrative(raw, language);
 }
 
-function mapAcceptanceEvidenceStatus(status: AcceptanceEvidenceStatus): AcceptanceItemStatus {
+function isCriterionTruncated(item: AcceptanceEvidenceItem, factsTruncated: boolean): boolean {
+  return item.status === 'waiting'
+    && (item.reason === 'facts_truncated' || (factsTruncated && item.reason !== 'awaiting_current_candidate'));
+}
+
+function mapAcceptanceEvidenceStatus(status: AcceptanceEvidenceStatus, truncated: boolean): AcceptanceItemStatus {
+  if (truncated) return 'incomplete';
   if (status === 'supported') return 'supported';
   if (status === 'failed') return 'failed';
   if (status === 'waiting') return 'waiting';
+  if (status === 'no_bound_check') return 'noBoundCheck';
   return 'notStarted';
 }
 
-function formatCriterionEvidence(item: AcceptanceEvidenceItem, language: string, t: TFunction): string | undefined {
+function formatCriterionEvidence(
+  item: AcceptanceEvidenceItem,
+  truncated: boolean,
+  language: string,
+  t: TFunction,
+): string | undefined {
+  if (truncated) {
+    return t('taskPage.acceptance.evidence.factsTruncated');
+  }
   const checkNames = item.checks.map((c, i) => checkLabel(c.check, { language, position: i + 1 }).text);
   const passedChecks = item.checks
     .filter((c) => c.outcome === 'passed')
@@ -355,13 +373,21 @@ function buildOneSentence(params: {
   } = params;
   const total = criteria.length;
   const supported = criteria.filter((c) => c.status === 'supported').length;
-  const waitingCriteria = criteria.filter((c) => c.status === 'waiting').length;
+  const awaitingReview = criteria.filter(
+    (c) => c.status === 'waiting' && c.reason === 'awaiting_review_approval',
+  ).length;
 
   switch (status) {
     case 'review': {
       const days = wait?.days ?? delivery?.rounds.find((r) => r.verdict === 'open')?.waitDays ?? null;
-      if (days !== null && hasPerCriterionEvidence && total > 0 && waitingCriteria > 0) {
-        return t('taskPage.summary.reviewWithCriteria', { days, total, supported, waiting: waitingCriteria });
+      if (days !== null && hasPerCriterionEvidence && total > 0 && awaitingReview > 0) {
+        if (supported > 0) {
+          return t('taskPage.summary.reviewWithCriteria', { days, total, supported, waiting: awaitingReview });
+        }
+        if (awaitingReview === total) {
+          return t('taskPage.summary.reviewAllAwaiting', { days, total });
+        }
+        return t('taskPage.summary.reviewSomeAwaiting', { days, total, waiting: awaitingReview });
       }
       if (days !== null) return t('taskPage.summary.reviewWithDays', { days });
       return t('taskPage.summary.review');
@@ -397,7 +423,7 @@ function buildOneSentence(params: {
       }
       return t('taskPage.summary.stalled');
     case 'waiting':
-      if (wait?.kind === 'external' && wait.waitingOnName && wait.what) {
+      if (wait?.kind === 'external' && !wait.contractMismatch && wait.waitingOnName && wait.what) {
         return wait.days !== null
           ? t('taskPage.summary.waitingExternalDays', { party: wait.waitingOnName, what: wait.what, days: wait.days })
           : t('taskPage.summary.waitingExternal', { party: wait.waitingOnName, what: wait.what });
@@ -506,6 +532,7 @@ export function deriveTaskPageModel(input: TaskPageDeriveInput): TaskPageModel {
 
   // Acceptance criteria: strictly read verbatim PPD-040 acceptance_evidence object shape;
   // when absent or status === 'not_provided', fall back to the contract criteria with explicit "尚无逐条依据".
+  const collab = snapshot?.observation?.collaboration ?? null;
   const contract = snapshot?.visible_contract ?? snapshot?.published_contract;
   const rawEvidence = snapshot?.acceptance_evidence;
   const evidenceItems = rawEvidence
@@ -515,19 +542,29 @@ export function deriveTaskPageModel(input: TaskPageDeriveInput): TaskPageModel {
     && rawEvidence.items.length > 0
     ? rawEvidence.items
     : null;
+  const evidenceTruncated = Boolean(
+    rawEvidence
+    && !Array.isArray(rawEvidence)
+    && rawEvidence.status === 'provided'
+    && (rawEvidence.facts_truncated === true || collab?.facts_truncated === true),
+  ) || Boolean(evidenceItems?.some((item) => item.reason === 'facts_truncated'));
   const hasPerCriterionEvidence = evidenceItems !== null;
   const criteria: TaskCriterionView[] = evidenceItems
-    ? evidenceItems.map((item, idx) => ({
-      key: `crit-${idx}`,
-      title: cleanNarrative(item.criterion, language) ?? humanText('contentUnavailable', language),
-      evidence: formatCriterionEvidence(item, language, t),
-      status: mapAcceptanceEvidenceStatus(item.status),
-    }))
+    ? evidenceItems.map((item, idx) => {
+      const truncated = isCriterionTruncated(item, evidenceTruncated);
+      return {
+        key: `crit-${idx}`,
+        title: cleanNarrative(item.criterion, language) ?? humanText('contentUnavailable', language),
+        evidence: formatCriterionEvidence(item, truncated, language, t),
+        status: mapAcceptanceEvidenceStatus(item.status, truncated),
+        reason: truncated ? 'facts_truncated' : item.reason,
+      };
+    })
     : (contract?.acceptance ?? []).flatMap((raw, idx): TaskCriterionView[] => {
       if (!hasObservationValue(raw)) return [];
       const text = cleanNarrative(raw, language);
       if (!text) return [];
-      return [{ key: `crit-${idx}`, title: text, status: null }];
+      return [{ key: `crit-${idx}`, title: text, status: null, reason: null }];
     });
 
   // Latest progress report (using describeProgressReport for full verbatim-sample guard!)
@@ -572,7 +609,6 @@ export function deriveTaskPageModel(input: TaskPageDeriveInput): TaskPageModel {
   }
 
   // Delivery & Review
-  const collab = snapshot?.observation?.collaboration ?? null;
   const modelRounds = (model?.input.reviewRounds.items ?? []).filter((r) => r.taskId === workId);
   const apiRounds = reviewRounds?.items ?? [];
   const hasDelivery = Boolean(
@@ -715,7 +751,7 @@ export function deriveTaskPageModel(input: TaskPageDeriveInput): TaskPageModel {
 
   // Timeline: built exclusively from real audit.development activity for this task, sorted newest-first by timestamp.
   const timeline: TaskTimelineViewItem[] = [];
-  const taskActivity = (activity ?? []).filter((item) => item.work_id == null || item.work_id === workId);
+  const taskActivity = (activity ?? []).filter((item) => item.work_id === workId);
   if (taskActivity.length > 0) {
     const folded = foldOperations(taskActivity, {
       language,
@@ -822,6 +858,8 @@ export function deriveTaskPageModel(input: TaskPageDeriveInput): TaskPageModel {
       behindCount,
       behindItems,
       inboxDetailKey,
+      moreWaitsCount: 0,
+      contractMismatch: false,
     };
     blocker = { kind: 'wait', wait: blockerWaitView };
   } else if (primaryStructuredWait) {
@@ -832,6 +870,8 @@ export function deriveTaskPageModel(input: TaskPageDeriveInput): TaskPageModel {
       && primaryStructuredWait.since_unix_ms <= refNowUnixMs
       ? Math.floor((refNowUnixMs - primaryStructuredWait.since_unix_ms) / DAY_MS)
       : null;
+    const moreWaitsCount = Math.max(0, (structuredWaitsObs?.items?.length ?? 1) - 1);
+    const contractMismatch = structuredWaitsObs?.contract_matches_current === false;
     blockerWaitView = {
       kind: waitingOnExternal ? 'external' : 'reported',
       waitingOnName,
@@ -842,6 +882,8 @@ export function deriveTaskPageModel(input: TaskPageDeriveInput): TaskPageModel {
       behindCount: null,
       behindItems: [],
       inboxDetailKey: null,
+      moreWaitsCount,
+      contractMismatch,
     };
     blocker = { kind: 'wait', wait: blockerWaitView };
   } else if (pendingHandoff) {
@@ -1031,7 +1073,8 @@ export function deriveTaskPageModel(input: TaskPageDeriveInput): TaskPageModel {
     || model?.ordering === 'incomparable'
     || blocker.kind === 'unknown'
     || (blockerWaitView !== null && blockerWaitView.behindCount === null)
-    || (activity?.some((item) => item.result === 'unknown') ?? false);
+    || evidenceTruncated
+    || taskActivity.some((item) => item.result === 'unknown');
 
   // Merge freshness across overview, model, and snapshot
   const baseFreshness = mergeProjectFreshness(overview?.freshness, model?.freshness);

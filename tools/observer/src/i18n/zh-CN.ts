@@ -1214,6 +1214,8 @@ const zhCN = {
       supported: '有依据',
       failed: '没通过',
       waiting: '在等',
+      noBoundCheck: '没有绑定检查',
+      incomplete: '读取不完整',
       notStarted: '还没有开始',
     },
   },
@@ -1279,6 +1281,8 @@ const zhCN = {
     },
     summary: {
       reviewWithCriteria: '在等复核，已经 {{days}} 天。{{total}} 条完成标准里 {{supported}} 条有依据，{{waiting}} 条等复核人确认。',
+      reviewAllAwaiting: '在等复核，已经 {{days}} 天。{{total}} 条完成标准都在等复核人确认。',
+      reviewSomeAwaiting: '在等复核，已经 {{days}} 天。{{total}} 条完成标准里 {{waiting}} 条等复核人确认。',
       reviewWithDays: '在等复核，已经 {{days}} 天。',
       review: '在等复核。',
       verifiedMultiRound: '已经核验：{{total}} 条完成标准都有依据，第 {{rounds}} 轮复核通过。',
@@ -1322,6 +1326,7 @@ const zhCN = {
         awaitingChecksNamed: '等{{checks}}完成',
         awaitingChecks: '等绑定检查完成',
         awaitingCandidate: '等提交当前交付候选',
+        factsTruncated: '读取不完整：交付记录没有读全，暂时无法确认这一条',
         noBoundCheck: '未绑定检查，尚无逐条依据',
         notStarted: '尚未开始执行',
       },
@@ -1416,6 +1421,8 @@ const zhCN = {
       empty: '没有卡住。',
       unknown: '卡点与等待信息尚未读全。',
       externalBadge: '外',
+      moreWaits: '还有 {{count}} 件在等',
+      contractMismatch: '这条等待记录针对旧版任务约定上报，不一定代表当前阻塞',
     },
     why: {
       title: '为什么做',
@@ -1472,6 +1479,7 @@ const zhCN = {
     coverage: {
       complete: '数据读取情况：任务详情、报告、复核、依赖与动态已读取',
       partial: '数据读取情况：部分任务记录没有读全，已确认的内容仍保留',
+      unknown: '数据读取情况：部分事实尚未读全或暂不能确认，未确认的部分按未知显示',
       failed: '数据读取情况：任务详情读取失败，请稍后重试',
       notFound: '数据读取情况：已检查当前可见项目范围，未找到这件任务',
       notFoundPartial: '数据读取情况：部分范围读取失败，当前可见范围未找到这件任务',

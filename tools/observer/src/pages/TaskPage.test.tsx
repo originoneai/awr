@@ -10,6 +10,7 @@ import { findHumanLanguageViolations } from '../lib/human-language-guard';
 import { createAppQueryClient, revokeObservationReads } from '../lib/queries';
 import { RevocationProvider } from '../lib/revocation';
 import { ScopeProvider } from '../lib/scope';
+import type { AcceptanceEvidenceItem } from '../lib/types';
 import { TaskPage } from './TaskPage';
 import { deriveTaskPageModel } from './task-page-model';
 
@@ -235,35 +236,35 @@ function canonicalFixtures() {
             items: [
               {
                 criterion: '提交成功返回订单编号',
-                status: 'supported' as const,
+                status: 'supported',
                 reason: 'bound_checks_passed_and_review_approved',
                 bound_checks: ['提交成功'],
-                checks: [{ check: '提交成功', outcome: 'passed' as const, run_id: 'check-t-102-1' }],
+                checks: [{ check: '提交成功', outcome: 'passed', run_id: 'check-t-102-1' }],
                 examples_count: 1,
                 positive_examples: 1,
                 negative_examples: 0,
               },
               {
                 criterion: '提交失败时返回可读的错误原因',
-                status: 'supported' as const,
+                status: 'supported',
                 reason: 'bound_checks_passed_and_review_approved',
                 bound_checks: ['错误分支'],
-                checks: [{ check: '错误分支', outcome: 'passed' as const, run_id: 'check-t-102-2' }],
+                checks: [{ check: '错误分支', outcome: 'passed', run_id: 'check-t-102-2' }],
                 examples_count: 1,
                 positive_examples: 1,
                 negative_examples: 0,
               },
               {
                 criterion: '同一请求重复提交不会重复下单',
-                status: 'waiting' as const,
+                status: 'waiting',
                 reason: 'awaiting_review_approval',
                 bound_checks: ['重复提交'],
-                checks: [{ check: '重复提交', outcome: 'passed' as const, run_id: 'check-t-102-3' }],
+                checks: [{ check: '重复提交', outcome: 'passed', run_id: 'check-t-102-3' }],
                 examples_count: 1,
                 positive_examples: 1,
                 negative_examples: 0,
               },
-            ],
+            ] as AcceptanceEvidenceItem[],
           },
           observation: {
             observed_at_unix_ms: NOW_UNIX_MS,
@@ -304,7 +305,7 @@ function canonicalFixtures() {
               ],
             },
             structured_waits: {
-              status: 'not_provided' as 'provided' | 'not_provided' | 'unknown',
+              status: 'not_provided' as 'provided' | 'not_provided',
               items: null as Array<{
                 waiting_on: { kind: 'person' | 'group' | 'external_party'; name: string };
                 what: string;
@@ -741,9 +742,60 @@ describe('TaskPage (AWR-PPO-050)', () => {
     expect(within(acc).getByText('有依据')).toBeTruthy();
     expect(within(acc).getByText('没通过')).toBeTruthy();
     expect(within(acc).getByText('在等')).toBeTruthy();
-    expect(within(acc).getAllByText('还没有开始')).toHaveLength(2);
+    const noBoundWord = within(acc).getByText('没有绑定检查');
+    expect(noBoundWord.closest('.obs-acceptance-item')?.getAttribute('data-status')).toBe('noBoundCheck');
+    const notStartedWords = within(acc).getAllByText('还没有开始');
+    expect(notStartedWords).toHaveLength(1);
+    expect(notStartedWords[0]?.closest('.obs-acceptance-item')?.getAttribute('data-status')).toBe('notStarted');
     expect(within(acc).getByText('复核已退回，需修改后重审')).toBeTruthy();
     expect(within(acc).getByText('未绑定检查，尚无逐条依据')).toBeTruthy();
+    expect(findHumanLanguageViolations(container)).toEqual([]);
+  });
+
+  it('renders no_bound_check as "No bound check" in English, distinct from "Not started"', async () => {
+    await i18n.changeLanguage('en-US');
+    const fixtures = canonicalFixtures();
+    (fixtures.snapshot.result.data as Record<string, unknown>).acceptance_evidence = {
+      status: 'provided',
+      basis: 'contract_examples_and_current_candidate',
+      candidate_digest: null,
+      candidate_current: false,
+      review_state: null,
+      review_current_candidate: false,
+      facts_truncated: false,
+      items: [
+        {
+          criterion: 'Export order matches approved template',
+          status: 'no_bound_check',
+          reason: 'no_bound_check',
+          bound_checks: [],
+          checks: [],
+          examples_count: 1,
+          positive_examples: 1,
+          negative_examples: 0,
+        },
+        {
+          criterion: 'Replay passes on sample batch',
+          status: 'not_started',
+          reason: 'work_not_started',
+          bound_checks: ['replay.check'],
+          checks: [{ check: 'replay.check', outcome: 'not_recorded', run_id: null }],
+          examples_count: 1,
+          positive_examples: 1,
+          negative_examples: 0,
+        },
+      ],
+    };
+    const { container, queryClient } = renderTaskPage('/tasks/T-102?scope=P-001', defaultHandler(fixtures));
+    await waitFor(() => {
+      expect(screen.getByTestId('task-acceptance-count').textContent).toBe('2');
+    });
+    await waitForSettled(queryClient);
+    const acc = screen.getByTestId('task-section-acceptance');
+    const noBoundRow = within(acc).getByText('No bound check').closest('.obs-acceptance-item');
+    const notStartedRow = within(acc).getByText('Not started').closest('.obs-acceptance-item');
+    expect(noBoundRow?.getAttribute('data-status')).toBe('noBoundCheck');
+    expect(notStartedRow?.getAttribute('data-status')).toBe('notStarted');
     expect(findHumanLanguageViolations(container)).toEqual([]);
   });
 
@@ -1657,5 +1709,407 @@ describe('TaskPage (AWR-PPO-050)', () => {
       expect(derived.blocker.wait.behindCount).toBeNull();
       expect(derived.blocker.wait.behindItems.length).toBeGreaterThan(0);
     }
+  });
+
+  // --- Round 3 review fixes: PPD-040 summary, facts_truncated, structured_waits, timeline work_id, H6a, unknown footer ---
+
+  it('counts only awaiting_review_approval as awaiting reviewer confirmation in hero summary (never awaiting_bound_checks or awaiting_current_candidate)', async () => {
+    // Case A: All 3 criteria awaiting_review_approval (true PPD-040 state for open review with passing checks).
+    const allAwaitingReview = canonicalFixtures();
+    allAwaitingReview.snapshot.result.data.acceptance_evidence.items = [
+      {
+        criterion: '提交成功返回订单编号',
+        status: 'waiting',
+        reason: 'awaiting_review_approval',
+        bound_checks: ['单元测试'],
+        checks: [{ check: '单元测试', outcome: 'passed', run_id: 'r1' }],
+        examples_count: 1,
+        positive_examples: 1,
+        negative_examples: 0,
+      },
+      {
+        criterion: '提交失败时返回可读的错误原因',
+        status: 'waiting',
+        reason: 'awaiting_review_approval',
+        bound_checks: ['接口约定检查'],
+        checks: [{ check: '接口约定检查', outcome: 'passed', run_id: 'r2' }],
+        examples_count: 1,
+        positive_examples: 1,
+        negative_examples: 0,
+      },
+      {
+        criterion: '同一请求重复提交不会重复下单',
+        status: 'waiting',
+        reason: 'awaiting_review_approval',
+        bound_checks: ['单元测试'],
+        checks: [{ check: '单元测试', outcome: 'passed', run_id: 'r3' }],
+        examples_count: 1,
+        positive_examples: 1,
+        negative_examples: 0,
+      },
+    ];
+    const vAll = renderTaskPage('/tasks/T-102?scope=P-001', defaultHandler(allAwaitingReview));
+    await waitFor(() => expect(screen.getByTestId('task-acceptance-count').textContent).toBe('3'));
+    await waitForSettled(vAll.queryClient);
+    expect(screen.getByTestId('task-summary').textContent).toBe('在等复核，已经 2 天。3 条完成标准都在等复核人确认。');
+    vAll.unmount();
+
+    // Case B: Mixed waiting reasons: only 1 is awaiting_review_approval, 1 is awaiting_bound_checks, 1 is awaiting_current_candidate.
+    const mixedWaiting = canonicalFixtures();
+    mixedWaiting.snapshot.result.data.acceptance_evidence.items = [
+      {
+        criterion: '标准一',
+        status: 'waiting',
+        reason: 'awaiting_review_approval',
+        bound_checks: ['单元测试'],
+        checks: [{ check: '单元测试', outcome: 'passed', run_id: 'r1' }],
+        examples_count: 1,
+        positive_examples: 1,
+        negative_examples: 0,
+      },
+      {
+        criterion: '标准二',
+        status: 'waiting',
+        reason: 'awaiting_bound_checks',
+        bound_checks: ['压测'],
+        checks: [{ check: '压测', outcome: 'not_recorded', run_id: null }],
+        examples_count: 1,
+        positive_examples: 1,
+        negative_examples: 0,
+      },
+      {
+        criterion: '标准三',
+        status: 'waiting',
+        reason: 'awaiting_current_candidate',
+        bound_checks: ['集成检查'],
+        checks: [{ check: '集成检查', outcome: 'not_recorded', run_id: null }],
+        examples_count: 1,
+        positive_examples: 1,
+        negative_examples: 0,
+      },
+    ];
+    const vMixed = renderTaskPage('/tasks/T-102?scope=P-001', defaultHandler(mixedWaiting));
+    await waitFor(() => expect(screen.getByTestId('task-acceptance-count').textContent).toBe('3'));
+    await waitForSettled(vMixed.queryClient);
+    expect(screen.getByTestId('task-summary').textContent).toBe('在等复核，已经 2 天。3 条完成标准里 1 条等复核人确认。');
+    expect(screen.getByTestId('task-summary').textContent).not.toContain('3 条等复核人确认');
+    vMixed.unmount();
+
+    // Case C: Only awaiting_bound_checks / awaiting_current_candidate -> must NOT claim any awaiting reviewer confirmation.
+    const nonReviewWaits = canonicalFixtures();
+    nonReviewWaits.snapshot.result.data.acceptance_evidence.items = [
+      {
+        criterion: '标准一',
+        status: 'waiting',
+        reason: 'awaiting_bound_checks',
+        bound_checks: ['压测'],
+        checks: [{ check: '压测', outcome: 'not_recorded', run_id: null }],
+        examples_count: 1,
+        positive_examples: 1,
+        negative_examples: 0,
+      },
+      {
+        criterion: '标准二',
+        status: 'waiting',
+        reason: 'awaiting_current_candidate',
+        bound_checks: ['集成检查'],
+        checks: [{ check: '集成检查', outcome: 'not_recorded', run_id: null }],
+        examples_count: 1,
+        positive_examples: 1,
+        negative_examples: 0,
+      },
+    ];
+    const vNonReview = renderTaskPage('/tasks/T-102?scope=P-001', defaultHandler(nonReviewWaits));
+    await waitFor(() => expect(screen.getByTestId('task-acceptance-count').textContent).toBe('2'));
+    await waitForSettled(vNonReview.queryClient);
+    expect(screen.getByTestId('task-summary').textContent).toBe('在等复核，已经 2 天。');
+    expect(screen.getByTestId('task-summary').textContent).not.toContain('等复核人确认');
+    vNonReview.unmount();
+  });
+
+  it('reads facts_truncated and renders incomplete-read copy instead of waiting for checks', async () => {
+    // Case A: facts_truncated=true with legacy reason=awaiting_bound_checks
+    const legacyTrunc = canonicalFixtures();
+    (legacyTrunc.snapshot.result.data as Record<string, unknown>).acceptance_evidence = {
+      status: 'provided',
+      basis: 'contract_examples_and_current_candidate',
+      candidate_digest: 'a'.repeat(64),
+      candidate_current: true,
+      review_state: 'open',
+      review_current_candidate: true,
+      facts_truncated: true,
+      items: [
+        {
+          criterion: '提交成功返回订单编号',
+          status: 'waiting',
+          reason: 'awaiting_bound_checks',
+          bound_checks: ['单元测试'],
+          checks: [{ check: '单元测试', outcome: 'unknown', run_id: null }],
+          examples_count: 1,
+          positive_examples: 1,
+          negative_examples: 0,
+        },
+        {
+          criterion: '错误分支校验',
+          status: 'failed',
+          reason: 'bound_check_failed',
+          bound_checks: ['错误分支'],
+          checks: [{ check: '错误分支', outcome: 'failed', run_id: 'r-fail' }],
+          examples_count: 1,
+          positive_examples: 1,
+          negative_examples: 0,
+        },
+      ],
+    };
+    const vA = renderTaskPage('/tasks/T-102?scope=P-001', defaultHandler(legacyTrunc));
+    await waitFor(() => expect(screen.getByTestId('task-acceptance-count').textContent).toBe('2'));
+    await waitForSettled(vA.queryClient);
+    const accA = screen.getByTestId('task-section-acceptance');
+    const incWordA = within(accA).getByText('读取不完整');
+    expect(incWordA.closest('.obs-acceptance-item')?.getAttribute('data-status')).toBe('incomplete');
+    expect(accA.textContent).toContain('交付记录没有读全');
+    expect(accA.textContent).not.toContain('等单元测试完成');
+    expect(within(accA).queryByText('在等')).toBeNull();
+    // Failed criterion still renders failed even when facts are truncated.
+    expect(within(accA).getByText('没通过')).toBeTruthy();
+    // Truncated facts also trigger unknown notice and prevent complete-read footer claim.
+    expect(screen.getByTestId('task-unknown')).toBeTruthy();
+    expect(screen.getByTestId('task-coverage-summary').textContent).not.toContain('任务详情、报告、复核、依赖与动态已读取');
+    expect(findHumanLanguageViolations(vA.container)).toEqual([]);
+    vA.unmount();
+
+    // Case B: dedicated reason=facts_truncated in English
+    await i18n.changeLanguage('en-US');
+    const dedicatedTrunc = canonicalFixtures();
+    (dedicatedTrunc.snapshot.result.data as Record<string, unknown>).acceptance_evidence = {
+      status: 'provided',
+      basis: 'contract_examples_and_current_candidate',
+      candidate_digest: 'a'.repeat(64),
+      candidate_current: true,
+      review_state: 'open',
+      review_current_candidate: true,
+      facts_truncated: true,
+      items: [
+        {
+          criterion: 'Returns order number on submit',
+          status: 'waiting',
+          reason: 'facts_truncated',
+          bound_checks: ['unit.submit'],
+          checks: [{ check: 'unit.submit', outcome: 'unknown', run_id: null }],
+          examples_count: 1,
+          positive_examples: 1,
+          negative_examples: 0,
+        },
+      ],
+    };
+    const vB = renderTaskPage('/tasks/T-102?scope=P-001', defaultHandler(dedicatedTrunc));
+    await waitFor(() => expect(screen.getByTestId('task-acceptance-count').textContent).toBe('1'));
+    await waitForSettled(vB.queryClient);
+    const accB = screen.getByTestId('task-section-acceptance');
+    expect(within(accB).getByText('Incomplete read')).toBeTruthy();
+    expect(within(accB).queryByText('Waiting')).toBeNull();
+    expect(accB.textContent).not.toContain('Waiting on');
+    expect(findHumanLanguageViolations(vB.container)).toEqual([]);
+    vB.unmount();
+  });
+
+  it('shows remaining count for multiple structured waits and warns when contract_matches_current is false', async () => {
+    // Case A: Multiple structured waits with current contract
+    const multiFixtures = canonicalFixtures();
+    multiFixtures.overviewModel.input.reviewRounds.items = [];
+    multiFixtures.snapshot.result.data.observation.structured_waits = {
+      status: 'provided',
+      items: [
+        {
+          waiting_on: { kind: 'external_party', name: '合作方账务台' },
+          what: '确认结算导出字段格式',
+          since_unix_ms: NOW_UNIX_MS - 3 * DAY,
+          release_condition: '收到签字确认的字段清单',
+        },
+        {
+          waiting_on: { kind: 'person', name: '陈明' },
+          what: '确认重试超时上限',
+          since_unix_ms: NOW_UNIX_MS - 2 * DAY,
+          release_condition: '决定记录完成',
+        },
+        {
+          waiting_on: { kind: 'group', name: '安全审查小组' },
+          what: '批准外发白名单',
+          since_unix_ms: NOW_UNIX_MS - DAY,
+          release_condition: '白名单状态更新为已通过',
+        },
+      ],
+      provenance: 'caller_declared',
+      grants_authority: false,
+      checkpoint_id: '01M83KMD31SZ2NX0Z01JQKJGGE',
+      reported_at_unix_ms: NOW_UNIX_MS - DAY,
+      contract_matches_current: true,
+    };
+    const vMulti = renderTaskPage('/tasks/T-102?scope=P-001', defaultHandler(multiFixtures));
+    await waitFor(() => expect(screen.getByTestId('task-blocker-more-waits')).toBeTruthy());
+    await waitForSettled(vMulti.queryClient);
+    expect(screen.getByTestId('task-blocker-more-waits').textContent).toBe('还有 2 件在等');
+    expect(screen.queryByTestId('task-blocker-contract-note')).toBeNull();
+    expect(findHumanLanguageViolations(vMulti.container)).toEqual([]);
+    vMulti.unmount();
+
+    // Case B: Stale contract (contract_matches_current === false)
+    const staleFixtures = canonicalFixtures();
+    staleFixtures.overviewModel.input.reviewRounds.items = [];
+    staleFixtures.overviewModel.input.tasks.items = [];
+    staleFixtures.snapshot.result.data.observation.progress.phase = 'blocked';
+    staleFixtures.snapshot.result.data.observation.collaboration.review = null as unknown as typeof staleFixtures.snapshot.result.data.observation.collaboration.review;
+    staleFixtures.snapshot.result.data.observation.structured_waits = {
+      status: 'provided',
+      items: [
+        {
+          waiting_on: { kind: 'external_party', name: '合作方账务台' },
+          what: '确认旧版导出字段',
+          since_unix_ms: NOW_UNIX_MS - 5 * DAY,
+          release_condition: '收到确认',
+        },
+      ],
+      provenance: 'caller_declared',
+      grants_authority: false,
+      checkpoint_id: '01M83KMD31SZ2NX0Z01JQKJGGE',
+      reported_at_unix_ms: NOW_UNIX_MS - 5 * DAY,
+      contract_matches_current: false,
+    };
+    const vStale = renderTaskPage('/tasks/T-102?scope=P-001', defaultHandler(staleFixtures));
+    await waitFor(() => expect(screen.getByTestId('task-blocker-contract-note')).toBeTruthy());
+    await waitForSettled(vStale.queryClient);
+    expect(screen.getByTestId('task-blocker-contract-note').textContent).toContain('旧版任务约定');
+    expect(screen.queryByTestId('task-blocker-more-waits')).toBeNull();
+    expect(screen.getByTestId('task-summary').textContent).not.toContain('开不了工：在等合作方账务台');
+    expect(findHumanLanguageViolations(vStale.container)).toEqual([]);
+    vStale.unmount();
+  });
+
+  it('excludes activity entries whose work_id is null or belongs to another task from the task timeline', async () => {
+    const fixtures = canonicalFixtures();
+    fixtures.activity.data.items = [
+      {
+        id: 'EV-PROJECT-NULL',
+        actor_id: 'M-001-agent',
+        client_id: null,
+        actor: { person_id: 'M-001', display_name: '周宁' },
+        client: { display_name: null },
+        action: 'planning.approve',
+        work_id: null,
+        result: 'committed',
+        created_at_unix_ms: NOW_UNIX_MS - 1_000,
+        credential_id: null,
+      },
+      {
+        id: 'EV-OTHER-WORK',
+        actor_id: 'M-002-agent',
+        client_id: null,
+        actor: { person_id: 'M-002', display_name: '林悦' },
+        client: { display_name: null },
+        action: 'review.approve',
+        work_id: 'T-103',
+        result: 'committed',
+        created_at_unix_ms: NOW_UNIX_MS - 2_000,
+        credential_id: null,
+      },
+      {
+        id: 'EV-THIS-WORK',
+        actor_id: 'M-003-agent',
+        client_id: 'M-003-codex',
+        actor: { person_id: 'M-003', display_name: '陈宇' },
+        client: { display_name: 'Codex' },
+        action: 'delivery.submit_and_request_review',
+        work_id: 'T-102',
+        result: 'committed',
+        created_at_unix_ms: NOW_UNIX_MS - 3_600_000,
+        credential_id: null,
+      },
+    ];
+
+    const { queryClient } = renderTaskPage('/tasks/T-102?scope=P-001', defaultHandler(fixtures));
+    await waitFor(() => expect(screen.getByTestId('task-timeline-count').textContent).toBe('1'));
+    await waitForSettled(queryClient);
+
+    const tl = screen.getByTestId('task-section-timeline');
+    expect(tl.querySelectorAll('.obs-timeline-item')).toHaveLength(1);
+    expect(tl.textContent).toContain('陈宇');
+    expect(tl.textContent).not.toContain('周宁');
+    expect(tl.textContent).not.toContain('林悦');
+  });
+
+  it('never marks a non-external wait without a person ID as external even when named 甲方 or ending in 小组/改造 (H6a)', async () => {
+    const cases: Array<{ kind: 'person' | 'group'; name: string; initial: string }> = [
+      { kind: 'person', name: '甲方', initial: '甲' },
+      { kind: 'group', name: '平台小组', initial: '平' },
+      { kind: 'group', name: '订单改造', initial: '订' },
+    ];
+    for (const testCase of cases) {
+      const fixtures = canonicalFixtures();
+      fixtures.overviewModel.input.reviewRounds.items = [];
+      fixtures.snapshot.result.data.observation.structured_waits = {
+        status: 'provided',
+        items: [
+          {
+            waiting_on: { kind: testCase.kind, name: testCase.name },
+            what: '等待内部确认',
+            since_unix_ms: NOW_UNIX_MS - 2 * DAY,
+            release_condition: '内部确认完成',
+          },
+        ],
+        provenance: 'caller_declared',
+        grants_authority: false,
+        checkpoint_id: '01M83KMD31SZ2NX0Z01JQKJGGE',
+        reported_at_unix_ms: NOW_UNIX_MS - DAY,
+        contract_matches_current: true,
+      };
+      const derived = deriveTaskPageModel({
+        workId: 'T-102',
+        projectKey: 'P-001',
+        projectTitle: '订单协作平台',
+        overview: fixtures.overview as unknown as Parameters<typeof deriveTaskPageModel>[0]['overview'],
+        model: fixtures.overviewModel as unknown as Parameters<typeof deriveTaskPageModel>[0]['model'],
+        snapshot: fixtures.snapshot.result.data as unknown as Parameters<typeof deriveTaskPageModel>[0]['snapshot'],
+        language: 'zh-CN',
+        nowUnixMs: NOW_UNIX_MS,
+        timeZone: 'UTC',
+        t: i18n.t.bind(i18n),
+      });
+      expect(derived.blocker.kind).toBe('wait');
+      if (derived.blocker.kind === 'wait') {
+        expect(derived.blocker.wait.waitingOnPersonId).toBeNull();
+        expect(derived.blocker.wait.waitingOnExternal).toBe(false);
+        expect(derived.blocker.wait.kind).not.toBe('external');
+      }
+
+      const view = renderTaskPage('/tasks/T-102?scope=P-001', defaultHandler(fixtures));
+      await waitFor(() => expect(screen.getByTestId('task-blocker-person-static')).toBeTruthy());
+      await waitForSettled(view.queryClient);
+      expect(screen.getByTestId('task-blocker-kind').textContent).not.toBe('等项目外的一方');
+      const avatar = screen.getByTestId('task-blocker-person-static').querySelector('.task-avatar-sm');
+      expect(avatar?.getAttribute('data-external')).toBeNull();
+      expect(avatar?.textContent).toBe(testCase.initial);
+      expect(avatar?.textContent).not.toBe('外');
+      view.unmount();
+    }
+  });
+
+  it('never claims complete read coverage in footer when task status is unknown or unknown notice is displayed', async () => {
+    const fixtures = canonicalFixtures();
+    // Simulate full-demo T-101 shape: overviewModel omits acceptance/verifiedAtUnixMs so status derives to 'unknown'.
+    delete (fixtures.overviewModel.input.tasks.items[0] as Record<string, unknown>).acceptance;
+    delete (fixtures.overviewModel.input.tasks.items[0] as Record<string, unknown>).verifiedAtUnixMs;
+    delete (fixtures.overviewModel.input.tasks.items[0] as Record<string, unknown>).externalWait;
+    fixtures.overviewModel.input.reviewRounds.items[0]!.state = 'approved';
+    fixtures.overviewModel.input.tasks.items[0]!.integrated = true;
+
+    const { container, queryClient } = renderTaskPage('/tasks/T-102?scope=P-001', defaultHandler(fixtures));
+    await waitFor(() => expect(screen.getByTestId('task-unknown')).toBeTruthy());
+    await waitForSettled(queryClient);
+
+    expect(within(screen.getByTestId('task-meta')).getByText('未知')).toBeTruthy();
+    const footerText = screen.getByTestId('task-coverage-summary').textContent ?? '';
+    expect(footerText).toContain('部分事实尚未读全');
+    expect(footerText).not.toContain('任务详情、报告、复核、依赖与动态已读取');
+    expect(findHumanLanguageViolations(container)).toEqual([]);
   });
 });

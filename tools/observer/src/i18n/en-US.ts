@@ -1218,6 +1218,8 @@ const enUS: Messages = {
       supported: 'Supported',
       failed: 'Not met',
       waiting: 'Waiting',
+      noBoundCheck: 'No bound check',
+      incomplete: 'Incomplete read',
       notStarted: 'Not started',
     },
   },
@@ -1283,6 +1285,8 @@ const enUS: Messages = {
     },
     summary: {
       reviewWithCriteria: 'Waiting for review for {{days}} days. {{supported}} of {{total}} acceptance criteria have evidence, {{waiting}} awaiting reviewer confirmation.',
+      reviewAllAwaiting: 'Waiting for review for {{days}} days. All {{total}} acceptance criteria are awaiting reviewer confirmation.',
+      reviewSomeAwaiting: 'Waiting for review for {{days}} days. {{waiting}} of {{total}} acceptance criteria are awaiting reviewer confirmation.',
       reviewWithDays: 'Waiting for review for {{days}} days.',
       review: 'Waiting for review.',
       verifiedMultiRound: 'Verified: all {{total}} acceptance criteria have evidence; passed round {{rounds}} review.',
@@ -1326,6 +1330,7 @@ const enUS: Messages = {
         awaitingChecksNamed: 'Waiting on {{checks}}',
         awaitingChecks: 'Waiting on bound checks',
         awaitingCandidate: 'Waiting for current delivery candidate',
+        factsTruncated: 'Incomplete read: delivery records were truncated before confirming this criterion',
         noBoundCheck: 'No bound check recorded yet',
         notStarted: 'Work has not started yet',
       },
@@ -1420,6 +1425,8 @@ const enUS: Messages = {
       empty: 'Not blocked.',
       unknown: 'Blocker and wait records are not fully read yet.',
       externalBadge: 'Ext',
+      moreWaits: '{{count}} more items waiting',
+      contractMismatch: 'This wait was reported against an earlier task contract and may not reflect the current blocker',
     },
     why: {
       title: 'Why this task exists',
@@ -1476,6 +1483,7 @@ const enUS: Messages = {
     coverage: {
       complete: 'Read coverage: task details, report, reviews, dependencies and activity read',
       partial: 'Read coverage: some task records are incomplete; confirmed facts remain visible',
+      unknown: 'Read coverage: some facts are not fully read or remain unconfirmed; unconfirmed values stay marked unknown',
       failed: 'Read coverage: task details could not be read; retry shortly',
       notFound: 'Read coverage: visible project scope checked; task not found',
       notFoundPartial: 'Read coverage: some reads failed; task not found in visible scope',

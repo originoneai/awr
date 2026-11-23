@@ -683,6 +683,145 @@ function canonicalDepartmentFacts(data) {
   };
 }
 
+/**
+ * Deterministic AWR-PPD-040 per-criterion acceptance_evidence evaluator matching
+ * `crates/awr-team-pg/src/workstream_read/acceptance_evidence.rs`.
+ * Every demo task's evidence status is derived strictly from the snapshot's own
+ * delivery facts (current candidate, verification runs, active review state, and
+ * execution/progress/runtime started state), never from prototype display labels.
+ */
+function evaluateDemoAcceptanceEvidence(criteriaBindings, observation) {
+  const collab = observation?.collaboration ?? {};
+  const candidateObj = asObject(collab.candidate) ? collab.candidate : null;
+  const candidateDigest = typeof candidateObj?.digest === 'string' ? candidateObj.digest : null;
+  const candidateCurrent = candidateObj?.current === true;
+  const factsTruncated = collab.facts_truncated === true;
+
+  const reviewObj = asObject(collab.review) ? collab.review : null;
+  const reviewState = typeof reviewObj?.state === 'string' ? reviewObj.state : null;
+  const reviewCurrentCandidate = candidateCurrent && reviewObj?.current_candidate === true;
+
+  if (!Array.isArray(criteriaBindings) || criteriaBindings.length === 0) {
+    return {
+      status: 'not_provided',
+      basis: 'contract_examples_absent',
+      candidate_digest: candidateDigest,
+      candidate_current: candidateCurrent,
+      review_state: reviewState,
+      review_current_candidate: reviewCurrentCandidate,
+      items: null,
+    };
+  }
+
+  const normalizeOutcome = (raw) => (
+    raw === 'failed' || raw === 'running' || raw === 'unknown' || raw === 'passed' ? raw : 'unknown'
+  );
+  const outcomeRank = (outcome) => (
+    outcome === 'failed' ? 4 : outcome === 'running' ? 3 : outcome === 'passed' ? 1 : 2
+  );
+
+  const checkResults = new Map();
+  if (candidateCurrent && Array.isArray(collab.verification)) {
+    for (const run of collab.verification) {
+      if (typeof run?.check !== 'string') continue;
+      const outcome = normalizeOutcome(run.outcome);
+      const runId = typeof run.run_id === 'string' ? run.run_id : null;
+      const existing = checkResults.get(run.check);
+      if (!existing || outcomeRank(outcome) > outcomeRank(existing.outcome)) {
+        checkResults.set(run.check, { outcome, runId });
+      }
+    }
+  }
+
+  const activeReviewState = reviewCurrentCandidate ? reviewState : null;
+  const definitionState = typeof observation?.definition_state === 'string' ? observation.definition_state : null;
+  const runtimeStateValue = typeof observation?.runtime?.state === 'string' ? observation.runtime.state : null;
+  const workInactive = definitionState === 'cancelled' || definitionState === 'archived'
+    || runtimeStateValue === 'cancelled' || runtimeStateValue === 'archived';
+  const currentExecution = observation?.execution?.contract_matches_current === true;
+  const currentProgress = observation?.progress?.contract_matches_current === true;
+  const workStarted = candidateCurrent
+    || currentExecution
+    || currentProgress
+    || (runtimeStateValue !== null && !['unclaimed', 'cancelled', 'archived'].includes(runtimeStateValue));
+  const missingOutcome = candidateCurrent && factsTruncated ? 'unknown' : 'not_recorded';
+
+  const items = criteriaBindings.map((binding) => {
+    const boundChecks = Array.isArray(binding.bound_checks) ? binding.bound_checks : [];
+    const checks = boundChecks.map((check) => {
+      const hit = checkResults.get(check);
+      return {
+        check,
+        outcome: hit ? hit.outcome : missingOutcome,
+        run_id: hit ? hit.runId : null,
+      };
+    });
+
+    let status;
+    let reason;
+    if (boundChecks.length === 0) {
+      status = 'no_bound_check';
+      reason = 'no_bound_check';
+    } else if (!candidateCurrent) {
+      if (workInactive) {
+        status = 'not_started';
+        reason = 'work_inactive';
+      } else if (workStarted) {
+        status = 'waiting';
+        reason = 'awaiting_current_candidate';
+      } else {
+        status = 'not_started';
+        reason = 'work_not_started';
+      }
+    } else {
+      const anyFailed = boundChecks.some((check) => checkResults.get(check)?.outcome === 'failed');
+      const allPassed = !factsTruncated
+        && boundChecks.every((check) => checkResults.get(check)?.outcome === 'passed');
+      if (anyFailed) {
+        status = 'failed';
+        reason = 'bound_check_failed';
+      } else if (activeReviewState === 'rejected') {
+        status = 'failed';
+        reason = 'review_returned';
+      } else if (factsTruncated) {
+        status = 'waiting';
+        reason = 'facts_truncated';
+      } else if (allPassed && activeReviewState === 'approved') {
+        status = 'supported';
+        reason = 'bound_checks_passed_and_review_approved';
+      } else if (allPassed) {
+        status = 'waiting';
+        reason = 'awaiting_review_approval';
+      } else {
+        status = 'waiting';
+        reason = 'awaiting_bound_checks';
+      }
+    }
+
+    return {
+      criterion: binding.criterion,
+      status,
+      reason,
+      bound_checks: boundChecks,
+      checks,
+      examples_count: binding.examples_count ?? 1,
+      positive_examples: binding.positive_examples ?? 1,
+      negative_examples: binding.negative_examples ?? 0,
+    };
+  });
+
+  return {
+    status: 'provided',
+    basis: 'contract_examples_and_current_candidate',
+    candidate_digest: candidateDigest,
+    candidate_current: candidateCurrent,
+    review_state: reviewState,
+    review_current_candidate: reviewCurrentCandidate,
+    facts_truncated: factsTruncated,
+    items,
+  };
+}
+
 function createDemoOrganization({ variant = 'full',
   timestampShiftMs = defaultDemoTimestampShiftMs() } = {}) {
   if (!Number.isInteger(timestampShiftMs)) throw new Error('Demo timestamp offset must be an integer');
@@ -1061,7 +1200,47 @@ function createDemoOrganization({ variant = 'full',
       selected_completion_id: completionId,
     };
     const docs = documentsForTask(work);
-    const report = progress(work);
+    const baseReport = progress(work);
+    // Verbatim AWR-PPD-050: structured_waits.status === 'provided' only exists alongside
+    // a progress checkpoint report with non-null checkpoint_id, reported_at_unix_ms, and
+    // contract_matches_current (matching crates/awr-server/tests/samples/work-snapshot-structured-waits.json).
+    const canonicalExtWaitItem = variant === 'canonical' && work.wait?.kind === 'ext'
+      ? {
+        waiting_on: { kind: 'external_party', name: work.wait.waiting_on_name },
+        what: work.wait.what,
+        since_unix_ms: work.wait.started_at_unix_ms,
+        release_condition: work.next_step || work.wait.what,
+      }
+      : null;
+    const report = canonicalExtWaitItem
+      ? (baseReport
+        ? { ...baseReport, waits: [canonicalExtWaitItem] }
+        : {
+          phase: phase(work),
+          summary: `等待${work.wait.waiting_on_name}${work.wait.what}`,
+          completed: [],
+          blockers: [`在等${work.wait.waiting_on_name}${work.wait.what}`],
+          tests: [],
+          artifacts: [],
+          origin: {
+            actor_id: `${work.owner_person_id}-agent`,
+            actor_name: person(work.owner_person_id).display_name,
+            client_id: `${work.owner_person_id}-client`,
+            session_id: `session-${work.work_id.toLowerCase()}`,
+          },
+          provenance: 'caller_declared',
+          reported_at_unix_ms: work.wait.started_at_unix_ms,
+          reported_contract_hash: contract,
+          recorded_project_revision: '47',
+          report_order_basis: 'recorded_project_revision',
+          contract_matches_current: true,
+          stale: false,
+          next_action: work.next_step,
+          checkpoint_id: `checkpoint-${work.work_id.toLowerCase()}`,
+          client_observed_at_unix_ms: null,
+          waits: [canonicalExtWaitItem],
+        })
+      : baseReport;
     const collaboration = {
       acceptance_inferred: false,
       delivery_required: Boolean(work.delivery),
@@ -1101,7 +1280,7 @@ function createDemoOrganization({ variant = 'full',
       contract_hash: contract,
       definition_state: 'enabled',
       observed_at_unix_ms: data.now_unix_ms,
-      last_activity_at_unix_ms: work.report?.reported_at_unix_ms ?? work.timeline[0]?.at_unix_ms ?? null,
+      last_activity_at_unix_ms: report?.reported_at_unix_ms ?? work.timeline[0]?.at_unix_ms ?? null,
       automatic_resume: false,
       observation_scope: 'current_work_ownership',
       execution_authorized: false,
@@ -1146,7 +1325,7 @@ function createDemoOrganization({ variant = 'full',
       session_execution: null,
       progress: report,
       reporting: {
-        version: 1, stale_after_ms: 900000, client_reported_at_unix_ms: work.report?.reported_at_unix_ms ?? null,
+        version: 1, stale_after_ms: 900000, client_reported_at_unix_ms: report?.reported_at_unix_ms ?? null,
         client_stale: false, billing_collected: false, usage_aggregation: 'none', provenance: 'caller_declared',
         model_basis: 'latest_session_declaration; not execution-time attribution',
         client_origin: report?.origin ?? null,
@@ -1156,7 +1335,7 @@ function createDemoOrganization({ variant = 'full',
       dependencies_ready_advisory: work.dependencies.every((dependency) => dependency.satisfied),
       checkpoint: report ? {
         id: report.checkpoint_id, created_at_unix_ms: report.reported_at_unix_ms,
-        contract_matches_current: true, next_action: work.next_step, open_loops: work.report?.blockers ?? [],
+        contract_matches_current: true, next_action: work.next_step, open_loops: report.blockers ?? [],
       } : null,
       waiting_user: work.wait?.kind === 'decision',
       model: null,
@@ -1173,25 +1352,20 @@ function createDemoOrganization({ variant = 'full',
       guidance: { code: 'task_intake', when: 'observe_only', because: ['read-only observation'],
         action: { op: 'work.next', note: work.next_step }, recheck_on: 'recorded facts change' },
       client: { product: work.agent_name, version: null, model: null,
-        capabilities: { model: 'unknown', progress: work.report ? 'supported' : 'unsupported', usage: 'unsupported' } },
+        capabilities: { model: 'unknown', progress: report ? 'supported' : 'unsupported', usage: 'unsupported' } },
       adopted_dependencies: [],
       // Verbatim AWR-PPD-050 observation.structured_waits shape (matches crates/awr-server/tests/samples/work-snapshot-structured-waits.json
       // and work-snapshot-legacy-waits.json). Omitted outside canonical so non-canonical variants keep legacy behavior.
       ...(variant === 'canonical' ? {
-        structured_waits: work.wait?.kind === 'ext'
+        structured_waits: canonicalExtWaitItem && report
           ? {
             status: 'provided',
-            items: [{
-              waiting_on: { kind: 'external_party', name: work.wait.waiting_on_name },
-              what: work.wait.what,
-              since_unix_ms: work.wait.started_at_unix_ms,
-              release_condition: work.next_step || work.wait.what,
-            }],
+            items: [canonicalExtWaitItem],
             provenance: 'caller_declared',
             grants_authority: false,
-            checkpoint_id: report?.checkpoint_id ?? null,
-            reported_at_unix_ms: report?.reported_at_unix_ms ?? null,
-            contract_matches_current: report ? true : null,
+            checkpoint_id: report.checkpoint_id,
+            reported_at_unix_ms: report.reported_at_unix_ms,
+            contract_matches_current: report.contract_matches_current,
           }
           : {
             status: 'not_provided',
@@ -1200,7 +1374,7 @@ function createDemoOrganization({ variant = 'full',
             grants_authority: false,
             checkpoint_id: report?.checkpoint_id ?? null,
             reported_at_unix_ms: report?.reported_at_unix_ms ?? null,
-            contract_matches_current: report ? true : null,
+            contract_matches_current: report ? report.contract_matches_current : null,
           },
       } : {}),
     };
@@ -1246,68 +1420,26 @@ function createDemoOrganization({ variant = 'full',
         version: 1, consistency: 'repeatable_read', queried_at_unix_ms: data.now_unix_ms,
         project_revision: '47', source_snapshot_id: sourceSnapshot(projectId), coordinator_epoch: `epoch-${projectId}-47`,
       },
-      // Verbatim AWR-PPD-040 acceptance_evidence shape (matches tools/observer/test/fixtures/ppd040/work-snapshot-supported.json
-      // and work-snapshot-legacy.json). Omitted outside canonical so non-canonical variants keep legacy fallback behavior.
+      // Verbatim AWR-PPD-040 acceptance_evidence shape evaluated deterministically from
+      // this snapshot's own delivery facts (matching crates/awr-team-pg/src/workstream_read/acceptance_evidence.rs).
+      // Omitted outside canonical so non-canonical variants keep legacy fallback behavior.
       ...(variant === 'canonical' ? {
-        acceptance_evidence: work.acceptance.length > 0
-          ? {
-            status: 'provided',
-            basis: 'contract_examples_and_current_candidate',
-            candidate_digest: collaboration.candidate?.digest ?? null,
-            candidate_current: collaboration.candidate?.current === true,
-            review_state: collaboration.review?.state ?? null,
-            review_current_candidate: collaboration.review?.current_candidate === true,
-            facts_truncated: false,
-            items: work.acceptance.map((criterion, idx) => {
-              const boundCheck = work.report?.tests?.[idx]?.name
-                ?? work.delivery?.checks?.[0]?.check
-                ?? null;
-              const runId = boundCheck ? `check-${work.work_id.toLowerCase()}-${idx + 1}` : null;
-              const isRejected = collaboration.review?.state === 'rejected';
-              let evStatus = 'not_started';
-              let reason = 'work_not_started';
-              let checkOutcome = 'not_recorded';
-              let checkRunId = null;
-              if (!boundCheck) {
-                evStatus = 'no_bound_check';
-                reason = 'no_bound_check';
-              } else if (criterion.evidence_state === 'ok') {
-                evStatus = 'supported';
-                reason = 'bound_checks_passed_and_review_approved';
-                checkOutcome = 'passed';
-                checkRunId = runId;
-              } else if (criterion.evidence_state === 'bad') {
-                evStatus = 'failed';
-                reason = isRejected ? 'review_returned' : 'bound_check_failed';
-                checkOutcome = isRejected ? 'passed' : 'failed';
-                checkRunId = runId;
-              } else if (criterion.evidence_state === 'wait') {
-                evStatus = 'waiting';
-                reason = collaboration.candidate?.current ? 'awaiting_review_approval' : 'awaiting_bound_checks';
-                checkOutcome = collaboration.candidate?.current ? 'passed' : 'not_recorded';
-                checkRunId = collaboration.candidate?.current ? runId : null;
-              }
-              return {
-                criterion: criterion.text,
-                status: evStatus,
-                reason,
-                bound_checks: boundCheck ? [boundCheck] : [],
-                checks: boundCheck ? [{ check: boundCheck, outcome: checkOutcome, run_id: checkRunId }] : [],
-                examples_count: 1,
-                positive_examples: 1,
-                negative_examples: 0,
-              };
-            }),
-          }
-          : {
-            status: 'not_provided',
-            basis: 'contract_examples_absent',
-            candidate_digest: collaboration.candidate?.digest ?? null,
-            candidate_current: collaboration.candidate?.current === true,
-            review_state: collaboration.review?.state ?? null,
-            review_current_candidate: collaboration.review?.current_candidate === true,
-            items: null,
-          },
+        acceptance_evidence: evaluateDemoAcceptanceEvidence(
+          work.acceptance.map((criterion, idx) => {
+            const deliveryChecks = work.delivery?.checks ?? [];
+            const boundCheck = deliveryChecks.length > 0
+              ? deliveryChecks[idx % deliveryChecks.length].check
+              : (work.report?.tests?.[idx]?.name ?? null);
+            return {
+              criterion: criterion.text,
+              bound_checks: boundCheck ? [boundCheck] : [],
+              examples_count: 1,
+              positive_examples: 1,
+              negative_examples: 0,
+            };
+          }),
+          observation,
+        ),
       } : {}),
     });
   }
@@ -2514,4 +2646,5 @@ module.exports = {
   createDemoOrganization, DemoReadError, DEMO_VARIANTS, DEMO_FUTURE_READ_OPS,
   canonicalOverviewInput, demoOverviewAsOf, canonicalProjectList, canonicalPeriodUpdates,
   canonicalOrganizationDirectory, canonicalPerspectiveFacts, canonicalDepartmentFacts,
+  evaluateDemoAcceptanceEvidence,
 };
