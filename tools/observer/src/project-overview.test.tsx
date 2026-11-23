@@ -3,21 +3,22 @@ import userEvent from '@testing-library/user-event';
 import { axe, toHaveNoViolations } from 'jest-axe';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from './i18n';
-import { formatUnixMs } from './lib/format';
-import { focusManager } from '@tanstack/react-query';
 import { defaultVisibleText, findForbiddenVisibleText } from './lib/human-language-guard';
-import { queryKeys, revokeObservationReads } from './lib/queries';
-import type { TeamWork } from './lib/types';
+import { revokeObservationReads } from './lib/queries';
+import type { ProjectListModel } from './components/projects/project-list-model';
+import { demoOverviewModelResponse, emptyOverviewModelResponse } from './test-fixtures/overview-model';
+import { realShapedActivity, realShapedOverview } from './test-fixtures/real-shaped';
+import { myWorkInput } from './test-fixtures/workbench';
 import {
   DEMO_ACTIVITY,
   DEMO_PROJECT_OVERVIEW,
-  DEMO_PROJECT_WORKS,
   DEMO_PROJECTS,
-  demoWorkSnapshot,
   renderApp,
 } from './test-utils';
 
 expect.extend(toHaveNoViolations);
+
+const NOW = Date.UTC(2026, 10, 19, 10, 0, 0);
 
 function json(payload: unknown) {
   return new Response(JSON.stringify(payload), {
@@ -26,79 +27,171 @@ function json(payload: unknown) {
   });
 }
 
-function makeProjectWorks(count: number) {
-  return Array.from({ length: count }, (_, index) => ({
-    ...DEMO_PROJECT_WORKS[0],
-    key: `W${index + 1}`,
-    title: `Observed project task ${index + 1}`,
-    workstream_id: 'WS1',
-    contract_hash: `contract-${index + 1}`,
-  }));
+function makeRichProjects() {
+  return {
+    ...DEMO_PROJECTS,
+    projects: [{
+      key: 'demo',
+      title: '订单协作平台',
+      role: 'admin',
+      leadPersonId: 'M-001',
+      groupName: '应用小组',
+    }],
+  };
 }
 
-function makeTwoStreamWorks(count: number) {
-  return Array.from({ length: count }, (_, index) => ({
-    ...DEMO_PROJECT_WORKS[0],
-    key: `W${index + 1}`,
-    title: `Observed project task ${index + 1}`,
-    workstream_id: index % 2 === 0 ? 'WS1' : 'WS2',
-    contract_hash: `contract-${index + 1}`,
-  }));
-}
-
-function makeProjectOverview(works: TeamWork[] = DEMO_PROJECT_WORKS) {
+function makeRichOverview() {
   return {
     ...DEMO_PROJECT_OVERVIEW,
-    works,
+    project: 'demo',
+    freshness: {
+      report_received: { status: 'measured', at_unix_ms: NOW - 12 * 60_000 },
+      authoritative: { status: 'measured', at_unix_ms: NOW },
+      page_read: { status: 'measured', at_unix_ms: NOW },
+    },
+    workstreams: [
+      { id: 'WS-FE', title: '前端' },
+      { id: 'WS-BE', title: '后端' },
+      { id: 'WS-QA', title: '验证' },
+    ],
+    works: [
+      { key: 'T-101', title: '订单查询接口', status: 'completed', owner_person: '陈宇', agent: null, next_step: null, detail_loaded: false, workstream_id: 'WS-BE', contract_hash: 'h1' },
+      { key: 'T-102', title: '接口第 3 版：提交与错误反馈', status: 'in_progress', owner_person: '陈宇', agent: null, next_step: null, detail_loaded: false, workstream_id: 'WS-BE', contract_hash: 'h2' },
+      { key: 'T-103', title: '订单页面联调', status: 'in_progress', owner_person: '林悦', agent: null, next_step: null, detail_loaded: false, workstream_id: 'WS-FE', contract_hash: 'h3' },
+      { key: 'T-104', title: '空状态检查', status: 'in_progress', owner_person: '林悦', agent: null, next_step: null, detail_loaded: false, workstream_id: 'WS-FE', contract_hash: 'h4' },
+      { key: 'T-106', title: '业务验收', status: 'planned', owner_person: '许宁', agent: null, next_step: null, detail_loaded: false, workstream_id: 'WS-QA', contract_hash: 'h6' },
+      { key: 'T-110', title: '错误提示文案', status: 'in_progress', owner_person: '林悦', agent: null, next_step: null, detail_loaded: false, workstream_id: 'WS-FE', contract_hash: 'h10' },
+    ],
     coverage: {
-      ...DEMO_PROJECT_OVERVIEW.coverage,
-      works_enumerated: works.length,
-      scope: { ...DEMO_PROJECT_OVERVIEW.coverage.scope, enumerated: works.length },
+      scope: { status: 'succeeded', enumerated: 6, truncated: false, next_cursor: null },
+      streams: [
+        { workstream_id: 'WS-FE', status: 'succeeded', works_enumerated: 3, works_total: 3, truncated: false, next_cursor: null, read_at_unix_ms: NOW },
+        { workstream_id: 'WS-BE', status: 'succeeded', works_enumerated: 2, works_total: 2, truncated: false, next_cursor: null, read_at_unix_ms: NOW },
+        { workstream_id: 'WS-QA', status: 'succeeded', works_enumerated: 1, works_total: 1, truncated: false, next_cursor: null, read_at_unix_ms: NOW },
+      ],
+      failed: 0,
+      truncated: false,
+      works_enumerated: 6,
+      works_total: 6,
     },
   };
 }
 
-function makeActivity(items: unknown[], overrides: Record<string, unknown> = {}) {
+function makeRichModel(overrides: Partial<ProjectListModel> = {}): ProjectListModel {
+  const input = myWorkInput({
+    options: {
+      nowUnixMs: NOW,
+      stalledAfterDays: 2,
+      views: { me: { personId: 'M-002', projectId: 'demo' } },
+    },
+    members: {
+      coverage: 'complete',
+      items: [
+        { personId: 'M-001', displayName: '周宁' },
+        { personId: 'M-002', displayName: '林悦' },
+        { personId: 'M-003', displayName: '陈宇' },
+        { personId: 'M-004', displayName: '许宁' },
+      ],
+    },
+    tasks: {
+      coverage: 'complete',
+      items: [
+        { id: 'T-101', title: '订单查询接口', projectId: 'demo', ownerPersonId: 'M-003', started: true, agentActive: false, acceptance: [{ evidence: [{ passed: true, current: true }] }], submittedResultAtUnixMs: NOW - 5 * 86_400_000, verifiedAtUnixMs: NOW - 4 * 86_400_000, integrated: true, report: { completed: true, reportedAtUnixMs: NOW - 5 * 86_400_000 }, externalWait: null, commitments: [] },
+        { id: 'T-102', title: '接口第 3 版：提交与错误反馈', projectId: 'demo', ownerPersonId: 'M-003', started: true, agentActive: false, acceptance: [{ evidence: [{ passed: true, current: true }] }], submittedResultAtUnixMs: NOW - 2 * 86_400_000, integrated: false, report: { completed: false, reportedAtUnixMs: NOW - 2 * 86_400_000 }, externalWait: null, commitments: [] },
+        { id: 'T-103', title: '订单页面联调', projectId: 'demo', ownerPersonId: 'M-002', started: true, agentName: 'Claude 桌面', agentActive: true, acceptance: [{ evidence: [] }], submittedResultAtUnixMs: null, integrated: false, report: { completed: false, reportedAtUnixMs: NOW - 12 * 60_000 }, externalWait: null, commitments: [] },
+        { id: 'T-104', title: '空状态检查', projectId: 'demo', ownerPersonId: 'M-002', started: true, agentName: 'Codex', agentActive: false, acceptance: [{ evidence: [] }], submittedResultAtUnixMs: null, integrated: false, report: { completed: false, reportedAtUnixMs: NOW - 2 * 86_400_000 }, externalWait: null, commitments: [] },
+        { id: 'T-106', title: '业务验收', projectId: 'demo', ownerPersonId: 'M-004', started: false, agentActive: false, acceptance: [{ evidence: [] }], submittedResultAtUnixMs: null, integrated: false, report: null, externalWait: null, commitments: [] },
+        { id: 'T-110', title: '错误提示文案', projectId: 'demo', ownerPersonId: 'M-002', started: true, agentActive: false, acceptance: [{ evidence: [] }], submittedResultAtUnixMs: null, integrated: false, report: { completed: true, reportedAtUnixMs: NOW - 86_400_000 }, externalWait: null, commitments: [] },
+      ],
+    },
+    dependencies: {
+      coverage: 'complete',
+      items: [
+        { id: 'D-1', consumerTaskId: 'T-103', providerTaskId: 'T-102', satisfied: false, sinceUnixMs: NOW - 2 * 86_400_000 },
+        { id: 'D-2', consumerTaskId: 'T-106', providerTaskId: 'T-103', satisfied: false, sinceUnixMs: NOW - 2 * 86_400_000 },
+      ],
+    },
+    reviewRounds: {
+      coverage: 'complete',
+      items: [
+        { id: 'R-1', taskId: 'T-101', roundIndex: 1, current: true, state: 'approved', independent: true, authorPersonId: 'M-003', reviewerPersonId: 'M-004' },
+        { id: 'R-2', taskId: 'T-102', roundIndex: 1, current: true, state: 'open', independent: true, authorPersonId: 'M-003', reviewerPersonId: 'M-004', openedAtUnixMs: NOW - 2 * 86_400_000 },
+      ],
+    },
+    decisions: {
+      coverage: 'complete',
+      items: [
+        { id: 'Q-001', taskId: 'T-104', state: 'open', current: true, question: '空状态要不要显示引导文案', allowedResponderIds: ['M-002'], createdAtUnixMs: NOW - 2 * 86_400_000 },
+        { id: 'Q-002', taskId: 'T-102', state: 'open', current: true, question: '登录异常处理要不要返工', allowedResponderIds: ['M-001'], createdAtUnixMs: NOW - 1 * 86_400_000 },
+      ],
+    },
+    handoffs: { coverage: 'complete', items: [] },
+    approvals: { coverage: 'unread', reason: 'not-read', items: [] },
+    activity: { coverage: 'complete', items: [] },
+  });
+  const base = demoOverviewModelResponse(input) as unknown as ProjectListModel;
+  return {
+    ...base,
+    project: 'demo',
+    read_at_unix_ms: Date.now(),
+    periodUpdates: {
+      coverage: 'complete',
+      items: [
+        { id: 'U-001', periodLabel: '第 47 周', startsOn: '2026-11-16', endsOn: '2026-11-22', status: 'risk', summary: '接口第 3 版的复核拖了两天，页面联调在等。', authorPersonId: 'M-001', recordedAtUnixMs: NOW - 30 * 60_000 },
+        { id: 'U-002', periodLabel: '第 46 周', startsOn: '2026-11-09', endsOn: '2026-11-15', status: 'ok', summary: '查询接口加缓存层后压测达标，按计划推进。', authorPersonId: 'M-001', recordedAtUnixMs: NOW - 4 * 86_400_000 },
+        { id: 'U-003', periodLabel: '第 45 周', startsOn: '2026-11-02', endsOn: '2026-11-08', status: 'ok', summary: '完成拆解：6 件任务。', authorPersonId: 'M-001', recordedAtUnixMs: NOW - 11 * 86_400_000 },
+        { id: 'U-004', periodLabel: '第 44 周', startsOn: '2026-10-26', endsOn: '2026-11-01', status: 'ok', summary: '更早一期不应显示在概览最近三条。', authorPersonId: 'M-001', recordedAtUnixMs: NOW - 18 * 86_400_000 },
+      ],
+    },
+    ...overrides,
+  };
+}
+
+function makeRichActivity(count = 8) {
   return {
     ...DEMO_ACTIVITY,
-    data: { ...DEMO_ACTIVITY.data, ...overrides, items },
+    data: {
+      ...DEMO_ACTIVITY.data,
+      items: Array.from({ length: count }, (_, idx) => ({
+        id: `E-${idx + 1}`,
+        action: idx % 2 === 0 ? 'session.checkpoint' : 'delivery.submit_and_request_review',
+        work_id: idx === 0 ? 'T-103' : idx === 1 ? 'T-102' : null,
+        actor: { display_name: idx % 2 === 0 ? '林悦' : '陈宇' },
+        client: idx === 0 ? { display_name: 'Claude 桌面' } : null,
+        client_id: idx === 0 ? 'c-1' : null,
+        result: 'ok',
+        created_at_unix_ms: NOW - (idx + 1) * 12 * 60_000,
+      })),
+    },
   };
 }
 
 function setupOverview({
   path = '/projects/demo?tab=overview',
-  overview = DEMO_PROJECT_OVERVIEW,
-  activity = DEMO_ACTIVITY,
-  snapshot = demoWorkSnapshot,
-  snapshotGate,
+  projects = makeRichProjects(),
+  overview = makeRichOverview(),
+  model = makeRichModel(),
+  activity = makeRichActivity(),
+  gate,
 }: {
   path?: string;
+  projects?: unknown;
   overview?: unknown;
+  model?: unknown;
   activity?: unknown;
-  snapshot?: (workId: string) => unknown;
-  /** Holds every work snapshot read back until it resolves. */
-  snapshotGate?: Promise<void>;
+  gate?: Promise<void>;
 } = {}) {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
-    if (url.includes('/api/team/projects')) return json(DEMO_PROJECTS);
+    if (gate) await gate;
+    if (url.includes('/api/team/projects')) return json(projects);
+    if (url.includes('/api/team/overview-model')) return json(model);
     if (url.includes('/api/team/overview')) return json(overview);
     if (url.includes('/api/team/activity')) return json(activity);
-    if (url.includes('/api/team/read')) {
-      const request = JSON.parse(String(init?.body)) as { query: { op: string; work_id?: string } };
-      if (request.query.op === 'work.snapshot') {
-        await snapshotGate;
-        return json(snapshot(request.query.work_id ?? ''));
-      }
-    }
     return json({ ok: false, error: { code: 'NoRoute', message: url } });
   });
   vi.stubGlobal('fetch', fetchMock);
   return { fetchMock, ...renderApp(path) };
-}
-
-function snapshotCalls(fetchMock: ReturnType<typeof vi.fn>) {
-  return fetchMock.mock.calls.filter(([, init]) => String(init?.body ?? '').includes('"work.snapshot"'));
 }
 
 afterEach(async () => {
@@ -106,1241 +199,252 @@ afterEach(async () => {
   await i18n.changeLanguage('zh-CN');
 });
 
-describe('project workstream progress', () => {
-  it('renders real groups and fields, honest unknowns, the work\'s own state, a plain missing next step and the report time', async () => {
-    setupOverview();
-    expect(await screen.findByRole('link', { name: 'Build the filter API' })).toBeTruthy();
-    expect(screen.getByTestId('workstream-group-WS1').textContent).toContain('Backend workstream');
-    expect(screen.getByTestId('workstream-group-WS2').textContent).toContain('Frontend workstream');
-    expect(screen.getByTestId('project-status-W1').textContent).toBe('已认领');
-    // A responsibility identifier does not supply the missing display name.
-    expect(screen.getByTestId('project-owner-W1').textContent).toBe('未提供');
-    expect(screen.getByTestId('project-owner-W1').getAttribute('data-owner-source')).toBe('none');
-    expect(screen.getByTestId('project-next-W1').textContent).toBe('未报告下一步');
-    expect(screen.getByTestId('last-report-W1').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN'));
-    expect(screen.getByTestId('last-report-W1').textContent).not.toBe(formatUnixMs(1761839900000, 'zh-CN'));
-    expect(screen.getByTestId('last-report-W1').style.whiteSpace).toBe('nowrap');
-    const timeColumn = screen.getByRole('columnheader', { name: '最近报告' }).closest('table')?.querySelector('colgroup')?.lastElementChild as HTMLElement | undefined;
-    expect(timeColumn?.style.width || timeColumn?.getAttribute('width')).toBe('220px');
+describe('ProjectOverview prototype structure and interactions', () => {
+  it('renders verdict band, 4 KPIs, workstream bars, waiting answers rail, recent 6 activity, recent 3 updates and empty reconciliation', async () => {
+    const { fetchMock } = setupOverview();
+    await waitFor(() => expect(screen.getByTestId('project-verdict-sentence').textContent).toBe('接口第 3 版的复核拖了两天，页面联调在等。'));
+
+    expect(screen.getByTestId('project-verdict-word').textContent).toContain('有风险');
+    expect(screen.getByTestId('project-verdict-sentence').hasAttribute('data-reporter-text')).toBe(true);
+    expect(screen.getByTestId('project-verdict-byline').textContent).toContain('第 47 周');
+    expect(screen.getByTestId('project-verdict-byline').textContent).toContain('周宁');
+    expect(screen.getByTestId('project-verdict-basis-btn').textContent).toContain('这句话的依据');
+
+    // 4 KPIs
+    const kpiGroup = screen.getByRole('group', { name: '关键数字' });
+    const kpiButtons = within(kpiGroup).getAllByRole('button');
+    expect(kpiButtons).toHaveLength(4);
+    expect(kpiButtons[0].textContent).toContain('已核验');
+    expect(kpiButtons[0].textContent).toContain('1件');
+    expect(kpiButtons[0].textContent).toContain('共 6 件');
+    expect(kpiButtons[1].textContent).toContain('标了完成，没核验');
+    expect(kpiButtons[1].textContent).toContain('1件');
+    expect(kpiButtons[1].textContent).toContain('错误提示文案');
+    expect(kpiButtons[2].textContent).toContain('等复核');
+    expect(kpiButtons[2].textContent).toContain('1件');
+    expect(kpiButtons[2].textContent).toContain('都在等许宁，最久 2 天');
+    expect(kpiButtons[3].textContent).toContain('等人回答');
+    expect(kpiButtons[3].textContent).toContain('2个');
+    expect(kpiButtons[3].textContent).toContain('最久 2 天');
+
+    // Workstreams block
+    expect(screen.getByTestId('project-workstreams-title').textContent).toBe('3 条工作线走到哪了');
+    expect(screen.getByTestId('workstream-row-WS-FE').textContent).toContain('前端');
+    expect(screen.getByTestId('workstream-row-WS-FE').textContent).toContain('订单页面联调、空状态检查');
+    expect(screen.getByTestId('workstream-row-WS-BE').textContent).toContain('后端');
+    expect(screen.getByTestId('workstream-row-WS-BE').textContent).toContain('接口第 3 版');
+    expect(screen.getByTestId('project-deps-link').textContent).toContain('卡在哪：看依赖');
+
+    // Waiting answers rail
+    expect(screen.getByTestId('project-waiting-answers-count').textContent).toBe('2');
+    const railItems = screen.getAllByTestId('project-waiting-answer-item');
+    expect(railItems).toHaveLength(2);
+    expect(railItems[0].textContent).toContain('空状态要不要显示引导文案');
+    expect(railItems[0].textContent).toContain('等林悦回答 · 2 天');
+
+    // Recent activity capped at 6 with "全部" link
+    expect(screen.getAllByTestId('project-activity-row')).toHaveLength(6);
+    expect(screen.getByTestId('project-activity-all').textContent).toContain('全部');
+
+    // Past updates capped at 3 (4th excluded)
+    const updatesBlock = screen.getByTestId('project-updates');
+    const updateButtons = within(updatesBlock).getAllByRole('button');
+    expect(updateButtons).toHaveLength(3);
+    expect(updatesBlock.textContent).not.toContain('更早一期不应显示在概览最近三条');
+
+    // Reconciliation shows "还没有对账" with zero example numbers
+    const recon = screen.getByTestId('project-reconciliation');
+    expect(screen.getByTestId('project-reconciliation-status').textContent).toBe('还没有对账');
+    expect(recon.textContent).not.toMatch(/\d/);
+
+    // Read-only: zero write requests issued
+    const methods = fetchMock.mock.calls.map(([, init]) => (init?.method ?? 'GET').toUpperCase());
+    expect(methods.every((m) => m === 'GET' || m === 'POST')).toBe(true);
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/team/write'))).toBe(false);
   });
 
-  it('uses the 60-second list cadence for every visible work snapshot', async () => {
-    const { fetchMock, queryClient } = setupOverview();
-    await waitFor(() => expect(snapshotCalls(fetchMock)).toHaveLength(2));
-    const snapshots = queryClient.getQueryCache().getAll().filter((query) => (
-      query.queryKey[0] === 'team' && query.queryKey[1] === 'work.snapshot'
-    ));
-    expect(snapshots).toHaveLength(2);
-    expect(snapshots.map((query) => (
-      'refetchInterval' in query.options ? query.options.refetchInterval : undefined
-    ))).toEqual([60000, 60000]);
+  it('shows at most four waiting answers in the rail while the count says how many there are', async () => {
+    const model = makeRichModel() as unknown as { input: { decisions: { items: Array<Record<string, unknown>> } } };
+    const extra = ['T-101', 'T-103', 'T-106', 'T-110'].map((taskId, index) => ({
+      id: `Q-10${index}`, taskId, state: 'open', current: true, question: `合成问题 ${index + 1}`,
+      allowedResponderIds: ['M-001'], createdAtUnixMs: NOW - (index + 1) * 3_600_000,
+    }));
+    model.input.decisions.items = [...model.input.decisions.items, ...extra];
+    setupOverview({ model });
+    await screen.findByTestId('project-instrument');
+    await waitFor(() => expect(screen.getByTestId('project-waiting-answers-count').textContent).toBe('6'));
+    expect(screen.getAllByTestId('project-waiting-answer-item')).toHaveLength(4);
   });
 
-  it.each([59, 60])('renders every work on page one across two workstreams: %i', async (count) => {
-    setupOverview({ overview: makeProjectOverview(makeTwoStreamWorks(count)) });
-    await waitFor(() => expect(screen.getAllByRole('link', { name: /Observed project task/ })).toHaveLength(count));
-    expect(screen.getByRole('link', { name: `Observed project task ${count}` })).toBeTruthy();
-  }, 20_000);
+  it('names at most two blocked tasks per workstream row', async () => {
+    const model = makeRichModel() as unknown as { input: { dependencies: { items: Array<Record<string, unknown>> } } };
+    model.input.dependencies.items = [
+      ...model.input.dependencies.items,
+      { id: 'D-3', consumerTaskId: 'T-110', providerTaskId: 'T-102', satisfied: false, sinceUnixMs: NOW - 86_400_000 },
+    ];
+    setupOverview({ model });
+    const row = await screen.findByTestId('workstream-row-WS-FE');
+    await waitFor(() => expect(row.textContent).toContain('订单页面联调'));
+    const named = ['订单页面联调', '空状态检查', '错误提示文案'].filter((title) => row.textContent?.includes(title));
+    expect(named).toHaveLength(2);
+  });
 
-  it('renders the correct sixty works on page two across two workstreams', async () => {
-    setupOverview({
-      path: '/projects/demo?tab=overview&page=2',
-      overview: makeProjectOverview(makeTwoStreamWorks(140)),
-    });
-    await waitFor(() => expect(screen.getAllByRole('link', { name: /Observed project task/ })).toHaveLength(60));
-    expect(screen.getByRole('link', { name: 'Observed project task 121' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Observed project task 139' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Observed project task 2' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Observed project task 100' })).toBeTruthy();
-    expect(screen.queryByRole('link', { name: 'Observed project task 120' })).toBeNull();
-    expect(screen.queryByRole('link', { name: 'Observed project task 102' })).toBeNull();
-  }, 20_000);
-
-  it('never puts the service\'s agent-addressed operation or its long note into the row, not even on hover', async () => {
-    const longNote = 'Batch progress with next_action/open_loops. Stop and report workspace execution before repository push or publication. '.repeat(4);
-    setupOverview({
-      snapshot: (workId) => {
-        const response = demoWorkSnapshot(workId);
-        response.result.data.guidance.action.note = longNote;
-        return response;
-      },
-    });
-    const cell = await screen.findByTestId('project-next-W1');
-    await waitFor(() => expect(cell.textContent).toBe('未报告下一步'));
-    expect(cell.textContent).not.toContain('session.checkpoint');
-    expect(cell.textContent).not.toContain('Batch progress');
-    // The row used to carry the note in an always-on tooltip; a person gets no engineering text there now.
+  it('opens a count-matched detail panel for every KPI and navigates from workstreams, basis, decisions, activity and updates', async () => {
     const user = userEvent.setup();
-    await user.hover(cell);
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
-    expect(document.querySelector('.ant-tooltip')).toBeNull();
-    expect(screen.queryByText(/Batch progress with next_action/)).toBeNull();
-    expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('project-progress-table')))).toEqual([]);
+    const { router } = setupOverview();
+    await waitFor(() => expect(screen.getByTestId('project-verdict-sentence').textContent).toContain('接口第 3 版'));
+
+    const kpiGroup = screen.getByRole('group', { name: '关键数字' });
+    const expectedCounts = [1, 1, 1, 2];
+    for (let i = 0; i < expectedCounts.length; i += 1) {
+      const buttons = within(kpiGroup).getAllByRole('button');
+      await user.click(buttons[i]);
+      const detail = await screen.findByTestId('project-overview-metric-detail');
+      expect(Number(detail.getAttribute('data-count'))).toBe(expectedCounts[i]);
+      expect(detail.querySelectorAll('.obs-row-item')).toHaveLength(expectedCounts[i]);
+      await user.click(screen.getByTestId('project-overview-detail-back'));
+      await waitFor(() => expect(screen.queryByTestId('project-overview-metric-detail')).toBeNull());
+    }
+
+    // Workstream click opens plan filtered to that stream
+    await user.click(screen.getByTestId('workstream-row-WS-FE'));
+    expect(router.state.location.search).toContain('tab=plan');
+    expect(router.state.location.search).toContain('stream=WS-FE');
   });
 
-  it('cuts the long ids of a reporter\'s sentence in the row and keeps the sentence as written in its title', async () => {
-    setupOverview({
-      snapshot: (workId) => {
-        const response = demoWorkSnapshot(workId) as { result: { data: { observation: { progress: Record<string, unknown> | null } } } };
-        response.result.data.observation.progress = { next_action: 'Wait for independent review of round 01M6AVQ870N7MBRJ5MPCN79T55.' };
-        return response;
-      },
-    });
-    await waitFor(() => expect(screen.getByTestId('project-next-W1').textContent).toBe('Wait for independent review of round 相关记录.'));
-    expect(screen.getByTestId('project-next-W1').getAttribute('title')).toBe('Wait for independent review of round 相关记录.');
-    expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('project-progress-table')))).toEqual([]);
-  });
-
-  it('shows the next action the work\'s reporter wrote in the checkpoint, the overview row as the fallback, and never the service\'s own hint', async () => {
-    const works = [
-      { ...DEMO_PROJECT_WORKS[0], next_step: 'Row text for the first work' },
-      { ...DEMO_PROJECT_WORKS[1], next_step: 'Row text for the second work' },
-      { ...DEMO_PROJECT_WORKS[1], key: 'W3', title: 'Third work', next_step: null },
-    ];
-    setupOverview({
-      overview: makeProjectOverview(works),
-      snapshot: (workId) => {
-        const response = demoWorkSnapshot(workId) as {
-          result: { data: { next_step: string | null; observation: { progress: Record<string, unknown> | null } } };
-        };
-        response.result.data.observation.progress = workId === 'W1' ? { next_action: 'Wait for the independent review.' } : null;
-        response.result.data.next_step = 'Call work.prepare to restore the context.';
-        return response;
-      },
-    });
-    await waitFor(() => {
-      expect(screen.getByTestId('project-next-W1').textContent).toBe('Wait for the independent review.');
-      expect(screen.getByTestId('project-next-W2').textContent).toBe('Row text for the second work');
-      expect(screen.getByTestId('project-next-W3').textContent).toBe('未报告下一步');
-    });
-    expect(screen.getByTestId('project-progress-table').textContent).not.toContain('work.prepare');
-    // A long sentence is clamped in the row; the whole of it stays in the title and the work's own page.
-    expect(screen.getByTestId('project-next-W1').getAttribute('title')).toBe('Wait for the independent review.');
-    expect(screen.getByTestId('project-next-W3').hasAttribute('title')).toBe(false);
-  });
-
-  it('says loading, not not-read-yet, while a work\'s own read is still pending', async () => {
-    let release: () => void = () => undefined;
-    setupOverview({ snapshotGate: new Promise<void>((resolve) => { release = resolve; }) });
-    await waitFor(() => {
-      expect(screen.getByTestId('project-next-W1').textContent).toBe('加载中…');
-      expect(screen.getByTestId('last-report-W1').textContent).toBe('加载中…');
-      expect(screen.getByTestId('project-status-W1').textContent).toBe('加载中…');
-    });
-    await act(async () => { release(); });
-    await waitFor(() => expect(screen.getByTestId('last-report-W1').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN')));
-    expect(screen.getByTestId('project-next-W1').textContent).toBe('未报告下一步');
-  });
-
-  it('puts no stale note on a finished work, whatever the clock says, and keeps the note on an open one', async () => {
-    setupOverview({
-      snapshot: (workId) => {
-        const response = demoWorkSnapshot(workId) as {
-          result: { data: { runtime: { state: string }; observation: { progress: Record<string, unknown> } } };
-        };
-        response.result.data.observation.progress.stale = true;
-        if (workId === 'W1') response.result.data.runtime.state = 'completed';
-        return response;
-      },
-    });
-    await waitFor(() => {
-      expect(screen.getByTestId('last-report-W1').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN'));
-      expect(screen.getByTestId('last-report-W2').textContent).toBe(`${formatUnixMs(1761839800000, 'zh-CN')}可能已过期`);
-    });
-  });
-
-  it('says how far each work has come: the reporter\'s phase, else the runtime state, else the row\'s status, else unknown', async () => {
-    const works = [
-      DEMO_PROJECT_WORKS[0],
-      DEMO_PROJECT_WORKS[1],
-      { ...DEMO_PROJECT_WORKS[1], key: 'W3', title: 'Third work', status: 'open' },
-      { ...DEMO_PROJECT_WORKS[1], key: 'W4', title: 'Fourth work', status: null },
-    ];
-    setupOverview({
-      overview: makeProjectOverview(works),
-      snapshot: (workId) => {
-        if (workId === 'W3' || workId === 'W4') return { ok: false, error: { code: 'ReadTimeout', message: 'slow' } };
-        const response = demoWorkSnapshot(workId) as {
-          result: { data: { observation: { progress: Record<string, unknown> | null } } };
-        };
-        response.result.data.observation.progress = workId === 'W1' ? { phase: 'ready_for_review' } : null;
-        return response;
-      },
-    });
-    await waitFor(() => {
-      expect(screen.getByTestId('project-status-W1').textContent).toBe('待评审');
-      expect(screen.getByTestId('project-status-W2').textContent).toBe('已认领');
-      expect(screen.getByTestId('project-status-W3').textContent).toBe('进行中');
-      expect(screen.getByTestId('project-status-W4').textContent).toBe('未知');
-    });
-    // the tone is one of the semantic colours: waiting for review is a warning, an unknown state is calm
-    expect(screen.getByTestId('project-status-W1').querySelector('.ant-badge-status-dot')?.className).toContain('ant-badge-status-warning');
-    expect(screen.getByTestId('project-status-W4').querySelector('.ant-badge-status-dot')?.className).toContain('ant-badge-status-default');
-    expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('project-progress-table')))).toEqual([]);
-  });
-
-  it('says "reported as delivered" for a reporter\'s delivered that the system has not confirmed, and delivered once it holds the completion', async () => {
-    setupOverview({
-      snapshot: (workId) => {
-        const response = demoWorkSnapshot(workId) as {
-          result: { data: { runtime: { state: string; selected_completion_id?: string | null }; observation: { progress: Record<string, unknown> | null } } };
-        };
-        response.result.data.observation.progress = { phase: 'delivered' };
-        if (workId === 'W2') response.result.data.runtime = { state: 'completed', selected_completion_id: 'completion-1' };
-        return response;
-      },
-    });
-    await waitFor(() => {
-      expect(screen.getByTestId('project-status-W1').textContent).toBe('汇报称已交付');
-      expect(screen.getByTestId('project-status-W2').textContent).toBe('已交付');
-    });
-    expect(screen.getByTestId('project-status-W1').querySelector('.ant-badge-status-dot')?.className).toContain('ant-badge-status-warning');
-    expect(screen.getByTestId('project-status-W2').querySelector('.ant-badge-status-dot')?.className).toContain('ant-badge-status-success');
-  });
-
-  it('marks a report the service itself declared stale, and only that one', async () => {
-    setupOverview({
-      snapshot: (workId) => {
-        const response = demoWorkSnapshot(workId) as {
-          result: { data: { observation: { progress: Record<string, unknown> } } };
-        };
-        response.result.data.observation.progress.stale = workId === 'W1';
-        return response;
-      },
-    });
-    await waitFor(() => {
-      expect(screen.getByTestId('last-report-W1').textContent).toBe(`${formatUnixMs(1761839800000, 'zh-CN')}可能已过期`);
-      expect(screen.getByTestId('last-report-W2').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN'));
-    });
-    expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('project-progress-table')))).toEqual([]);
-  });
-
-  it('uses not measured for missing or failed report times, never the current clock', async () => {
-    const currentTime = formatUnixMs(Date.now(), 'zh-CN');
-    setupOverview({
-      snapshot: (workId) => {
-        if (workId === 'W2') return { ok: false, error: { code: 'ReadTimeout', message: 'slow' } };
-        const response = demoWorkSnapshot(workId) as {
-          result: { data: { observation: { progress: { reported_at_unix_ms?: number } } } };
-        };
-        delete response.result.data.observation.progress.reported_at_unix_ms;
-        return response;
-      },
-    });
-    // Wait for hydration to finish instead of a fixed sleep: on a slow
-    // runner the cells can still read 加载中 at the 1200ms mark.
-    await waitFor(() => {
-      expect(screen.getByTestId('last-report-W1').textContent).toBe('尚未读取');
-      expect(screen.getByTestId('last-report-W2').textContent).toBe('尚未读取');
-    }, { timeout: 4000 });
-    expect(screen.getByTestId('last-report-W1').textContent).not.toBe(currentTime);
-    expect(screen.getByTestId('last-report-W2').textContent).not.toBe(currentTime);
-  });
-
-  it('falls back to the overview row\'s next step, or says none was reported, when snapshots fail', async () => {
-    const works = [
-      { ...DEMO_PROJECT_WORKS[0], next_step: 'Review the contract' },
-      { ...DEMO_PROJECT_WORKS[1], next_step: null },
-    ];
-    setupOverview({
-      overview: makeProjectOverview(works),
-      snapshot: () => ({ ok: false, error: { code: 'ReadTimeout', message: 'slow' } }),
-    });
-    await waitFor(() => {
-      expect(screen.getByTestId('project-next-W1').textContent).toBe('Review the contract');
-      expect(screen.getByTestId('project-next-W2').textContent).toBe('未报告下一步');
-    });
-  });
-
-  it('groups shared workstreams once and uses an unlisted workstream id as its header', async () => {
-    const works = [
-      { ...DEMO_PROJECT_WORKS[0], key: 'SHARED1', title: 'Shared work one' },
-      { ...DEMO_PROJECT_WORKS[0], key: 'SHARED2', title: 'Shared work two' },
-      { ...DEMO_PROJECT_WORKS[0], key: 'OTHER', title: 'Other stream work', workstream_id: 'WS9' },
-    ];
-    setupOverview({ overview: makeProjectOverview(works) });
-    await screen.findByRole('link', { name: 'Shared work two' });
-    expect(screen.getAllByTestId('workstream-group-WS1')).toHaveLength(1);
-    expect(screen.getByTestId('workstream-group-WS9').textContent).toBe('WS9');
-    expect(document.querySelectorAll('[data-testid^="workstream-group-"]')).toHaveLength(2);
-  });
-
-  it('encodes same-task links for project and work IDs', async () => {
-    const special = [{
-      ...DEMO_PROJECT_WORKS[0],
-      key: 'work /?&=中文',
-      title: 'Encoded project task',
-    }];
-    setupOverview({
-      path: '/projects/demo%20%2F%3F%26%3D?tab=overview',
-      overview: makeProjectOverview(special),
-    });
-    const link = await screen.findByRole('link', { name: 'Encoded project task' });
-    expect(link.getAttribute('href')).toBe(
-      '/projects/demo%20%2F%3F%26%3D?tab=plan&work=work%20%2F%3F%26%3D%E4%B8%AD%E6%96%87',
-    );
-  });
-
-  it('clamps an out-of-range page and keeps pagination visible', async () => {
-    setupOverview({ path: '/projects/demo?tab=overview&page=5' });
-    expect(await screen.findByTestId('project-progress-table')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Build the filter API' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Prepare the support page' })).toBeTruthy();
-    expect(document.querySelector('.ant-pagination')).not.toBeNull();
-    expect(document.querySelector('.ant-pagination-item-active')?.textContent).toBe('1');
-  });
-
-  it('clamps again when the overview shrinks below the current page', async () => {
-    const { queryClient } = setupOverview({
-      path: '/projects/demo?tab=overview&page=2',
-      overview: makeProjectOverview(makeProjectWorks(61)),
-    });
-    await screen.findByRole('link', { name: 'Observed project task 61' });
-
-    act(() => {
-      queryClient.setQueryData(queryKeys.overview('demo'), makeProjectOverview(makeProjectWorks(60)));
-    });
-
-    await screen.findByRole('link', { name: 'Observed project task 1' });
-    expect(screen.queryByRole('link', { name: 'Observed project task 61' })).toBeNull();
-    expect(document.querySelector('.ant-pagination-item-active')?.textContent).toBe('1');
-  });
-
-  it.each(['0', '-1', '1.5', '2e1'])('falls back to page one for page=%s', async (page) => {
-    setupOverview({
-      path: `/projects/demo?tab=overview&page=${page}`,
-      overview: makeProjectOverview(makeProjectWorks(61)),
-    });
-    await screen.findByRole('link', { name: 'Observed project task 1' });
-    expect(screen.queryByRole('link', { name: 'Observed project task 61' })).toBeNull();
-  });
-
-  it('writes pages to the URL, clears selection, and hydrates only visible rows', async () => {
+  it('navigates to /updates/:id from verdict basis button when an update exists, and toggles inline basis when none exists', async () => {
     const user = userEvent.setup();
-    const { fetchMock, router } = setupOverview({
-      path: '/projects/demo?tab=overview&work=W1',
-      overview: makeProjectOverview(makeProjectWorks(61)),
-    });
-    await screen.findByRole('link', { name: 'Observed project task 1' });
-    await waitFor(() => expect(snapshotCalls(fetchMock)).toHaveLength(60));
+    const { router } = setupOverview();
+    await waitFor(() => expect(screen.getByTestId('project-verdict-basis-btn')).toBeTruthy());
+    await user.click(screen.getByTestId('project-verdict-basis-btn'));
+    expect(router.state.location.pathname).toBe('/updates/U-001');
 
-    await user.click(screen.getByRole('listitem', { name: '下一页' }));
-    await screen.findByRole('link', { name: 'Observed project task 61' });
-    let params = new URLSearchParams(router.state.location.search);
-    expect(params.get('page')).toBe('2');
-    expect(params.get('work')).toBeNull();
-    await waitFor(() => expect(snapshotCalls(fetchMock)).toHaveLength(61));
+    // Without period updates: deterministic program-fact verdict + inline basis disclosure
+    vi.unstubAllGlobals();
+    setupOverview({ model: makeRichModel({ periodUpdates: { coverage: 'complete', items: [] } }) });
+    await waitFor(() => expect(screen.getByTestId('project-verdict-sentence').textContent).toContain('还没有一期更新'));
+    expect(screen.getByTestId('project-verdict-sentence').hasAttribute('data-reporter-text')).toBe(false);
+    await user.click(screen.getByTestId('project-verdict-basis-btn'));
+    expect(await screen.findByTestId('project-verdict-basis')).toBeTruthy();
+    expect(screen.getByTestId('project-verdict-basis').textContent).toContain('没有使用模型');
+  });
 
-    await user.click(screen.getByRole('listitem', { name: '上一页' }));
-    await screen.findByRole('link', { name: 'Observed project task 1' });
-    params = new URLSearchParams(router.state.location.search);
-    expect(params.get('page')).toBeNull();
-  }, 20_000);
-
-  it('clears page and work when changing project tabs', async () => {
+  it('opens inbox detail when clicking a waiting answer card and /activity from 全部', async () => {
     const user = userEvent.setup();
-    const { router } = setupOverview({
-      path: '/projects/demo?tab=overview&page=2&work=W61',
-      overview: makeProjectOverview(makeProjectWorks(61)),
+    const { router } = setupOverview();
+    const firstCard = (await screen.findAllByTestId('project-waiting-answer-item'))[0];
+    await user.click(firstCard);
+    expect(router.state.location.pathname).toBe('/inbox');
+    expect(router.state.location.search).toContain('detail=answer%3AQ-001%3AM-002');
+  });
+
+  it('preserves coverage disclosures, freshness badge, activity Unsupported, next_cursor and duplicate-id notes', async () => {
+    const ov = makeRichOverview();
+    ov.coverage.failed = 1;
+    ov.coverage.truncated = true;
+    ov.coverage.streams[0] = {
+      workstream_id: 'WS-FE',
+      status: 'failed',
+      works_enumerated: 0,
+      works_total: 3,
+      truncated: false,
+      next_cursor: null,
+      read_at_unix_ms: NOW,
+    };
+    setupOverview({
+      overview: ov,
+      activity: {
+        ok: false,
+        error: { code: 'Unsupported', message: 'not supported' },
+      },
     });
-    await screen.findByRole('link', { name: 'Observed project task 61' });
-    await user.click(screen.getByRole('tab', { name: '工作计划' }));
-    const params = new URLSearchParams(router.state.location.search);
-    expect(params.get('page')).toBeNull();
-    expect(params.get('work')).toBeNull();
-  });
-});
-
-describe('project coverage and freshness', () => {
-  it('explains read coverage and unknown totals without raw response rows', async () => {
-    setupOverview();
-    const coverage = await screen.findByTestId('project-coverage');
-    expect(within(coverage).getByTestId('coverage-summary').textContent).toBe('已读取 2 个工作项，总数暂时未知');
-    expect(within(coverage).getByTestId('freshness-badge')).toBeTruthy();
-    expect(findForbiddenVisibleText(defaultVisibleText(coverage))).toEqual([]);
-    expect(within(coverage).queryByTestId('coverage-works-total')).toBeNull();
-    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-    expect(screen.queryByTestId("coverage-works-total")).toBeNull();
-    expect(screen.queryByTestId("technical-detail-coverage.works_enumerated")).toBeNull();
-    expect(screen.queryByTestId("technical-detail-coverage.scope.next_cursor")).toBeNull();
+    expect(await screen.findByTestId('project-coverage')).toBeTruthy();
+    expect(screen.getByTestId('freshness-badge')).toBeTruthy();
+    expect(screen.getByTestId('coverage-summary').textContent).toContain('6 / 6');
+    expect(screen.getByTestId('coverage-failed-summary').textContent).toContain('1');
+    expect(screen.getByTestId('coverage-stream-WS-FE')).toBeTruthy();
+    expect(screen.getByTestId('project-coverage-unread')).toBeTruthy();
+    expect((await screen.findByTestId('activity-unavailable')).textContent).toContain('此模式不可用');
   });
 
-  it('says all of it was read when the total is known, and counts a partial batch against the total', async () => {
-    setupOverview({ overview: { ...DEMO_PROJECT_OVERVIEW, works: DEMO_PROJECT_WORKS, coverage: { ...DEMO_PROJECT_OVERVIEW.coverage, works_enumerated: 2, works_total: 2, scope: { ...DEMO_PROJECT_OVERVIEW.coverage.scope, enumerated: 7 } } } });
-    expect((await screen.findByTestId('coverage-summary')).textContent).toBe('已读取 2 / 2 个工作项');
-    expect(screen.queryByTestId('coverage-failed-summary')).toBeNull();
-  });
+  it.each(['zh-CN', 'en-US'] as const)('renders all 7 states cleanly in %s', async (lang) => {
+    await act(async () => { await i18n.changeLanguage(lang); });
 
-  it.each(['failed', 'succeeded'])('does not call zero enumerated empty with failed streams: %s scope', async (status) => {
+    // 1. Loading
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    setupOverview({ gate });
+    expect(await screen.findByTestId('project-overview-loading')).toBeTruthy();
+    release();
+    await screen.findByTestId('project-instrument');
+
+    // 2. Empty
+    cleanup();
+    vi.unstubAllGlobals();
     setupOverview({
       overview: {
-        ...DEMO_PROJECT_OVERVIEW,
+        ...makeRichOverview(),
         works: [],
-        coverage: {
-          ...DEMO_PROJECT_OVERVIEW.coverage,
-          failed: 1,
-          works_enumerated: 0,
-          scope: { ...DEMO_PROJECT_OVERVIEW.coverage.scope, status, enumerated: 0 },
-          streams: [{
-            workstream_id: 'WS1',
-            status: 'failed',
-            error_code: 'ReadTimeout',
-            read_at_unix_ms: 1761831234000,
-          }],
-        },
+        workstreams: [],
+        coverage: { scope: { status: 'succeeded', enumerated: 0, truncated: false, next_cursor: null }, streams: [], succeeded: 0, failed: 0, truncated: false, works_enumerated: 0, works_total: 0 },
       },
+      model: { ...emptyOverviewModelResponse(), project: 'demo', periodUpdates: { coverage: 'complete', items: [] } },
+      activity: makeRichActivity(0),
     });
-    expect(await screen.findByTestId('state-partial')).toBeTruthy();
-    expect(screen.queryByTestId('state-empty')).toBeNull();
-    expect(screen.getByTestId('coverage-summary').textContent).toBe('已读取 0 个工作项，总数暂时未知');
-  });
+    expect(await screen.findByTestId('project-overview-empty')).toBeTruthy();
 
-  it('retains a failed stream with its read time and confirmed rows', async () => {
-    const failedAt = 1761831234000;
-    setupOverview({
-      overview: {
-        ...DEMO_PROJECT_OVERVIEW,
-        coverage: {
-          ...DEMO_PROJECT_OVERVIEW.coverage,
-          failed: 1,
-          streams: [{
-            workstream_id: 'WS1',
-            status: 'failed',
-            error_code: 'ReadTimeout',
-            works_enumerated: 1,
-            works_total: null,
-            truncated: false,
-            next_cursor: null,
-            read_at_unix_ms: failedAt,
-          }],
-        },
-      },
-    });
-    expect(await screen.findByTestId('state-partial')).toBeTruthy();
-    const failed = screen.getByTestId('coverage-stream-WS1');
-    expect(failed.textContent).toContain('读取失败');
-    expect(failed.textContent).toContain(formatUnixMs(failedAt, 'zh-CN'));
-    expect(failed.textContent).not.toContain('ReadTimeout');
-    expect(failed.textContent).not.toContain('WS1');
-    expect(screen.getByTestId('coverage-failed-summary').textContent).toBe('有 1 条工作线读取失败，列表可能不完整');
-    const coverage = screen.getByTestId('project-coverage');
-    expect(findForbiddenVisibleText(defaultVisibleText(coverage))).toEqual([]);
-    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-    expect(screen.queryByTestId("technical-detail-coverage.streams.WS1")).toBeNull();
-    expect(screen.getByRole('link', { name: 'Build the filter API' })).toBeTruthy();
-  });
-
-  it('discloses truncation and an unread cursor instead of presenting a complete batch', async () => {
-    setupOverview({
-      overview: {
-        ...DEMO_PROJECT_OVERVIEW,
-        coverage: {
-          ...DEMO_PROJECT_OVERVIEW.coverage,
-          truncated: true,
-          scope: { ...DEMO_PROJECT_OVERVIEW.coverage.scope, next_cursor: 'cursor-next-2' },
-        },
-      },
-    });
-    const unread = await screen.findByTestId('project-coverage-unread');
-    expect(unread.textContent).toContain('还有未读部分');
-    expect(unread.textContent).not.toContain('cursor-next-2');
-    screen.getByTestId('project-coverage');
-    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-    expect(screen.queryByTestId("technical-detail-coverage.scope.next_cursor")).toBeNull();
-  });
-});
-
-describe('project recent development activity', () => {
-  it('shows product changes from development activity without raw records', async () => {
-    const { fetchMock } = setupOverview();
-    const block = await screen.findByTestId('project-activity');
-    const step = await within(block).findByTestId('recent-step-0');
-    expect(within(step).getByTestId('recent-step-text').textContent).toBe('变更授权');
-    expect(within(step).getByTestId('recent-step-time').textContent).toBe(formatUnixMs(1761839700000, 'zh-CN'));
-    for (const hidden of ['access.changed', 'actor-raw-17', 'activity-1', 'audit.development', 'not_observed']) {
-      expect(defaultVisibleText(block)).not.toContain(hidden);
-    }
-    expect(findForbiddenVisibleText(defaultVisibleText(block))).toEqual([]);
-    expect(step.querySelector('[data-testid="activity-narrative"]')).toBeNull();
-
-    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-    expect(screen.queryByTestId("recent-step-technical-0")).toBeNull();
-    expect(screen.queryByTestId("recent-step-technical-0")).toBeNull();
-    expect(screen.queryByTestId("technical-detail-development_source")).toBeNull();
-    expect(screen.queryByTestId("technical-detail-unknown_means")).toBeNull();
-    expect(within(block).getByTestId('recent-changes-all').getAttribute('href')).toBe('/activity?project=demo');
-    const activityUrls = fetchMock.mock.calls.map(([input]) => String(input))
-      .filter((url) => url.includes('/api/team/activity'));
-    expect(activityUrls).toHaveLength(1);
-    expect(activityUrls[0]).toContain('kind=development');
-    expect(activityUrls[0]).not.toContain('kind=requests');
-  });
-
-  it('uses the shared empty state for a successful empty activity read', async () => {
-    setupOverview({ activity: makeActivity([]) });
-    const block = await screen.findByTestId('project-activity');
-    expect(await within(block).findByTestId('state-empty')).toBeTruthy();
-  });
-
-  it('presents Unsupported as unavailable in this mode, not a failure', async () => {
-    setupOverview({ activity: { ok: false, error: { code: 'Unsupported', message: 'demo' } } });
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1200));
-    });
-    expect(screen.getByTestId('activity-unavailable')).toBeTruthy();
-    expect(screen.getByTestId('activity-unavailable').textContent).toContain('此模式不可用');
-    expect(screen.queryByTestId('state-partial')).toBeNull();
-  });
-
-  it('presents upstream activity failure as partial failure', async () => {
-    setupOverview({ activity: { ok: false, error: { code: 'ReadTimeout', message: 'slow' } } });
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1200));
-    });
-    const block = screen.getByTestId('project-activity');
-    const partial = within(block).getByTestId('state-partial');
-    expect(partial.textContent).not.toContain('ReadTimeout');
-    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-    expect(within(partial).queryByText('ReadTimeout')).toBeNull();
-  });
-
-  it('discloses earlier activity records without continuation', async () => {
-    setupOverview({ activity: makeActivity(DEMO_ACTIVITY.data.items, { next_cursor: 'older-2' }) });
-    const block = await screen.findByTestId('project-activity');
-    expect(await within(block).findByText('还有更早的记录')).toBeTruthy();
-  });
-
-  it('shows at most eight steps, newest first, and says that earlier changes exist', async () => {
-    const items = Array.from({ length: 22 }, (_, index) => ({
-      ...DEMO_ACTIVITY.data.items[0],
-      id: `activity-${index + 1}`,
-      action: index % 2 === 0 ? 'work.snapshot' : 'execution.start',
-      created_at_unix_ms: 1761839700000 + index * 1000,
-    }));
-    setupOverview({ activity: makeActivity(items) });
-    const block = await screen.findByTestId('project-activity');
-    await waitFor(() => expect(block.querySelectorAll('[data-testid^="recent-step-"][data-testid$="0"], [data-testid^="recent-step-"]').length).toBeGreaterThan(0));
-    const steps = Array.from(block.querySelectorAll('li[data-testid^="recent-step-"]'));
-    expect(steps).toHaveLength(8);
-    expect(within(steps[0] as HTMLElement).getByTestId('recent-step-text').textContent).toBe('开始执行');
-    expect(within(steps[1] as HTMLElement).getByTestId('recent-step-text').textContent).toBe('查看工作现状');
-    expect(within(block).getByTestId('recent-changes-more').textContent).toBe('更早的变化请在“活动与审计”里查看');
-
-    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-    expect(screen.queryByTestId("recent-step-technical-0")).toBeNull();
-    expect(block.textContent).not.toContain('activity-1 ');
-  });
-
-  it('folds a run of the same kind into one counted step and marks an unknown result', async () => {
-    const base = DEMO_ACTIVITY.data.items[0];
-    const items = [
-      ...Array.from({ length: 5 }, (_, index) => ({ ...base, id: `read-${index}`, action: 'work.snapshot', result: 'committed', created_at_unix_ms: 1761839700000 + index * 1000 })),
-      { ...base, id: 'unknown-1', action: 'execution.report', result: 'unknown', created_at_unix_ms: 1761839700000 + 6000 },
-    ];
-    setupOverview({ activity: makeActivity(items) });
-    const block = await screen.findByTestId('project-activity');
-    const steps = await within(block).findAllByTestId(/^recent-step-\d+$/);
-    expect(steps.map((step) => within(step).getByTestId('recent-step-text').textContent)).toEqual(['报告执行结果', '5 次读取']);
-    expect(within(steps[0]).getByTestId('recent-step-unknown').textContent).toBe('结果未知');
-    expect(within(steps[1]).queryByTestId('recent-step-unknown')).toBeNull();
-    // A counted step shows when its newest record happened.
-    expect(within(steps[1]).getByTestId('recent-step-time').textContent).toBe(formatUnixMs(1761839700000 + 4000, 'zh-CN'));
-  });
-
-  it('counts a repeated audit id once and says so in plain words', async () => {
-    const base = DEMO_ACTIVITY.data.items[0];
-    const items = [
-      { ...base, id: 'dup-1', action: 'work.snapshot' },
-      { ...base, id: 'dup-1', action: 'work.snapshot' },
-      { ...base, id: 'other-1', action: 'work.snapshot', created_at_unix_ms: base.created_at_unix_ms - 1000 },
-    ];
-    setupOverview({ activity: makeActivity(items) });
-    const block = await screen.findByTestId('project-activity');
-    const steps = await within(block).findAllByTestId(/^recent-step-\d+$/);
-    expect(steps).toHaveLength(1);
-    expect(within(steps[0]).getByTestId('recent-step-text').textContent).toBe('2 次读取');
-    expect(within(block).getByTestId('recent-note-duplicate-id').textContent).toBe('发现重复记录，原始事件已全部保留');
-  });
-
-});
-
-describe('project overview placeholders, localization, and accessibility', () => {
-  it('keeps the dependencies block as a later-slice placeholder', async () => {
-    setupOverview();
-    // Dependencies have no read yet; goals and delivery are filled from the reads the page makes.
-    expect((await screen.findByTestId('project-deps-placeholder')).textContent).toContain('尚未开放');
-    expect(screen.queryByTestId('project-goals-placeholder')).toBeNull();
-    expect(screen.queryByTestId('project-delivery-placeholder')).toBeNull();
-  });
-
-  it('renders new overview strings in English', async () => {
-    setupOverview();
-    await screen.findByRole('link', { name: 'Build the filter API' });
-    await act(() => i18n.changeLanguage('en-US'));
-    expect(await screen.findByText('Workstream progress')).toBeTruthy();
-    expect(screen.getByText('Recent changes')).toBeTruthy();
-    expect(screen.getByText('How much was read')).toBeTruthy();
-    expect(screen.getByTestId('coverage-summary').textContent).toBe('Read 2 work items; the total is not known yet');
-  });
-
-  it('has no axe violations', async () => {
-    const { container } = setupOverview();
-    await screen.findByRole('link', { name: 'Build the filter API' });
-    const results = await axe(container, {
-      rules: { 'color-contrast': { enabled: false } },
-    });
-    expect(results).toHaveNoViolations();
-  });
-});
-
-describe('overview goals and delivery blocks (read from the page\'s own snapshot reads)', () => {
-  function snapshotWithContract(workId: string, contract: Record<string, unknown> | null) {
-    const base = demoWorkSnapshot(workId) as { result: { data: Record<string, unknown> } };
-    if (contract === null) delete base.result.data.visible_contract;
-    else base.result.data.visible_contract = contract;
-    return base;
-  }
-
-  function opsOf(fetchMock: ReturnType<typeof vi.fn>) {
-    const ops = new Map<string, number>();
-    for (const [, init] of fetchMock.mock.calls as Array<[string, RequestInit | undefined]>) {
-      const body = String(init?.body ?? '');
-      if (!body.includes('"op"')) continue;
-      const op = (JSON.parse(body).query as { op: string }).op;
-      ops.set(op, (ops.get(op) ?? 0) + 1);
-    }
-    return ops;
-  }
-
-  it('sends no read the page did not already make: the same snapshot ops, nothing else new', async () => {
-    const { fetchMock } = setupOverview();
-    await screen.findAllByTestId('project-status-W2');
-    const ops = opsOf(fetchMock);
-    // The blocks read only the snapshot queries the table already drives, once per visible work.
-    expect(ops.get('work.snapshot')).toBe(2);
-    expect([...ops.keys()].filter((op) => op !== 'work.snapshot')).toEqual([]);
-  });
-
-  it('merges works that agreed on their goals into one group named by both', async () => {
-    const snapshot = (id: string) => snapshotWithContract(id, {
-      goals: ['Keep support filters useful'],
-      acceptance: ['Do not mutate input records'],
-    });
-    setupOverview({ snapshot });
-    const groups = await screen.findAllByTestId('project-goals-group');
-    expect(groups).toHaveLength(1);
-    const joined = groups[0].textContent ?? '';
-    expect(joined).toContain('Build the filter API');
-    expect(joined).toContain('Prepare the support page');
-    expect(joined).toContain('Keep support filters useful');
-  });
-
-  it('keeps different agreements as separate groups', async () => {
-    const snapshot = (id: string) => snapshotWithContract(id, id === 'W2'
-      ? { goals: ['A different goal'], acceptance: ['A different acceptance'] }
-      : { goals: ['Keep support filters useful'], acceptance: ['Do not mutate input records'] });
-    setupOverview({ snapshot });
-    await screen.findAllByTestId('project-goals-group');
-    expect(screen.getAllByTestId('project-goals-group')).toHaveLength(2);
-  });
-
-  it('shows the first five groups and says how many more there are', async () => {
-    const works = Array.from({ length: 7 }, (_, index) => ({
-      key: `W${index + 1}`, title: `Task ${index + 1}`, status: 'unknown', owner_person: null, agent: null,
-      next_step: null, detail_loaded: false, workstream_id: 'WS1', contract_hash: `c${index}`,
-    }));
-    let m = 0;
-    setupOverview({
-      overview: { ...DEMO_PROJECT_OVERVIEW, works, coverage: { ...DEMO_PROJECT_OVERVIEW.coverage, works_enumerated: 7 } },
-      snapshot: (id: string) => snapshotWithContract(id, { goals: [`Goal ${++m}`], acceptance: [] }),
-    });
-    expect(await screen.findAllByTestId('project-goals-group')).toHaveLength(5);
-    expect(screen.getByTestId('project-goals').textContent).toContain('还有');
-  });
-
-  it('draws no checkbox: nothing in this data says whether an acceptance item is met', async () => {
-    setupOverview();
-    await screen.findAllByTestId('project-goals-group');
-    expect(document.querySelector('[data-testid="project-goals"] input[type="checkbox"]')).toBeNull();
-    expect(screen.getByTestId('project-goals').textContent).toContain('Do not mutate input records');
-  });
-
-  it('counts progress words only from reads that happened, and gives no project verdict', async () => {
-    setupOverview();
-    await screen.findAllByTestId('project-delivery-counts');
-    expect(screen.getByTestId('project-delivery-counts').textContent).toContain('已认领');
-    expect(screen.getByTestId('project-delivery-counts').textContent).toContain('× 2');
-    // Loading and unread works are named separately, never folded into a word.
-    expect(screen.getByTestId('project-delivery-counts').textContent).not.toContain('加载中');
-    expect(screen.getByTestId('project-delivery-counts').textContent).not.toContain('未知');
-    // The demo coverage knows no total, so the scope sentence states no total either.
-    expect(screen.getByTestId('project-delivery-scope').textContent).toBe('本页 2 项工作，已读到 2 项');
-    // No whole-project verdict: the prototype's judgement sentence is not ours to make.
-    const visible = document.querySelector('[data-testid="project-overview"]')?.textContent ?? '';
-    expect(visible).not.toContain('最终验收');
-    expect(visible).not.toContain('不具备');
-  });
-
-  it('names a failed read, counts it nowhere, and drops it from the word counts', async () => {
-    // A failed read is the bridge's error envelope (throwing inside the mock leaves the
-    // query pending forever under p-limit, which is a loading read, not a failed one).
-    const snapshot = (id: string) => (id === 'W2'
-      ? { ok: false, error: { code: 'ReadFailed', message: 'synthetic read failure' } }
-      : demoWorkSnapshot(id));
-    setupOverview({ snapshot });
-    // Wait for the read to actually fail (the table's word stops being the loading one);
-    // a query that never settles is a loading read, and this test is about a failed one.
-    await waitFor(() => expect(screen.getByTestId('project-status-W2').textContent).not.toBe('加载中…'));
-    expect(screen.getByTestId('project-status-W2').textContent).toBe('未知');
-    expect(screen.getByTestId('project-delivery-unread')).toBeTruthy();
-    expect(screen.getByTestId('project-delivery-unread').textContent).toContain('1');
-    // One word bucket only — the failed work appears as no word at all, whatever the row says.
-    expect(screen.getByTestId('project-delivery-counts').querySelectorAll('.ant-typography-secondary')).toHaveLength(1);
-    expect(screen.getByTestId('project-delivery-counts').textContent).toContain('× 1');
-    expect(screen.getByTestId('project-delivery-counts').textContent).not.toContain('× 2');
-    expect(screen.getByTestId('project-delivery-counts').textContent).not.toContain('未知');
-    expect(screen.getByTestId('project-delivery-counts').textContent).not.toContain('加载中');
-    expect(screen.getByTestId('project-delivery-counts').textContent).not.toContain('未提供');
-  });
-
-  it('names the works that need attention with their word, and caps the list', async () => {
-    setupOverview();
-    await screen.findAllByTestId('project-delivery-attention');
-    const attention = screen.getByTestId('project-delivery-attention').textContent ?? '';
-    expect(attention).toContain('Build the filter API');
-    expect(attention).toContain('已认领');
-    expect(screen.getByTestId('project-delivery-attention').querySelectorAll('a').length).toBe(2);
-  });
-
-  it('says it is reading while the reads are running, in both blocks', async () => {
-    let release: () => void = () => {};
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    setupOverview({ snapshotGate: gate });
-    expect(await screen.findByTestId('project-goals-loading')).toBeTruthy();
-    expect(screen.getByTestId('project-goals-loading').textContent).toContain('加载中');
-    expect(await screen.findByTestId('project-delivery-loading')).toBeTruthy();
-    const goalsText = document.querySelector('[data-testid="project-goals"]')?.textContent ?? '';
-    const deliveryText = document.querySelector('[data-testid="project-delivery"]')?.textContent ?? '';
-    expect(goalsText).not.toContain('没有登记');
-    expect(deliveryText).not.toContain('读取不到');
-    release();
-  });
-
-  it('with one read of two failed, the page count and the read count each say their own thing', async () => {
-    const snapshot = (id: string) => {
-      if (id === 'W2') throw new Error('synthetic read failure');
-      return demoWorkSnapshot(id);
-    };
-    setupOverview({ snapshot });
-    expect(await screen.findByTestId('project-delivery-scope')).toBeTruthy();
-    // The second number is the reads that happened (1), not the page count (2): swapping
-    // them changes the sentence, and the English line carries both numbers too.
-    expect(screen.getByTestId('project-delivery-scope').textContent).toBe('本页 2 项工作，已读到 1 项');
-    await act(() => i18n.changeLanguage('en-US'));
-    expect(screen.getByTestId('project-delivery-scope').textContent).toBe('2 works on this page, 1 read');
-    await act(() => i18n.changeLanguage('zh-CN'));
-    expect(screen.getByTestId('project-delivery-unread').textContent).toContain('1');
-  });
-
-  it('takes the project total from the coverage card, not from the length of the list', async () => {
-    const works = Array.from({ length: 2 }, (_, index) => ({
-      key: `W${index + 1}`, title: `Task ${index + 1}`, status: 'unknown', owner_person: null, agent: null,
-      next_step: null, detail_loaded: false, workstream_id: 'WS1', contract_hash: `c${index}`,
-    }));
-    // One read of two fails, so the sentence's three numbers are all different: page 2,
-    // read 1, total 100 — no two of them can stand in for each other.
-    const snapshot = (id: string) => (id === 'W2'
-      ? { ok: false, error: { code: 'ReadFailed', message: 'synthetic read failure' } }
-      : demoWorkSnapshot(id));
-    setupOverview({
-      overview: {
-        ...DEMO_PROJECT_OVERVIEW,
-        works,
-        coverage: { ...DEMO_PROJECT_OVERVIEW.coverage, works_total: 100, works_enumerated: 2 },
-      },
-      snapshot,
-    });
-    expect(await screen.findByTestId('project-delivery-scope')).toBeTruthy();
-    expect(screen.getByTestId('project-delivery-scope').textContent).toBe('本页 2 项工作，已读到 1 项，项目共 100 项');
-    // One total on the page: the coverage card's own sentence matches.
-    expect(screen.getByTestId('coverage-summary').textContent).toContain('100');
-  });
-
-  it('keeps goals and acceptance apart under their own small headings', async () => {
-    setupOverview();
-    const group = await screen.findByTestId('project-goals-group');
-    expect(group.textContent).toContain('目标');
-    expect(group.textContent).toContain('验收');
-    expect(group.textContent?.indexOf('目标')).toBeLessThan(group.textContent?.indexOf('验收') ?? 0);
-  });
-
-  it('says how many more groups of agreements there are, in the block\'s own words', async () => {
-    const works = Array.from({ length: 7 }, (_, index) => ({
-      key: `W${index + 1}`, title: `Task ${index + 1}`, status: 'unknown', owner_person: null, agent: null,
-      next_step: null, detail_loaded: false, workstream_id: 'WS1', contract_hash: `c${index}`,
-    }));
-    let m = 0;
-    setupOverview({
-      overview: { ...DEMO_PROJECT_OVERVIEW, works, coverage: { ...DEMO_PROJECT_OVERVIEW.coverage, works_enumerated: 7 } },
-      snapshot: (id: string) => {
-        const base = demoWorkSnapshot(id) as { result: { data: Record<string, unknown> } };
-        base.result.data.visible_contract = { goals: [`Goal ${++m}`], acceptance: [] };
-        return base;
-      },
-    });
-    expect(await screen.findByTestId('project-goals-more')).toBeTruthy();
-    expect(screen.getByTestId('project-goals-more').textContent).toContain('还有 2 组约定');
-  });
-
-  it('caps the attention list at five with the more line, and each link goes to its own work', async () => {
-    const works = Array.from({ length: 8 }, (_, index) => ({
-      key: `W${index + 1}`, title: `Task ${index + 1}`, status: 'unknown', owner_person: null, agent: null,
-      next_step: null, detail_loaded: false, workstream_id: 'WS1', contract_hash: `c${index}`,
-    }));
-    // W1 finished (positive) and W3 unrecognized (neutral) stay out of the attention list;
-    // W2 is blocked (negative) and must be named; six named works hit the cap of five.
-    const snapshot = (id: string) => {
-      const base = demoWorkSnapshot(id) as { result: { data: Record<string, unknown> } };
-      const data = base.result.data as { runtime: Record<string, unknown>; observation: Record<string, unknown> };
-      if (id === 'W1') {
-        data.runtime = { ...data.runtime, state: 'completed', selected_completion_id: '01M6COMPLETION000000000000000' };
-        data.observation = { ...data.observation, progress: { phase: 'delivered' } };
-      }
-      if (id === 'W2') {
-        data.runtime = { ...data.runtime, state: 'blocked' };
-        data.observation = { ...data.observation, progress: { phase: 'blocked' } };
-      }
-      if (id === 'W3') {
-        data.runtime = { ...data.runtime, state: 'made-up-state' };
-      }
-      return base;
-    };
-    setupOverview({
-      overview: { ...DEMO_PROJECT_OVERVIEW, works, coverage: { ...DEMO_PROJECT_OVERVIEW.coverage, works_enumerated: 7 } },
-      snapshot,
-    });
-    await screen.findByTestId('project-delivery-attention');
-    const attention = screen.getByTestId('project-delivery-attention');
-    const links = attention.querySelectorAll('a');
-    expect(links.length).toBe(5);
-    expect(attention.textContent).toContain('还有');
-    expect(links[0].getAttribute('href')).toContain('work=W2');
-    expect(links[0].textContent).toContain('受阻');
-    expect(links[4].getAttribute('href')).toContain('work=W7');
-    // Waiting and blocked words own the list; the finished and unrecognized ones never appear.
-    expect(attention.textContent).not.toContain('Task 1');
-    expect(screen.getByTestId('project-delivery-counts').textContent).toContain('已交付× 1');
-    expect(screen.getByTestId('project-delivery-counts').textContent).toContain('受阻× 1');
-    // A neutral word is counted as a word but never named in the list above.
-    expect(screen.getByTestId('project-delivery-counts').textContent).toContain('未知× 1');
-    expect(attention.textContent).not.toContain('Task 3');
-  });
-
-  it('says the agreements cannot be read when every read failed, in its own words', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url.includes('/api/team/projects')) return json(DEMO_PROJECTS);
-      if (url.includes('/api/team/overview')) return json(DEMO_PROJECT_OVERVIEW);
-      if (url.includes('/api/team/activity')) return json(DEMO_ACTIVITY);
-      if (url.includes('/api/team/read')) {
-        const request = JSON.parse(String(init?.body)) as { query: { op: string } };
-        if (request.query.op === 'work.snapshot') {
-          return json({ ok: false, error: { code: 'ReadFailed', message: 'synthetic read failure' } });
-        }
-      }
-      return json({ ok: false, error: { code: 'NoRoute', message: url } });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    renderApp('/projects/demo?tab=overview');
-    const failed = await screen.findByTestId('project-goals-failed');
-    expect(failed.textContent).toContain('约定暂时读取不到');
-    expect(failed.textContent).not.toContain('进展');
-  });
-
-  it('shows the row\'s own owner when the overview row has one (H2)', async () => {
-    const overview = {
-      ...DEMO_PROJECT_OVERVIEW,
-      works: DEMO_PROJECT_OVERVIEW.works.map((work: { key: string }, index: number) => (
-        index === 0 ? { ...work, owner_person: 'Zhou Ning' } : work
-      )),
-    };
-    setupOverview({ overview });
-    const owner = await screen.findByTestId('project-owner-W1');
-    expect(owner.textContent).toBe('Zhou Ning');
-    expect(owner.getAttribute('data-owner-source')).toBe('row');
-  });
-
-  it('says loading then not provided in the owner column as the read runs and fails (H3)', async () => {
-    let release: () => void = () => {};
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    setupOverview({ snapshotGate: gate });
-    const loading = await screen.findByTestId('project-owner-W1');
-    expect(loading.textContent).toBe('加载中…');
-    expect(loading.getAttribute('data-owner-source')).toBe('none');
-    release();
-    await waitFor(() => expect(screen.getByTestId('project-status-W1').textContent).not.toBe('加载中…'));
-    expect(screen.getByTestId('project-owner-W1').textContent).toBe('未提供');
-
+    // 3. Failed
     cleanup();
-    const snapshot = () => ({ ok: false, error: { code: 'ReadFailed', message: 'synthetic read failure' } });
-    setupOverview({ snapshot });
-    // The fresh render says loading first; the failed read then lands as 未提供
-    // (queried fresh each poll: React replaces the cell across renders).
-    await waitFor(() => expect(screen.getByTestId('project-owner-W1').textContent).toBe('未提供'));
-    expect(screen.getByTestId('project-owner-W1').getAttribute('data-owner-source')).toBe('none');
-  });
+    vi.unstubAllGlobals();
+    setupOverview({
+      overview: { ok: false, error: { code: 'ReadTimeout', message: 'fail' } },
+      model: { ok: false, error: { code: 'ReadTimeout', message: 'fail' } },
+      activity: { ok: false, error: { code: 'ReadTimeout', message: 'fail' } },
+    });
+    expect(await screen.findByRole('button', { name: lang === 'zh-CN' ? '重试' : 'Try again' })).toBeTruthy();
 
-  it('keeps both blocks off the page after revocation', async () => {
+    // 4. Partial failure
+    cleanup();
+    vi.unstubAllGlobals();
+    setupOverview({
+      model: { ok: false, error: { code: 'ReadTimeout', message: 'partial' } },
+    });
+    expect(await screen.findByTestId('project-overview-partial')).toBeTruthy();
+
+    // 5. Unknown result (incomparable ordering)
+    cleanup();
+    vi.unstubAllGlobals();
+    setupOverview({
+      model: makeRichModel({ ordering: 'incomparable' }),
+    });
+    expect(await screen.findByTestId('project-overview-unknown')).toBeTruthy();
+
+    // 6. Revoked clears the overview completely
+    cleanup();
+    vi.unstubAllGlobals();
     const { queryClient } = setupOverview();
-    await screen.findAllByTestId('project-status-W2');
+    await screen.findByTestId('project-instrument');
     act(() => revokeObservationReads(queryClient));
     expect(await screen.findByTestId('state-forbidden')).toBeTruthy();
-    expect(screen.queryByTestId('project-goals')).toBeNull();
-    expect(screen.queryByTestId('project-delivery')).toBeNull();
-  });
+    expect(screen.queryByTestId('project-instrument')).toBeNull();
+  }, 15_000);
 
-  it('shows the row\'s own owner when the overview row has one (H2)', async () => {
-    const overview = {
-      ...DEMO_PROJECT_OVERVIEW,
-      works: DEMO_PROJECT_OVERVIEW.works.map((work: { key: string }, index: number) => (
-        index === 0 ? { ...work, owner_person: 'Zhou Ning' } : work
-      )),
-    };
-    setupOverview({ overview });
-    const owner = await screen.findByTestId('project-owner-W1');
-    expect(owner.textContent).toBe('Zhou Ning');
-    expect(owner.getAttribute('data-owner-source')).toBe('row');
-  });
-
-  it('keeps both blocks off the page after revocation', async () => {
-    const { queryClient } = setupOverview();
-    await screen.findAllByTestId('project-status-W2');
-    act(() => revokeObservationReads(queryClient));
-    expect(await screen.findByTestId('state-forbidden')).toBeTruthy();
-    expect(screen.queryByTestId('project-goals')).toBeNull();
-    expect(screen.queryByTestId('project-delivery')).toBeNull();
-  });
-
-  it('says loading and no unread count while every read is pending; the count names the mixed state', async () => {
-    let release: () => void = () => {};
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    setupOverview({ snapshotGate: gate });
-    expect(await screen.findByTestId('project-goals-loading')).toBeTruthy();
-    // The loading sentence already says it; an unread count would repeat it in other words.
-    expect(screen.queryByTestId('project-goals-unread')).toBeNull();
-    release();
-  });
-
-  it('keeps the unread sentence on its own line in the mixed state', async () => {
-    const snapshot = (id: string) => (id === 'W2'
-      ? { ok: false, error: { code: 'ReadFailed', message: 'synthetic read failure' } }
-      : demoWorkSnapshot(id));
-    setupOverview({ snapshot });
-    const unread = await screen.findByTestId('project-goals-unread');
-    // Its own line: a block container, not an inline run that can touch the sentence above it.
-    expect(unread.tagName).toBe('DIV');
-    expect(unread.style.display).toBe('block');
-  });
-
-  it('shows exactly one sentence when every read failed, on its own line, not inline with another', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url.includes('/api/team/projects')) return json(DEMO_PROJECTS);
-      if (url.includes('/api/team/overview')) return json(DEMO_PROJECT_OVERVIEW);
-      if (url.includes('/api/team/activity')) return json(DEMO_ACTIVITY);
-      if (url.includes('/api/team/read')) {
-        const request = JSON.parse(String(init?.body)) as { query: { op: string } };
-        if (request.query.op === 'work.snapshot') {
-          return json({ ok: false, error: { code: 'ReadFailed', message: 'synthetic read failure' } });
-        }
-      }
-      return json({ ok: false, error: { code: 'NoRoute', message: url } });
+  it('renders verbatim real-shaped live replies with zero undefined/null/NaN/raw identifiers and passes axe', async () => {
+    const { container } = setupOverview({
+      overview: realShapedOverview(),
+      activity: realShapedActivity(),
+      model: makeRichModel(),
     });
-    vi.stubGlobal('fetch', fetchMock);
-    renderApp('/projects/demo?tab=overview');
-    const failed = await screen.findByTestId('project-goals-failed');
-    // Only the failure sentence: no unread sentence repeating it, nothing inline beside it.
-    expect(screen.queryByTestId('project-goals-unread')).toBeNull();
-    const block = failed.closest('section');
-    expect(block?.textContent).toContain('约定暂时读取不到');
-    const lineTexts = [...(block?.querySelectorAll('[data-testid], div, span') ?? [])]
-      .filter((el) => el.children.length === 0 && el.textContent && el.textContent.trim().length > 0)
-      .map((el) => el.textContent);
-    expect(lineTexts.some((text) => text.includes('尚未读取'))).toBe(false);
-    // The English sentence is pinned as a whole, not by a shared word.
-    cleanup();
-    const fetchEn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url.includes('/api/team/projects')) return json(DEMO_PROJECTS);
-      if (url.includes('/api/team/overview')) return json(DEMO_PROJECT_OVERVIEW);
-      if (url.includes('/api/team/activity')) return json(DEMO_ACTIVITY);
-      if (url.includes('/api/team/read')) {
-        const request = JSON.parse(String(init?.body)) as { query: { op: string } };
-        if (request.query.op === 'work.snapshot') {
-          return json({ ok: false, error: { code: 'ReadFailed', message: 'synthetic read failure' } });
-        }
-      }
-      return json({ ok: false, error: { code: 'NoRoute', message: url } });
-    });
-    vi.stubGlobal('fetch', fetchEn);
-    renderApp('/projects/demo?tab=overview');
-    await act(() => i18n.changeLanguage('en-US'));
-    const failedEn = await screen.findByTestId('project-goals-failed');
-    expect(failedEn.textContent).toBe('The agreements of these works cannot be read right now');
-    expect(failedEn.textContent).not.toContain('How far these works have come');
-  });
-});
+    await screen.findByTestId('project-instrument');
+    await waitFor(() => expect(screen.getByTestId('project-recent-changes')).toBeTruthy());
 
-describe('overview count sentences in English (plural forms)', () => {
-  it('says one work, not 1 works, in every counted sentence of the page', async () => {
-    const works = [{ key: 'W1', title: 'Only task', status: 'unknown', owner_person: null, agent: null, next_step: null, detail_loaded: false, workstream_id: 'WS1', contract_hash: 'c1' }];
-    setupOverview({
-      overview: { ...DEMO_PROJECT_OVERVIEW, works, coverage: { ...DEMO_PROJECT_OVERVIEW.coverage, works_total: 1, works_enumerated: 1 } },
-    });
-    await screen.findAllByTestId('project-status-W1');
-    await act(() => i18n.changeLanguage('en-US'));
-    // The scope line, the unread line and the coverage line with count = 1.
-    expect(screen.getByTestId('project-delivery-scope').textContent).toBe('1 work on this page, 1 read, 1 in the project');
-    expect(screen.getByTestId('coverage-summary').textContent).toBe('Read 1 of 1 work item');
-    const page = document.querySelector('[data-testid="project-overview"]')?.textContent ?? '';
-    expect(page).not.toMatch(/1 works/);
-    expect(page).not.toMatch(/1 work items/);
-  });
-
-  it('says one more group of agreements, not 1 more groups', async () => {
-    const works = Array.from({ length: 6 }, (_, index) => ({
-      key: `W${index + 1}`, title: `Task ${index + 1}`, status: 'unknown', owner_person: null, agent: null,
-      next_step: null, detail_loaded: false, workstream_id: 'WS1', contract_hash: `c${index}`,
-    }));
-    let n = 0;
-    setupOverview({
-      overview: { ...DEMO_PROJECT_OVERVIEW, works, coverage: { ...DEMO_PROJECT_OVERVIEW.coverage, works_enumerated: 6 } },
-      snapshot: (id: string) => {
-        const base = demoWorkSnapshot(id) as { result: { data: Record<string, unknown> } };
-        base.result.data.visible_contract = { goals: [`Goal ${++n}`], acceptance: [] };
-        return base;
-      },
-    });
-    expect(await screen.findByTestId('project-goals-more')).toBeTruthy();
-    await act(() => i18n.changeLanguage('en-US'));
-    expect(screen.getByTestId('project-goals-more').textContent).toBe('1 more group of agreements');
-  });
-
-  it('says one workstream could not be read (L5)', async () => {
-    setupOverview({
-      overview: {
-        ...DEMO_PROJECT_OVERVIEW,
-        coverage: {
-          ...DEMO_PROJECT_OVERVIEW.coverage,
-          works_enumerated: 1,
-          streams: [{
-            workstream_id: 'WS1', status: 'failed', enumerated: 0, truncated: false,
-            next_cursor: null, read_at_unix_ms: 1761840000000,
-          }],
-        },
-      },
-    });
-    expect(await screen.findByTestId('coverage-failed-summary')).toBeTruthy();
-    await act(() => i18n.changeLanguage('en-US'));
-    expect(screen.getByTestId('coverage-failed-summary').textContent).toBe('1 workstream could not be read, so the list may be incomplete');
-  });
-
-  it('says one work on this page, 1 read, with no total known (L6)', async () => {
-    const works = [{ key: 'W1', title: 'Only task', status: 'unknown', owner_person: null, agent: null, next_step: null, detail_loaded: false, workstream_id: 'WS1', contract_hash: 'c1' }];
-    setupOverview({
-      overview: { ...DEMO_PROJECT_OVERVIEW, works, coverage: { ...DEMO_PROJECT_OVERVIEW.coverage, works_total: null, works_enumerated: 1 } },
-    });
-    await screen.findAllByTestId('project-status-W1');
-    await act(() => i18n.changeLanguage('en-US'));
-    expect(screen.getByTestId('project-delivery-scope').textContent).toBe('1 work on this page, 1 read');
-  });
-
-  it('says the agreement of one work has not been read', async () => {
-    const snapshot = (id: string) => (id === 'W2'
-      ? { ok: false, error: { code: 'ReadFailed', message: 'synthetic read failure' } }
-      : demoWorkSnapshot(id));
-    setupOverview({ snapshot });
-    expect(await screen.findByTestId('project-goals-unread')).toBeTruthy();
-    await act(() => i18n.changeLanguage('en-US'));
-    expect(screen.getByTestId('project-goals-unread').textContent).toBe('The agreement of 1 work has not been read yet');
-  });
-});
-
-describe('trouble facts from the service\'s own record (review)', () => {
-  /** A synthetic snapshot of the recorded shape: the run's rejected integration on the current binding. */
-  function snapshotWithTrouble(workId: string, overrides: Record<string, unknown> = {}) {
-    const base = demoWorkSnapshot(workId) as { result: { data: Record<string, unknown> } };
-    const data = base.result.data as { observation: Record<string, unknown> };
-    data.observation = {
-      ...data.observation,
-      collaboration: {
-        integration: {
-          current_binding: true,
-          id: '01M6SYNTHETICINTEGRATION000000A',
-          state: 'rejected',
-          target_changed: true,
-        },
-      },
-      ...overrides,
-    };
-    return base;
-  }
-
-  it('names a rejected integration whatever the reporter\'s word says, with the target-moved sentence', async () => {
-    setupOverview({ snapshot: (id) => snapshotWithTrouble(id) });
-    await screen.findByTestId('project-delivery-attention-W1');
-    const trouble = screen.getByTestId('project-delivery-trouble-W1');
-    expect(trouble.textContent).toContain('并入主线被退回，主线已变化');
-    // The word itself is untouched and still counted.
-    expect(screen.getByTestId('project-delivery-attention-W1').textContent).toContain('已认领');
-    expect(screen.getByTestId('project-delivery-counts').textContent).toContain('已认领× 2');
-  });
-
-  it('names a delivered work whose integration was rejected — the positive word never hides the fact', async () => {
-    const snapshot = (id: string) => {
-      const base = snapshotWithTrouble(id);
-      const data = base.result.data as { runtime: Record<string, unknown>; observation: Record<string, unknown> };
-      data.runtime = { ...data.runtime, state: 'completed', selected_completion_id: '01M6SYNTHETICCOMPLETION00000A' };
-      data.observation = { ...data.observation, progress: { phase: 'delivered' } };
-      return base;
-    };
-    setupOverview({ snapshot });
-    await screen.findByTestId('project-delivery-attention-W1');
-    // The word stays 已交付 and its count stays; the fact rides beside it.
-    expect(screen.getByTestId('project-delivery-attention-W1').textContent).toContain('已交付');
-    expect(screen.getByTestId('project-delivery-trouble-W1').textContent).toContain('并入主线被退回');
-    expect(screen.getByTestId('project-delivery-counts').textContent).toContain('已交付× 2');
-  });
-
-  it('says the plainer sentence when the target has not moved, and nothing for a confirmed integration', async () => {
-    const snapshot = (id: string) => {
-      if (id === 'W2') {
-        const confirmed = demoWorkSnapshot(id) as { result: { data: Record<string, unknown> } };
-        const data = confirmed.result.data as { observation: Record<string, unknown> };
-        data.observation = {
-          ...data.observation,
-          collaboration: { integration: { current_binding: true, state: 'confirmed', target_changed: false } },
-        };
-        return confirmed;
-      }
-      const base = snapshotWithTrouble(id);
-      const data = base.result.data as { observation: Record<string, unknown> };
-      const collab = data.observation.collaboration as { integration: Record<string, unknown> };
-      collab.integration = { ...collab.integration, target_changed: false };
-      return base;
-    };
-    setupOverview({ snapshot });
-    await screen.findAllByTestId('project-status-W2');
-    expect(screen.getByTestId('project-delivery-trouble-W1').textContent).toBe('并入主线被退回');
-    expect(screen.queryByTestId('project-delivery-trouble-W2')).toBeNull();
-  });
-
-  it('names a failed last execution with its own sentence, beside the word', async () => {
-    const snapshot = (id: string) => {
-      const base = demoWorkSnapshot(id) as { result: { data: Record<string, unknown> } };
-      const data = base.result.data as { observation: Record<string, unknown> };
-      data.observation = { ...data.observation, execution: { state: 'failed', execution_id: '01M6SYNTHETICEXECUTION00000A' } };
-      return base;
-    };
-    setupOverview({ snapshot });
-    await screen.findByTestId('project-delivery-trouble-W1');
-    expect(screen.getByTestId('project-delivery-trouble-W1').textContent).toContain('上一次尝试没有成功');
-  });
-
-  it('keeps the cap of five with trouble works in the list', async () => {
-    const works = Array.from({ length: 7 }, (_, index) => ({
-      key: `W${index + 1}`, title: `Task ${index + 1}`, status: 'unknown', owner_person: null, agent: null,
-      next_step: null, detail_loaded: false, workstream_id: 'WS1', contract_hash: `c${index}`,
-    }));
-    setupOverview({
-      overview: { ...DEMO_PROJECT_OVERVIEW, works, coverage: { ...DEMO_PROJECT_OVERVIEW.coverage, works_enumerated: 7 } },
-      snapshot: (id) => snapshotWithTrouble(id),
-    });
-    await screen.findByTestId('project-delivery-attention');
-    expect(screen.getByTestId('project-delivery-attention').querySelectorAll('a').length).toBe(5);
-    expect(screen.getByTestId('project-delivery-attention').textContent).toContain('还有');
-  });
-
-  it('shows both sentences when a work has both facts (Q3)', async () => {
-    const snapshot = (id: string) => {
-      const base = snapshotWithTrouble(id);
-      const data = base.result.data as { observation: Record<string, unknown> };
-      data.observation = { ...data.observation, execution: { state: 'failed', execution_id: '01M6SYNTHETICEXECUTION00000A' } };
-      return base;
-    };
-    setupOverview({ snapshot });
-    await screen.findByTestId('project-delivery-trouble-W1');
-    const trouble = screen.getByTestId('project-delivery-trouble-W1');
-    expect(trouble.textContent).toContain('并入主线被退回，主线已变化');
-    expect(trouble.textContent).toContain('上一次尝试没有成功');
-  });
-
-  it('names an unknown outcome with its own sentence, and neither a stop nor in-progress words (page)', async () => {
-    const snapshot = (id: string) => {
-      const base = demoWorkSnapshot(id) as { result: { data: Record<string, unknown> } };
-      const data = base.result.data as { observation: Record<string, unknown> };
-      data.observation = { ...data.observation, execution: { state: 'unknown', execution_id: '01M6SYNTHETICEXECUTION00000A' } };
-      return base;
-    };
-    setupOverview({ snapshot });
-    await screen.findByTestId('project-delivery-trouble-W1');
-    expect(screen.getByTestId('project-delivery-trouble-W1').textContent).toContain('上一次尝试的结果不明，需要核对');
-  });
-
-  it('does not name a work whose refetch failed even though the earlier data is still held (Q4)', async () => {
-    // The app's real shape: the read succeeds once (the fact lands), then the refetch fails
-    // while the query keeps the last data. A failed read must not keep naming from stale data.
-    let failing = false;
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url.includes('/api/team/projects')) return json(DEMO_PROJECTS);
-      if (url.includes('/api/team/overview')) return json(DEMO_PROJECT_OVERVIEW);
-      if (url.includes('/api/team/activity')) return json(DEMO_ACTIVITY);
-      if (url.includes('/api/team/read')) {
-        const request = JSON.parse(String(init?.body)) as { query: { op: string; work_id?: string } };
-        if (request.query.op === 'work.snapshot') {
-          if (request.query.work_id === 'W1') return json(demoWorkSnapshot('W1')); // stays read
-          if (failing) return json({ ok: false, error: { code: 'ReadFailed', message: 'synthetic read failure' } });
-          return json(snapshotWithTrouble('W2')); // lands once, then the refetch fails
-        }
-      }
-      return json({ ok: false, error: { code: 'NoRoute', message: url } });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    renderApp('/projects/demo?tab=overview');
-    // The read happened: the work is named with its sentence.
-    expect(await screen.findByTestId('project-delivery-trouble-W2')).toBeTruthy();
-    // Now every further read fails; the focus refetch keeps the earlier data in the query.
-    failing = true;
-    await act(async () => {
-      focusManager.setFocused(true);
-    });
-    // W2's refetch failed while its earlier fact data stayed in the query: the block still
-    // counts W1 (its read is fine), and W2 must not be named from the stale facts.
-    await waitFor(() => expect(screen.getByTestId('project-delivery-unread').textContent).toContain('1'));
-    expect(screen.getByTestId('project-delivery-attention').textContent).not.toContain('Prepare the support page');
-    expect(screen.queryByTestId('project-delivery-trouble-W2')).toBeNull();
-  });
-
-  it('keeps raw facts out of the interface in every interaction state', async () => {
-
-    setupOverview({ snapshot: id => snapshotWithTrouble(id) });
-    await screen.findByTestId('project-delivery-trouble-W1');
-    const visible = defaultVisibleText(screen.getByTestId('project-overview'));
-    expect(visible).not.toContain('01M6SYNTHETICINTEGRATION000000A');
-    expect(visible).not.toContain('rejected');
+    const visible = defaultVisibleText(screen.getByTestId('page-project'));
+    expect(visible).not.toMatch(/\bundefined\b|\bnull\b|\bNaN\b/);
+    expect(visible).not.toMatch(/actor_id|client_id|workstream_id|contract_hash|0121E42AF137882D640D53F0D3/);
     expect(findForbiddenVisibleText(visible)).toEqual([]);
     expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-  });
 
-  it('keeps internal owner sources and raw values out of the interface', async () => {
-
-    setupOverview({ snapshot: id => snapshotWithTrouble(id) });
-    await screen.findByTestId('project-delivery-trouble-W1');
-    const overview = screen.getByTestId('project-overview');
-    expect(findForbiddenVisibleText(defaultVisibleText(overview))).toEqual([]);
-    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-    expect(overview.textContent).not.toContain('actor_id');
-    expect(overview.textContent).not.toContain('client_id');
+    const results = await axe(container);
+    expect(results).toHaveNoViolations();
   });
 });

@@ -26,6 +26,8 @@ export interface ChainNodeView {
   health?: HealthStatus | null;
   /** Display name shown as the trailing avatar chip in the kicker row. */
   ownerName?: string | null;
+  /** External or group avatar uses the prototype's rounded-square badge (.av.ext). */
+  ownerExternal?: boolean;
   queue?: readonly ChainQueueEntry[];
   /** Queue footer counts; rendered from the shared vocabulary, not by the caller. */
   queueNote?: { queued: number; oldestDays: number | null } | null;
@@ -113,7 +115,11 @@ export function Chain({ nodes, connectors, present, onOpen, header, empty, foote
         <span className="obs-chain-kicker">
           {lamp}
           {view.kicker}
-          {view.ownerName ? <span className="obs-chain-avatar" aria-hidden="true">{initialOf(view.ownerName)}</span> : null}
+          {view.ownerName ? (
+            <span className="obs-chain-avatar" data-external={view.ownerExternal || undefined} aria-hidden="true">
+              {initialOf(view.ownerName, view.ownerExternal)}
+            </span>
+          ) : null}
         </span>
         <span className="obs-chain-title">{view.title}</span>
         {view.meta ? <span className="obs-chain-meta">{view.meta}</span> : null}
@@ -187,8 +193,9 @@ export function Chain({ nodes, connectors, present, onOpen, header, empty, foote
   );
 }
 
-/** The prototype avatar takes the first character of the display name; groups keep their word. */
-function initialOf(name: string): string {
+/** The prototype avatar takes the first character of the display name; external client uses 外. */
+function initialOf(name: string, external?: boolean): string {
+  if (external && name === '甲方') return '外';
   return name.slice(0, 1).toUpperCase();
 }
 

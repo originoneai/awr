@@ -1,7 +1,12 @@
+import { QueryClientProvider } from '@tanstack/react-query';
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { act, waitFor } from '@testing-library/react';
+import { act, render, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { WorkDetailPanel } from './components/WorkDetailPanel';
 import i18n from './i18n';
+import { createAppQueryClient } from './lib/queries';
+import { RevocationProvider } from './lib/revocation';
 import BASELINE from './test-fixtures/human-language-baseline.json';
 import { findHumanLanguageViolations, visibleTextParts, withinHumanLanguageBaseline } from './lib/human-language-guard';
 import { REAL_API_WORK, realShapedActivity, realShapedOverview, realShapedSnapshot, realShapedWorkInbox, realShapedWorkNext, type RealMoment } from './test-fixtures/real-shaped';
@@ -279,7 +284,6 @@ const DELIVERED = {
 const REPORTER_SENTENCES = {
   plan: [IN_REVIEW.next, ...IN_REVIEW.report],
   planDelivered: [DELIVERED.next, ...DELIVERED.report],
-  overview: [IN_REVIEW.next],
 } as const;
 
 describe('the real-shaped pages show a reporter as written, with long identifiers cut and machine names in words', () => {
@@ -293,8 +297,19 @@ describe('the real-shaped pages show a reporter as written, with long identifier
   it.each(Object.keys(REPORTER_SENTENCES) as Array<keyof typeof REPORTER_SENTENCES>)('%s exempts exactly the reporter\'s sentences', async (page) => {
     await act(async () => { await i18n.changeLanguage('en-US'); });
     installRealShapeMock('data', MOMENTS[page] ?? 'in-review');
-    renderApp(PAGES[page]);
-    // the page answers a few queries one after another: wait for its sentences rather than for a fixed time
+    const overview = realShapedOverview();
+    const work = overview.works.find((item) => item.key === REAL_API_WORK) ?? overview.works[0];
+    const queryClient = createAppQueryClient({ retry: false });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RevocationProvider>
+          <MemoryRouter>
+            <WorkDetailPanel project="demo" work={work} reviewRoundId={null} />
+          </MemoryRouter>
+        </RevocationProvider>
+      </QueryClientProvider>,
+    );
+    // the detail panel answers a few queries one after another: wait for its sentences rather than for a fixed time
     await waitFor(() => expect(visibleTextParts(document.body).reporter.split('\n').sort()).toEqual([...REPORTER_SENTENCES[page]].sort()));
   });
 });

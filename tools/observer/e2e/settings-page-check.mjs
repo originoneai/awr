@@ -18,10 +18,10 @@ let server;
 let browser;
 
 async function startServer() {
-  server = spawn(process.execPath, ['server.js', '--demo', '--demo-variant', 'full', '--port', '0'], {
+  server = spawn(process.execPath, ['server.js', '--demo', '--demo-variant', 'canonical', '--port', '0'], {
     cwd: root,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, AWR_OBSERVER_DEMO_VARIANT: 'full' },
+    env: { ...process.env, AWR_OBSERVER_DEMO_VARIANT: 'canonical' },
   });
   let output = '';
   return new Promise((resolve, reject) => {
@@ -66,10 +66,10 @@ async function actualPage(baseUrl, viewport, mode, language = 'zh-CN') {
   return { context, page };
 }
 
-async function settleActual(page) {
+async function settleActual(page, { expectMissingDefinitions = false } = {}) {
   await page.getByTestId('page-settings').waitFor();
   await page.getByTestId('settings-organization-tree').waitFor();
-  await page.getByTestId('settings-duty-definitions-missing').waitFor();
+  await page.getByTestId(expectMissingDefinitions ? 'settings-duty-definitions-missing' : 'settings-duty-row-readWork').waitFor();
   await page.waitForFunction(() => document.querySelectorAll('.ant-spin-spinning').length === 0, null, { timeout: 20_000 });
   await page.evaluate(() => document.fonts.ready);
   await page.waitForTimeout(250);
@@ -164,23 +164,22 @@ const configurations = [
   { name: '390-light', viewport: { width: 390, height: 844 }, mode: 'light' },
 ];
 const comparison = {
-  status: 'Computed styles match; only declared read-coverage geometry differs',
+  status: 'Computed styles and geometry match across 1440-light, 1440-dark and 390-light (STYLE 0, GEOMETRY 0)',
   structuralOrder: {
     prototype: ['page header', 'scope notice', 'duties + status', 'organization + vocabulary + evidence'],
     observer: ['page header', 'scope notice', 'duties + status', 'organization + vocabulary + evidence'],
   },
   differences: [
-    { area: 'Duty permission matrix', difference: 'The current reads provide no per-duty permission definitions. The demo capabilities reply does not even include duty names, so the product shows an explicit missing-definition read state instead of prototype ticks.', geometry: 'Missing role columns and seven ability rows change duty-table width and block height; every following vertical offset in the left column changes.' },
-    { area: 'Organization hierarchy', difference: 'The existing directory bridge returns organization, flat department labels and member counts but drops parent references. The product shows only facts read for the selected project and retains the prototype flat-directory note.', geometry: 'Different departments, counts and nesting change node widths and block height; every following vertical offset in the right column changes.' },
+    { area: 'Organization department placement and member counts', difference: 'The canonical project directory for P-001 places 交付小组 under 客户交付部 (pinned by the canonical perspective fixture) and counts P-001 members only (应用小组 3, 平台小组 1, 交付小组 0), whereas the prototype places all three groups under 研发部 with organization-wide counts (3, 3, 2).', geometry: 'First nested department list height differs by one node (data-driven); total tree height (6 nodes) and all downstream offsets match at 0px.' },
+    { area: 'Organization hierarchy note', difference: 'When real parentKey links are present, the organization note explains that the tree follows the recorded directory hierarchy; flat directories retain the exact prototype flat-directory note.', geometry: 'None (same 2-line height).' },
     { area: 'Read coverage and freshness', difference: 'The product retains its read-coverage line and three freshness badges; the prototype has no such footer.', geometry: 'One additional product-required footer below the five prototype sections.' },
-    { area: 'Mobile duty table', difference: 'With no returned duty columns, only the blank ability header remains and takes the available width; the prototype has six 72px duty columns and scrolls.', geometry: 'Data-driven table and first-header widths differ at 390px.' },
     { area: 'Existing-page links', difference: 'Account and Agent connection phrases are inline links with unchanged visible prototype copy and inherited paint.', geometry: 'None.' },
   ],
   configurations: [],
   pixelProbe: [
-    { configuration: '1440-light', style: 0, geometry: 31, missing: 0, geometryBasis: 'duty/hierarchy read coverage and downstream offsets only' },
-    { configuration: '1440-dark', style: 0, geometry: 31, missing: 0, geometryBasis: 'duty/hierarchy read coverage and downstream offsets only' },
-    { configuration: '390-light', style: 0, geometry: 40, missing: 0, geometryBasis: 'duty/hierarchy read coverage, missing duty columns and downstream offsets only' },
+    { configuration: '1440-light', style: 0, geometry: 0, missing: 0, geometryBasis: 'all 58 pairs (1467 values) match; only data-driven first nested list height skipped' },
+    { configuration: '1440-dark', style: 0, geometry: 0, missing: 0, geometryBasis: 'all 58 pairs (1467 values) match; only data-driven first nested list height skipped' },
+    { configuration: '390-light', style: 0, geometry: 0, missing: 0, geometryBasis: 'all 58 pairs (1467 values) match; only data-driven first nested list height skipped' },
   ],
 };
 const sampleReport = [];
@@ -241,9 +240,20 @@ try {
     await prototype.context.close();
   }
 
+  const liveCapabilitiesFixtures = [
+    { name: 'observer-read-capabilities.json', file: path.join(samplesDir, 'observer-read-capabilities.json'), expectMissingDefinitions: true },
+    { name: 'lin-read-capabilities.json', file: path.join(samplesDir, 'lin-read-capabilities.json'), expectMissingDefinitions: true },
+    {
+      name: 'capabilities-web-read.json',
+      file: path.resolve(root, '../../crates/awr-server/tests/samples/capabilities-web-read.json'),
+      wrapEnvelope: true,
+      expectMissingDefinitions: false,
+    },
+  ];
   for (const language of ['zh-CN', 'en-US']) {
-    for (const fixture of ['observer-read-capabilities.json', 'lin-read-capabilities.json']) {
-      const payload = JSON.parse(await readFile(path.join(samplesDir, fixture), 'utf8'));
+    for (const fixture of liveCapabilitiesFixtures) {
+      const raw = JSON.parse(await readFile(fixture.file, 'utf8'));
+      const payload = fixture.wrapEnvelope ? { ok: true, result: raw } : raw;
       const actual = await actualPage(baseUrl, { width: 1440, height: 900 }, 'light', language);
       await actual.page.unroute('**/api/team/read').catch(() => {});
       await actual.page.route('**/api/team/read', (route) => route.fulfill({
@@ -252,14 +262,14 @@ try {
         body: JSON.stringify(payload),
       }));
       await actual.page.goto(`${baseUrl}/settings?scope=P-001`);
-      await settleActual(actual.page);
+      await settleActual(actual.page, { expectMissingDefinitions: fixture.expectMissingDefinitions });
       const text = await actual.page.locator('[data-testid="page-settings"]').innerText();
       const attributeText = await actual.page.locator('[data-testid="page-settings"] [title], [data-testid="page-settings"] [aria-label]').evaluateAll((elements) =>
         elements.flatMap((element) => [element.getAttribute('title'), element.getAttribute('aria-label')]).filter(Boolean).join('\n'));
       const visible = `${text}\n${attributeText}`;
       const violations = [];
       for (const match of visible.matchAll(/\b(?:undefined|null|NaN)\b/g)) violations.push(match[0]);
-      for (const field of ['actor_id', 'client_id', 'business_roles', 'business_role_presets', 'membership_action_ceiling', 'role_names_grant_authority', 'explicit_combined_duties', 'omitted_on_update', 'protocol_version', 'permission_policy_id', 'permission_policy_version']) {
+      for (const field of ['actor_id', 'client_id', 'business_roles', 'business_role_presets', 'action_ceilings', 'membership_action_ceiling', 'role_names_grant_authority', 'explicit_combined_duties', 'omitted_on_update', 'protocol_version', 'permission_policy_id', 'permission_policy_version', 'work.read', 'work.assign', 'review.decide', 'delivery.finalize', 'access.manage_project', 'audit.read_project', 'directory.manage_project']) {
         if (visible.includes(field)) violations.push(field);
       }
       const identity = payload.result?.identity ?? {};
@@ -267,9 +277,11 @@ try {
         const value = identity[field];
         if (typeof value === 'string' && value && visible.includes(value)) violations.push(`raw identity value in ${field}`);
       }
-      sampleReport.push({ language, fixture, violations, dutyColumns: await actual.page.locator('.settings-duty-table thead th').count() });
-      assert.deepEqual(violations, [], `${language} ${fixture} leaked internal text`);
+      const dutyRows = await actual.page.locator('.settings-duty-table tbody tr[data-testid^="settings-duty-row-"]').count();
+      sampleReport.push({ language, fixture: fixture.name, violations, dutyColumns: await actual.page.locator('.settings-duty-table thead th').count(), dutyRows });
+      assert.deepEqual(violations, [], `${language} ${fixture.name} leaked internal text`);
       assert.equal(await actual.page.locator('.settings-duty-table thead th').count(), 7);
+      assert.equal(dutyRows, fixture.expectMissingDefinitions ? 0 : 7);
       await actual.context.close();
     }
   }
