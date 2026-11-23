@@ -68,7 +68,22 @@ pub(super) struct OpenReview {
     session_id: String,
     expected_session_version: String,
     evidence_id: String,
+    requested_reviewer: Option<RequestedReviewer>,
 }
+
+#[derive(Clone, Debug, Deserialize, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum RequestedReviewer {
+    Member { person_id: String },
+    Role { role: ReviewerDuty },
+}
+
+#[derive(Clone, Debug, Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ReviewerDuty {
+    Reviewer,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Decide {
@@ -1151,6 +1166,19 @@ async fn open(
     if !identity(&a.evidence_id) {
         return Err(invalid());
     }
+    let requested_reviewer = a.requested_reviewer.unwrap_or(RequestedReviewer::Role {
+        role: ReviewerDuty::Reviewer,
+    });
+    if let RequestedReviewer::Member { person_id } = &requested_reviewer {
+        if !identity(person_id) {
+            return Err(invalid());
+        }
+        let reviewers = crate::workstream_read::reviews::reviewers(tx, tenant, project).await?;
+        if !reviewers.contains_key(person_id) {
+            return Err(PgError::Forbidden);
+        }
+    }
+    let requested_reviewer = json!(requested_reviewer);
     let row = tx
         .query_opt(
             "SELECT work_id, contract_hash, digest, execution_id, output_digest, execution_result_digest, member_origins_json, created_by, input_digest
@@ -1271,8 +1299,8 @@ async fn open(
             tenant_id, project_id, id, work_id, round_index, bundle_hash,
             contract_hash, author_actor_id, state, author_person_id, evidence_id,
             execution_id, artifact_digest, execution_result_digest, author_client_id, member_origins_json,
-            governance_binding)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'open',$9,$10,$11,$12,$13,$14,$15,$16)",
+            governance_binding, requested_reviewer)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'open',$9,$10,$11,$12,$13,$14,$15,$16,$17)",
         &[
             &tenant,
             &project,
@@ -1290,6 +1318,7 @@ async fn open(
             &auth.client_id,
             &member_origins_json,
             &governance,
+            &requested_reviewer,
         ],
     )
     .await?;
@@ -1306,6 +1335,7 @@ async fn open(
         data: json!({
             "round_id": id,
             "round_index": round_index,
+            "requested_reviewer": requested_reviewer,
             "bundle_hash": digest_v,
             "contract_hash": contract_hash,
             "evidence_id": a.evidence_id,
@@ -1322,6 +1352,7 @@ async fn open(
                 "bundle_hash": digest_v,
                 "evidence_id": a.evidence_id,
                 "author_person_id": author_person,
+                "requested_reviewer": requested_reviewer,
             }),
         )],
     };
@@ -2967,7 +2998,8 @@ pub(crate) async fn inspect_review(
         .query_opt(
             "SELECT id, work_id, round_index, bundle_hash, contract_hash, state,
                     author_actor_id, author_person_id, evidence_id, execution_id,
-                    artifact_digest, execution_result_digest, author_client_id, member_origins_json
+                    artifact_digest, execution_result_digest, author_client_id, member_origins_json,
+                    COALESCE(requested_reviewer, jsonb_build_object('kind','role','role','reviewer'))
              FROM awr_team.review_rounds
              WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
             &[&tenant, &project, &round_id],
@@ -3009,6 +3041,7 @@ pub(crate) async fn inspect_review(
         "artifact_digest": row.get::<_,Option<String>>(10),
         "execution_result_digest": row.get::<_,Option<String>>(11),
         "author_client_id": row.get::<_,Option<String>>(12),
+        "requested_reviewer": row.get::<_,Value>(14),
         "decisions": decisions.iter().map(|d| {
             let mut item = json!({
             "decision": d.get::<_,String>(0),

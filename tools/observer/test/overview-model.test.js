@@ -11,6 +11,7 @@ const REAL_OVERVIEW = require('../src/test-fixtures/overview/overview-works-run0
 const REAL_REPORTS = require('../src/test-fixtures/work-state/progress-reports-run09.json');
 const REAL_SNAPSHOTS = require('../src/test-fixtures/work-state/snapshots-run09.json');
 const REAL_ACTIVITY = require('../src/test-fixtures/activity/service-audit-development-run09.json');
+const QUEUE_SAMPLES = Object.fromEntries(['review.queue', 'team.reviewers'].map((op) => [op, require(`./fixtures/review-queue/${op}.json`)]));
 const COOKIE = 'awr_web_session=synthetic-overview-reader';
 const AT = Date.now();
 const STREAM = REAL_OVERVIEW.workstreams[0].id;
@@ -102,6 +103,12 @@ function defaultReply(query, state) {
     items: [realWorkListItem()], total: 1, next_cursor: null, truncated: false, execution_authorized: false, as_of: asOf(state),
   } } };
   if (query.op === 'audit.development') return { body: activityReply(state) };
+  if (QUEUE_SAMPLES[query.op]) {
+    const sample = JSON.parse(JSON.stringify(QUEUE_SAMPLES[query.op]));
+    Object.assign(sample, envelope(state, query));
+    Object.assign(sample.data, { items: [], total: 0, as_of: asOf(state), ...(query.op === 'review.queue' ? { groups: [] } : {}) });
+    return { body: sample };
+  }
   if (['decisions.list', 'dependencies.list', 'handoff.list', 'review.rounds'].includes(query.op)) {
     // These four raw list replies are not in the verbatim archive (样本里没有).
     // Empty contract-valid collections test composition without fabricating facts.
@@ -213,7 +220,7 @@ test('overview-model composes canonical facts from real extracts without inventi
   assert.equal(result.coverage.approvals.reason, 'not-read');
   const ops = new Set(state.calls.map((call) => call.op));
   assert.deepEqual(ops, new Set(['session', 'workstreams.list', 'work.list', 'decisions.list',
-    'dependencies.list', 'handoff.list', 'audit.development', 'directory.read', 'review.rounds']));
+    'dependencies.list', 'handoff.list', 'audit.development', 'directory.read', 'review.rounds', 'review.queue', 'team.reviewers']));
   assert.equal(ops.has('work.snapshot'), false);
 });
 
@@ -300,7 +307,7 @@ test('overview-model shares one in-flight composition between overlapping calls'
   assert.equal(left.ok, true, JSON.stringify(left));
   assert.equal(right.ok, true, JSON.stringify(right));
   assert.equal(left.read_at_unix_ms, right.read_at_unix_ms);
-  assert.equal(nonSession(state).length, 10);
+  assert.equal(nonSession(state).length, 12);
   assert.equal(state.calls.filter((query) => query.op === 'session').length, 2);
 });
 
@@ -356,8 +363,8 @@ test('overview-model never shares a composition between different cookie session
   assert.equal(right.input.tasks.items[0].id, 'work-b');
   assert.equal(left.input.tasks.items[0].title, 'Session A task');
   assert.equal(right.input.tasks.items[0].title, 'Session B task');
-  assert.equal(nonSession(state).filter((query) => query.cookie === sessionA).length, 8);
-  assert.equal(nonSession(state).filter((query) => query.cookie === sessionB).length, 8);
+  assert.equal(nonSession(state).filter((query) => query.cookie === sessionA).length, 10);
+  assert.equal(nonSession(state).filter((query) => query.cookie === sessionB).length, 10);
 });
 
 test('overview-model fails closed instead of joining an older-generation flight', async (t) => {
@@ -406,7 +413,7 @@ test('overview-model cleans a rejected flight so the next call recomputes succes
   globalThis.structuredClone = originalClone;
   const recovered = await call();
   assert.equal(recovered.ok, true, JSON.stringify(recovered));
-  assert.equal(nonSession(state).length, 16, 'both the rejected and recovered calls must compose');
+  assert.equal(nonSession(state).length, 20, 'both the rejected and recovered calls must compose');
 });
 
 test('overview-model skips review reads only for no_runtime, not other null runtime reasons', async (t) => {
@@ -431,14 +438,14 @@ test('overview-model spends the 50-work two-stream cap in deterministic list ord
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.equal(nonSession(state).length, 47);
   const reads = reviewIds(state);
-  assert.equal(reads.length, 39);
+  assert.equal(reads.length, 37);
   assert.equal(reads[0], 'w-1-024', 'the delivered result must be read first');
   assert.ok(reads.includes('w-1-024'));
   assert.ok(!reads.includes('w-0-000'), 'the quiet work must yield to informative work');
   assert.equal(result.input.reviewRounds.coverage, 'unread');
   assert.equal(result.input.reviewRounds.reason, 'truncated');
   const missing = result.coverage.reviewRounds.missing.filter((gap) => gap.reason === 'truncated');
-  assert.equal(missing.length, 11);
+  assert.equal(missing.length, 13);
   assert.ok(missing.some((gap) => gap.work_id === 'w-0-000'));
 });
 
@@ -447,7 +454,7 @@ test('overview-model gives no-runtime works known empty rounds without spending 
   const { call, state } = await modelFixture(t, respondFor(project), { readTimeoutMs: 1000, overviewDeadlineMs: 5000 });
   const result = await call();
   assert.equal(result.ok, true, JSON.stringify(result));
-  assert.equal(nonSession(state).length, 37);
+  assert.equal(nonSession(state).length, 39);
   const reads = reviewIds(state);
   assert.equal(reads.length, 30);
   assert.ok(reads.every((id) => Number(id.split('-')[2]) % 2 === 0));
@@ -472,7 +479,7 @@ test('overview-model caps a 100-work three-stream composition at 47 non-session 
   assert.equal(result.input.tasks.items.length, 100);
   assert.ok(nonSession(state).length <= 47);
   assert.equal(nonSession(state).length, 47);
-  assert.equal(reviewIds(state).length, 38);
+  assert.equal(reviewIds(state).length, 36);
   assert.equal(result.input.reviewRounds.reason, 'truncated');
 });
 
@@ -489,7 +496,7 @@ test('overview-model makes only session reads during twelve polls inside the cac
   const pollingCalls = state.calls.slice(afterWarm);
   assert.equal(pollingCalls.length, 12);
   assert.ok(pollingCalls.every((query) => query.op === 'session'));
-  assert.equal(nonSession(state).length, 8);
+  assert.equal(nonSession(state).length, 10);
 });
 
 test('overview-model revocation clears the cached model and later reads return no restricted input', async (t) => {
@@ -555,4 +562,66 @@ test('the demo composition feeds the real deriveOverview input surface directly'
   assert.equal(result.input.approvals.items.length, 2);
   assert.equal(derived.coverage.parts.approvals.state, 'complete');
   assert.equal(derived.coverage.parts.approvals.reason, null);
+});
+
+
+test('production queue samples feed review chains and the same per-person queue input', async (t) => {
+  const queue = QUEUE_SAMPLES['review.queue'];
+  for (const people of [[], ['reviewer'], ['reviewer', 'same-name']]) {
+  const { call, state } = await modelFixture(t, (query, state) => {
+    if (query.op === 'directory.read' && people.length) return { body: { data: {
+      project_id: 'portal', configured: true, version: '1', updated_at_ms: AT,
+      plan: { organization: { id: 'organization', name: 'Example' }, departments: [], project_department_ids: [],
+        members: people.map((id) => ({ person_id: id, department_ids: [] })) },
+      members: people.map((id) => ({ member_ref: { project_id: 'portal', person_id: id },
+        display_name: 'Reviewer One', available: true, department_ids: [] })),
+    } } };
+    if (QUEUE_SAMPLES[query.op]) {
+      const reply = structuredClone(QUEUE_SAMPLES[query.op]);
+      Object.assign(reply, envelope(state, query)); reply.data.as_of = asOf(state);
+      return { body: reply };
+    }
+    if (query.op === 'work.list') return { body: { ...envelope(state, query), data: {
+      items: queue.data.items.map((round) => ({ ...realWorkListItem(), work_id: round.work_id,
+        title: round.work_title, summary: { ...realWorkListItem().summary, phase: field('review') } })),
+      total: queue.data.items.length, next_cursor: null, truncated: false, execution_authorized: false, as_of: asOf(state),
+    } } };
+    if (query.op === 'review.rounds') {
+      const item = queue.data.items.find((item) => item.work_id === query.work_id);
+      const round = { round_id: item.round_id, round_index: item.round_index, round_position: 1,
+        readable: true, reason: null, state: 'open', bundle_hash: 'a'.repeat(64), contract_hash: 'b'.repeat(64),
+        contract_matches_current: true, artifact_digest: null, reviewer_role: null, role_basis: null,
+        reviewer_actor_id: null, reviewer_person_id: null, decision: null, decided_at_unix_ms: null,
+        reason_first_line: null };
+      round.missing = Object.fromEntries(['state', 'bundle_hash', 'contract_hash', 'contract_matches_current', 'artifact_digest',
+        'reviewer_role', 'role_basis', 'reviewer_actor_id', 'reviewer_person_id', 'decision', 'decided_at_unix_ms', 'reason_first_line']
+        .map((key) => [key, round[key] === null ? 'not_recorded' : null]));
+      return { body: { ...envelope(state, query), data: { work_id: query.work_id, items: [round], total: 1,
+        next_cursor: null, truncated: false, execution_authorized: false,
+        as_of: asOf(state, { rounds_revision: 'c'.repeat(32) }) } } };
+    }
+    return undefined;
+  });
+  const result = await call();
+  assert.equal(result.input.reviewRounds.coverage, 'complete', JSON.stringify(result));
+  const named = result.input.reviewRounds.items.find((r) => r.id === 'named');
+  const shared = result.input.reviewRounds.items.find((r) => r.id === 'old-role');
+  assert.equal(named.reviewerPersonId, 'reviewer');
+  assert.equal(shared.reviewerPersonId, people.length === 1 ? 'reviewer' : null, 'a role is shared until a complete directory identifies one unambiguous person');
+  assert.equal(named.openedAtUnixMs, queue.data.items.find((r) => r.round_id === 'named').opened_at_unix_ms);
+  assert.equal(state.calls.some((call) => call.op === 'team.reviewers'), true);
+  const vite = await createServer({ configFile: false, root: path.resolve(__dirname, '..'),
+    server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
+  t.after(() => vite.close());
+  const { deriveOverview } = await vite.ssrLoadModule('/src/core/overview/index.ts');
+  // Directory identity is synthetic; routing facts above retain the production values.
+  const input = { ...result.input, members: { coverage: 'complete', items: [{ personId: 'reviewer', displayName: 'Reviewer One' }] } };
+  const derived = deriveOverview(input);
+  const chain = derived.chains.find((chain) => chain.root.person?.id === 'reviewer');
+  assert.ok(chain, JSON.stringify(derived.waits));
+  assert.ok(chain.root.queue.items.some((wait) => wait.task.id === 'c'));
+  assert.equal(chain.root.queue.items.length, people.length === 1 ? 2 : 1);
+  const person = derived.people.find((person) => person.person.id === 'reviewer');
+  assert.ok(person.pending.items.some((item) => item.task?.id === 'c'), JSON.stringify(person));
+  }
 });

@@ -642,3 +642,68 @@ async fn http_preserves_context_limits_and_labels_stale_recovery() {
     assert_eq!(body["code"], "ResponseTooLarge");
     assert!(body.get("data").is_none());
 }
+
+#[tokio::test]
+async fn review_queue_and_reviewers_verbatim_production_routes_are_scoped_and_private() {
+    let (_guard, admin, _, store) = setup().await;
+    admin.batch_execute("INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status)
+        VALUES('reader-tenant','reader-project','reviewer','Reviewer One','active');
+        UPDATE awr_team.project_memberships SET business_roles='[\"observer\",\"reviewer\"]' WHERE actor_id='reviewer';").await.unwrap();
+    for (id, work, days, target) in [
+        ("old-role", "a", 9, None),
+        (
+            "named",
+            "c",
+            3,
+            Some(json!({"kind":"member","person_id":"reviewer"})),
+        ),
+        ("private-round", "b-private", 30, None),
+    ] {
+        admin.execute("INSERT INTO awr_team.review_rounds(tenant_id,project_id,id,work_id,round_index,
+            state,bundle_hash,contract_hash,author_actor_id,requested_reviewer,created_at)
+            SELECT c.tenant_id,c.project_id,$1,c.work_id,1,'open',repeat('a',64),c.contract_hash,'agent',$2,
+              transaction_timestamp()-make_interval(days=>$3)
+            FROM awr_team.work_contracts c JOIN awr_team.projects p ON p.tenant_id=c.tenant_id AND p.id=c.project_id
+              AND p.active_snapshot_id=c.snapshot_id WHERE c.tenant_id=$4 AND c.project_id=$5 AND c.work_id=$6",
+            &[&id,&target,&days,&TENANT,&PROJECT,&work]).await.unwrap();
+    }
+    let server = start(store).await;
+    for op in ["review.queue", "team.reviewers"] {
+        let body = json!({"protocol_version":1,"op":op});
+        let response = post(&server, "one", A, body.clone()).await;
+        assert_eq!(response.status(), 200);
+        // Capture exact wire bytes from the production router linked into awr-server.
+        let wire = response.text().await.unwrap();
+        let value: Value = serde_json::from_str(&wire).unwrap();
+        assert!(!wire.contains("b-private"));
+        assert!(!wire.contains("observer"));
+        assert_eq!(value["data"]["execution_authorized"], false);
+        if op == "review.queue" {
+            assert_eq!(value["data"]["total"], 2);
+            assert_eq!(
+                value["data"]["items"][0]["requested_reviewer"],
+                json!({"kind":"role","role":"reviewer"})
+            );
+        } else {
+            assert_eq!(
+                value["data"]["items"],
+                json!([{"name":"Reviewer One","review_duty":"reviewer","queue_count":2}])
+            );
+        }
+        if let Ok(dir) = std::env::var("AWR_REVIEW_SAMPLE_DIR") {
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(std::path::Path::new(&dir).join(format!("{op}.json")), wire).unwrap();
+        }
+        for (key, token) in [("other", A), ("one", NONE), ("one", "invalid")] {
+            let denied = post(&server, key, token, body.clone()).await;
+            assert_eq!(denied.status(), 403);
+            assert_eq!(
+                denied.json::<Value>().await.unwrap(),
+                json!({"code":"Forbidden","message":"access denied"})
+            );
+        }
+        let mut scoped = body.clone();
+        scoped["work_id"] = json!("b-private");
+        assert_eq!(post(&server, "one", A, scoped).await.status(), 403);
+    }
+}

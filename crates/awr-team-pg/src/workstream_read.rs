@@ -30,7 +30,7 @@ mod planning;
 mod portfolio;
 pub use portfolio::{PORTFOLIO_PAGE_MAX, PortfolioOverviewRequest};
 mod retained;
-mod reviews;
+pub(crate) mod reviews;
 mod sources;
 mod updates;
 
@@ -59,6 +59,8 @@ pub(crate) const QUERIES: &[&str] = &[
     "evidence.inspect",
     "review.inspect",
     "review.rounds",
+    "review.queue",
+    "team.reviewers",
     "completion.inspect",
     "delivery.inspect",
     "delivery.neutral.inspect",
@@ -154,6 +156,8 @@ impl WorkstreamQuery {
         "artifact.segment",
         "review.inspect",
         "review.rounds",
+        "review.queue",
+        "team.reviewers",
         "handoff.list",
         "dependencies.list",
         "delivery.neutral.inspect",
@@ -280,6 +284,8 @@ impl WorkstreamQuery {
                 | "decisions.list"
                 | "updates.list"
                 | "review.rounds"
+                | "review.queue"
+                | "team.reviewers"
                 | "handoff.list"
                 | "dependencies.list"
         );
@@ -324,7 +330,8 @@ impl WorkstreamQuery {
             ),
             (
                 "recipient_person_id",
-                self.recipient_person_id.is_some() && self.op != "handoff.list",
+                self.recipient_person_id.is_some()
+                    && !matches!(self.op.as_str(), "handoff.list" | "review.queue"),
             ),
             (
                 "handoff_state",
@@ -521,6 +528,8 @@ impl WorkstreamQuery {
                             "sources.inspect"
                                 | "documents.list"
                                 | "handoff.list"
+                                | "review.queue"
+                                | "team.reviewers"
                                 | "dependencies.list"
                         )),
             ),
@@ -1466,6 +1475,9 @@ pub(crate) async fn read(
     }
     if q.op == "dependencies.list" {
         return dependencies::read(tx, tenant, project, auth, q).await;
+    }
+    if matches!(q.op.as_str(), "review.queue" | "team.reviewers") {
+        return reviews::queue(tx, tenant, project, auth, q).await;
     }
     if q.op == "handoff.list" {
         return handoffs::read(tx, tenant, project, auth, q).await;
