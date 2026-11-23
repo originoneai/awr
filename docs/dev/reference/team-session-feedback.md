@@ -59,7 +59,9 @@ See [execution settlement](team-execution-settlement.md).
 
 Summary is at most 2,048 UTF-8 bytes. Each list has at most eight entries:
 completed/blocker text is at most 1,024 bytes; labels/test names 256 bytes;
-references 1,024 bytes. Tests use `passed`, `failed` or `not_run`, with optional
+references 1,024 bytes. Optional structured waits live under `progress.waits`
+and appear under `structured_waits` in `work.snapshot`, `work.observe`, and
+`work.graph`; see [structured waits](structured-waits.md). Tests use `passed`, `failed` or `not_run`, with optional
 `reference`. These are reported outcomes and references, not verified evidence.
 No files or URLs are fetched automatically. Submit concise, redacted business
 facts; raw logs, private prompts and credentials do not belong here.

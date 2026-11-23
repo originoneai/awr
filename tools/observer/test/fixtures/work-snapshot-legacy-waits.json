@@ -1,0 +1,279 @@
+{
+  "authority_version": "1",
+  "coordinator_epoch": "epoch-a",
+  "data": {
+    "adopted_dependencies": [],
+    "authorized_readable_refs": [],
+    "completeness_reasons": [
+      "dependency_export_unavailable"
+    ],
+    "context_complete": false,
+    "context_hash": "6f19b3627d4324e6fb7cf560701b38dfb9c120389c12ff817c632f0ed42f0404",
+    "context_hash_protocol": "awr-team-workstream-context-v1",
+    "contract_hash": "bbe65a8738832a473a7c8191291eea8af0c9a821291ae94751f381bb0344aa51",
+    "definition_state": "enabled",
+    "dependency_export_unavailable": true,
+    "execution_admission": "not_evaluated",
+    "guidance": {
+      "action": {
+        "note": "Restore missing context before effects; use source.content or a larger context budget as needed.",
+        "op": "work.prepare"
+      },
+      "because": [
+        "missing authorized specs or dependencies"
+      ],
+      "code": "restore_context",
+      "recheck_on": "specification or dependency changes",
+      "when": "required context is incomplete"
+    },
+    "next_step": "re-prepare after restoring missing authorized specs/deps, or raise max_context_bytes / use source.content",
+    "observation": {
+      "automatic_resume": false,
+      "checkpoint": {
+        "contract_matches_current": true,
+        "created_at_unix_ms": 1795417584797,
+        "id": "01M83KMD4XJ6ZTDN0GV6BT9NST",
+        "next_action": "Continue tests",
+        "open_loops": []
+      },
+      "claim": null,
+      "client": null,
+      "collaboration": {
+        "acceptance_inferred": false,
+        "candidate": null,
+        "claim_present": false,
+        "delivery_channel": null,
+        "delivery_required": false,
+        "facts_truncated": false,
+        "integration": null,
+        "integration_required": false,
+        "publication": null,
+        "recovery": {
+          "claim_binding_changed": false,
+          "expired_claim": false,
+          "unknown_resource": false,
+          "unsettled_execution": false
+        },
+        "repository_integration_policy": false,
+        "review": null,
+        "source_state": {
+          "basis": "current_physical_source",
+          "observation": "not_measured",
+          "query": {
+            "op": "delivery.source.status",
+            "protocol_version": 1,
+            "work_id": "c"
+          }
+        },
+        "source_synchronized": null,
+        "verification": []
+      },
+      "contract_hash": "bbe65a8738832a473a7c8191291eea8af0c9a821291ae94751f381bb0344aa51",
+      "definition_state": "enabled",
+      "dependencies_ready_advisory": false,
+      "execution": null,
+      "execution_authorized": false,
+      "guidance": {
+        "action": {
+          "note": "Restore missing context before effects; use source.content or a larger context budget as needed.",
+          "op": "work.prepare"
+        },
+        "because": [
+          "missing authorized specs or dependencies"
+        ],
+        "code": "restore_context",
+        "recheck_on": "specification or dependency changes",
+        "when": "required context is incomplete"
+      },
+      "last_activity_at_unix_ms": 1795417584798,
+      "last_participation": {
+        "actor_id": "agent",
+        "actor_name": "Worker",
+        "at_unix_ms": 1795417584798,
+        "basis": "latest_recorded_session_activity",
+        "client_id": "cli-a",
+        "recorded_project_revision": "5",
+        "session_id": "session-c",
+        "state": "active"
+      },
+      "missing": {
+        "model": "client_capability_unknown",
+        "progress": null,
+        "usage": "client_capability_unknown"
+      },
+      "model": null,
+      "observation_scope": "current_work_ownership",
+      "observed_at_unix_ms": 1795417584831,
+      "pr_deliveries": [],
+      "progress": {
+        "artifacts": [],
+        "blockers": [],
+        "checkpoint_id": "01M83KMD4XJ6ZTDN0GV6BT9NST",
+        "client_observed_at_unix_ms": null,
+        "completed": [],
+        "contract_matches_current": true,
+        "next_action": "Continue tests",
+        "origin": {
+          "actor_id": "agent",
+          "actor_name": "Worker",
+          "client_id": "cli-a",
+          "session_id": "session-c"
+        },
+        "phase": "testing",
+        "provenance": "caller_declared",
+        "recorded_project_revision": "4",
+        "report_order_basis": "recorded_project_revision",
+        "reported_at_unix_ms": 1795417584797,
+        "reported_contract_hash": "bbe65a8738832a473a7c8191291eea8af0c9a821291ae94751f381bb0344aa51",
+        "stale": false,
+        "summary": "Legacy report omitting waits.",
+        "tests": []
+      },
+      "reporting": {
+        "billing_collected": false,
+        "client_origin": {
+          "actor_id": "agent",
+          "actor_name": "Worker",
+          "client_id": "cli-a",
+          "session_id": "session-c"
+        },
+        "client_reported_at_unix_ms": null,
+        "client_stale": false,
+        "model_basis": "latest_session_declaration; not execution-time attribution",
+        "provenance": "caller_declared",
+        "stale_after_ms": 900000,
+        "usage_aggregation": "none",
+        "version": 1
+      },
+      "responsibility": {
+        "collaborators": [],
+        "coordination_allowed_advisory": true,
+        "coordination_delegation_id": null,
+        "current_executor": null,
+        "current_executor_matches_client": true,
+        "executor_agent_id": null,
+        "executor_agent_name": null,
+        "executor_person_name": null,
+        "historical": null,
+        "independent_reviewer": null,
+        "member_person_id": "agent",
+        "owner": null,
+        "owner_name": null,
+        "owner_person_id": null,
+        "pending": null,
+        "pending_name": null,
+        "personal_mode_default": false,
+        "project_id": "reader-project",
+        "relation": "pool",
+        "version": "0",
+        "work_item_id": "c"
+      },
+      "runtime": null,
+      "session": {
+        "actor_id": "agent",
+        "actor_name": "Worker",
+        "client_id": "cli-a",
+        "id": "session-c",
+        "state": "active"
+      },
+      "session_execution": null,
+      "structured_waits": {
+        "checkpoint_id": "01M83KMD4XJ6ZTDN0GV6BT9NST",
+        "contract_matches_current": true,
+        "grants_authority": false,
+        "items": null,
+        "provenance": "caller_declared",
+        "reported_at_unix_ms": 1795417584797,
+        "status": "not_provided"
+      },
+      "usage": null,
+      "waiting_user": false,
+      "work_id": "c",
+      "workstream_id": "00000000000000000000000001"
+    },
+    "ordinary_decisions": {
+      "items": [],
+      "truncated": false
+    },
+    "ownership_version": "1",
+    "published_contract": {
+      "acceptance": [
+        "verified"
+      ],
+      "codec": "awr-team-contract-v1",
+      "completion_policy": "review",
+      "external_key": "c",
+      "goals": [
+        "ship"
+      ],
+      "hard_rules": [
+        "preserve compatibility"
+      ],
+      "required_dependencies": [],
+      "scope_paths": [
+        "src"
+      ],
+      "verification_requirements": [
+        "report"
+      ],
+      "work_id": "c"
+    },
+    "required_specs": [],
+    "responsibility": {
+      "collaborators": [],
+      "coordination_allowed_advisory": true,
+      "coordination_delegation_id": null,
+      "current_executor": null,
+      "current_executor_matches_client": true,
+      "independent_reviewer": null,
+      "member_person_id": "agent",
+      "owner": null,
+      "pending": null,
+      "personal_mode_default": false,
+      "project_id": "reader-project",
+      "relation": "pool",
+      "version": "0",
+      "work_item_id": "c"
+    },
+    "runtime": null,
+    "snapshot": {
+      "consistency": "repeatable_read",
+      "coordinator_epoch": "epoch-a",
+      "project_revision": "5",
+      "queried_at_unix_ms": 1795417584831,
+      "source_snapshot_id": "01M83KMCXN0A5R86759ERZ8B5S",
+      "version": 1
+    },
+    "title": "c",
+    "visible_contract": {
+      "acceptance": [
+        "verified"
+      ],
+      "codec": "awr-team-contract-v1",
+      "completion_policy": "review",
+      "external_key": "c",
+      "goals": [
+        "ship"
+      ],
+      "hard_rules": [
+        "preserve compatibility"
+      ],
+      "required_dependencies": [],
+      "scope_paths": [
+        "src"
+      ],
+      "verification_requirements": [
+        "report"
+      ],
+      "work_id": "c"
+    },
+    "work_id": "c"
+  },
+  "project_revision": "5",
+  "project_status": "active",
+  "protocol_version": 1,
+  "scope_id": "main",
+  "selection_basis": "work",
+  "source_snapshot_id": "01M83KMCXN0A5R86759ERZ8B5S",
+  "workstream_id": "00000000000000000000000001"
+}

@@ -5,7 +5,7 @@
  */
 'use strict';
 
-const { mapObservation, createGithubObserver } = require('./team-progress');
+const { mapObservation, mapStructuredWaits, validStructuredWaits, createGithubObserver } = require('./team-progress');
 const { projectDirectory } = require('./directory');
 const { createDemoOrganization, DEMO_FUTURE_READ_OPS, canonicalOverviewInput, demoOverviewAsOf,
   canonicalProjectList, canonicalPeriodUpdates, canonicalOrganizationDirectory,
@@ -276,6 +276,17 @@ function validReadResponse(reply, op) {
   if (data.next_cursor != null
     && (typeof data.next_cursor !== 'string' || data.next_cursor.length === 0
       || data.next_cursor.length > 4096)) return false;
+  if (op === 'work.graph') {
+    return Array.isArray(data.items) && data.items.every((item) =>
+      asObject(item) && (item.structured_waits === undefined || validStructuredWaits(item.structured_waits)));
+  }
+  if (op === 'work.snapshot') {
+    const waits = data.observation?.structured_waits;
+    return waits === undefined || validStructuredWaits(waits);
+  }
+  if (op === 'work.observe') {
+    return data.structured_waits === undefined || validStructuredWaits(data.structured_waits);
+  }
   if (op === 'sources.inspect') return validRequiredSources(reply);
   if (op === 'documents.list') return validDocuments(reply);
   if (op === 'decisions.list') return validDecisions(reply);
@@ -2346,7 +2357,16 @@ function createTeamBridge(opts) {
           return { ok: false, error: { code: 'SourceChanged', message: 'Project changed while reading the graph; refresh' } };
         }
         asOf = page.as_of;
-        items.push(...page.items.map((item) => ({ ...item, workstream_id: stream.id })));
+        for (const item of page.items) {
+          if (item.structured_waits !== undefined && !validStructuredWaits(item.structured_waits)) {
+            return { ok: false, error: { code: 'BadGateway', message: 'Invalid structured wait observation in graph' } };
+          }
+        }
+        items.push(...page.items.map((item) => ({
+          ...item,
+          workstream_id: stream.id,
+          structured_waits: mapStructuredWaits(item.structured_waits),
+        })));
       }
       // Scope discovery has a bare list contract. Recheck its complete identity
       // after composing revision-bound work pages to catch grants or scope changes.
@@ -2606,6 +2626,9 @@ function createTeamBridge(opts) {
           return { ok: false, error: { code: 'BadGateway', message: 'Invalid atomic Team snapshot' } };
         }
         snapshot = meta;
+      }
+      if (observation.structured_waits !== undefined && !validStructuredWaits(observation.structured_waits)) {
+        return { ok: false, error: { code: 'BadGateway', message: 'Invalid structured wait observation' } };
       }
       progress = mapObservation(observation);
       progress.github = observeGithub.background(progress.pr_reference);
