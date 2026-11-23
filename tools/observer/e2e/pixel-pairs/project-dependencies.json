@@ -7,8 +7,8 @@
   "notes": {
     "geometryExclusions": [
       "Probe coordinates are anchored at the project page title (.hero h1 / [data-testid=\"project-title\"]), excluding shell-only header/sidebar offsets.",
-      "Canonical demo fixtures/demo-organization.json has 2 dependencies for P-001 (T-103->T-102 and T-106->T-103, omitting T-103->T-104) and 4 derived chains in overview-model (vs 2 curated chains in prototype PCHAINS.orders); container heights (__h), content-driven widths (__w), and downstream vertical positions (__y) that depend on item count or text length are skipped with zero style skips.",
-      "On [chain switch], computed margin-left resolves from margin-left: auto (remaining flex space after 4 vs 2 chain buttons) and is omitted rather than skipped; all visual box and paint properties of the switch are checked."
+      "Canonical demo fixtures/demo-organization.json has 2 dependencies for P-001 (T-103->T-102 and T-106->T-103, omitting T-103->T-104); container heights (__h), content-driven widths (__w), and downstream vertical positions (__y) that depend on item count or text length are skipped with zero style skips.",
+      "On [chain switch], computed margin-left resolves from margin-left: auto across available flex width and is omitted rather than skipped; all visual box and paint properties of the switch are checked."
     ]
   },
   "pairs": [

@@ -437,19 +437,6 @@ button.project-deps-chain-tag:hover {
     max-width: 100%;
     flex-wrap: wrap;
   }
-
-  .project-deps [data-testid="project-deps-versions"] .obs-table-scroll[data-compact="true"] .obs-data-table .ant-table-thead > tr > th,
-  .project-deps [data-testid="project-deps-versions"] .obs-table-scroll[data-compact="true"] .obs-data-table .ant-table-tbody > tr > td {
-    padding-inline: var(--ant-padding-xxs);
-  }
-
-  .project-deps [data-testid="project-deps-versions"] .obs-table-scroll[data-compact="true"] .obs-data-table :is(th, td):first-child {
-    padding-inline-start: var(--ant-padding-sm);
-  }
-
-  .project-deps [data-testid="project-deps-versions"] .obs-table-scroll[data-compact="true"] .obs-data-table :is(th, td):last-child {
-    padding-inline-end: var(--ant-padding-xs);
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

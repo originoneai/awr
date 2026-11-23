@@ -7,11 +7,12 @@ import {
   type DerivedChain,
   type DerivedTask,
   type DerivedWait,
+  type OverviewCommitment,
   type OverviewDerivation,
   type OverviewPart,
-  type OverviewReviewRound,
 } from '../../core/overview';
 import { readsAsName } from '../../core/observation/owner';
+import { workLabel } from '../../core/observation/labels';
 import type {
   DependencyListData,
   DependencyObservation,
@@ -31,14 +32,15 @@ export type DependencyRowStatus =
   | 'unknown';
 
 export type DependencyAdoptedCell =
-  | { kind: 'version'; version: number }
-  | { kind: 'notYet' }
+  | { kind: 'matchesAvailable' }
+  | { kind: 'differsFromAvailable' }
+  | { kind: 'recorded' }
+  | { kind: 'notRecorded' }
   | { kind: 'restricted' }
   | { kind: 'adoptionUnavailable' };
 
 export type DependencyAvailableCell =
-  | { kind: 'version'; version: number }
-  | { kind: 'inReviewVersion'; version: number }
+  | { kind: 'recorded' }
   | { kind: 'inReview' }
   | { kind: 'stalledAnswer' }
   | { kind: 'stalled' }
@@ -48,7 +50,7 @@ export type DependencyAvailableCell =
   | { kind: 'running' }
   | { kind: 'returned' }
   | { kind: 'claimed' }
-  | { kind: 'notYet' }
+  | { kind: 'notRecorded' }
   | { kind: 'restricted' };
 
 export type DependencyRequirementKind =
@@ -88,21 +90,39 @@ export interface ProjectBlockerItem {
   destination: { kind: 'person'; id: string } | { kind: 'task'; id: string } | null;
 }
 
+export interface RelatedOpenDecision {
+  id: string | null;
+  question: string;
+  responderName: string | null;
+}
+
 export interface ProjectChainDisplay {
   chain: DerivedChain;
-  /** Representative horizontal path (root + up to 2 tasks + commitment) that fits cleanly without dropping impact facts. */
+  /** Representative horizontal path (root -> up to 2 tasks -> primary commitment). */
   displayNodes: ChainNode[];
   displayConnectors: ChainConnector[];
   /** Number of tasks in this chain's full impact set; null when incomplete. */
   impact: CountDetails<DerivedTask>;
-  /** For project/week commitment end nodes, verified / total progress when known. */
+  /** For commitment end nodes, verified / total progress across tasks bound to that commitment when known. */
   commitmentProgress: { done: number; total: number } | null;
+  /** True only when complete directory duty/role records confirm this reviewer is the sole reviewer on the project. */
+  soleReviewer: boolean;
+  /** Open current decision explicitly tied to a task in this chain's queue, when recorded. */
+  relatedOpenDecision: RelatedOpenDecision | null;
+}
+
+export interface ProjectDirectoryMemberRole {
+  personId: string | null;
+  available: boolean;
+  duty?: string | null;
+  businessRoles?: readonly string[] | null;
 }
 
 export interface ProjectDependenciesModel {
   derived: OverviewDerivation | null;
   chains: ProjectChainDisplay[];
   chainsCount: number | null;
+  chainsComplete: boolean;
   rows: ProjectDependencyRow[];
   dependenciesTotal: number | null;
   dependenciesTruncated: boolean;
@@ -117,6 +137,19 @@ export interface ProjectDependenciesModel {
     hasUnknownFacts: boolean;
   };
 }
+
+/**
+ * Deterministic blocker kind priority when two blockers hold up the same number of tasks:
+ * internal team blockers (review queue, then internal decision) precede external waits.
+ */
+export const BLOCKER_KIND_PRIORITY: Readonly<Record<ProjectBlockerItem['kind'], number>> = {
+  review: 0,
+  decision: 1,
+  external: 2,
+};
+
+const OPAQUE_KEY_PATTERN = /^[A-Z]{1,8}-\d+$/i;
+const REVIEWER_DUTY_LABELS = new Set(['复核', 'reviewer']);
 
 function cleanText(value: string | null | undefined): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
@@ -142,93 +175,60 @@ function sameVersion(left: DependencyVersion | null | undefined, right: Dependen
 }
 
 /**
- * Assign deterministic 1-based delivery numbers ("第 N 版" / "vN") per upstream provider.
- * Receipts and hashes are used ONLY as opaque ordering keys and are never exposed in UI text.
+ * Returns true when a commitment carries a recorded human-readable title rather than
+ * an omitted title or an opaque record key such as "P-001" or "GOAL-001".
  */
-export function buildDeliveryVersionMap(
-  dependencies: readonly DependencyObservation[],
-  reviewRounds: readonly OverviewReviewRound[],
-): {
-  versionOf: (providerWorkId: string, version: DependencyVersion | null | undefined) => number | null;
-  latestRoundNumberOf: (providerWorkId: string) => number | null;
-} {
-  const roundsByProvider = new Map<string, OverviewReviewRound[]>();
-  for (const round of reviewRounds) {
-    const taskId = cleanText(round.taskId);
-    if (!taskId) continue;
-    const list = roundsByProvider.get(taskId) ?? [];
-    list.push(round);
-    roundsByProvider.set(taskId, list);
-  }
-  for (const list of roundsByProvider.values()) {
-    list.sort((a, b) => (a.roundIndex ?? Number.MAX_SAFE_INTEGER) - (b.roundIndex ?? Number.MAX_SAFE_INTEGER)
-      || (a.openedAtUnixMs ?? Number.MAX_SAFE_INTEGER) - (b.openedAtUnixMs ?? Number.MAX_SAFE_INTEGER)
-      || (a.id ?? '').localeCompare(b.id ?? ''));
-  }
+export function hasRecordedCommitmentTitle(
+  commitment: OverviewCommitment | null | undefined,
+  projectKey: string,
+): boolean {
+  const title = cleanText(commitment?.title);
+  if (!title) return false;
+  if (commitment?.id && title === commitment.id) return false;
+  if (title === projectKey) return false;
+  if (OPAQUE_KEY_PATTERN.test(title)) return false;
+  return workLabel(title, { language: 'en-US', recordedTitle: false }).kind === 'named';
+}
 
-  // Per provider, collect distinct delivery keys in earliest-to-latest order:
-  // consumed -> adopted -> available -> required (matching temporal progression).
-  const orderedKeysByProvider = new Map<string, string[]>();
-  const recordKey = (providerId: string, version: DependencyVersion | null | undefined) => {
-    const key = versionKey(version);
-    if (!key) return;
-    const list = orderedKeysByProvider.get(providerId) ?? [];
-    if (!list.includes(key)) list.push(key);
-    orderedKeysByProvider.set(providerId, list);
-  };
-
-  // First pass: older versions (consumed, adopted) across all edges of this provider.
-  for (const item of dependencies) {
-    recordKey(item.provider_work_id, item.consumed_version);
-    recordKey(item.provider_work_id, item.adopted_version);
+/**
+ * Determine whether project directory records establish a single sole reviewer.
+ * Only returns a personId when:
+ * - at least one member is present,
+ * - every member is available and carries an explicit recorded duty or businessRoles list, and
+ * - exactly one member holds reviewer duty/role.
+ * Never guesses from past review rounds or incomplete directory data.
+ */
+export function findSoleReviewerPersonId(
+  directoryMembers: readonly ProjectDirectoryMemberRole[] | null | undefined,
+): string | null {
+  if (!directoryMembers || directoryMembers.length === 0) return null;
+  const reviewerIds = new Set<string>();
+  for (const member of directoryMembers) {
+    if (!member.available || !member.personId) return null;
+    const roles = Array.isArray(member.businessRoles) && member.businessRoles.length > 0
+      ? member.businessRoles.map((role) => role.trim().toLowerCase()).filter(Boolean)
+      : null;
+    const duty = cleanText(member.duty);
+    if (!roles && !duty) return null;
+    const isReviewer = (roles !== null && roles.includes('reviewer'))
+      || (duty !== null && REVIEWER_DUTY_LABELS.has(duty.toLowerCase()));
+    if (isReviewer) reviewerIds.add(member.personId);
   }
-  // Second pass: currently available / required versions (newer or equal).
-  for (const item of dependencies) {
-    recordKey(item.provider_work_id, item.available_version);
-    if (item.required_version?.receipt_id) {
-      recordKey(item.provider_work_id, item.required_version);
-    }
-  }
+  if (reviewerIds.size !== 1) return null;
+  return [...reviewerIds][0] ?? null;
+}
 
-  const numberByProvider = new Map<string, Map<string, number>>();
-  const latestRoundByProvider = new Map<string, number>();
-
-  for (const [providerId, rounds] of roundsByProvider) {
-    const maxRoundIndex = rounds.reduce((max, round) => (
-      typeof round.roundIndex === 'number' && Number.isSafeInteger(round.roundIndex) && round.roundIndex > max
-        ? round.roundIndex
-        : max
-    ), 0);
-    const total = Math.max(maxRoundIndex, rounds.length);
-    if (total > 0) latestRoundByProvider.set(providerId, total);
-  }
-
-  for (const [providerId, keys] of orderedKeysByProvider) {
-    const map = new Map<string, number>();
-    const rounds = roundsByProvider.get(providerId) ?? [];
-    // If a provider has multiple review rounds (e.g. round 1 rejected, round 2 approved) and
-    // a single observed delivery receipt, align that delivery to the approved round's sequence.
-    const approvedRounds = rounds.filter((r) => r.state === 'approved');
-    const latestApproved = approvedRounds.at(-1);
-    const baseOffset = keys.length === 1 && latestApproved && typeof latestApproved.roundIndex === 'number' && latestApproved.roundIndex >= 1
-      ? latestApproved.roundIndex - 1
-      : 0;
-    keys.forEach((key, index) => {
-      map.set(key, index + 1 + baseOffset);
-    });
-    numberByProvider.set(providerId, map);
-  }
-
-  return {
-    versionOf(providerWorkId, version) {
-      const key = versionKey(version);
-      if (!key) return null;
-      return numberByProvider.get(providerWorkId)?.get(key) ?? null;
-    },
-    latestRoundNumberOf(providerWorkId) {
-      return latestRoundByProvider.get(providerWorkId) ?? null;
-    },
-  };
+/**
+ * Deterministic project dependency chain selection rule (matches prototype pDeps()):
+ * - Always include review-queue chains (cross-person review bottlenecks).
+ * - Always include external-wait chains (blockers outside the project boundary).
+ * - Include decision chains only when they hold up downstream dependent tasks (impact > 1).
+ *   Standalone single-task decisions remain visible in the right-column "卡点" blocker list.
+ */
+export function isProjectBlockedChain(chain: DerivedChain): boolean {
+  if (chain.root.kind === 'review' || chain.root.kind === 'external') return true;
+  const impactSize = chain.impact.count ?? chain.impact.items.length;
+  return impactSize > 1;
 }
 
 /**
@@ -239,6 +239,7 @@ export function buildDeliveryVersionMap(
 export function selectChainDisplayNodes(
   chain: DerivedChain,
   tasksById: ReadonlyMap<string, DerivedTask>,
+  projectKey = '',
 ): { displayNodes: ChainNode[]; displayConnectors: ChainConnector[] } {
   const rootNode = chain.nodes.find((node) => node.root);
   if (!rootNode) return { displayNodes: chain.nodes, displayConnectors: chain.connectors };
@@ -273,7 +274,7 @@ export function selectChainDisplayNodes(
   let bestPath: string[] = [];
   const walk = (current: string, path: string[], visited: Set<string>) => {
     if (path.length > bestPath.length) bestPath = [...path];
-    if (path.length >= 4) return; // cap depth for cycle-safety & rendering budget
+    if (path.length >= 4) return;
     for (const next of outgoing.get(current) ?? []) {
       if (visited.has(next) || !taskNodesById.has(next)) continue;
       visited.add(next);
@@ -291,12 +292,13 @@ export function selectChainDisplayNodes(
     if (firstTaskNode?.task?.id) bestPath = [firstTaskNode.task.id];
   }
 
-  // Choose one primary commitment node (prefer week commitment -> goal -> project).
+  // Choose one primary commitment node from explicit kind and recorded title — never parse commitment.id.
   const commitmentNodes = chain.nodes.filter((node) => node.kind === 'commitment' && node.commitment);
-  const weekCommitment = commitmentNodes.find((node) => node.commitment?.id?.includes('-week-'));
+  const namedProjectCommitment = commitmentNodes.find((node) =>
+    node.commitment?.kind === 'project' && hasRecordedCommitmentTitle(node.commitment, projectKey));
   const goalCommitment = commitmentNodes.find((node) => node.commitment?.kind === 'goal');
   const projectCommitment = commitmentNodes.find((node) => node.commitment?.kind === 'project');
-  const endNode = weekCommitment ?? goalCommitment ?? projectCommitment ?? null;
+  const endNode = namedProjectCommitment ?? goalCommitment ?? projectCommitment ?? commitmentNodes[0] ?? null;
 
   // Keep at most 2 task nodes when an end commitment exists (4 cards total, matching prototype),
   // or up to 3 task nodes when there is no end commitment.
@@ -328,7 +330,6 @@ export function selectChainDisplayNodes(
     });
   }
 
-  // Ensure tasksById is acknowledged for callers that inspect node metadata.
   void tasksById;
   return { displayNodes, displayConnectors };
 }
@@ -342,8 +343,12 @@ function compareNullableDescending(left: number | null, right: number | null): n
 
 /**
  * Derive the prototype's right-column "卡点" blocker list from derived waits.
- * Excludes dependency waits (those are downstream consequences of an upstream root),
- * groups review waits by explicit reviewer ID, and sorts descending by behind count.
+ * Excludes dependency waits (downstream consequences of an upstream root),
+ * groups review waits only when an explicit reviewer ID is recorded, and sorts by:
+ *   1. behind.count descending (known counts before unknown)
+ *   2. blocker kind priority: review (0) -> decision (1) -> external (2) (internal blockers before external)
+ *   3. oldestDays descending (known before unknown)
+ *   4. original read order for stability
  */
 export function deriveProjectBlockers(
   derived: OverviewDerivation | null,
@@ -450,6 +455,7 @@ export function deriveProjectBlockers(
   const sorted = out
     .map((item, index) => ({ item, index }))
     .sort((a, b) => compareNullableDescending(a.item.behind.count, b.item.behind.count)
+      || BLOCKER_KIND_PRIORITY[a.item.kind] - BLOCKER_KIND_PRIORITY[b.item.kind]
       || compareNullableDescending(a.item.oldestDays, b.item.oldestDays)
       || a.index - b.index)
     .map((entry) => entry.item);
@@ -466,26 +472,27 @@ export function deriveProjectBlockers(
   };
 }
 
+/**
+ * Derive the "现在可用" cell without inventing version numbers or mixing review round
+ * indices into the version column. When `available_version` is absent (`not_recorded`),
+ * show the upstream task's factual blocking state if known, otherwise `notRecorded`.
+ */
 function deriveAvailableCell(
   item: DependencyObservation,
-  availableVersionNum: number | null,
   providerTask: DerivedTask | undefined,
   providerWaits: readonly DerivedWait[],
-  latestRoundNum: number | null,
 ): DependencyAvailableCell {
-  if (item.available_version && availableVersionNum !== null) {
-    return { kind: 'version', version: availableVersionNum };
+  if (item.available_version && versionKey(item.available_version) !== null) {
+    return { kind: 'recorded' };
   }
   if (item.missing?.available_version === 'permission_restricted') {
     return { kind: 'restricted' };
   }
-  if (!providerTask) return { kind: 'notYet' };
+  if (!providerTask) return { kind: 'notRecorded' };
 
   switch (providerTask.status) {
     case 'review':
-      return latestRoundNum !== null
-        ? { kind: 'inReviewVersion', version: latestRoundNum }
-        : { kind: 'inReview' };
+      return { kind: 'inReview' };
     case 'stalled':
       return providerWaits.some((wait) => wait.kind === 'decision')
         ? { kind: 'stalledAnswer' }
@@ -501,16 +508,22 @@ function deriveAvailableCell(
     case 'claimed':
       return { kind: 'claimed' };
     default:
-      return { kind: 'notYet' };
+      return { kind: 'notRecorded' };
   }
 }
 
-function deriveAdoptedCell(
-  item: DependencyObservation,
-  adoptedVersionNum: number | null,
-): DependencyAdoptedCell {
-  if (item.adopted_version && adoptedVersionNum !== null) {
-    return { kind: 'version', version: adoptedVersionNum };
+/**
+ * Derive the "已采用" cell honestly without guessing ordinal version numbers or
+ * conflating `not_recorded` with "还没有".
+ */
+function deriveAdoptedCell(item: DependencyObservation): DependencyAdoptedCell {
+  if (item.adopted_version && versionKey(item.adopted_version) !== null) {
+    if (item.available_version && versionKey(item.available_version) !== null) {
+      return sameVersion(item.adopted_version, item.available_version)
+        ? { kind: 'matchesAvailable' }
+        : { kind: 'differsFromAvailable' };
+    }
+    return { kind: 'recorded' };
   }
   if (item.missing?.adopted_version === 'permission_restricted') {
     return { kind: 'restricted' };
@@ -518,7 +531,7 @@ function deriveAdoptedCell(
   if (item.missing?.adopted_version === 'adoption_unavailable') {
     return { kind: 'adoptionUnavailable' };
   }
-  return { kind: 'notYet' };
+  return { kind: 'notRecorded' };
 }
 
 function deriveRowStatus(item: DependencyObservation): DependencyRowStatus {
@@ -548,9 +561,6 @@ export function deriveDependencyRows(
   const items = dependencies?.items ?? [];
   if (items.length === 0) return [];
 
-  const reviewRounds = model?.input?.reviewRounds?.coverage === 'unread'
-    ? []
-    : (model?.input?.reviewRounds?.items ?? []);
   const modelDeps = model?.input?.dependencies?.coverage === 'unread'
     ? []
     : (model?.input?.dependencies?.items ?? []);
@@ -577,8 +587,6 @@ export function deriveDependencyRows(
     waitsByTaskId.set(wait.task.id, list);
   }
 
-  const versions = buildDeliveryVersionMap(items, reviewRounds);
-
   return items.map((item) => {
     const pairKey = `${item.work_id}\u0000${item.provider_work_id}`;
     const recordedReq = depRequirementByPair.get(pairKey);
@@ -588,9 +596,6 @@ export function deriveDependencyRows(
         ? { kind: 'pinned' }
         : { kind: 'reviewed' };
 
-    const adoptedNum = versions.versionOf(item.provider_work_id, item.adopted_version);
-    const availableNum = versions.versionOf(item.provider_work_id, item.available_version);
-    const latestRoundNum = versions.latestRoundNumberOf(item.provider_work_id);
     const providerTask = tasksById.get(item.provider_work_id);
     const providerWaits = waitsByTaskId.get(item.provider_work_id) ?? [];
     const status = deriveRowStatus(item);
@@ -602,8 +607,8 @@ export function deriveDependencyRows(
       providerWorkId: item.provider_work_id,
       providerTitle: item.provider_title,
       requirement,
-      adopted: deriveAdoptedCell(item, adoptedNum),
-      available: deriveAvailableCell(item, availableNum, providerTask, providerWaits, latestRoundNum),
+      adopted: deriveAdoptedCell(item),
+      available: deriveAvailableCell(item, providerTask, providerWaits),
       status,
       highlighted: status === 'changed',
     };
@@ -612,22 +617,46 @@ export function deriveDependencyRows(
 
 const PLANE_KEYS = ['report_received', 'authoritative', 'page_read'] as const;
 
+function oldestTimestamp(planes: ReadonlyArray<PlaneFreshness | undefined>): number | undefined {
+  if (planes.length === 0) return undefined;
+  const times: number[] = [];
+  for (const entry of planes) {
+    if (typeof entry?.at_unix_ms !== 'number' || !Number.isFinite(entry.at_unix_ms)) {
+      return undefined;
+    }
+    times.push(entry.at_unix_ms);
+  }
+  return Math.min(...times);
+}
+
+/**
+ * Conservatively merge freshness across multiple read sources:
+ * - If any source failed on a plane, the merged plane is `failed` with NO timestamp.
+ * - Otherwise `stale > measured > not_measured`.
+ * - Timestamps always take the OLDEST (`Math.min`) recorded time among the decisive planes
+ *   so the footer never appears fresher than its stalest underlying source.
+ */
 export function mergeDependenciesFreshness(
   ...sources: Array<TeamFreshness | undefined>
 ): TeamFreshness | undefined {
   const present = sources.filter((item): item is TeamFreshness => Boolean(item));
   if (present.length === 0) return undefined;
-  if (present.length === 1) return present[0];
   const plane = (key: (typeof PLANE_KEYS)[number]): PlaneFreshness => {
     const planes = present.map((source) => source[key]);
-    const status = planes.some((entry) => entry?.status === 'failed') ? 'failed'
-      : planes.some((entry) => entry?.status === 'stale') ? 'stale'
-        : planes.some((entry) => entry?.status === 'measured') ? 'measured'
-          : 'not_measured';
-    const times = planes
-      .map((entry) => entry?.at_unix_ms)
-      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
-    return { status, ...(times.length > 0 ? { at_unix_ms: Math.max(...times) } : {}) };
+    if (planes.some((entry) => entry?.status === 'failed')) {
+      return { status: 'failed' };
+    }
+    const stalePlanes = planes.filter((entry) => entry?.status === 'stale');
+    if (stalePlanes.length > 0) {
+      const oldest = oldestTimestamp(stalePlanes);
+      return oldest !== undefined ? { status: 'stale', at_unix_ms: oldest } : { status: 'stale' };
+    }
+    const measuredPlanes = planes.filter((entry) => entry?.status === 'measured');
+    if (measuredPlanes.length > 0) {
+      const oldest = oldestTimestamp(measuredPlanes);
+      return oldest !== undefined ? { status: 'measured', at_unix_ms: oldest } : { status: 'measured' };
+    }
+    return { status: 'not_measured' };
   };
   return {
     report_received: plane('report_received'),
@@ -641,11 +670,13 @@ export function deriveProjectDependencies({
   overview,
   model,
   dependencies,
+  directoryMembers,
 }: {
   projectKey: string;
   overview?: TeamOverviewResponse;
   model?: ProjectListModel;
   dependencies?: DependencyListData;
+  directoryMembers?: readonly ProjectDirectoryMemberRole[] | null;
 }): ProjectDependenciesModel {
   const usableModel = model?.project === projectKey && model.input && model.input.options ? model : undefined;
   const orderingIncomparable = usableModel?.ordering === 'incomparable';
@@ -664,42 +695,94 @@ export function deriveProjectDependencies({
     if (task.id) tasksById.set(task.id, task);
   }
 
-  // Compute week-commitment verified progress when tasks are complete.
-  const weekCommitmentTasks = new Map<string, { done: number; total: number }>();
+  const memberNameById = new Map<string, string>();
+  if (usableModel && usableModel.input.members.coverage !== 'unread') {
+    for (const member of usableModel.input.members.items) {
+      const id = cleanText(member.personId);
+      const name = cleanName(member.displayName);
+      if (id && name) memberNameById.set(id, name);
+    }
+  }
+
+  // Compute verified progress for any commitment when task coverage is complete (never sniff commitment.id).
+  const commitmentTasks = new Map<string, { done: number; total: number }>();
   if (derived && !orderingIncomparable && usableModel?.input.tasks.coverage === 'complete') {
     for (const task of derived.tasks) {
       if (!task.commitments) continue;
       for (const commitment of task.commitments) {
-        if (!commitment.id || !commitment.id.includes('-week-')) continue;
-        const entry = weekCommitmentTasks.get(commitment.id) ?? { done: 0, total: 0 };
+        const cid = cleanText(commitment.id);
+        if (!cid) continue;
+        const entry = commitmentTasks.get(cid) ?? { done: 0, total: 0 };
         entry.total += 1;
         if (task.status === 'verified') entry.done += 1;
-        weekCommitmentTasks.set(commitment.id, entry);
+        commitmentTasks.set(cid, entry);
       }
     }
   }
 
-  const chains: ProjectChainDisplay[] = (derived?.chains ?? []).map((chain) => {
-    const { displayNodes, displayConnectors } = selectChainDisplayNodes(chain, tasksById);
+  const soleReviewerId = findSoleReviewerPersonId(directoryMembers);
+
+  const openDecisions = usableModel && usableModel.input.decisions.coverage !== 'unread'
+    ? usableModel.input.decisions.items.filter((decision) =>
+      decision.state === 'open' && decision.current !== false && cleanText(decision.question) !== null)
+    : [];
+
+  const selectedDerivedChains = (derived?.chains ?? []).filter(isProjectBlockedChain);
+
+  const chains: ProjectChainDisplay[] = selectedDerivedChains.map((chain) => {
+    const { displayNodes, displayConnectors } = selectChainDisplayNodes(chain, tasksById, projectKey);
     const endNode = displayNodes.at(-1);
     const commitmentProgress = endNode?.kind === 'commitment' && endNode.commitment?.id
-      ? (weekCommitmentTasks.get(endNode.commitment.id) ?? null)
+      ? (commitmentTasks.get(endNode.commitment.id) ?? null)
       : null;
     const impact: CountDetails<DerivedTask> = orderingIncomparable
       ? { count: null, items: chain.impact.items, unknownItems: [...chain.impact.unknownItems, { part: 'tasks', reason: 'ordering-incomparable' }] }
       : chain.impact;
+
+    const soleReviewer = chain.root.kind === 'review'
+      && soleReviewerId !== null
+      && chain.root.person?.id === soleReviewerId;
+
+    let relatedOpenDecision: RelatedOpenDecision | null = null;
+    if (chain.root.kind === 'review' && openDecisions.length > 0) {
+      const queueTaskIds = new Set(
+        chain.root.queue.items
+          .map((wait) => wait.task.id)
+          .filter((id): id is string => id !== null),
+      );
+      const matched = openDecisions.find((decision) =>
+        decision.taskId != null && queueTaskIds.has(decision.taskId));
+      if (matched) {
+        const firstResponderId = matched.allowedResponderIds?.find((id) => cleanText(id) !== null);
+        relatedOpenDecision = {
+          id: cleanText(matched.id),
+          question: cleanText(matched.question)!,
+          responderName: firstResponderId ? (memberNameById.get(firstResponderId) ?? null) : null,
+        };
+      }
+    }
+
     return {
       chain,
       displayNodes,
       displayConnectors,
       impact,
       commitmentProgress,
+      soleReviewer,
+      relatedOpenDecision,
     };
   });
 
-  const chainsCount = derived && !orderingIncomparable && derived.chainCounts.all.count !== null
-    ? derived.chainCounts.all.count
-    : null;
+  const decisionImpactComplete = (derived?.chains ?? [])
+    .filter((chain) => chain.root.kind === 'decision')
+    .every((chain) => chain.impact.count !== null);
+  const chainsComplete = Boolean(
+    derived
+    && !orderingIncomparable
+    && derived.chainCounts.all.count !== null
+    && decisionImpactComplete,
+  );
+  const chainsCount = chainsComplete ? chains.length : null;
 
   const rows = deriveDependencyRows(dependencies, usableModel, derived);
   const dependenciesTotal = dependencies ? dependencies.total : null;
@@ -726,6 +809,7 @@ export function deriveProjectDependencies({
     derived,
     chains,
     chainsCount,
+    chainsComplete,
     rows,
     dependenciesTotal,
     dependenciesTruncated,

@@ -17,27 +17,36 @@ import { StatusLamp, TaskStatusTag } from '../components/display/StatusTag';
 import { ArrowLeftIcon, ArrowRightIcon, CircleCheckIcon } from '../components/icons/prototype-icons';
 import {
   deriveProjectDependencies,
+  hasRecordedCommitmentTitle,
   mergeDependenciesFreshness,
   type DependencyAdoptedCell,
   type DependencyAvailableCell,
   type DependencyRowStatus,
   type ProjectBlockerItem,
   type ProjectChainDisplay,
+  type ProjectDirectoryMemberRole,
 } from '../components/projects/project-dependencies-model';
 import type { ProjectListEntry, ProjectListModel } from '../components/projects/project-list-model';
 import { ObservationForbidden } from '../components/states';
 import { workbenchAgentName, workbenchDisplayText } from '../components/workbench/model';
-import { readsAsName, workLabel } from '../core/observation';
+import { readableNarrative, readsAsName, workLabel } from '../core/observation';
+import { containsDiagnosticContent } from '../core/observation/readable';
 import { hasObservationValue } from '../core/observation/values';
 import type { ChainNode, DerivedTask, OverviewPart } from '../core/overview';
 import { humanText } from '../i18n/human-language';
 import { apiPost, isAuthError } from '../lib/api';
 import { dependenciesQueryOptions } from '../lib/collaboration';
+import { findForbiddenVisibleText } from '../lib/human-language-guard';
 import { projectLabel } from '../lib/project-label';
-import { overviewModelQueryOptions, overviewQueryOptions, projectsQueryOptions, readQueryDefaults } from '../lib/queries';
+import {
+  overviewModelQueryOptions,
+  overviewQueryOptions,
+  projectsQueryOptions,
+  readQueryDefaults,
+  SHELL_POLL_INTERVAL_MS,
+} from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
 import { taskPath } from '../lib/task-path';
-import { useCompactViewport } from '../lib/viewport';
 import type { HandoffListData, TeamFreshness, TeamReadResponse } from '../lib/types';
 import { PERSON_ROUTE_BASE } from './MembersPage';
 import { ProjectMaps } from './ProjectMaps';
@@ -66,6 +75,19 @@ type DetailSelection =
   | { kind: 'blocker'; key: string }
   | { kind: 'chain-impact'; index: number };
 
+interface ProjectDirectoryResponse {
+  data?: {
+    configured?: boolean;
+    members?: Array<{
+      personId?: string | null;
+      member_ref?: { person_id?: string | null };
+      available?: boolean;
+      duty?: string | null;
+      business_roles?: string[] | null;
+    }>;
+  };
+}
+
 function asView(value: string | null): DependenciesView {
   return (VIEW_KEYS as readonly string[]).includes(value ?? '') ? (value as DependenciesView) : 'overview';
 }
@@ -75,9 +97,31 @@ function validChainIndex(value: string | null, count: number): number {
   return Number.isInteger(parsed) && parsed >= 0 && parsed < count ? parsed : 0;
 }
 
+/**
+ * Pass every human-facing free-text field (requirements, decision questions, outside party names,
+ * commitment titles, agent names) through product-language cleaning before rendering.
+ */
+function sanitizeHumanText(
+  raw: string | null | undefined,
+  language: string,
+  fallback: string,
+  budget = 120,
+): string {
+  if (typeof raw !== 'string') return fallback;
+  const normalized = raw.replace(/\s+/g, ' ').trim();
+  if (!normalized || /[\p{Cc}\p{Cf}]/u.test(normalized)) return fallback;
+  const cleaned = readableNarrative(normalized, language);
+  if (!cleaned) return fallback;
+  if (containsDiagnosticContent(cleaned) || findForbiddenVisibleText(cleaned).length > 0) {
+    return fallback;
+  }
+  return workbenchDisplayText(cleaned, fallback, budget);
+}
+
 function safeTitle(raw: string | null | undefined, language: string, fallback: string): string {
   if (!raw) return fallback;
-  return workLabel(raw, { language, recordedTitle: true, fallback }).text;
+  const labelled = workLabel(raw, { language, recordedTitle: true, fallback }).text;
+  return sanitizeHumanText(labelled, language, fallback);
 }
 
 function shortQueueTitle(raw: string | null | undefined, language: string, fallback: string): string {
@@ -92,8 +136,9 @@ function safePersonName(raw: unknown, language: string, fallback: string): strin
     : humanText('nameUnavailable', language);
 }
 
-function isExternalParty(name: string): boolean {
-  return name === '甲方' || name.endsWith('小组') || name.endsWith('改造') || name.endsWith('部');
+function safeAgentName(raw: string | null | undefined, language: string, fallback: string): string {
+  const stripped = workbenchAgentName(raw, '');
+  return stripped ? sanitizeHumanText(stripped, language, fallback, 60) : fallback;
 }
 
 function partNames(parts: readonly OverviewPart[], t: TFunction): string {
@@ -120,17 +165,33 @@ function projectHandoffsQueryOptions(project: string, cursor: string | null, rev
   } satisfies UseQueryOptions<TeamReadResponse<HandoffListData>>;
 }
 
+function projectDirectoryRolesQueryOptions(project: string, revoked: boolean) {
+  return {
+    queryKey: ['team', 'directory', 'roles', project],
+    meta: { failureScope: 'object' },
+    queryFn: ({ signal }: { signal: AbortSignal }) =>
+      apiPost<ProjectDirectoryResponse>('/api/team/directory', { project }, signal),
+    enabled: Boolean(project) && !revoked,
+    retry: false,
+    refetchInterval: SHELL_POLL_INTERVAL_MS,
+    refetchOnWindowFocus: false,
+  } satisfies UseQueryOptions<ProjectDirectoryResponse>;
+}
+
 function formatAdoptedCell(cell: DependencyAdoptedCell, t: TFunction): string {
-  if (cell.kind === 'version') return t('projectDependencies.table.versionNumber', { version: cell.version });
-  if (cell.kind === 'restricted') return t('projectDependencies.table.restricted');
-  if (cell.kind === 'adoptionUnavailable') return t('projectDependencies.table.adoptionUnavailable');
-  return t('projectDependencies.table.notYet');
+  switch (cell.kind) {
+    case 'matchesAvailable': return t('projectDependencies.table.adoptedMatchesAvailable');
+    case 'differsFromAvailable': return t('projectDependencies.table.adoptedDiffersFromAvailable');
+    case 'recorded': return t('projectDependencies.table.adoptedRecorded');
+    case 'restricted': return t('projectDependencies.table.restricted');
+    case 'adoptionUnavailable': return t('projectDependencies.table.adoptionUnavailable');
+    case 'notRecorded': return t('projectDependencies.table.notRecorded');
+  }
 }
 
 function formatAvailableCell(cell: DependencyAvailableCell, t: TFunction): string {
   switch (cell.kind) {
-    case 'version': return t('projectDependencies.table.versionNumber', { version: cell.version });
-    case 'inReviewVersion': return t('projectDependencies.table.versionInReview', { version: cell.version });
+    case 'recorded': return t('projectDependencies.table.availableRecorded');
     case 'inReview': return t('projectDependencies.table.availableInReview');
     case 'stalledAnswer': return t('projectDependencies.table.availableStalledAnswer');
     case 'stalled': return t('projectDependencies.table.availableStalled');
@@ -141,7 +202,7 @@ function formatAvailableCell(cell: DependencyAvailableCell, t: TFunction): strin
     case 'returned': return t('projectDependencies.table.availableReturned');
     case 'claimed': return t('projectDependencies.table.availableClaimed');
     case 'restricted': return t('projectDependencies.table.restricted');
-    case 'notYet': return t('projectDependencies.table.notYet');
+    case 'notRecorded': return t('projectDependencies.table.notRecorded');
   }
 }
 
@@ -178,16 +239,21 @@ function chainTabLabel(
     return t('projectDependencies.chain.tabReview');
   }
   if (root.kind === 'external') {
-    const party = workbenchDisplayText(root.externalParty, '');
+    const party = sanitizeHumanText(root.externalParty, language, '');
     return party
       ? t('projectDependencies.chain.tabExternal', { party })
       : t('projectDependencies.chain.tabExternalUnknown');
   }
-  const responder = root.queue.items[0]?.waitingOn[0]?.displayName;
-  const name = responder ? safePersonName(responder, language, '') : '';
-  return name
-    ? t('projectDependencies.chain.tabDecisionNamed', { name })
-    : t('projectDependencies.chain.tabDecisionUnknown');
+  const firstWait = root.queue.items[0];
+  const responder = firstWait?.waitingOn[0];
+  const name = responder?.displayName ? safePersonName(responder.displayName, language, '') : '';
+  const isOwnTask = responder?.id != null && firstWait?.task.owner?.id === responder.id;
+  if (name) {
+    return isOwnTask
+      ? t('projectDependencies.chain.tabDecisionAnswerNamed', { name })
+      : t('projectDependencies.chain.tabDecisionDecideNamed', { name });
+  }
+  return t('projectDependencies.chain.tabDecisionUnknown');
 }
 
 function blockerTitle(blocker: ProjectBlockerItem, t: TFunction, language: string): string {
@@ -197,8 +263,8 @@ function blockerTitle(blocker: ProjectBlockerItem, t: TFunction, language: strin
       : t('projectDependencies.blockers.reviewQueueUnknownTitle');
   }
   if (blocker.kind === 'external') {
-    const party = workbenchDisplayText(blocker.externalParty, '');
-    const what = workbenchDisplayText(blocker.what, '');
+    const party = sanitizeHumanText(blocker.externalParty, language, '');
+    const what = sanitizeHumanText(blocker.what, language, '');
     if (party && what) return t('projectDependencies.blockers.externalTitle', { party, what });
     if (party) return t('projectDependencies.blockers.externalFallbackTitle', { party });
     return t('projectDependencies.blockers.externalUnknownTitle');
@@ -208,11 +274,10 @@ function blockerTitle(blocker: ProjectBlockerItem, t: TFunction, language: strin
       ? t('projectDependencies.blockers.decisionAnswerTitle', { name: blocker.personName })
       : t('projectDependencies.blockers.decisionDecideTitle', { name: blocker.personName });
   }
-  void language;
   return t('projectDependencies.blockers.decisionUnknownTitle');
 }
 
-function blockerMeta(blocker: ProjectBlockerItem, t: TFunction): string {
+function blockerMeta(blocker: ProjectBlockerItem, t: TFunction, language: string): string {
   if (blocker.kind === 'review') {
     return blocker.oldestDays !== null
       ? t('projectDependencies.blockers.reviewQueueMeta', { count: blocker.queuedCount, days: blocker.oldestDays })
@@ -223,7 +288,8 @@ function blockerMeta(blocker: ProjectBlockerItem, t: TFunction): string {
       ? t('projectDependencies.blockers.externalMeta', { days: blocker.oldestDays })
       : t('projectDependencies.blockers.externalMetaUnknownAge');
   }
-  const what = workbenchDisplayText(blocker.what?.replace(/^(?:回答|决定)[：:]/, ''), t('projectDependencies.blockers.decisionMetaFallback'));
+  const stripped = blocker.what?.replace(/^(?:回答|决定)[：:]/, '');
+  const what = sanitizeHumanText(stripped, language, t('projectDependencies.blockers.decisionMetaFallback'));
   return blocker.oldestDays !== null
     ? t('projectDependencies.blockers.decisionMetaWithAge', { what, days: blocker.oldestDays })
     : what;
@@ -288,7 +354,7 @@ function ProjectHandoffsView({
         ? safePersonName(task.owner.displayName, language, t('collaboration.nameMissing'))
         : <span className="project-deps-dim">{t('projectDependencies.detail.ownerUnknown')}</span>,
       task.agentName
-        ? workbenchAgentName(task.agentName, t('projectDependencies.handoffs.noAgent'))
+        ? safeAgentName(task.agentName, language, t('projectDependencies.handoffs.noAgent'))
         : <span className="project-deps-dim">{t('projectDependencies.handoffs.noAgent')}</span>,
       <TaskStatusTag status={task.status} live={task.agentActive === true} />,
     ],
@@ -365,7 +431,6 @@ export function ProjectDependencies({ project }: { project: string }) {
   const language = i18n.language;
   const navigate = useNavigate();
   const { revoked } = useRevocation();
-  const compactViewport = useCompactViewport();
   const [searchParams, setSearchParams] = useSearchParams();
   const [cursors, setCursors] = useState<Array<string | null>>([null]);
   const [detail, setDetail] = useState<DetailSelection | null>(null);
@@ -376,6 +441,7 @@ export function ProjectDependencies({ project }: { project: string }) {
   const overview = useQuery(overviewQueryOptions(project, revoked));
   const modelQuery = useQuery(overviewModelQueryOptions(project || null, revoked));
   const dependencies = useQuery(dependenciesQueryOptions(project, null, cursors.at(-1) ?? null, revoked));
+  const directoryQuery = useQuery(projectDirectoryRolesQueryOptions(project, revoked));
 
   const projectEntries = projects.data?.projects as ProjectListEntry[] | undefined;
   const projectIndex = projectEntries ? projectEntries.findIndex((item) => item.key === project) : -1;
@@ -387,12 +453,24 @@ export function ProjectDependencies({ project }: { project: string }) {
     : undefined;
   const dependenciesData = dependencies.data?.result.data;
 
+  const directoryMembers = useMemo<ProjectDirectoryMemberRole[] | null>(() => {
+    const dir = directoryQuery.data?.data;
+    if (!dir?.configured || !Array.isArray(dir.members) || dir.members.length === 0) return null;
+    return dir.members.map((member) => ({
+      personId: member.personId ?? member.member_ref?.person_id ?? null,
+      available: member.available === true,
+      duty: member.duty ?? null,
+      businessRoles: member.business_roles ?? null,
+    }));
+  }, [directoryQuery.data]);
+
   const derived = useMemo(() => deriveProjectDependencies({
     projectKey: project,
     overview: overview.data,
     model: modelData,
     dependencies: dependenciesData,
-  }), [project, overview.data, modelData, dependenciesData]);
+    directoryMembers,
+  }), [project, overview.data, modelData, dependenciesData, directoryMembers]);
 
   if (
     revoked
@@ -489,19 +567,30 @@ export function ProjectDependencies({ project }: { project: string }) {
 
   const primaryLoading = modelQuery.isPending && dependencies.isPending;
   const primaryFailed = !primaryLoading && modelQuery.isError && !modelData && dependencies.isError && !dependenciesData;
+  const missingModelParts = [...derived.coverage.modelPartialParts, ...derived.coverage.modelUnreadParts];
+  const missingReadLabels: string[] = [];
+  if (dependencies.isError) missingReadLabels.push(t('projectDependencies.states.missingDepsRead'));
+  if (modelQuery.isError) missingReadLabels.push(t('projectDependencies.states.missingChainsAndBlockersRead'));
+  if (overview.isError || Boolean(overview.data && overview.data.coverage.failed > 0)) {
+    missingReadLabels.push(t('projectDependencies.states.missingOverviewRead'));
+  }
+  if (missingModelParts.length > 0) missingReadLabels.push(partNames(missingModelParts, t));
+
   const partialFailure = !primaryLoading && !primaryFailed && (
     modelQuery.isError
     || dependencies.isError
-    || derived.coverage.modelPartialParts.length > 0
+    || overview.isError
+    || missingModelParts.length > 0
     || Boolean(overview.data && overview.data.coverage.failed > 0)
   );
   const showUnknownNotice = !primaryLoading && !primaryFailed && !partialFailure
+    && !modelQuery.isPending && !dependencies.isPending
     && (derived.coverage.orderingIncomparable || derived.coverage.hasUnknownFacts);
 
   const mergedFreshness = mergeDependenciesFreshness(
-    dependencies.data?.freshness,
-    modelData?.freshness,
-    overview.data?.freshness,
+    dependencies.isError ? FAILED_FRESHNESS : dependencies.data?.freshness,
+    modelQuery.isError ? FAILED_FRESHNESS : modelData?.freshness,
+    overview.isError ? FAILED_FRESHNESS : overview.data?.freshness,
   );
 
   if (primaryLoading) {
@@ -558,8 +647,8 @@ export function ProjectDependencies({ project }: { project: string }) {
         };
       }
       if (root.kind === 'external') {
-        const party = workbenchDisplayText(root.externalParty, '');
-        const what = workbenchDisplayText(firstWait?.what, '');
+        const party = sanitizeHumanText(root.externalParty, language, '');
+        const what = sanitizeHumanText(firstWait?.what, language, '');
         const title = party && what
           ? t('projectDependencies.chain.rootExternal', { party, what })
           : party
@@ -572,7 +661,8 @@ export function ProjectDependencies({ project }: { project: string }) {
             ? t('projectDependencies.chain.externalNoReplyDays', { days: root.oldestDays })
             : t('projectDependencies.chain.externalNoReplyUnknown'),
           ownerName: party || null,
-          ownerExternal: party ? isExternalParty(party) : true,
+          // Strictly from the read's wait kind ('external'); never inferred from party name patterns.
+          ownerExternal: true,
           open: Boolean(firstWait?.task.id),
         };
       }
@@ -584,10 +674,12 @@ export function ProjectDependencies({ project }: { project: string }) {
           ? t('projectDependencies.chain.rootDecisionAnswer', { name: responderName })
           : t('projectDependencies.chain.rootDecisionDecide', { name: responderName })
         : t('projectDependencies.chain.rootDecisionUnknown');
+      const rawQuestion = firstWait?.what?.replace(/^(?:回答|决定)[：:]/, '');
+      const cleanQuestion = sanitizeHumanText(rawQuestion, language, '');
       return {
         kicker: t('display.chain.rootKicker'),
         title,
-        meta: workbenchDisplayText(firstWait?.what?.replace(/^(?:回答|决定)[：:]/, ''), ''),
+        meta: cleanQuestion || null,
         ownerName: responderName || null,
         open: Boolean(firstWait?.task.id),
       };
@@ -630,26 +722,27 @@ export function ProjectDependencies({ project }: { project: string }) {
       };
     }
 
+    // Commitment end node: use explicit commitment kind and recorded title; never sniff IDs or invent risk.
     const commitment = node.commitment;
-    const isWeek = Boolean(commitment?.id?.includes('-week-'));
     const isGoal = commitment?.kind === 'goal';
-    const kicker = isWeek
-      ? t('projectDependencies.chain.commitmentWeekKicker')
-      : isGoal
-        ? t('projectDependencies.chain.commitmentGoalKicker')
-        : t('projectDependencies.chain.commitmentProjectKicker');
-    const title = isGoal
+    const kicker = isGoal
+      ? t('projectDependencies.chain.commitmentGoalKicker')
+      : t('projectDependencies.chain.commitmentProjectKicker');
+    const fallbackTitle = isGoal
       ? t('workbench.home.commitmentGoalFallback')
       : projectTitle;
+    const title = hasRecordedCommitmentTitle(commitment, project)
+      ? sanitizeHumanText(commitment?.title, language, fallbackTitle)
+      : fallbackTitle;
     const progress = entry.commitmentProgress;
     const remaining = progress ? Math.max(0, progress.total - progress.done) : null;
     return {
       kicker,
       title,
       meta: remaining !== null && remaining > 0
-        ? t('projectDependencies.chain.commitmentRemainingRisk', { remaining })
+        ? t('projectDependencies.chain.commitmentRemaining', { remaining })
         : null,
-      health: remaining !== null && remaining > 0 ? 'risk' : 'none',
+      health: null,
       progress,
       open: Boolean(commitment?.id),
     };
@@ -687,9 +780,23 @@ export function ProjectDependencies({ project }: { project: string }) {
       const name = root.person?.displayName ? safePersonName(root.person.displayName, language, '') : '';
       sentence = impactCount === null
         ? t('projectDependencies.chain.footerReviewUnknownCount', { name: name || t('projectDependencies.chain.rootReviewUnknown') })
-        : name
-          ? t('projectDependencies.chain.footerReview', { name, count: impactCount })
-          : t('projectDependencies.chain.footerReviewUnknownPerson', { count: impactCount });
+        : name && entry.soleReviewer
+          ? t('projectDependencies.chain.footerReviewSole', { name, count: impactCount })
+          : name
+            ? t('projectDependencies.chain.footerReview', { name, count: impactCount })
+            : t('projectDependencies.chain.footerReviewUnknownPerson', { count: impactCount });
+      if (entry.relatedOpenDecision) {
+        const question = sanitizeHumanText(entry.relatedOpenDecision.question, language, '');
+        if (question) {
+          const responder = entry.relatedOpenDecision.responderName
+            ? safePersonName(entry.relatedOpenDecision.responderName, language, '')
+            : '';
+          const suffix = responder
+            ? t('projectDependencies.chain.footerReviewRelatedDecisionNamed', { question, responder })
+            : t('projectDependencies.chain.footerReviewRelatedDecision', { question });
+          sentence = `${sentence}${language.toLowerCase().startsWith('zh') ? '' : ' '}${suffix}`;
+        }
+      }
       if (root.person?.id && name) {
         ctaLabel = t('projectDependencies.chain.ctaPerson', { name });
         ctaAction = () => openPerson(root.person!.id);
@@ -746,7 +853,7 @@ export function ProjectDependencies({ project }: { project: string }) {
       ? safeTitle(row.providerTitle, language, t('projectDependencies.table.restrictedWork'))
       : t('projectDependencies.table.restrictedWork');
     const requirementText = row.requirement.kind === 'recorded'
-      ? workbenchDisplayText(row.requirement.text, t('projectDependencies.table.requirementReviewed'))
+      ? sanitizeHumanText(row.requirement.text, language, t('projectDependencies.table.requirementReviewed'))
       : row.requirement.kind === 'pinned'
         ? t('projectDependencies.table.requirementPinned')
         : t('projectDependencies.table.requirementReviewed');
@@ -865,25 +972,206 @@ export function ProjectDependencies({ project }: { project: string }) {
     }
   }
 
+  // Independent read state for the top chains block: never show calm empty during loading, error, or partial reads.
+  let chainsEmptyContent: ReactNode;
+  if (modelQuery.isPending) {
+    chainsEmptyContent = (
+      <div className="project-deps-empty" data-testid="project-deps-chains-loading">
+        {t('projectDependencies.chain.loading')}
+      </div>
+    );
+  } else if (modelQuery.isError && !modelData) {
+    chainsEmptyContent = (
+      <div className="project-deps-empty" data-testid="project-deps-chains-failed">
+        {t('projectDependencies.chain.readFailed')}
+      </div>
+    );
+  } else if (!derived.chainsComplete) {
+    chainsEmptyContent = (
+      <div className="project-deps-empty" data-testid="project-deps-chains-partial">
+        {missingModelParts.length > 0
+          ? t('projectDependencies.chain.partialMissing', { parts: partNames(missingModelParts, t) })
+          : t('projectDependencies.chain.partialUnknown')}
+      </div>
+    );
+  } else {
+    chainsEmptyContent = (
+      <div className="project-deps-calm" data-testid="project-deps-calm">
+        <span className="project-deps-calm-icon" aria-hidden="true">
+          <CircleCheckIcon size={20} strokeWidth={1.5} />
+        </span>
+        <div>
+          <strong>{t('projectDependencies.chain.calmTitle')}</strong>
+          <p>{t('projectDependencies.chain.calmDescription')}</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Independent read state for the bottom-left versions table block.
+  const depsListIncompleteEmpty = Boolean(
+    dependenciesData && dependencyRows.length === 0 && (dependenciesData.total > 0 || dependenciesData.next_cursor),
+  );
+  let versionsBody: ReactNode;
+  if (dependencies.isPending) {
+    versionsBody = (
+      <div className="project-deps-empty" data-testid="project-deps-table-loading">
+        {t('projectDependencies.table.loading')}
+      </div>
+    );
+  } else if (dependencies.isError && !dependenciesData) {
+    versionsBody = (
+      <div className="project-deps-empty" data-testid="project-deps-table-failed">
+        {t('projectDependencies.table.readFailed')}
+      </div>
+    );
+  } else if (dependencyRows.length > 0) {
+    versionsBody = (
+      <DataTable
+        columns={[
+          { key: 'consumer', title: t('projectDependencies.table.columns.consumer'), width: '24%' },
+          { key: 'provider', title: t('projectDependencies.table.columns.provider') },
+          { key: 'adopted', title: t('projectDependencies.table.columns.adopted'), width: 96 },
+          { key: 'available', title: t('projectDependencies.table.columns.available'), width: 132, hideOnSmall: true },
+          { key: 'status', title: t('projectDependencies.table.columns.status'), width: 136 },
+        ]}
+        rows={dependencyRows}
+        navigationWidth={36}
+        stickyNavigation={false}
+      />
+    );
+  } else if (depsListIncompleteEmpty) {
+    versionsBody = (
+      <div className="project-deps-empty" data-testid="project-deps-table-partial">
+        {t('projectDependencies.table.partialEmpty')}
+      </div>
+    );
+  } else {
+    versionsBody = (
+      <div className="project-deps-empty" data-testid="project-deps-table-empty">
+        {t('projectDependencies.table.empty')}
+      </div>
+    );
+  }
+
+  // Independent read state for the bottom-right blockers block.
+  let blockersBody: ReactNode;
+  if (modelQuery.isPending) {
+    blockersBody = (
+      <div className="project-deps-empty" data-testid="project-deps-blockers-loading">
+        {t('projectDependencies.blockers.loading')}
+      </div>
+    );
+  } else if (modelQuery.isError && !modelData) {
+    blockersBody = (
+      <div className="project-deps-empty" data-testid="project-deps-blockers-failed">
+        {t('projectDependencies.blockers.readFailed')}
+      </div>
+    );
+  } else if (derived.blockers.length === 0) {
+    blockersBody = derived.blockersComplete ? (
+      <div className="project-deps-empty" data-testid="project-deps-blockers-empty">
+        {t('projectDependencies.blockers.empty')}
+      </div>
+    ) : (
+      <div className="project-deps-empty" data-testid="project-deps-blockers-partial">
+        {missingModelParts.length > 0
+          ? t('projectDependencies.blockers.partialMissing', { parts: partNames(missingModelParts, t) })
+          : t('projectDependencies.blockers.unread')}
+      </div>
+    );
+  } else {
+    blockersBody = (
+      <>
+        <ul className="project-deps-blocker-list" data-testid="project-deps-blocker-list">
+          {derived.blockers.map((blocker) => {
+            const title = blockerTitle(blocker, t, language);
+            const meta = blockerMeta(blocker, t, language);
+            const openDestination = () => {
+              if (!blocker.destination) return;
+              if (blocker.destination.kind === 'person') openPerson(blocker.destination.id);
+              else openTask(blocker.destination.id);
+            };
+            const mainInner = (
+              <>
+                <StatusLamp lamp={blocker.lamp} />
+                <div className="project-deps-blocker-body">
+                  <div className="project-deps-blocker-title">{title}</div>
+                  <div className="project-deps-blocker-meta">{meta}</div>
+                </div>
+              </>
+            );
+            return (
+              <li key={blocker.key} className="project-deps-blocker-item" data-testid="project-deps-blocker-row">
+                <div className="project-deps-blocker-row">
+                  {blocker.destination ? (
+                    <button
+                      type="button"
+                      className="project-deps-blocker-main"
+                      data-testid="project-deps-blocker-main"
+                      onClick={openDestination}
+                    >
+                      {mainInner}
+                    </button>
+                  ) : (
+                    <div className="project-deps-blocker-main" data-static="true">
+                      {mainInner}
+                    </div>
+                  )}
+                  {blocker.behind.count !== null ? (
+                    <button
+                      type="button"
+                      className="project-deps-blocker-behind"
+                      data-testid="project-deps-blocker-behind"
+                      aria-label={t('projectDependencies.blockers.behindAria', { count: blocker.behind.count })}
+                      onClick={() => setDetail({ kind: 'blocker', key: blocker.key })}
+                    >
+                      {t('projectDependencies.blockers.behindCount', { count: blocker.behind.count })}
+                    </button>
+                  ) : (
+                    <span className="project-deps-blocker-behind-static">
+                      {t('projectDependencies.blockers.behindUnknown')}
+                    </span>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+        {!derived.blockersComplete && missingModelParts.length > 0 ? (
+          <div className="project-deps-pnote" data-testid="project-deps-blockers-partial-note">
+            {t('projectDependencies.blockers.partialConfirmedNote', { parts: partNames(missingModelParts, t) })}
+          </div>
+        ) : null}
+      </>
+    );
+  }
+
+  const anyPending = modelQuery.isPending || dependencies.isPending;
   const pageState = partialFailure
     ? 'partial'
-    : showUnknownNotice
-      ? 'unknown'
-      : derived.chains.length === 0 && derived.rows.length === 0 && derived.blockers.length === 0
-        ? 'empty'
-        : 'data';
+    : anyPending
+      ? 'loading'
+      : showUnknownNotice
+        ? 'unknown'
+        : derived.chainsComplete
+          && derived.blockersComplete
+          && derived.chains.length === 0
+          && derived.rows.length === 0
+          && derived.blockers.length === 0
+          && !depsListIncompleteEmpty
+          ? 'empty'
+          : 'data';
 
-  const depsSectionCount = dependencies.isError
+  const depsSectionCount = dependencies.isPending || dependencies.isError
     ? undefined
     : derived.dependenciesTotal !== null
       ? derived.dependenciesTotal
       : undefined;
 
-  const blockersSectionCount = derived.blockersCount !== null && derived.blockersCount > 0
+  const blockersSectionCount = !modelQuery.isPending && !modelQuery.isError && derived.blockersCount !== null && derived.blockersCount > 0
     ? derived.blockersCount
-    : derived.blockers.length > 0 && derived.blockersComplete
-      ? derived.blockers.length
-      : undefined;
+    : undefined;
 
   return (
     <div className="project-deps" data-testid="page-project-dependencies" data-view="overview" data-state={pageState}>
@@ -891,12 +1179,16 @@ export function ProjectDependencies({ project }: { project: string }) {
         <Notice
           tone="warning"
           title={t('projectDependencies.states.partialTitle')}
-          extra={(modelQuery.isError || dependencies.isError) ? (
+          extra={(modelQuery.isError || dependencies.isError || overview.isError) ? (
             <Button size="small" onClick={retryFailed}>{t('projectDependencies.states.retry')}</Button>
           ) : undefined}
           className="project-deps-notice"
         >
-          <span data-testid="project-deps-partial">{t('projectDependencies.states.partialDescription')}</span>
+          <span data-testid="project-deps-partial">
+            {missingReadLabels.length > 0
+              ? t('projectDependencies.states.partialMissing', { missing: missingReadLabels.join(t('common.listSeparator')) })
+              : t('projectDependencies.states.partialDescription')}
+          </span>
         </Notice>
       ) : null}
 
@@ -947,21 +1239,16 @@ export function ProjectDependencies({ project }: { project: string }) {
                 ) : null}
               </div>
             )}
-            empty={(
-              <div className="project-deps-calm" data-testid="project-deps-calm">
-                <span className="project-deps-calm-icon" aria-hidden="true">
-                  <CircleCheckIcon size={20} strokeWidth={1.5} />
-                </span>
-                <div>
-                  <strong>{t('projectDependencies.chain.calmTitle')}</strong>
-                  <p>{t('projectDependencies.chain.calmDescription')}</p>
-                </div>
-              </div>
-            )}
+            empty={chainsEmptyContent}
             present={(node) => presentChainNode(activeChainEntry!, node)}
             onOpen={(node) => openChainNode(activeChainEntry!, node)}
             footer={activeChainEntry ? renderChainFooter(activeChainEntry) : undefined}
           />
+          {derived.chains.length > 0 && !derived.chainsComplete && missingModelParts.length > 0 ? (
+            <div className="project-deps-pnote" data-testid="project-deps-chains-partial-note">
+              {t('projectDependencies.chain.partialConfirmedNote', { parts: partNames(missingModelParts, t) })}
+            </div>
+          ) : null}
         </div>
       </section>
 
@@ -973,29 +1260,8 @@ export function ProjectDependencies({ project }: { project: string }) {
             countTestId="project-deps-versions-count"
             className="project-deps-section"
           >
-            {dependencies.isError ? (
-              <div className="project-deps-empty" data-testid="project-deps-table-failed">
-                {t('projectDependencies.table.readFailed')}
-              </div>
-            ) : dependencyRows.length > 0 ? (
-              <DataTable
-                columns={[
-                  { key: 'consumer', title: t('projectDependencies.table.columns.consumer'), width: compactViewport ? '22%' : '24%' },
-                  { key: 'provider', title: t('projectDependencies.table.columns.provider') },
-                  { key: 'adopted', title: t('projectDependencies.table.columns.adopted'), width: compactViewport ? 56 : 96 },
-                  { key: 'available', title: t('projectDependencies.table.columns.available'), width: 132, hideOnSmall: true },
-                  { key: 'status', title: t('projectDependencies.table.columns.status'), width: compactViewport ? 108 : 136 },
-                ]}
-                rows={dependencyRows}
-                navigationWidth={compactViewport ? 22 : 36}
-                stickyNavigation={false}
-              />
-            ) : (
-              <div className="project-deps-empty" data-testid="project-deps-table-empty">
-                {t('projectDependencies.table.empty')}
-              </div>
-            )}
-            {(!dependencies.isError && (cursors.length > 1 || derived.dependenciesTruncated)) ? (
+            {versionsBody}
+            {(!dependencies.isPending && !dependencies.isError && (cursors.length > 1 || derived.dependenciesTruncated)) ? (
               <div className="project-deps-pagination" data-testid="project-deps-pagination">
                 <span>
                   {t('projectDependencies.table.paginationNote', {
@@ -1030,73 +1296,7 @@ export function ProjectDependencies({ project }: { project: string }) {
             countTestId="project-deps-blockers-count"
             className="project-deps-section"
           >
-            {modelQuery.isError && derived.blockers.length === 0 ? (
-              <div className="project-deps-empty" data-testid="project-deps-blockers-unread">
-                {t('projectDependencies.blockers.unread')}
-              </div>
-            ) : derived.blockers.length === 0 ? (
-              <div className="project-deps-empty" data-testid="project-deps-blockers-empty">
-                {derived.blockersComplete
-                  ? t('projectDependencies.blockers.empty')
-                  : t('projectDependencies.blockers.unread')}
-              </div>
-            ) : (
-              <ul className="project-deps-blocker-list" data-testid="project-deps-blocker-list">
-                {derived.blockers.map((blocker) => {
-                  const title = blockerTitle(blocker, t, language);
-                  const meta = blockerMeta(blocker, t);
-                  const openDestination = () => {
-                    if (!blocker.destination) return;
-                    if (blocker.destination.kind === 'person') openPerson(blocker.destination.id);
-                    else openTask(blocker.destination.id);
-                  };
-                  const mainInner = (
-                    <>
-                      <StatusLamp lamp={blocker.lamp} />
-                      <div className="project-deps-blocker-body">
-                        <div className="project-deps-blocker-title">{title}</div>
-                        <div className="project-deps-blocker-meta">{meta}</div>
-                      </div>
-                    </>
-                  );
-                  return (
-                    <li key={blocker.key} className="project-deps-blocker-item" data-testid="project-deps-blocker-row">
-                      <div className="project-deps-blocker-row">
-                        {blocker.destination ? (
-                          <button
-                            type="button"
-                            className="project-deps-blocker-main"
-                            data-testid="project-deps-blocker-main"
-                            onClick={openDestination}
-                          >
-                            {mainInner}
-                          </button>
-                        ) : (
-                          <div className="project-deps-blocker-main" data-static="true">
-                            {mainInner}
-                          </div>
-                        )}
-                        {blocker.behind.count !== null ? (
-                          <button
-                            type="button"
-                            className="project-deps-blocker-behind"
-                            data-testid="project-deps-blocker-behind"
-                            aria-label={t('projectDependencies.blockers.behindAria', { count: blocker.behind.count })}
-                            onClick={() => setDetail({ kind: 'blocker', key: blocker.key })}
-                          >
-                            {t('projectDependencies.blockers.behindCount', { count: blocker.behind.count })}
-                          </button>
-                        ) : (
-                          <span className="project-deps-blocker-behind-static">
-                            {t('projectDependencies.blockers.behindUnknown')}
-                          </span>
-                        )}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
+            {blockersBody}
           </Section>
         </div>
       </div>
@@ -1109,12 +1309,14 @@ export function ProjectDependencies({ project }: { project: string }) {
         <div>
           {t('projectDependencies.coverage.title')}
           {' · '}
-          {dependenciesData
-            ? t('projectDependencies.coverage.depsRead', {
-              shown: dependencyRows.length,
-              total: dependenciesData.total,
-            })
-            : t('projectDependencies.coverage.depsUnread')}
+          {dependencies.isPending
+            ? t('projectDependencies.coverage.depsLoading')
+            : dependenciesData
+              ? t('projectDependencies.coverage.depsRead', {
+                shown: dependencyRows.length,
+                total: dependenciesData.total,
+              })
+              : t('projectDependencies.coverage.depsUnread')}
         </div>
         {derived.coverage.modelPartialParts.length > 0 ? (
           <div data-testid="project-deps-coverage-partial">
