@@ -22,6 +22,7 @@ fn task() -> TaskDraft {
         hard_rules: None,
         verification_requirements: None,
         execution_settlement: None,
+        examples: None,
         definition_state: DraftDefinitionState::Enabled,
         workstream: Some("backend".into()),
         split_from: None,

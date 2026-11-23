@@ -11,9 +11,9 @@ use awr_core::{
     Error, Id, Result, WORKSTREAM_CATALOG_VERSION, Workstream, WorkstreamCatalog, WorkstreamState,
 };
 use awr_team::{
-    DependencyAcceptanceMode, DraftDefinitionState, GOVERNANCE_FILE, GovernanceCandidate,
-    TASK_DEFINITIONS_FILE, TaskDefinition, TaskDefinitions, WorkContract, WorkId, WorkstreamBundle,
-    WorkstreamContract,
+    ContractExample, DependencyAcceptanceMode, DraftDefinitionState, GOVERNANCE_FILE,
+    GovernanceCandidate, TASK_DEFINITIONS_FILE, TaskDefinition, TaskDefinitions, WorkContract,
+    WorkId, WorkstreamBundle, WorkstreamContract,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -37,6 +37,7 @@ pub const PARSER_VERSION_V3: &str = "awr-team-workstreams/3";
 pub const PARSER_VERSION_V4: &str = "awr-team-workstreams/4";
 pub const PARSER_VERSION_V5: &str = "awr-team-workstreams/5";
 pub const PARSER_VERSION_V6: &str = "awr-team-workstreams/6";
+pub const PARSER_VERSION_V7: &str = "awr-team-workstreams/7";
 
 const SUPPORTED_SPEC_EXTENSIONS: &[&str] = &["json", "md", "markdown"];
 
@@ -131,6 +132,8 @@ pub struct PublishPreview {
     pub dependency_acceptance_diffs: Vec<FieldDiff>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub execution_settlement_diffs: Vec<FieldDiff>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub examples_diffs: Vec<FieldDiff>,
     /// Explicit simulation policy changes only; older previews keep their wire.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub completion_policy_diffs: Vec<FieldDiff>,
@@ -271,6 +274,11 @@ pub fn prepare_publish_from_ledger_bytes(
     let bundle = WorkstreamBundle {
         codec: if contracts
             .iter()
+            .any(|entry| entry.contract.codec == WorkContract::CODEC_V7)
+        {
+            WorkstreamBundle::CODEC_V7
+        } else if contracts
+            .iter()
             .any(|entry| entry.contract.codec == WorkContract::CODEC_V6)
         {
             WorkstreamBundle::CODEC_V6
@@ -382,6 +390,7 @@ pub fn prepare_publish_from_ledger_bytes(
         files,
         governance_digest,
         parser_version: match bundle.codec.as_str() {
+            WorkstreamBundle::CODEC_V7 => PARSER_VERSION_V7,
             WorkstreamBundle::CODEC_V6 => PARSER_VERSION_V6,
             WorkstreamBundle::CODEC_V5 => PARSER_VERSION_V5,
             WorkstreamBundle::CODEC_V4 => PARSER_VERSION_V4,
@@ -659,6 +668,15 @@ fn map_contracts(
                     "{pointer}/execution_settlement: invalid explicit settlement policy"
                 ))
             })?;
+        let examples: Option<Vec<ContractExample>> = item
+            .get("examples")
+            .map(|raw| serde_json::from_value(raw.clone()))
+            .transpose()
+            .map_err(|_| {
+                Error::InvalidInput(format!(
+                    "{pointer}/examples: invalid acceptance examples list"
+                ))
+            })?;
         if execution_settlement.is_some() && item.get("completion_policy").is_some() {
             // A mapping default cannot conceal a malformed settlement policy.
             required_string(item, "completion_policy", &pointer)?;
@@ -679,7 +697,9 @@ fn map_contracts(
         }
 
         let contract = WorkContract {
-            codec: if dependency_acceptance
+            codec: if examples.is_some() {
+                WorkContract::CODEC_V7
+            } else if dependency_acceptance
                 .values()
                 .any(|mode| matches!(mode, DependencyAcceptanceMode::CrossWorkstream(_)))
             {
@@ -712,6 +732,7 @@ fn map_contracts(
             verification_requirements,
             dependency_acceptance,
             execution_settlement,
+            examples,
         };
         contract
             .validate()
@@ -786,11 +807,17 @@ fn preview_against_baseline(
         });
         if (matches!(
             after.codec.as_str(),
-            WorkContract::CODEC_V4 | WorkContract::CODEC_V5 | WorkContract::CODEC_V6
+            WorkContract::CODEC_V4
+                | WorkContract::CODEC_V5
+                | WorkContract::CODEC_V6
+                | WorkContract::CODEC_V7
         ) || prior_contract.is_some_and(|prior| {
             matches!(
                 prior.codec.as_str(),
-                WorkContract::CODEC_V4 | WorkContract::CODEC_V5 | WorkContract::CODEC_V6
+                WorkContract::CODEC_V4
+                    | WorkContract::CODEC_V5
+                    | WorkContract::CODEC_V6
+                    | WorkContract::CODEC_V7
             )
         })) && prior_contract.map(|prior| &prior.completion_policy)
             != Some(&after.completion_policy)
@@ -799,6 +826,17 @@ fn preview_against_baseline(
                 external_key: after.external_key.clone(),
                 before: prior_contract.map(|prior| serde_json::json!(prior.completion_policy)),
                 after: Some(serde_json::json!(after.completion_policy)),
+            });
+        }
+        let before_examples = prior_contract.and_then(|prior| prior.examples.as_ref());
+        if before_examples != after.examples.as_ref() {
+            preview.examples_diffs.push(FieldDiff {
+                external_key: after.external_key.clone(),
+                before: before_examples.map(|entries| serde_json::json!(entries)),
+                after: after
+                    .examples
+                    .as_ref()
+                    .map(|entries| serde_json::json!(entries)),
             });
         }
         let before = baseline
@@ -1874,5 +1912,74 @@ mod tests {
         let a_meta: SourceProvenance = serde_json::from_slice(&a_prov.bytes).unwrap();
         assert_eq!(a_meta.source_version_digest, a.source_version_digest);
         assert_eq!(a_meta.ledger_relative_path, "ledger.yaml");
+    }
+
+    #[test]
+    fn examples_in_yaml_select_v7_and_preview_diffs() {
+        let root = fixture_root();
+        let location = SoleSourceLocation::server_directory(&root, "ledger.yaml").unwrap();
+        let original = fs::read(root.join("ledger.yaml")).unwrap();
+        let base_pkg = prepare_publish_from_ledger_bytes(
+            &location,
+            &root,
+            &original,
+            "demo",
+            &PublishPrepOptions::default(),
+        )
+        .unwrap();
+        let base_bundle = base_pkg.bundle().unwrap();
+        assert_eq!(base_bundle.codec, WorkstreamBundle::CODEC);
+
+        let mut doc: Value = serde_yaml_ng::from_slice(&original).unwrap();
+        let criterion = doc["work_items"][0]["acceptance"][0]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        doc["work_items"][0]["examples"] = serde_json::json!([
+            {
+                "id": "api-pos",
+                "criterion": criterion,
+                "kind": "positive",
+                "given": "valid request",
+                "when": "handler runs",
+                "then": "returns success",
+                "check_id": "unit.api.pos"
+            },
+            {
+                "id": "api-neg",
+                "criterion": criterion,
+                "kind": "negative",
+                "given": "invalid request",
+                "when": "handler runs",
+                "then": "returns error",
+                "check_id": "unit.api.neg"
+            }
+        ]);
+        let revised = serde_yaml_ng::to_string(&doc).unwrap().into_bytes();
+        let pkg = prepare_publish_from_ledger_bytes(
+            &location,
+            &root,
+            &revised,
+            "demo",
+            &PublishPrepOptions {
+                baseline: Some(base_bundle),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let bundle = pkg.bundle().unwrap();
+        assert_eq!(bundle.codec, WorkstreamBundle::CODEC_V7);
+        assert_eq!(pkg.parser_version, PARSER_VERSION_V7);
+        assert_eq!(bundle.contracts[0].contract.codec, WorkContract::CODEC_V7);
+        assert_eq!(
+            bundle.contracts[0]
+                .contract
+                .examples
+                .as_ref()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(pkg.preview.examples_diffs.len(), 1);
     }
 }

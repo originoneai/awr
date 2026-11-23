@@ -155,6 +155,7 @@ fn draft() -> TaskDraft {
         hard_rules: None,
         verification_requirements: None,
         execution_settlement: None,
+        examples: None,
         definition_state: DraftDefinitionState::Enabled,
         workstream: Some("api".into()),
         split_from: None,

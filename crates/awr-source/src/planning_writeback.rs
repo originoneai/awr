@@ -26,6 +26,7 @@ pub const SOURCE_WRITABLE_FIELDS: &[&str] = &[
     "hard_rules",
     "verification_requirements",
     "execution_settlement",
+    "examples",
     "definition_state",
     "workstream",
     "split_from",
@@ -293,6 +294,31 @@ pub fn apply_planning_changes_to_ledger(
                         "include the exact prior execution_settlement before replacing it".into(),
                     ));
                 }
+                let source_examples: Option<Vec<awr_team::ContractExample>> = row
+                    .get("examples")
+                    .map(|entries| serde_json::from_value(entries.clone()))
+                    .transpose()
+                    .map_err(|_| Error::InvalidInput("invalid source examples".into()))?;
+                let before_examples = change.before.as_ref().and_then(|b| b.examples.as_ref());
+                if (change.after.examples.is_some() || before_examples.is_some())
+                    && before_examples != source_examples.as_ref()
+                {
+                    return Err(Error::SourceConflict(
+                        "include the exact prior examples before replacing it".into(),
+                    ));
+                }
+                if let Some(retained_examples) = &source_examples {
+                    if change.after.examples.is_none()
+                        && retained_examples
+                            .iter()
+                            .any(|ex| !change.after.acceptance.contains(&ex.criterion))
+                    {
+                        return Err(Error::InvalidInput(
+                            "planning cannot orphan retained examples; use an explicit reviewed V7 examples edit"
+                                .into(),
+                        ));
+                    }
+                }
                 let source_modes: Option<BTreeMap<String, awr_team::DependencyAcceptanceMode>> =
                     row.get("dependency_acceptance")
                         .map(|modes| serde_json::from_value(modes.clone()))
@@ -425,6 +451,9 @@ fn draft_to_ledger_row(draft: &TaskDraft) -> Value {
         if let Some(settlement) = &draft.execution_settlement {
             obj.insert("execution_settlement".into(), json!(settlement));
         }
+        if let Some(examples) = &draft.examples {
+            obj.insert("examples".into(), json!(examples));
+        }
         if let Some(ws) = draft
             .workstream
             .as_deref()
@@ -463,6 +492,9 @@ fn apply_draft_fields(row: &mut Value, draft: &TaskDraft) {
         }
         if let Some(settlement) = &draft.execution_settlement {
             obj.insert("execution_settlement".into(), json!(settlement));
+        }
+        if let Some(examples) = &draft.examples {
+            obj.insert("examples".into(), json!(examples));
         }
         // Preserve existing workstream ownership unless the draft explicitly
         // carries a non-empty workstream (CreateTask always does).
@@ -524,6 +556,7 @@ mod tests {
             hard_rules: None,
             verification_requirements: None,
             execution_settlement: None,
+            examples: None,
             definition_state: DraftDefinitionState::Enabled,
             workstream: None,
             split_from: None,
@@ -1223,5 +1256,102 @@ work_items:
                 ));
             }
         }
+    }
+
+    #[test]
+    fn examples_create_retention_replacement_and_orphan_refusal() {
+        let ex_pos = awr_team::ContractExample {
+            id: Some("ok-pos".into()),
+            criterion: "ok".into(),
+            kind: awr_core::ExampleKind::Positive,
+            given: "valid".into(),
+            when: "run".into(),
+            then: "passes".into(),
+            check_id: Some("unit.ok".into()),
+        };
+        let ex_neg = awr_team::ContractExample {
+            id: Some("ok-neg".into()),
+            criterion: "ok".into(),
+            kind: awr_core::ExampleKind::Negative,
+            given: "invalid".into(),
+            when: "run".into(),
+            then: "fails safely".into(),
+            check_id: Some("unit.ok.neg".into()),
+        };
+        let mut created = draft("EX-1", &[]);
+        created.workstream = Some("delivery".into());
+        created.examples = Some(vec![ex_pos.clone()]);
+        let patch = apply_planning_changes_to_ledger(
+            b"work_items: []\n",
+            &[DraftChange {
+                op: DraftOpKind::CreateTask,
+                before: None,
+                after: created.clone(),
+            }],
+        )
+        .unwrap();
+        let doc: Value = serde_yaml_ng::from_slice(&patch.after_bytes).unwrap();
+        assert_eq!(doc["work_items"][0]["examples"], json!([ex_pos]));
+
+        // Omitting examples on an edit retains existing source examples.
+        let mut retain_before = draft("EX-1", &[]);
+        retain_before.workstream = Some("delivery".into());
+        let mut retain_after = retain_before.clone();
+        retain_after.title = "Retained title".into();
+        let retained = apply_planning_changes_to_ledger(
+            &patch.after_bytes,
+            &[DraftChange {
+                op: DraftOpKind::EditFields,
+                before: Some(retain_before.clone()),
+                after: retain_after,
+            }],
+        )
+        .unwrap();
+        let doc: Value = serde_yaml_ng::from_slice(&retained.after_bytes).unwrap();
+        assert_eq!(doc["work_items"][0]["examples"], json!([ex_pos]));
+
+        // Dropping an acceptance criterion referenced by retained examples is refused.
+        let mut orphan_after = retain_before.clone();
+        orphan_after.acceptance = vec!["different criterion".into()];
+        assert!(matches!(
+            apply_planning_changes_to_ledger(
+                &retained.after_bytes,
+                &[DraftChange {
+                    op: DraftOpKind::EditFields,
+                    before: Some(retain_before),
+                    after: orphan_after,
+                }]
+            ),
+            Err(Error::InvalidInput(_))
+        ));
+
+        // Replacing examples requires the exact prior list in before.
+        let mut wrong_before = created.clone();
+        wrong_before.examples = Some(vec![]);
+        let mut replaced_after = created.clone();
+        replaced_after.examples = Some(vec![ex_pos.clone(), ex_neg.clone()]);
+        assert!(matches!(
+            apply_planning_changes_to_ledger(
+                &retained.after_bytes,
+                &[DraftChange {
+                    op: DraftOpKind::EditFields,
+                    before: Some(wrong_before),
+                    after: replaced_after.clone(),
+                }]
+            ),
+            Err(Error::SourceConflict(_))
+        ));
+
+        let replaced = apply_planning_changes_to_ledger(
+            &retained.after_bytes,
+            &[DraftChange {
+                op: DraftOpKind::EditFields,
+                before: Some(created),
+                after: replaced_after,
+            }],
+        )
+        .unwrap();
+        let doc: Value = serde_yaml_ng::from_slice(&replaced.after_bytes).unwrap();
+        assert_eq!(doc["work_items"][0]["examples"], json!([ex_pos, ex_neg]));
     }
 }

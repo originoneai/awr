@@ -214,6 +214,33 @@ Older baselines show `classification: legacy` and retain their original outcome 
 See [baseline classifications](checks.md#classify-baseline-failures) and
 [check freezing and baselines](admission.md#freeze-checks-and-record-baselines).
 
+### Team contract examples and snapshot evidence
+
+Team contracts reuse the personal-edition `examples` shape under contract codec `awr-team-contract-v7`
+and planning codec `awr-team-planning-v7`. Each entry declares `criterion` (matching an entry of
+`acceptance`), `kind` (`positive` or `negative`), `given`, `when`, `then`, an optional `id`
+matching `[a-z0-9][a-z0-9-]{0,31}` and an optional `check_id` (1–128 trimmed bytes) matching a
+Team candidate `VerificationRun.check` identifier. Planning drafts (`awr_team_planning_draft`)
+carry `examples` through preview, approval and guarded source writeback; omitting `examples` on an
+edit retains existing source entries, while explicit replacement requires the exact prior list in
+`before`.
+
+`work.snapshot` evaluates `data.acceptance_evidence` deterministically in the same `RepeatableRead`
+transaction while keeping `context_hash` compatible with `work.prepare`:
+
+| Field / Status | Meaning |
+| --- | --- |
+| `status: "not_provided"` (`items: null`) | Legacy contract (V1–V6) without `examples` mapping |
+| `supported` | Every check bound to the criterion passed on the current delivery candidate and the latest review round on that current candidate is `approved` |
+| `failed` | A bound check failed on the current candidate, or the latest review round on the current candidate is `rejected` (returned) |
+| `waiting` | Work has started or has a current candidate, with bound checks still pending/missing or review awaiting approval |
+| `no_bound_check` | Contract declares `examples`, while this criterion binds zero check identifiers (coverage is explicitly reported as unbound) |
+| `not_started` | Bound checks are declared while the work remains unclaimed with no current candidate or active execution on the current contract |
+
+Changing a criterion's `check_id` updates `contract_hash`, invalidating prior candidates and review
+rounds. Selecting a new delivery candidate invalidates prior candidate check results and review
+approvals until the new candidate runs its bound checks and passes review.
+
 ## Limits
 
 - Definitions use YAML; Markdown ledgers reject them with `ledger.definition`.
@@ -234,6 +261,7 @@ See [baseline classifications](checks.md#classify-baseline-failures) and
 ## Code and tests
 
 - Model and report: `crates/awr-core/src/work_definition.rs`.
+- Team contract examples and snapshot evaluation: `crates/awr-team/src/contract.rs`, `crates/awr-team/src/planning.rs`, `crates/awr-team-pg/src/workstream_read/acceptance_evidence.rs`.
 - Definition rules: `crates/awr-core/tests/work_definition.rs`.
 - Source parsing: `crates/awr-source/tests/ledger_definition.rs`.
 - Admission bindings: `crates/awr-runtime/tests/admission.rs`.

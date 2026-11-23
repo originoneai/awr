@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio_postgres::{IsolationLevel, Transaction};
 
+mod acceptance_evidence;
 mod activity;
 mod artifact_segments;
 mod assignees;
@@ -2215,6 +2216,8 @@ pub(crate) async fn read(
                     "queried_at_unix_ms":observed["observed_at_unix_ms"]
                 });
                 data["observation"] = observed;
+                data["acceptance_evidence"] =
+                    acceptance_evidence::evaluate(&contract, &data["observation"]);
                 if serde_json::to_vec(&data)
                     .map_err(|_| PgError::SourceDivergence)?
                     .len()

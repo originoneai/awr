@@ -7,7 +7,7 @@
 //! must not downgrade independent delivery-review requirements.
 
 use crate::canonical::contract_hash;
-use crate::contract::ExecutionSettlementPolicy;
+use crate::contract::{ContractExample, ExecutionSettlementPolicy, validate_examples};
 use crate::error::{TeamError, TeamResult};
 use crate::permission::{Action, AuthorityScope, ResourceRef, authorize_action};
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,7 @@ pub const PLANNING_CODEC_V3: &str = "awr-team-planning-v3";
 pub const PLANNING_CODEC_V4: &str = "awr-team-planning-v4";
 pub const PLANNING_CODEC_V5: &str = "awr-team-planning-v5";
 pub const PLANNING_CODEC_V6: &str = "awr-team-planning-v6";
+pub const PLANNING_CODEC_V7: &str = "awr-team-planning-v7";
 
 /// Suggestions never become claimable work and never enlarge the formal work
 /// denominator or mutate live deps/acceptance.
@@ -186,6 +187,14 @@ pub struct TaskDraft {
         deserialize_with = "present_execution_settlement"
     )]
     pub execution_settlement: Option<ExecutionSettlementPolicy>,
+    /// V7 onward. Omission retains existing source examples; a list replaces
+    /// them through the reviewed candidate, including an explicit []. Null is rejected.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::contract::present_examples"
+    )]
+    pub examples: Option<Vec<ContractExample>>,
     pub definition_state: DraftDefinitionState,
     /// Owning workstream external key. Required for CreateTask writeback so
     /// publish prep can bind the new task before authoritative source mutation.
@@ -277,6 +286,12 @@ impl TaskDraft {
                     "dependency_acceptance requires a nonempty map and unique existing required predecessors".into(),
                 ));
             }
+        }
+        if let Some(examples) = &self.examples {
+            validate_examples(examples, &self.acceptance).map_err(|err| match err {
+                TeamError::InvalidContract(msg) => TeamError::InvalidInput(msg),
+                other => other,
+            })?;
         }
         if FORGE_COMPLETION_VIA_STATUS_ALLOWED {
             return Err(TeamError::InvalidInput(
@@ -834,6 +849,17 @@ pub fn build_candidate_diff(
                 review_requirements.insert("execution_contract_review".into());
             }
         }
+        let before_examples = change.before.as_ref().and_then(|b| b.examples.as_ref());
+        let after_examples = change.after.examples.as_ref();
+        if after_examples.is_some() && before_examples != after_examples {
+            field_diffs.push(FieldDiff {
+                work_key: key.clone(),
+                field: "examples".into(),
+                before: before_examples.map(|entries| json!(entries)),
+                after: after_examples.map(|entries| json!(entries)),
+            });
+            review_requirements.insert("acceptance_examples_review".into());
+        }
         review_requirements.insert(change.after.completion_policy.clone());
         if change.after.definition_state == DraftDefinitionState::Cancelled
             || change.after.definition_state == DraftDefinitionState::Archived
@@ -1033,6 +1059,10 @@ pub fn edit_candidate(
 /// original digest without a schema migration or a reinterpretation of policy.
 pub fn planning_codec_for_changes(changes: &[DraftChange]) -> &'static str {
     if changes.iter().any(|c| {
+        c.after.examples.is_some() || c.before.as_ref().is_some_and(|b| b.examples.is_some())
+    }) {
+        PLANNING_CODEC_V7
+    } else if changes.iter().any(|c| {
         std::iter::once(&c.after).chain(c.before.as_ref()).any(|d| {
             d.dependency_acceptance.as_ref().is_some_and(|modes| {
                 modes
@@ -1099,6 +1129,7 @@ mod tests {
             hard_rules: None,
             verification_requirements: None,
             execution_settlement: None,
+            examples: None,
             definition_state: DraftDefinitionState::Draft,
             workstream: None,
             split_from: None,

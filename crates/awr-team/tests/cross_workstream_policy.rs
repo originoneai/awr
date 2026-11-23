@@ -65,6 +65,7 @@ fn old_candidate(version: usize) -> PlanningCandidate {
         hard_rules: None,
         verification_requirements: matches!(version, 3 | 4).then_some(vec!["Verify bytes".into()]),
         execution_settlement: (version == 4).then_some(settlement()),
+        examples: None,
         definition_state: DraftDefinitionState::Enabled,
         workstream: Some("api".into()),
         split_from: None,

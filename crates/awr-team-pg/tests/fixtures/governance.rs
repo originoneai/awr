@@ -225,6 +225,7 @@ pub async fn publish(db: &str, governance: Option<&GovernanceCandidate>) -> Resu
         contract: WorkContract {
             dependency_acceptance: Default::default(),
             execution_settlement: None,
+            examples: None,
             codec: WorkContract::CODEC.into(),
             work_id: WorkId::new(id).unwrap(),
             external_key: id.into(),

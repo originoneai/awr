@@ -43,13 +43,25 @@ pub(super) fn add(schema: &mut Value) {
                     "mode":{"type":"string","enum":["independent_workspace_v1","independent_workspace_v2"]},
                     "workspace_id":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:-]*$"}
                 },"description":"Omission retains source values; null is rejected. V2 only permits the original current claim's late terminal report, not execution or renewal."},
+            "examples":{"type":"array","maxItems":64,"items":{
+                "type":"object","additionalProperties":false,
+                "required":["criterion","kind","given","when","then"],
+                "properties":{
+                    "id":{"type":["string","null"],"pattern":"^[a-z0-9][a-z0-9-]{0,31}$"},
+                    "criterion":{"type":"string"},
+                    "kind":{"type":"string","enum":["positive","negative"]},
+                    "given":{"type":"string"},
+                    "when":{"type":"string"},
+                    "then":{"type":"string"},
+                    "check_id":{"type":["string","null"],"minLength":1,"maxLength":128}
+                }},"description":"Omission retains source examples; a list replaces them. Null is rejected."},
             "workstream":{"type":["string","null"],"description":"Owning workstream external key; required for creating source-backed tasks."},
             "split_from":{"type":["string","null"]},
             "split_children":strings
         }
     }});
     schema["properties"]["changes"]["description"] = json!(
-        "Full task definitions, not field patches. On edits, omitted dependency_acceptance, hard_rules, verification_requirements and execution_settlement retain source values; replacements require exact prior values in before. New workspace tasks require scope_paths and verification_requirements."
+        "Full task definitions, not field patches. On edits, omitted dependency_acceptance, hard_rules, verification_requirements, execution_settlement and examples retain source values; replacements require exact prior values in before. New workspace tasks require scope_paths and verification_requirements."
     );
     schema["properties"]["changes"]["items"] = json!({
         "type":"object","additionalProperties":false,"required":["op","after"],
@@ -102,7 +114,11 @@ mod tests {
             "split_children":["child"],"hard_rules":["Preserve existing behavior"],
             "verification_requirements":["Run the API tests"],
             "dependency_acceptance":{"upstream":"simulated_member_independent"},
-            "execution_settlement":{"mode":"independent_workspace_v2","workspace_id":"workspace.api-1"}
+            "execution_settlement":{"mode":"independent_workspace_v2","workspace_id":"workspace.api-1"},
+            "examples":[
+                {"id":"api-ok","criterion":"Tests pass","kind":"positive","given":"valid input","when":"API runs","then":"returns 200","check_id":"unit.api"},
+                {"id":"api-err","criterion":"Tests pass","kind":"negative","given":"invalid input","when":"API runs","then":"returns 400","check_id":"unit.api"}
+            ]
         })
     }
 
@@ -250,6 +266,7 @@ mod tests {
             "hard_rules",
             "verification_requirements",
             "execution_settlement",
+            "examples",
             "workstream",
             "split_from",
             "split_children",
@@ -261,12 +278,14 @@ mod tests {
         parsed.validate().unwrap();
         assert!(parsed.dependency_acceptance.is_none() && parsed.execution_settlement.is_none());
         assert!(parsed.hard_rules.is_none() && parsed.verification_requirements.is_none());
+        assert!(parsed.examples.is_none());
         assert!(parsed.split_children.is_empty());
         for (field, kind) in [
             ("dependency_acceptance", "object"),
             ("execution_settlement", "object"),
             ("hard_rules", "array"),
             ("verification_requirements", "array"),
+            ("examples", "array"),
             ("split_children", "array"),
         ] {
             assert_eq!(fields[field]["type"], kind);
@@ -523,5 +542,55 @@ mod tests {
                     .is_err()
             );
         }
+    }
+
+    #[test]
+    fn examples_schema_matches_contract_example_parser_and_bounds() {
+        let schema = advertised();
+        let examples = &schema["$defs"]["TaskDraft"]["properties"]["examples"];
+        assert_eq!(examples["type"], "array");
+        assert_eq!(examples["maxItems"], 64);
+        let item = &examples["items"];
+        assert_eq!(item["additionalProperties"], false);
+        assert_eq!(
+            item["required"],
+            json!(["criterion", "kind", "given", "when", "then"])
+        );
+        assert_eq!(
+            item["properties"]["kind"]["enum"],
+            json!(["positive", "negative"])
+        );
+        assert_eq!(item["properties"]["id"]["type"], json!(["string", "null"]));
+        assert_eq!(
+            item["properties"]["check_id"]["type"],
+            json!(["string", "null"])
+        );
+        // Optional id and check_id accept null or omission; unknown field is rejected.
+        let mut minimal = task();
+        minimal["examples"] = json!([{
+            "criterion": "Tests pass",
+            "kind": "positive",
+            "given": "input",
+            "when": "run",
+            "then": "ok"
+        }]);
+        serde_json::from_value::<TaskDraft>(minimal)
+            .unwrap()
+            .validate()
+            .unwrap();
+        let mut bad_kind = task();
+        bad_kind["examples"][0]["kind"] = json!("neutral");
+        assert!(serde_json::from_value::<TaskDraft>(bad_kind).is_err());
+        let mut unknown_criterion = task();
+        unknown_criterion["examples"][0]["criterion"] = json!("Missing criterion");
+        assert!(
+            serde_json::from_value::<TaskDraft>(unknown_criterion)
+                .unwrap()
+                .validate()
+                .is_err()
+        );
+        let mut extra = task();
+        extra["examples"][0]["unexpected"] = json!(true);
+        assert!(serde_json::from_value::<TaskDraft>(extra).is_err());
     }
 }

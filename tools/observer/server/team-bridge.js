@@ -1127,6 +1127,71 @@ function validInboxPage(reply, cursor) {
       && typeof item.guidance.recheck_on === 'string');
 }
 
+const ACCEPTANCE_EVIDENCE_STATUSES = new Set([
+  'supported', 'failed', 'waiting', 'no_bound_check', 'not_started',
+]);
+const ACCEPTANCE_CHECK_OUTCOMES = new Set(['passed', 'failed', 'running', 'unknown', 'not_recorded']);
+
+function mapAcceptanceEvidence(value) {
+  if (value === undefined) {
+    return { status: 'not_provided', basis: 'upstream_omitted', items: null };
+  }
+  const obj = asObject(value);
+  if (!obj) return null;
+  if (obj.status === 'not_provided') {
+    if (obj.items !== null && obj.items !== undefined) return null;
+    return {
+      status: 'not_provided',
+      basis: typeof obj.basis === 'string' ? obj.basis : 'contract_examples_absent',
+      candidate_digest: typeof obj.candidate_digest === 'string' ? obj.candidate_digest : null,
+      candidate_current: obj.candidate_current === true,
+      review_state: typeof obj.review_state === 'string' ? obj.review_state : null,
+      review_current_candidate: obj.review_current_candidate === true,
+      items: null,
+    };
+  }
+  if (obj.status !== 'provided' || !Array.isArray(obj.items)) return null;
+  const items = [];
+  for (const raw of obj.items) {
+    const item = asObject(raw);
+    if (!item || typeof item.criterion !== 'string'
+      || !ACCEPTANCE_EVIDENCE_STATUSES.has(item.status)
+      || !Array.isArray(item.bound_checks) || !item.bound_checks.every((c) => typeof c === 'string')
+      || !Array.isArray(item.checks)) {
+      return null;
+    }
+    const checks = [];
+    for (const rawCheck of item.checks) {
+      const check = asObject(rawCheck);
+      if (!check || typeof check.check !== 'string' || !ACCEPTANCE_CHECK_OUTCOMES.has(check.outcome)
+        || (check.run_id !== null && typeof check.run_id !== 'string')) {
+        return null;
+      }
+      checks.push({ check: check.check, outcome: check.outcome, run_id: check.run_id });
+    }
+    items.push({
+      criterion: item.criterion,
+      status: item.status,
+      reason: typeof item.reason === 'string' ? item.reason : null,
+      bound_checks: item.bound_checks.slice(),
+      checks,
+      examples_count: Number.isInteger(item.examples_count) ? item.examples_count : 0,
+      positive_examples: Number.isInteger(item.positive_examples) ? item.positive_examples : 0,
+      negative_examples: Number.isInteger(item.negative_examples) ? item.negative_examples : 0,
+    });
+  }
+  return {
+    status: 'provided',
+    basis: typeof obj.basis === 'string' ? obj.basis : 'contract_examples_and_current_candidate',
+    candidate_digest: typeof obj.candidate_digest === 'string' ? obj.candidate_digest : null,
+    candidate_current: obj.candidate_current === true,
+    review_state: typeof obj.review_state === 'string' ? obj.review_state : null,
+    review_current_candidate: obj.review_current_candidate === true,
+    facts_truncated: obj.facts_truncated === true,
+    items,
+  };
+}
+
 function asObject(body) {
   if (body == null) return {};
   if (typeof body === 'object') return body;
@@ -2656,6 +2721,10 @@ function createTeamBridge(opts) {
         : { code: 'restore_context', action: { op: 'work.prepare', note: data.next_step || null } };
       progress.next_step = progress.guidance.action?.note || null;
     }
+    const acceptance_evidence = mapAcceptanceEvidence(data.acceptance_evidence);
+    if (!acceptance_evidence) {
+      return { ok: false, error: { code: 'BadGateway', message: 'Invalid acceptance evidence in Team snapshot' } };
+    }
     // Three clocks side by side (AWR-OBS-002): the caller's report receipt,
     // the service's own measurement and this page read — never substituted.
     const freshness = readFreshness(
@@ -2667,6 +2736,7 @@ function createTeamBridge(opts) {
       runtime_available: Boolean(data.runtime),
       recovery_blocked: Boolean(data.runtime && data.runtime.recovery_blocked),
       acceptance: data.visible_contract.acceptance || [],
+      acceptance_evidence,
       goals: data.visible_contract.goals || [],
       depends_on: (data.visible_contract.required_dependencies || []).map((key) => ({ key, visible: true })),
       dependency_export_unavailable: data.dependency_export_unavailable === true,

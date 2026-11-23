@@ -15,6 +15,7 @@ fn bundle() -> WorkstreamBundle {
     let contract = WorkContract {
         dependency_acceptance: Default::default(),
         execution_settlement: None,
+        examples: None,
         codec: WorkContract::CODEC.into(),
         work_id: WorkId::new("interface").unwrap(),
         external_key: "API".into(),

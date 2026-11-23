@@ -123,6 +123,7 @@ async fn stage_integration_source_change(
         hard_rules: Some(contract.hard_rules),
         verification_requirements: Some(contract.verification_requirements),
         execution_settlement: contract.execution_settlement,
+        examples: None,
         definition_state: awr_team::DraftDefinitionState::Enabled,
         workstream: Some(if work == "a" { "alpha" } else { "private-beta" }.into()),
         split_from: None,

@@ -71,6 +71,7 @@ fn draft(id: &str, deps: &[&str]) -> TaskDraft {
         hard_rules: None,
         verification_requirements: None,
         execution_settlement: None,
+        examples: None,
         definition_state: DraftDefinitionState::Draft,
         split_from: None,
         split_children: vec![],
@@ -103,6 +104,7 @@ fn successor_bundle(title_suffix: &str) -> WorkstreamBundle {
         contract: WorkContract {
             dependency_acceptance: Default::default(),
             execution_settlement: None,
+            examples: None,
             codec: WorkContract::CODEC.into(),
             work_id: WorkId::new(id).unwrap(),
             external_key: id.into(),

@@ -1094,7 +1094,7 @@ async fn stage_member_source_edit(admin:&Client,source:&awr_team_pg::SourceStore
         scope_paths:contract.scope_paths.clone(),acceptance:contract.acceptance.clone(),required_dependencies:contract.required_dependencies.clone(),
         completion_policy:contract.completion_policy.clone(),dependency_acceptance:if contract.dependency_acceptance.is_empty() {None} else {Some(contract.dependency_acceptance.clone())},
         hard_rules:Some(contract.hard_rules.clone()),verification_requirements:Some(contract.verification_requirements.clone()),
-        execution_settlement:contract.execution_settlement.clone(),definition_state:awr_team::DraftDefinitionState::Enabled,
+        execution_settlement:contract.execution_settlement.clone(),examples:contract.examples.clone(),definition_state:awr_team::DraftDefinitionState::Enabled,
         workstream:Some(stream.into()),split_from:None,split_children:vec![]};
     let mut after=before.clone();after.scope_paths=vec!["src/revised".into()];
     let created=source.create_planning_candidate(TENANT,PROJECT,RUNNER,&awr_team_pg::DraftCandidateCreate {

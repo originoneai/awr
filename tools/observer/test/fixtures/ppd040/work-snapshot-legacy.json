@@ -1,0 +1,254 @@
+{
+  "authority_version": "1",
+  "coordinator_epoch": "epoch-a",
+  "data": {
+    "acceptance_evidence": {
+      "basis": "contract_examples_absent",
+      "candidate_current": false,
+      "candidate_digest": null,
+      "items": null,
+      "review_current_candidate": false,
+      "review_state": null,
+      "status": "not_provided"
+    },
+    "adopted_dependencies": [],
+    "authorized_readable_refs": [],
+    "completeness_reasons": [],
+    "context_complete": true,
+    "context_hash": "fea4a6636142d0f85affdcf614c5f2f1087885ecff21102deecf01ed30c5862a",
+    "context_hash_protocol": "awr-team-workstream-context-v1",
+    "contract_hash": "167ab92502cfebdac1d2529b9a167836e63d0407ea92d1f65f3059436fa58327",
+    "definition_state": "enabled",
+    "dependency_export_unavailable": false,
+    "execution_admission": "not_evaluated",
+    "guidance": {
+      "action": {
+        "note": "At the next checkpoint include known client_info and supported/unsupported/unknown observations; never guess model or usage.",
+        "op": "session.checkpoint"
+      },
+      "because": [
+        "client_info is absent"
+      ],
+      "code": "declare_client",
+      "recheck_on": "client, model or capability changes",
+      "when": "client capabilities have not been declared"
+    },
+    "next_step": null,
+    "observation": {
+      "automatic_resume": false,
+      "checkpoint": {
+        "contract_matches_current": false,
+        "created_at_unix_ms": 1795422565580,
+        "id": "cp-session-a",
+        "next_action": "continue alpha",
+        "open_loops": []
+      },
+      "claim": null,
+      "client": null,
+      "collaboration": {
+        "acceptance_inferred": false,
+        "candidate": null,
+        "claim_present": false,
+        "delivery_channel": null,
+        "delivery_required": false,
+        "facts_truncated": false,
+        "integration": null,
+        "integration_required": false,
+        "publication": null,
+        "recovery": {
+          "claim_binding_changed": false,
+          "expired_claim": false,
+          "unknown_resource": false,
+          "unsettled_execution": false
+        },
+        "repository_integration_policy": false,
+        "review": null,
+        "source_state": {
+          "basis": "current_physical_source",
+          "observation": "not_measured",
+          "query": {
+            "op": "delivery.source.status",
+            "protocol_version": 1,
+            "work_id": "a"
+          }
+        },
+        "source_synchronized": null,
+        "verification": []
+      },
+      "contract_hash": "167ab92502cfebdac1d2529b9a167836e63d0407ea92d1f65f3059436fa58327",
+      "definition_state": "enabled",
+      "dependencies_ready_advisory": true,
+      "execution": null,
+      "execution_authorized": false,
+      "guidance": {
+        "action": {
+          "note": "At the next checkpoint include known client_info and supported/unsupported/unknown observations; never guess model or usage.",
+          "op": "session.checkpoint"
+        },
+        "because": [
+          "client_info is absent"
+        ],
+        "code": "declare_client",
+        "recheck_on": "client, model or capability changes",
+        "when": "client capabilities have not been declared"
+      },
+      "last_activity_at_unix_ms": 1795422565580,
+      "last_participation": {
+        "actor_id": "agent",
+        "actor_name": "Worker",
+        "at_unix_ms": 1795422565580,
+        "basis": "latest_recorded_session_activity",
+        "client_id": "cli-a",
+        "recorded_project_revision": "1",
+        "session_id": "session-a",
+        "state": "active"
+      },
+      "missing": {
+        "model": "client_capability_unknown",
+        "progress": "client_capability_unknown",
+        "usage": "client_capability_unknown"
+      },
+      "model": null,
+      "observation_scope": "current_work_ownership",
+      "observed_at_unix_ms": 1795422565649,
+      "pr_deliveries": [],
+      "progress": null,
+      "reporting": {
+        "billing_collected": false,
+        "client_origin": {
+          "actor_id": "agent",
+          "actor_name": "Worker",
+          "client_id": "cli-a",
+          "session_id": "session-a"
+        },
+        "client_reported_at_unix_ms": null,
+        "client_stale": false,
+        "model_basis": "latest_session_declaration; not execution-time attribution",
+        "provenance": "caller_declared",
+        "stale_after_ms": 900000,
+        "usage_aggregation": "none",
+        "version": 1
+      },
+      "responsibility": {
+        "collaborators": [],
+        "coordination_allowed_advisory": true,
+        "coordination_delegation_id": null,
+        "current_executor": null,
+        "current_executor_matches_client": true,
+        "executor_agent_id": null,
+        "executor_agent_name": null,
+        "executor_person_name": null,
+        "historical": null,
+        "independent_reviewer": null,
+        "member_person_id": "person-author",
+        "owner": null,
+        "owner_name": null,
+        "owner_person_id": null,
+        "pending": null,
+        "pending_name": null,
+        "personal_mode_default": false,
+        "project_id": "reader-project",
+        "relation": "pool",
+        "version": "0",
+        "work_item_id": "a"
+      },
+      "runtime": null,
+      "session": {
+        "actor_id": "agent",
+        "actor_name": "Worker",
+        "client_id": "cli-a",
+        "id": "session-a",
+        "state": "active"
+      },
+      "session_execution": null,
+      "usage": null,
+      "waiting_user": false,
+      "work_id": "a",
+      "workstream_id": "00000000000000000000000001"
+    },
+    "ordinary_decisions": {
+      "items": [],
+      "truncated": false
+    },
+    "ownership_version": "1",
+    "published_contract": {
+      "acceptance": [
+        "verified"
+      ],
+      "codec": "awr-team-contract-v1",
+      "completion_policy": "review",
+      "external_key": "a",
+      "goals": [
+        "ship"
+      ],
+      "hard_rules": [
+        "preserve compatibility"
+      ],
+      "required_dependencies": [],
+      "scope_paths": [
+        "src"
+      ],
+      "verification_requirements": [
+        "report"
+      ],
+      "work_id": "a"
+    },
+    "required_specs": [],
+    "responsibility": {
+      "collaborators": [],
+      "coordination_allowed_advisory": true,
+      "coordination_delegation_id": null,
+      "current_executor": null,
+      "current_executor_matches_client": true,
+      "independent_reviewer": null,
+      "member_person_id": "person-author",
+      "owner": null,
+      "pending": null,
+      "personal_mode_default": false,
+      "project_id": "reader-project",
+      "relation": "pool",
+      "version": "0",
+      "work_item_id": "a"
+    },
+    "runtime": null,
+    "snapshot": {
+      "consistency": "repeatable_read",
+      "coordinator_epoch": "epoch-a",
+      "project_revision": "3",
+      "queried_at_unix_ms": 1795422565649,
+      "source_snapshot_id": "01M83RCD5HKPAF2THMH3MDRM3B",
+      "version": 1
+    },
+    "title": "a",
+    "visible_contract": {
+      "acceptance": [
+        "verified"
+      ],
+      "codec": "awr-team-contract-v1",
+      "completion_policy": "review",
+      "external_key": "a",
+      "goals": [
+        "ship"
+      ],
+      "hard_rules": [
+        "preserve compatibility"
+      ],
+      "required_dependencies": [],
+      "scope_paths": [
+        "src"
+      ],
+      "verification_requirements": [
+        "report"
+      ],
+      "work_id": "a"
+    },
+    "work_id": "a"
+  },
+  "project_revision": "3",
+  "project_status": "active",
+  "protocol_version": 1,
+  "scope_id": "main",
+  "selection_basis": "work",
+  "source_snapshot_id": "01M83RCD5HKPAF2THMH3MDRM3B",
+  "workstream_id": "00000000000000000000000001"
+}

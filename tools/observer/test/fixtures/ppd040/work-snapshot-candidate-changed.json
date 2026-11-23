@@ -1,0 +1,404 @@
+{
+  "authority_version": "1",
+  "coordinator_epoch": "epoch-a",
+  "data": {
+    "acceptance_evidence": {
+      "basis": "contract_examples_and_current_candidate",
+      "candidate_current": true,
+      "candidate_digest": "4922a47daacfc5aa5224c291fc78f4aae4bc9c8de62dafa9153f0036f4b6be6e",
+      "facts_truncated": false,
+      "items": [
+        {
+          "bound_checks": [
+            "unit.filter.pos",
+            "unit.filter.neg"
+          ],
+          "checks": [
+            {
+              "check": "unit.filter.pos",
+              "outcome": "not_recorded",
+              "run_id": null
+            },
+            {
+              "check": "unit.filter.neg",
+              "outcome": "not_recorded",
+              "run_id": null
+            }
+          ],
+          "criterion": "Filter matches status and keyword without mutating input",
+          "examples_count": 2,
+          "negative_examples": 1,
+          "positive_examples": 1,
+          "reason": "awaiting_bound_checks",
+          "status": "waiting"
+        },
+        {
+          "bound_checks": [],
+          "checks": [],
+          "criterion": "Empty filter query returns all visible records",
+          "examples_count": 1,
+          "negative_examples": 0,
+          "positive_examples": 1,
+          "reason": "no_bound_check",
+          "status": "no_bound_check"
+        }
+      ],
+      "review_current_candidate": false,
+      "review_state": "approved",
+      "status": "provided"
+    },
+    "adopted_dependencies": [],
+    "authorized_readable_refs": [],
+    "completeness_reasons": [
+      "missing_hard_rules"
+    ],
+    "context_complete": false,
+    "context_hash": "397a591a59c870805e8f3a44d7e9824f8c1d32b4a266c8fedcd10748f622cb92",
+    "context_hash_protocol": "awr-team-workstream-context-v1",
+    "contract_hash": "bc4aa925cb1b183926e7e3bb7e6ca54acf3be7b5609f53b02224ac83bd70ff79",
+    "definition_state": "enabled",
+    "dependency_export_unavailable": false,
+    "execution_admission": "not_evaluated",
+    "guidance": {
+      "action": {
+        "note": "Restore missing context before effects; use source.content or a larger context budget as needed.",
+        "op": "work.prepare"
+      },
+      "because": [
+        "missing authorized specs or dependencies"
+      ],
+      "code": "restore_context",
+      "recheck_on": "specification or dependency changes",
+      "when": "required context is incomplete"
+    },
+    "next_step": "re-prepare after restoring missing authorized specs/deps, or raise max_context_bytes / use source.content",
+    "observation": {
+      "automatic_resume": false,
+      "checkpoint": {
+        "contract_matches_current": false,
+        "created_at_unix_ms": 1795422565580,
+        "id": "cp-session-a",
+        "next_action": "continue alpha",
+        "open_loops": []
+      },
+      "claim": {
+        "epoch_matches_current": true,
+        "expires_at_unix_ms": 1795426166012,
+        "id": "01M83RCDKV07G2TRDR0690S01M",
+        "lease_live": true,
+        "state": "active"
+      },
+      "client": null,
+      "collaboration": {
+        "acceptance_inferred": false,
+        "candidate": {
+          "current": true,
+          "digest": "4922a47daacfc5aa5224c291fc78f4aae4bc9c8de62dafa9153f0036f4b6be6e",
+          "required_checks": [
+            "unit.filter.pos",
+            "unit.filter.neg"
+          ],
+          "selection_version": "2"
+        },
+        "claim_present": true,
+        "delivery_channel": {
+          "basis": "current_enabled_connector_registration",
+          "mapping_present": true,
+          "matching_template_available": false,
+          "registered_for_candidate": true
+        },
+        "delivery_required": true,
+        "facts_truncated": false,
+        "integration": null,
+        "integration_required": true,
+        "publication": null,
+        "recovery": {
+          "claim_binding_changed": false,
+          "expired_claim": false,
+          "unknown_resource": false,
+          "unsettled_execution": false
+        },
+        "repository_integration_policy": true,
+        "review": {
+          "author_actor_id": "agent",
+          "bundle_hash": "208299e6c85dc174479f3f8673079db2b0c2d01aff357a4ef7b919cf33d3437b",
+          "candidate_digest": "7601305af357a3be96933c2d11fbf53f751a4ee0ed3fc49f6bf8da7c8987512e",
+          "current_candidate": false,
+          "id": "01M83RCDWS6PMESDWXW80CWQRJ",
+          "state": "approved"
+        },
+        "source_state": {
+          "basis": "current_physical_source",
+          "cursor_current": true,
+          "history_truncated": false,
+          "metadata_revision": "0",
+          "observation": "observed",
+          "pending_publication_id": null,
+          "projection_current": true,
+          "query": {
+            "op": "delivery.source.status",
+            "protocol_version": 1,
+            "work_id": "a"
+          },
+          "query_started_at_unix_ms": 1795422566477,
+          "source_fingerprint": "sha256:e4bcebbd90b839421d44ae6185b6eac9e74793d4eb5fab0b33dbef6ab1795cd9",
+          "source_synchronized": false
+        },
+        "source_synchronized": false,
+        "verification": []
+      },
+      "contract_hash": "bc4aa925cb1b183926e7e3bb7e6ca54acf3be7b5609f53b02224ac83bd70ff79",
+      "definition_state": "enabled",
+      "dependencies_ready_advisory": true,
+      "execution": null,
+      "execution_authorized": false,
+      "guidance": {
+        "action": {
+          "note": "Restore missing context before effects; use source.content or a larger context budget as needed.",
+          "op": "work.prepare"
+        },
+        "because": [
+          "missing authorized specs or dependencies"
+        ],
+        "code": "restore_context",
+        "recheck_on": "specification or dependency changes",
+        "when": "required context is incomplete"
+      },
+      "last_activity_at_unix_ms": 1795422566469,
+      "last_participation": {
+        "actor_id": "reviewer",
+        "actor_name": "Reviewer",
+        "at_unix_ms": 1795422566362,
+        "basis": "latest_recorded_session_activity",
+        "client_id": "cli-reviewer",
+        "recorded_project_revision": "14",
+        "session_id": "01M83RCDYSCXW7Y8124R6H0YHA",
+        "state": "active"
+      },
+      "missing": {
+        "model": "client_capability_unknown",
+        "progress": "client_capability_unknown",
+        "usage": "client_capability_unknown"
+      },
+      "model": null,
+      "observation_scope": "current_work_ownership",
+      "observed_at_unix_ms": 1795422566477,
+      "pr_deliveries": [],
+      "progress": null,
+      "reporting": {
+        "billing_collected": false,
+        "client_origin": {
+          "actor_id": "agent",
+          "actor_name": "Worker",
+          "client_id": "cli-a",
+          "session_id": "session-a"
+        },
+        "client_reported_at_unix_ms": null,
+        "client_stale": false,
+        "model_basis": "latest_session_declaration; not execution-time attribution",
+        "provenance": "caller_declared",
+        "stale_after_ms": 900000,
+        "usage_aggregation": "none",
+        "version": 1
+      },
+      "responsibility": {
+        "collaborators": [],
+        "coordination_allowed_advisory": true,
+        "coordination_delegation_id": null,
+        "current_executor": {
+          "agent_id": "agent",
+          "binding_id": "bind-agent",
+          "kind": "agent_run",
+          "person_id": "person-author"
+        },
+        "current_executor_matches_client": true,
+        "executor_agent_id": "agent",
+        "executor_agent_name": "Worker",
+        "executor_person_name": "Author",
+        "historical": null,
+        "independent_reviewer": null,
+        "member_person_id": "person-author",
+        "owner": "person-author",
+        "owner_name": "Author",
+        "owner_person_id": "person-author",
+        "pending": null,
+        "pending_name": null,
+        "personal_mode_default": false,
+        "project_id": "reader-project",
+        "relation": "owned_by_me",
+        "version": "2",
+        "work_item_id": "a"
+      },
+      "runtime": {
+        "last_fence": "1",
+        "recovery_blocked": false,
+        "selected_completion_id": null,
+        "state": "claimed",
+        "work_version": "1"
+      },
+      "session": {
+        "actor_id": "agent",
+        "actor_name": "Worker",
+        "client_id": "cli-a",
+        "id": "session-a",
+        "state": "active"
+      },
+      "session_execution": null,
+      "usage": null,
+      "waiting_user": false,
+      "work_id": "a",
+      "workstream_id": "00000000000000000000000001"
+    },
+    "ordinary_decisions": {
+      "items": [],
+      "truncated": false
+    },
+    "ownership_version": "1",
+    "published_contract": {
+      "acceptance": [
+        "Filter matches status and keyword without mutating input",
+        "Empty filter query returns all visible records"
+      ],
+      "codec": "awr-team-contract-v7",
+      "completion_policy": "independent_review",
+      "examples": [
+        {
+          "check_id": "unit.filter.pos",
+          "criterion": "Filter matches status and keyword without mutating input",
+          "given": "issues exist with status open",
+          "id": "filter-pos",
+          "kind": "positive",
+          "then": "matching issues return and originals stay unchanged",
+          "when": "filtering by status open and keyword"
+        },
+        {
+          "check_id": "unit.filter.neg",
+          "criterion": "Filter matches status and keyword without mutating input",
+          "given": "issues exist with mismatched keyword",
+          "id": "filter-neg",
+          "kind": "negative",
+          "then": "empty list returns without throwing",
+          "when": "filtering with unmatched keyword"
+        },
+        {
+          "criterion": "Empty filter query returns all visible records",
+          "given": "visible issues exist",
+          "id": "empty-query",
+          "kind": "positive",
+          "then": "all visible issues return",
+          "when": "query parameters are blank"
+        }
+      ],
+      "external_key": "a",
+      "goals": [
+        "alpha"
+      ],
+      "hard_rules": [],
+      "required_dependencies": [],
+      "scope_paths": [
+        "src"
+      ],
+      "verification_requirements": [
+        "unit.filter.pos",
+        "unit.filter.neg"
+      ],
+      "work_id": "a"
+    },
+    "required_specs": [],
+    "responsibility": {
+      "collaborators": [],
+      "coordination_allowed_advisory": true,
+      "coordination_delegation_id": null,
+      "current_executor": {
+        "agent_id": "agent",
+        "binding_id": "bind-agent",
+        "kind": "agent_run",
+        "person_id": "person-author"
+      },
+      "current_executor_matches_client": true,
+      "independent_reviewer": null,
+      "member_person_id": "person-author",
+      "owner": "person-author",
+      "pending": null,
+      "personal_mode_default": false,
+      "project_id": "reader-project",
+      "relation": "owned_by_me",
+      "version": "2",
+      "work_item_id": "a"
+    },
+    "runtime": {
+      "last_fence": "1",
+      "recovery_blocked": false,
+      "selected_completion_id": null,
+      "state": "claimed",
+      "work_version": "1"
+    },
+    "snapshot": {
+      "consistency": "repeatable_read",
+      "coordinator_epoch": "epoch-a",
+      "project_revision": "16",
+      "queried_at_unix_ms": 1795422566477,
+      "source_snapshot_id": "01M83RCDESBQ7G5KKQ6739FG0G",
+      "version": 1
+    },
+    "title": "a",
+    "visible_contract": {
+      "acceptance": [
+        "Filter matches status and keyword without mutating input",
+        "Empty filter query returns all visible records"
+      ],
+      "codec": "awr-team-contract-v7",
+      "completion_policy": "independent_review",
+      "examples": [
+        {
+          "check_id": "unit.filter.pos",
+          "criterion": "Filter matches status and keyword without mutating input",
+          "given": "issues exist with status open",
+          "id": "filter-pos",
+          "kind": "positive",
+          "then": "matching issues return and originals stay unchanged",
+          "when": "filtering by status open and keyword"
+        },
+        {
+          "check_id": "unit.filter.neg",
+          "criterion": "Filter matches status and keyword without mutating input",
+          "given": "issues exist with mismatched keyword",
+          "id": "filter-neg",
+          "kind": "negative",
+          "then": "empty list returns without throwing",
+          "when": "filtering with unmatched keyword"
+        },
+        {
+          "criterion": "Empty filter query returns all visible records",
+          "given": "visible issues exist",
+          "id": "empty-query",
+          "kind": "positive",
+          "then": "all visible issues return",
+          "when": "query parameters are blank"
+        }
+      ],
+      "external_key": "a",
+      "goals": [
+        "alpha"
+      ],
+      "hard_rules": [],
+      "required_dependencies": [],
+      "scope_paths": [
+        "src"
+      ],
+      "verification_requirements": [
+        "unit.filter.pos",
+        "unit.filter.neg"
+      ],
+      "work_id": "a"
+    },
+    "work_id": "a"
+  },
+  "project_revision": "16",
+  "project_status": "active",
+  "protocol_version": 1,
+  "scope_id": "main",
+  "selection_basis": "work",
+  "source_snapshot_id": "01M83RCDESBQ7G5KKQ6739FG0G",
+  "workstream_id": "00000000000000000000000001"
+}
