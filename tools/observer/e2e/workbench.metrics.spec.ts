@@ -230,14 +230,19 @@ test('empty chain uses the flat why.plain surface instead of the dotted canvas',
   expect(plain['background-image']).toBe('none');
 });
 
-test('subtitle uses the viewer name and browser-local date from the read timestamp', async ({ page }, testInfo) => {
+test('subtitle uses the viewer name and the display-clock day in the browser-local zone', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-new-york');
-  const expected = await page.evaluate(async () => {
+  // The header's "today" is the display clock's day: the reply's derivation clock (input.options.nowUnixMs)
+  // walked forward with real time, read in the browser's zone (this demo variant pins none), not the real
+  // read moment. The day is read before and after the subtitle so a midnight in New York cannot flake it.
+  const days = async () => page.evaluate(async () => {
     const response = await fetch('/api/team/overview-model?project=P-001');
-    const body = await response.json() as { read_at_unix_ms: number };
-    const date = new Date(body.read_at_unix_ms);
+    const body = await response.json() as { read_at_unix_ms: number; input: { options: { nowUnixMs: number } } };
+    const date = new Date(Date.now() + (body.input.options.nowUnixMs - body.read_at_unix_ms));
     return `${date.getMonth() + 1} 月 ${date.getDate()} 日`;
   });
+  const before = await days();
   const subtitle = await page.locator('.obs-page-subtitle').innerText();
-  expect(subtitle).toBe(`林悦 · 今天，${expected}`);
+  const after = await days();
+  expect([`林悦 · 今天，${before}`, `林悦 · 今天，${after}`]).toContain(subtitle);
 });
