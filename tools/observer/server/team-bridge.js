@@ -9,7 +9,7 @@ const { mapObservation, createGithubObserver } = require('./team-progress');
 const { projectDirectory } = require('./directory');
 const { createDemoOrganization, DEMO_FUTURE_READ_OPS, canonicalOverviewInput, demoOverviewAsOf,
   canonicalProjectList, canonicalPeriodUpdates, canonicalOrganizationDirectory,
-  canonicalPerspectiveFacts } = require('./demo-organization');
+  canonicalPerspectiveFacts, canonicalDepartmentFacts } = require('./demo-organization');
 const { OBSERVATION_STALE_AFTER_MS, READ_TIMEOUT_MS, OVERVIEW_DEADLINE_MS, compareAuthoritative, resolveCurrency } = require('./observation-contract');
 
 const fs = require('fs');
@@ -1885,7 +1885,7 @@ function createTeamBridge(opts) {
 
   const routes = {
     'GET /api/team/portfolio': async (url, _body, req, res) => {
-      if (!TEAM.live) {
+      if (!TEAM.live && !TEAM.demoOrganization) {
         return { ok: false, error: { code: 'Unsupported', message: 'Live Team observation required' },
           freshness: unmeasuredFreshness(now()) };
       }
@@ -1915,6 +1915,45 @@ function createTeamBridge(opts) {
             freshness: unmeasuredFreshness(now()) };
         }
         query.cursor = cursor;
+      }
+
+      if (!TEAM.live && TEAM.demoOrganization) {
+        let result;
+        try {
+          result = TEAM.demoOrganization.portfolioOverview(query);
+        } catch (error) {
+          const code = error?.code || 'Unavailable';
+          return { ok: false, error: { code, message: String(error?.message || 'Demo portfolio read failed') },
+            freshness: compositionFailedFreshness(code, now()) };
+        }
+        const data = result.data;
+        const projects = data.projects;
+        const readAt = now();
+        const asOf = Number.isFinite(data.as_of?.at_unix_ms) ? data.as_of.at_unix_ms : null;
+        const notRead = projects.filter((project) => project?.read?.status === 'not_read').length;
+        return {
+          ok: true,
+          result,
+          read_at_unix_ms: readAt,
+          coverage: {
+            status: data.truncated || notRead ? 'partial' : 'complete',
+            returned_projects: projects.length,
+            total_projects: data.total_projects,
+            not_read_projects: notRead,
+            truncated: data.truncated,
+            next_cursor: data.next_cursor,
+          },
+          freshness: {
+            report_received: { status: 'not_measured' },
+            authoritative: asOf === null ? { status: 'not_measured' } : {
+              ...resolveCurrency({ atUnixMs: asOf, readAtMs: readAt, staleAfterMs: OBSERVATION_STALE_AFTER_MS }),
+              at_unix_ms: asOf,
+            },
+            page_read: { status: 'measured', at_unix_ms: readAt },
+          },
+          ...(TEAM.demoOrganization.variant === 'canonical'
+            ? { department_facts: canonicalDepartmentFacts(TEAM.demoOrganization.data) } : {}),
+        };
       }
 
       // Session checks and this composition are revocation-sensitive: always

@@ -15,16 +15,50 @@ import { DEMO_PROJECTS, renderApp } from '../test-utils';
 
 const NOW = 1_795_089_600_000;
 const ROLES = ['observer', 'developer', 'reviewer', 'supervisor', 'deliverer', 'administrator'];
+const ACTION_CEILINGS: Record<string, string[]> = {
+  observer: ['work.read'],
+  developer: [
+    'work.read', 'session.maintain_own', 'claim.manage_own',
+    'execution.request_and_report_own', 'planning.propose', 'delivery.submit_and_request_review',
+  ],
+  reviewer: ['work.read', 'session.maintain_own', 'review.decide'],
+  supervisor: [
+    'work.read', 'work.assign', 'session.maintain_own',
+    'planning.propose', 'planning.edit_draft', 'planning.approve', 'planning.publish',
+    'audit.read_project', 'directory.manage_project',
+  ],
+  deliverer: ['work.read', 'session.maintain_own', 'delivery.finalize'],
+  administrator: ['work.read', 'access.manage_project', 'audit.read_project', 'directory.manage_project'],
+};
 const DIRECTORY = {
   configured: true,
   organization: '示例组织',
-  departments: [{ key: 'group-app', name: '应用小组' }, { key: 'group-platform', name: '平台小组' }],
+  departments: [{ key: 'group-app', name: '应用小组', parentKey: null }, { key: 'group-platform', name: '平台小组', parentKey: null }],
   updated_at_ms: NOW,
   members: [
-    { name: '成员甲', available: true, departments: [{ key: 'group-app', name: '应用小组' }] },
-    { name: '成员乙', available: true, departments: [{ key: 'group-app', name: '应用小组' }] },
-    { name: '成员丙', available: true, departments: [{ key: 'group-app', name: '应用小组' }] },
-    { name: '成员丁', available: true, departments: [{ key: 'group-platform', name: '平台小组' }] },
+    { name: '成员甲', available: true, departments: [{ key: 'group-app', name: '应用小组', parentKey: null }] },
+    { name: '成员乙', available: true, departments: [{ key: 'group-app', name: '应用小组', parentKey: null }] },
+    { name: '成员丙', available: true, departments: [{ key: 'group-app', name: '应用小组', parentKey: null }] },
+    { name: '成员丁', available: true, departments: [{ key: 'group-platform', name: '平台小组', parentKey: null }] },
+  ],
+};
+const HIERARCHICAL_DIRECTORY = {
+  configured: true,
+  organization: '示例组织',
+  departments: [{ key: 'group-app', name: '应用小组', parentKey: 'dept-eng' }],
+  allDepartments: [
+    { key: 'dept-eng', name: '研发部', parentKey: null },
+    { key: 'dept-delivery', name: '客户交付部', parentKey: null },
+    { key: 'group-app', name: '应用小组', parentKey: 'dept-eng' },
+    { key: 'group-platform', name: '平台小组', parentKey: 'dept-eng' },
+    { key: 'group-delivery', name: '交付小组', parentKey: 'dept-delivery' },
+  ],
+  updated_at_ms: NOW,
+  members: [
+    { name: '成员甲', available: true, departments: [{ key: 'group-app', name: '应用小组', parentKey: 'dept-eng' }] },
+    { name: '成员乙', available: true, departments: [{ key: 'group-app', name: '应用小组', parentKey: 'dept-eng' }] },
+    { name: '成员丙', available: true, departments: [{ key: 'group-app', name: '应用小组', parentKey: 'dept-eng' }] },
+    { name: '成员丁', available: true, departments: [{ key: 'group-platform', name: '平台小组', parentKey: 'dept-eng' }] },
   ],
 };
 
@@ -32,13 +66,13 @@ function json(payload: unknown) {
   return new Response(JSON.stringify(payload), { status: 200, headers: { 'content-type': 'application/json' } });
 }
 
-function capabilities() {
+function capabilities(ceilings: Record<string, unknown> | null = ACTION_CEILINGS) {
   return {
     ok: true,
     result: {
       identity: { actor_id: 'synthetic-actor', role: 'reader', business_roles: ['observer'] },
-      // This is the verbatim live-sample shape. It names duties but has no permission matrix.
       business_role_presets: {
+        ...(ceilings !== null ? { action_ceilings: ceilings } : {}),
         explicit_combined_duties: true,
         omitted_on_update: 'preserve_existing_declaration',
         role_names_grant_authority: false,
@@ -49,6 +83,10 @@ function capabilities() {
   };
 }
 
+function capabilitiesWithoutCeilings() {
+  return capabilities(null);
+}
+
 interface SetupOptions {
   projects?: unknown;
   directory?: unknown;
@@ -57,6 +95,7 @@ interface SetupOptions {
   pending?: boolean;
   overviewGate?: Promise<void>;
   capabilitiesFailure?: { current: boolean };
+  directoryFailure?: { current: boolean };
 }
 
 function setupSettings(options: SetupOptions = {}) {
@@ -66,7 +105,10 @@ function setupSettings(options: SetupOptions = {}) {
     calls.push(url);
     if (options.pending && !url.includes('/api/team/projects')) return new Promise<Response>(() => {});
     if (url.includes('/api/team/projects')) return json(options.projects ?? DEMO_PROJECTS);
-    if (url.includes('/api/team/directory')) return json(options.directory ?? { ok: true, data: DIRECTORY });
+    if (url.includes('/api/team/directory')) {
+      if (options.directoryFailure?.current) return json({ ok: false, error: { code: 'Unavailable', message: 'private synthetic directory failure' } });
+      return json(options.directory ?? { ok: true, data: DIRECTORY });
+    }
     if (url.includes('/api/team/overview-model')) {
       if (options.overviewGate) await options.overviewGate;
       return json(options.overview ?? demoOverviewModelResponse());
@@ -156,8 +198,59 @@ describe('settings prototype structure and exact static copy', () => {
     expect(table.querySelectorAll('tbody tr')[0].querySelector('.obs-tag')?.getAttribute('title')).toBe('每条完成标准都有测试结果或复核记录对着，成果已经合入');
   });
 
-  it('uses service duty names, never a hardcoded permission matrix, and shows the missing-definition state', async () => {
+  it('renders the full duty permission matrix from service action_ceilings and never exposes raw action identifiers', async () => {
     setupSettings();
+    renderApp('/settings?scope=demo');
+    const duty = await screen.findByTestId('settings-duty-table');
+    await within(duty).findByTestId('settings-duty-row-readWork');
+    expect([...duty.querySelectorAll('thead th')].map((header) => header.textContent))
+      .toEqual(['', '只读', '开发', '复核', '主管', '交付', '管理员']);
+    const expectedMatrix: Record<string, Record<string, string>> = {
+      readWork: { observer: 'true', developer: 'true', reviewer: 'true', supervisor: 'true', deliverer: 'true', administrator: 'true' },
+      executeAndSubmit: { observer: 'false', developer: 'true', reviewer: 'false', supervisor: 'false', deliverer: 'false', administrator: 'false' },
+      reviewOthers: { observer: 'false', developer: 'false', reviewer: 'true', supervisor: 'false', deliverer: 'false', administrator: 'false' },
+      assignAndPlan: { observer: 'false', developer: 'false', reviewer: 'false', supervisor: 'true', deliverer: 'false', administrator: 'false' },
+      confirmIntegration: { observer: 'false', developer: 'false', reviewer: 'false', supervisor: 'false', deliverer: 'true', administrator: 'false' },
+      manageAccess: { observer: 'false', developer: 'false', reviewer: 'false', supervisor: 'false', deliverer: 'false', administrator: 'true' },
+      readAudit: { observer: 'false', developer: 'false', reviewer: 'false', supervisor: 'true', deliverer: 'false', administrator: 'true' },
+    };
+    for (const [ability, perRole] of Object.entries(expectedMatrix)) {
+      for (const [role, allowed] of Object.entries(perRole)) {
+        expect(within(duty).getByTestId(`settings-duty-cell-${ability}-${role}`).getAttribute('data-allowed')).toBe(allowed);
+      }
+    }
+    expect(within(duty).queryByTestId('settings-duty-definitions-missing')).toBeNull();
+    expect(duty.textContent).not.toContain('observer');
+    expect(duty.textContent).not.toContain('business_role_presets');
+    expect(duty.textContent).not.toContain('work.read');
+    expect(duty.textContent).not.toContain('delivery.finalize');
+  });
+
+  it('derives every duty cell dynamically from action_ceilings instead of hardcoding ticks', async () => {
+    setupSettings({
+      capabilities: capabilities({
+        observer: ['work.read', 'audit.read_project'],
+        developer: ['work.read', 'claim.manage_own'], // incomplete row 2 (missing 2 of 3 actions)
+        reviewer: ['work.read'],
+        supervisor: ['work.read', 'directory.manage_project'], // incomplete row 6 (missing access.manage_project)
+        deliverer: ['work.read', 'review.decide'], // swapped from finalize to review
+        administrator: ['work.read'],
+      }),
+    });
+    renderApp('/settings?scope=demo');
+    const duty = await screen.findByTestId('settings-duty-table');
+    await within(duty).findByTestId('settings-duty-row-readWork');
+    expect(within(duty).getByTestId('settings-duty-cell-readAudit-observer').getAttribute('data-allowed')).toBe('true');
+    expect(within(duty).getByTestId('settings-duty-cell-executeAndSubmit-developer').getAttribute('data-allowed')).toBe('false');
+    expect(within(duty).getByTestId('settings-duty-cell-reviewOthers-reviewer').getAttribute('data-allowed')).toBe('false');
+    expect(within(duty).getByTestId('settings-duty-cell-reviewOthers-deliverer').getAttribute('data-allowed')).toBe('true');
+    expect(within(duty).getByTestId('settings-duty-cell-confirmIntegration-deliverer').getAttribute('data-allowed')).toBe('false');
+    expect(within(duty).getByTestId('settings-duty-cell-manageAccess-supervisor').getAttribute('data-allowed')).toBe('false');
+    expect(within(duty).getByTestId('settings-duty-cell-manageAccess-administrator').getAttribute('data-allowed')).toBe('false');
+  });
+
+  it('shows the missing-definition state when the service publishes duty names without action_ceilings', async () => {
+    setupSettings({ capabilities: capabilitiesWithoutCeilings() });
     renderApp('/settings?scope=demo');
     const duty = await screen.findByTestId('settings-duty-table');
     await waitFor(() => expect([...duty.querySelectorAll('thead th')].map((header) => header.textContent))
@@ -170,15 +263,71 @@ describe('settings prototype structure and exact static copy', () => {
     expect(duty.textContent).not.toContain('business_role_presets');
   });
 
-  it('renders only directory organization facts and known member counts', async () => {
+  it('renders only directory organization facts and known member counts when flat', async () => {
     setupSettings();
     renderApp('/settings?scope=demo');
     const organization = await screen.findByTestId('settings-organization-tree');
+    expect(organization.getAttribute('data-hierarchy')).toBe('false');
     expect(organization.textContent).toContain('示例组织');
     expect(organization.textContent).toContain('应用小组 · 3 人');
     expect(organization.textContent).toContain('平台小组 · 1 人');
     expect(organization.textContent).not.toContain('研发部');
     expect(organization.textContent).not.toContain('交付小组');
+    expect(screen.getByTestId('settings-organization-note').textContent)
+      .toBe('现在的成员目录里，部门是平铺的一层。“小组属于哪个部门”还没有，部门和最高层那两页的汇总要靠它。');
+  });
+
+  it('renders a true nested department tree from parentKey links without reversing parent and child', async () => {
+    setupSettings({ directory: { ok: true, data: HIERARCHICAL_DIRECTORY } });
+    renderApp('/settings?scope=demo');
+    const organization = await screen.findByTestId('settings-organization-tree');
+    expect(organization.getAttribute('data-hierarchy')).toBe('true');
+    const topBranches = [...organization.querySelectorAll(':scope > ul > li > ul > li')];
+    expect(topBranches).toHaveLength(2);
+    expect(topBranches[0].querySelector(':scope > .nd')?.textContent).toBe('研发部');
+    const engChildren = [...topBranches[0].querySelectorAll(':scope > ul > li > .nd')].map((node) => node.textContent);
+    expect(engChildren).toEqual(['应用小组 · 3 人', '平台小组 · 1 人']);
+    expect(topBranches[1].querySelector(':scope > .nd')?.textContent).toBe('客户交付部');
+    const deliveryChildren = [...topBranches[1].querySelectorAll(':scope > ul > li > .nd')].map((node) => node.textContent);
+    expect(deliveryChildren).toEqual(['交付小组']);
+    expect(screen.getByTestId('settings-organization-note').textContent).toBe(zhCN.settings.organizationHierarchyNote);
+  });
+
+  it('fails closed when the directory hierarchy contains a cycle or self-parent', async () => {
+    setupSettings({
+      directory: {
+        ok: true,
+        data: {
+          ...DIRECTORY,
+          allDepartments: [
+            { key: 'dept-a', name: '部门甲', parentKey: 'dept-b' },
+            { key: 'dept-b', name: '部门乙', parentKey: 'dept-a' },
+          ],
+          departments: [{ key: 'dept-a', name: '部门甲', parentKey: 'dept-b' }],
+          members: [],
+        },
+      },
+    });
+    const cyclic = renderApp('/settings?scope=demo');
+    await screen.findByTestId('settings-organization-read-failed');
+    expect(screen.queryByTestId('settings-organization-tree')).toBeNull();
+    expect(screen.getByTestId('page-settings').getAttribute('data-state')).toBe('partial');
+    cyclic.unmount();
+
+    setupSettings({
+      directory: {
+        ok: true,
+        data: {
+          ...DIRECTORY,
+          allDepartments: [{ key: 'dept-self', name: '自环部门', parentKey: 'dept-self' }],
+          departments: [{ key: 'dept-self', name: '自环部门', parentKey: 'dept-self' }],
+          members: [],
+        },
+      },
+    });
+    renderApp('/settings?scope=demo');
+    await screen.findByTestId('settings-organization-read-failed');
+    expect(screen.queryByTestId('settings-organization-tree')).toBeNull();
   });
 
   it('escapes untrusted department names and encodes both existing-page links', async () => {
@@ -203,17 +352,39 @@ describe('settings prototype structure and exact static copy', () => {
 });
 
 describe('settings read failures and revocation', () => {
-  it('drops previously loaded duty names as soon as their read fails', async () => {
+  it('drops previously loaded duty rows and headers as soon as their read fails', async () => {
     const failure = { current: false };
     setupSettings({ capabilitiesFailure: failure });
     const { queryClient } = renderApp('/settings?scope=demo');
     const loadedDuty = await screen.findByTestId('settings-duty-table');
-    await waitFor(() => expect(loadedDuty.textContent).toContain('只读'));
+    await within(loadedDuty).findByTestId('settings-duty-row-readWork');
+    expect(loadedDuty.textContent).toContain('只读');
+    expect(loadedDuty.textContent).toContain('看项目和任务');
     failure.current = true;
     await act(async () => { await queryClient.refetchQueries({ queryKey: ['team', 'capabilities', 'demo'] }); });
     await waitFor(() => expect(screen.getByTestId('settings-duty-table').textContent).toContain('职责定义读取失败'));
     expect(screen.getByTestId('settings-duty-table').textContent).not.toContain('只读');
+    expect(screen.getByTestId('settings-duty-table').textContent).not.toContain('看项目和任务');
+    expect(screen.queryByTestId('settings-duty-row-readWork')).toBeNull();
     expect(screen.getByTestId('settings-duty-table').textContent).not.toContain('private synthetic failure');
+  });
+
+  it('drops previously loaded organization tree as soon as directory read fails', async () => {
+    const failure = { current: false };
+    setupSettings({ directory: { ok: true, data: HIERARCHICAL_DIRECTORY }, directoryFailure: failure });
+    const { queryClient } = renderApp('/settings?scope=demo');
+    const loadedTree = await screen.findByTestId('settings-organization-tree');
+    expect(loadedTree.textContent).toContain('研发部');
+    expect(loadedTree.textContent).toContain('应用小组 · 3 人');
+    failure.current = true;
+    await act(async () => { await queryClient.refetchQueries({ queryKey: ['team', 'directory', 'demo'] }); });
+    await screen.findByTestId('settings-organization-read-failed');
+    expect(screen.queryByTestId('settings-organization-tree')).toBeNull();
+    expect(screen.getByTestId('page-settings').querySelector('.obs-page-subtitle')?.textContent).toBe('组织名称未知');
+    expect(document.body.textContent).not.toContain('示例组织');
+    expect(document.body.textContent).not.toContain('研发部');
+    expect(document.body.textContent).not.toContain('应用小组');
+    expect(document.body.textContent).not.toContain('private synthetic directory failure');
   });
 
   it.each(['zh-CN', 'en-US'])('shows loading, empty, total failure, partial failure and unknown states in %s', async (language) => {
@@ -324,7 +495,7 @@ describe('settings review-round regressions', () => {
     setupSettings({ overviewGate: new Promise<void>(() => {}) });
     renderApp('/settings?scope=demo');
     expect(await screen.findByTestId('settings-organization-tree')).toBeTruthy();
-    expect(await screen.findByTestId('settings-duty-definitions-missing')).toBeTruthy();
+    expect(await screen.findByTestId('settings-duty-row-readWork')).toBeTruthy();
     expect(screen.getByTestId('page-settings').getAttribute('data-state')).toBe('loading');
   });
 
@@ -344,12 +515,19 @@ describe('settings review-round regressions', () => {
     });
   });
 
-  it('reports partial coverage when duty definitions are missing', async () => {
-    setupSettings();
-    renderApp('/settings?scope=demo');
+  it('reports partial coverage when duty definitions are missing and complete coverage when ceilings are present', async () => {
+    setupSettings({ capabilities: capabilitiesWithoutCeilings() });
+    const missing = renderApp('/settings?scope=demo');
     expect(await screen.findByTestId('settings-duty-definitions-missing')).toBeTruthy();
     expect(screen.getByTestId('settings-read-coverage').textContent).toBe(i18n.t('settings.coveragePartial'));
     expect(screen.getByTestId('settings-read-coverage').textContent).not.toBe(i18n.t('settings.coverageComplete'));
+    missing.unmount();
+
+    setupSettings();
+    renderApp('/settings?scope=demo');
+    expect(await screen.findByTestId('settings-duty-row-readWork')).toBeTruthy();
+    expect(await screen.findByTestId('settings-organization-tree')).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId('settings-read-coverage').textContent).toBe(i18n.t('settings.coverageComplete')));
   });
 
   it('collects departments that appear only on members', async () => {
@@ -414,6 +592,140 @@ describe('settings review-round regressions', () => {
     await waitFor(() => expect([...duty.querySelectorAll('thead th')].map((header) => header.textContent))
       .toEqual(['', '只读']));
   });
+  it.each(['zh-CN', 'en-US'])('covers all seven read states for the duty table in %s', async (language) => {
+    await changeLanguage(language);
+
+    // 1. data
+    setupSettings();
+    const dataView = renderApp('/settings?scope=demo');
+    await screen.findByTestId('settings-duty-row-readWork');
+    expect(screen.getByTestId('settings-duty-cell-readWork-observer').getAttribute('data-allowed')).toBe('true');
+    expect(screen.getByTestId('settings-duty-cell-executeAndSubmit-observer').getAttribute('data-allowed')).toBe('false');
+    expect(screen.getByTestId('settings-duty-cell-readWork-observer').getAttribute('aria-label')).toBe(i18n.t('settings.duties.allowed'));
+    expect(screen.getByTestId('settings-duty-cell-executeAndSubmit-observer').getAttribute('aria-label')).toBe(i18n.t('settings.duties.notIncluded'));
+    dataView.unmount();
+
+    // 2. loading
+    setupSettings({ pending: true });
+    const loadingView = renderApp('/settings?scope=demo');
+    const loadingDuty = await screen.findByTestId('settings-duty-table');
+    expect(within(loadingDuty).getByTestId('settings-loading').textContent).toBe(i18n.t('settings.loading'));
+    loadingView.unmount();
+
+    // 3. empty (empty roles array)
+    setupSettings({
+      capabilities: {
+        ...capabilities(),
+        result: { ...capabilities().result, business_role_presets: { ...capabilities().result.business_role_presets, roles: [] } },
+      },
+    });
+    const emptyView = renderApp('/settings?scope=demo');
+    expect((await screen.findByTestId('settings-duty-empty')).textContent).toBe(i18n.t('settings.dutiesEmpty'));
+    emptyView.unmount();
+
+    // 4. failed (malformed action_ceilings)
+    setupSettings({
+      capabilities: capabilities({ observer: [123 as unknown as string] }),
+    });
+    const failedView = renderApp('/settings?scope=demo');
+    expect((await screen.findByTestId('settings-duty-read-failed')).textContent).toBe(i18n.t('settings.dutyReadFailed'));
+    expect(screen.queryByTestId('settings-duty-row-readWork')).toBeNull();
+    failedView.unmount();
+
+    // 5. partial (one role omitted from action_ceilings)
+    const { administrator: _omitted, ...partialCeilings } = ACTION_CEILINGS;
+    setupSettings({ capabilities: capabilities(partialCeilings) });
+    const partialView = renderApp('/settings?scope=demo');
+    await screen.findByTestId('settings-duty-row-readWork');
+    expect(screen.getByTestId('settings-duty-cell-readWork-administrator').getAttribute('data-allowed')).toBe('unknown');
+    expect(screen.getByTestId('settings-duty-cell-readWork-administrator').textContent).toBe(i18n.t('settings.duties.cellUnknown'));
+    expect(screen.getByTestId('settings-duty-cell-readWork-observer').getAttribute('data-allowed')).toBe('true');
+    expect(screen.getByTestId('page-settings').getAttribute('data-state')).toBe('partial');
+    expect(screen.getByTestId('settings-read-coverage').textContent).toBe(i18n.t('settings.coveragePartial'));
+    partialView.unmount();
+
+    // 6. revoked
+    setupSettings({ capabilities: { ok: false, error: { code: 'Unauthenticated' } } });
+    const revokedView = renderApp('/settings?scope=demo');
+    expect(await screen.findByTestId('state-forbidden')).toBeTruthy();
+    expect(screen.queryByTestId('settings-duty-table')).toBeNull();
+    revokedView.unmount();
+
+    // 7. unknown (incomparable ordering)
+    setupSettings({ overview: demoOverviewModelResponse(undefined, { ordering: 'incomparable' }) });
+    const unknownView = renderApp('/settings?scope=demo');
+    await screen.findByTestId('settings-read-unknown');
+    expect(screen.getByTestId('page-settings').getAttribute('data-state')).toBe('unknown');
+    expect(await screen.findByTestId('settings-duty-row-readWork')).toBeTruthy();
+    unknownView.unmount();
+  }, 20_000);
+
+  it.each(['zh-CN', 'en-US'])('covers all seven read states for the organization tree in %s', async (language) => {
+    await changeLanguage(language);
+
+    // 1. data (hierarchical)
+    setupSettings({ directory: { ok: true, data: HIERARCHICAL_DIRECTORY } });
+    const dataView = renderApp('/settings?scope=demo');
+    const tree = await screen.findByTestId('settings-organization-tree');
+    expect(tree.getAttribute('data-hierarchy')).toBe('true');
+    expect(screen.getByTestId('settings-organization-note').textContent).toBe(i18n.t('settings.organizationHierarchyNote'));
+    dataView.unmount();
+
+    // 2. loading
+    setupSettings({ pending: true });
+    const loadingView = renderApp('/settings?scope=demo');
+    const rightCol = await screen.findByTestId('settings-right');
+    expect(within(rightCol).getByTestId('settings-loading').textContent).toBe(i18n.t('settings.loading'));
+    loadingView.unmount();
+
+    // 3. empty (unconfigured + configured with no departments)
+    setupSettings({ directory: { ok: true, data: { configured: false, organization: null, departments: [], allDepartments: [], members: [], updated_at_ms: null } } });
+    const emptyUnconfigured = renderApp('/settings?scope=demo');
+    expect((await screen.findByTestId('settings-organization-empty')).textContent).toBe(i18n.t('settings.organizationEmpty'));
+    emptyUnconfigured.unmount();
+
+    setupSettings({ directory: { ok: true, data: { configured: true, organization: '示例组织', departments: [], allDepartments: [], members: [], updated_at_ms: NOW } } });
+    const emptyDepts = renderApp('/settings?scope=demo');
+    expect(await screen.findByTestId('settings-organization-tree')).toBeTruthy();
+    expect(screen.getByTestId('settings-organization-note').textContent).toBe(i18n.t('settings.organizationNoDepartments'));
+    emptyDepts.unmount();
+
+    // 4. failed
+    setupSettings({ directory: { ok: false, error: { code: 'Unavailable', message: 'private failure' } } });
+    const failedView = renderApp('/settings?scope=demo');
+    expect((await screen.findByTestId('settings-organization-read-failed')).textContent).toBe(i18n.t('settings.organizationReadFailed'));
+    expect(screen.queryByTestId('settings-organization-tree')).toBeNull();
+    failedView.unmount();
+
+    // 5. partial (capabilities fail while hierarchical org tree still renders)
+    setupSettings({
+      directory: { ok: true, data: HIERARCHICAL_DIRECTORY },
+      capabilities: { ok: false, error: { code: 'Unavailable' } },
+    });
+    const partialView = renderApp('/settings?scope=demo');
+    await screen.findByTestId('settings-read-partial');
+    expect(screen.getByTestId('page-settings').getAttribute('data-state')).toBe('partial');
+    expect((await screen.findByTestId('settings-organization-tree')).getAttribute('data-hierarchy')).toBe('true');
+    partialView.unmount();
+
+    // 6. revoked
+    setupSettings({ directory: { ok: false, error: { code: 'Unauthenticated' } } });
+    const revokedView = renderApp('/settings?scope=demo');
+    expect(await screen.findByTestId('state-forbidden')).toBeTruthy();
+    expect(screen.queryByTestId('settings-organization-tree')).toBeNull();
+    revokedView.unmount();
+
+    // 7. unknown (incomparable ordering)
+    setupSettings({
+      directory: { ok: true, data: HIERARCHICAL_DIRECTORY },
+      overview: demoOverviewModelResponse(undefined, { ordering: 'incomparable' }),
+    });
+    const unknownView = renderApp('/settings?scope=demo');
+    await screen.findByTestId('settings-read-unknown');
+    expect(screen.getByTestId('page-settings').getAttribute('data-state')).toBe('unknown');
+    expect((await screen.findByTestId('settings-organization-tree')).getAttribute('data-hierarchy')).toBe('true');
+    unknownView.unmount();
+  }, 20_000);
 });
 
 describe('settings vocabulary and source craft guards', () => {
@@ -425,15 +737,20 @@ describe('settings vocabulary and source craft guards', () => {
 
   it.each(['zh-CN', 'en-US'])('keeps visible copy, titles and accessibility labels in product language in %s', async (language) => {
     await changeLanguage(language);
-    setupSettings();
+    const liveCapabilities = JSON.parse(readFileSync('../../crates/awr-server/tests/samples/capabilities-web-read.json', 'utf8'));
+    setupSettings({
+      capabilities: { ok: true, result: liveCapabilities },
+      directory: { ok: true, data: HIERARCHICAL_DIRECTORY },
+    });
     renderApp('/settings?scope=demo');
     await screen.findByTestId('settings-organization-tree');
-    // The legacy scanner calls the mandatory prototype word “绑定” engineering copy and the
-    // ordinary English word “completion” an engineering token. Neither is an internal identifier.
-    const violations = findHumanLanguageViolations(document.body)
-      .filter((violation) => violation.match !== '绑定' && violation.match !== 'completion');
-    expect(violations).toEqual([]);
-    expect(defaultVisibleText(document.body)).not.toMatch(/\b(?:undefined|null|NaN|business_role_presets|membership_action_ceiling|protocol_version|parent_id|project_id)\b/);
+    await screen.findByTestId('settings-duty-row-readWork');
+    const visible = defaultVisibleText(document.body);
+    expect(visible).toContain(language === 'zh-CN' ? '绑定到代码版本' : 'reported completion');
+    expect(visible).toContain(i18n.t('settings.duties.abilities.readWork'));
+    expect(visible).toContain(i18n.t('settings.organizationHierarchyNote'));
+    expect(findHumanLanguageViolations(document.body)).toEqual([]);
+    expect(visible).not.toMatch(/\b(?:undefined|null|NaN|business_role_presets|action_ceilings|membership_action_ceiling|protocol_version|parent_id|project_id|work\.read|review\.decide|delivery\.finalize|audit\.read_project)\b/);
   });
 
   it('keeps inline styles, raw colors and non-token dimensions out of production source', () => {

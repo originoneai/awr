@@ -133,6 +133,212 @@ export interface TeamOverviewModelResponse {
   ordering?: 'incomparable';
 }
 
+export interface PortfolioDirectoryUnit {
+  id: string;
+  name: string;
+}
+
+export interface PortfolioProjectDirectory {
+  registered: boolean;
+  group: PortfolioDirectoryUnit | null;
+  departments: PortfolioDirectoryUnit[] | null;
+}
+
+export interface PortfolioProjectWorks {
+  total: number;
+  not_started: number;
+  in_progress: number;
+  delivered_unverified: number;
+  verified: number;
+  completed_without_independent_review: number;
+  retired: number;
+  hidden_work_count: number;
+}
+
+export interface PortfolioProjectWaits {
+  decision: number;
+  review: number;
+  dependency: number;
+  oldest_open_unix_ms: number | null;
+  external?: number;
+}
+
+export interface PortfolioLatestUpdate {
+  update_id: string;
+  period_kind: string;
+  period_key: string;
+  starts_on: string;
+  ends_on: string;
+  status: string;
+  summary: string | null;
+  author: {
+    person_id: string;
+    display_name: string | null;
+  } | null;
+  recorded_at_unix_ms: number;
+}
+
+export interface PortfolioProjectComplete {
+  project_id: string;
+  project_key: string;
+  project_status: string;
+  coordinator_epoch: string;
+  project_revision: string;
+  responsible_person: {
+    person_id: string;
+    display_name: string | null;
+  } | null;
+  directory: PortfolioProjectDirectory;
+  works: PortfolioProjectWorks;
+  waits: PortfolioProjectWaits;
+  latest_update: PortfolioLatestUpdate | null;
+  read: { status: 'complete' };
+}
+
+export interface PortfolioProjectNotRead {
+  project_id: string;
+  project_key: string;
+  read: { status: 'not_read'; reason: string };
+}
+
+export type PortfolioProjectItem = PortfolioProjectComplete | PortfolioProjectNotRead;
+
+export interface PortfolioDepartmentUpdate {
+  id: string | null;
+  health: 'ok' | 'risk' | 'off' | 'none';
+  sentence: string;
+  author_person_id: string | null;
+  author_name: string | null;
+  written_at_unix_ms: number;
+}
+
+export interface PortfolioMonthlyVerifiedItem {
+  id: string;
+  title: string;
+  project_key: string;
+  project_title: string | null;
+  owner_name: string | null;
+  verified_at_unix_ms: number | null;
+}
+
+export interface PortfolioCrossGroupWait {
+  id: string;
+  who: string;
+  on: string;
+  what: string;
+  kind: 'review' | 'dependency' | 'decision' | 'external';
+  days: number | null;
+  started_at_unix_ms: number | null;
+  behind: number | null;
+  task_id: string | null;
+  task_title: string | null;
+  project_key: string;
+}
+
+export interface PortfolioPendingItem {
+  id: string;
+  kind: 'decision' | 'answer' | 'assignment' | 'plan-approval' | 'lesson';
+  title: string;
+  description: string | null;
+  from: string | null;
+  since_unix_ms: number | null;
+  days: number | null;
+  project_key: string;
+  project_title: string | null;
+  task_id: string | null;
+  person_id: string | null;
+  copy_text: string | null;
+  agent_guidance: string | null;
+}
+
+export interface PortfolioChainNodeFact {
+  id: string;
+  kind: 'root' | 'task' | 'project' | 'goal';
+  root?: boolean;
+  kicker: string;
+  title: string;
+  meta?: string | null;
+  status?: 'waiting' | 'stalled' | 'running' | 'review' | 'returned' | null;
+  health?: 'ok' | 'risk' | 'off' | 'none' | null;
+  owner_name?: string | null;
+  owner_external?: boolean;
+  queue?: Array<{ title: string; days: number | null }>;
+  foot_note?: string | null;
+  to?: string | null;
+}
+
+export interface PortfolioChainFact {
+  id: string;
+  tab: string;
+  footer: string;
+  cta?: { label: string; to: string } | null;
+  nodes: PortfolioChainNodeFact[];
+}
+
+export interface PortfolioLessonFact {
+  id: string;
+  title: string;
+  stage: 'candidate' | 'project' | 'group';
+  author_name: string | null;
+  why: string;
+  used: number;
+  passed: number;
+  not_applicable: number;
+}
+
+export interface PortfolioUsageFacts {
+  collected_groups: string[];
+  missing_groups: string[];
+  by_project?: Record<string, { display_text: string | null } | null>;
+}
+
+/** Optional recorded department facts carried beside the portfolio read (canonical demo / future reads). */
+export interface PortfolioDepartmentFacts {
+  department_name?: string | null;
+  viewer_person_id?: string | null;
+  department_update?: PortfolioDepartmentUpdate | null;
+  project_titles?: Record<string, string>;
+  project_leads?: Record<string, string>;
+  monthly_verified?: {
+    current: { count: number; items: PortfolioMonthlyVerifiedItem[] };
+    previous: { count: number };
+  } | null;
+  cross_group_waits?: PortfolioCrossGroupWait[] | null;
+  pending?: PortfolioPendingItem[] | null;
+  chains?: PortfolioChainFact[] | null;
+  lessons?: PortfolioLessonFact[] | null;
+  usage?: PortfolioUsageFacts | null;
+}
+
+export interface TeamPortfolioResponse {
+  ok: true;
+  result: {
+    protocol_version: 1;
+    op: 'portfolio.overview';
+    selection_basis: 'member';
+    data: {
+      as_of: { at_unix_ms: number };
+      execution_authorized: false;
+      projects: PortfolioProjectItem[];
+      total_projects: number;
+      truncated: boolean;
+      next_cursor: string | null;
+    };
+  };
+  read_at_unix_ms: number;
+  coverage: {
+    status: 'complete' | 'partial';
+    returned_projects: number;
+    total_projects: number;
+    not_read_projects: number;
+    truncated: boolean;
+    next_cursor: string | null;
+  };
+  freshness: TeamFreshness;
+  ordering?: 'incomparable';
+  department_facts?: PortfolioDepartmentFacts | null;
+}
+
 export type TeamIdentity = NonNullable<TeamOverviewResponse['identity']>;
 
 /** The recorded kind of the actor behind an audit row. */

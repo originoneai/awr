@@ -126,7 +126,7 @@ describe('project navigation and reads', () => {
     renderApp('/projects/demo');
     await screen.findByRole('tab', { name: '概览' });
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-      '概览', '工作计划', '协作依赖', '成果与验收', '项目知识',
+      '概览', '工作计划', '依赖', '成果与验收', '项目知识',
     ]);
   });
 });
