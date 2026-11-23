@@ -1220,7 +1220,8 @@ describe('project acceptance prototype parity and states (AWR-PPO-044)', () => {
     expect(screen.getByTestId('acceptance-coverage')).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/\bundefined\b|\bnull\b|\bNaN\b/);
     dataView.unmount();
-  });
+    // Seven full renders in one test: CI runners need more than vitest's 5 s default.
+  }, 30000);
 
   it('renders approved-without-integration, multi-round latest selection, invalidated review, and restricted open round accurately', async () => {
     const now = 1795089600000;
