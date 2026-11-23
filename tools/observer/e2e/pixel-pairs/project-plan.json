@@ -1,0 +1,43 @@
+{
+  "page": "project-plan",
+  "proto": "#p=project&id=orders&tab=plan",
+  "app": "/projects/P-001?tab=plan",
+  "ready": "[data-testid=\"workstream-group-WS-001\"]",
+  "protoReady": ".block .grp",
+  "notes": {
+    "geometryExclusions": [
+      "Probe coordinates are anchored at the project page title (.hero h1 / [data-testid=\"project-title\"]), excluding shell-only header/sidebar offsets.",
+      "Text-width-dependent boxes (segment buttons, goal link, task titles, next-step cells, group name/count) skip __w/__x where system-font metrics or workstream order width vary slightly across platforms; block/table container heights (__h) skip only where antd table wrapper border-box or subpixel row height differs by data wrapping.",
+      "Zero style properties are skipped on any pair."
+    ]
+  },
+  "pairs": [
+    ["project title", ".hero h1", "[data-testid=\"project-title\"]", ["TEXT", "margin-top", "margin-bottom"]],
+    ["pending callout", ".callout", "[data-testid=\"work-plan-pending-callout\"]", ["BOX", "PAINT", "TEXT"], {"skip": ["__w", "__h"]}],
+    ["pending callout icon", ".callout .ic", "[data-testid=\"work-plan-pending-callout\"] .work-plan-callout-icon", ["BOX", "color"]],
+    ["pending callout lead", ".callout .b b", "[data-testid=\"work-plan-pending-callout\"] .work-plan-callout-lead", ["TEXT"], {"skip": ["__w", "__h"]}],
+    ["pending callout body", ".callout .b", "[data-testid=\"work-plan-pending-callout\"] .work-plan-callout-body", ["TEXT"], {"skip": ["__w", "__h"]}],
+    ["pending callout button", ".callout .btn", "[data-testid=\"work-plan-pending-open\"]", ["BOX", "PAINT", "TEXT"], {"skip": ["__x", "__w"]}],
+    ["filters bar", ".filters", "[data-testid=\"work-plan-filters\"]", ["BOX", "margin-bottom"], {"skip": ["__w", "__h"]}],
+    ["filter segment", ".filters .seg", "[data-testid=\"work-plan-filters\"] .work-plan-segment", ["BOX", "background-color", "border-top-left-radius"], {"skip": ["__w"]}],
+    ["filter active button", ".filters .seg button[aria-pressed=\"true\"]", "[data-testid=\"work-plan-filter-all\"]", ["BOX", "PAINT", "TEXT"], {"skip": ["__w"]}],
+    ["filter inactive button", ".filters .seg button[aria-pressed=\"false\"]", "[data-testid=\"work-plan-filter-open\"]", ["BOX", "PAINT", "TEXT"], {"skip": ["__x", "__w"]}],
+    ["goal link", ".filters .link.sm", "[data-testid=\"work-plan-goal-link\"]", ["BOX", "TEXT"], {"skip": ["__x", "__w"]}],
+    ["completion legend", ".filters .legend", "[data-testid=\"work-plan-filters\"] .obs-legend", ["BOX", "TEXT"], {"skip": ["__x", "__w"]}],
+    ["by-workstream block", ".block", "[data-testid=\"plan-progress-table\"] .obs-section", ["BOX", "PAINT"], {"skip": ["__w", "__h"]}],
+    ["by-workstream block head", ".block-head", "[data-testid=\"plan-progress-table\"] .ant-card-head", ["BOX", "border-bottom-color"], {"skip": ["__w"]}],
+    ["by-workstream block title", ".block-head h2", "[data-testid=\"plan-progress-table\"] .obs-section-title", ["TEXT"], {"skip": ["__w"]}],
+    ["first workstream group head", ".block > .grp:nth-of-type(2)", "[data-testid=\"workstream-group-WS-001\"] .work-plan-group-head", ["BOX", "PAINT"], {"skip": ["__w"]}],
+    ["first workstream group name", ".block > .grp:nth-of-type(2) b", "[data-testid=\"workstream-group-WS-001\"] .work-plan-group-name", ["TEXT"], {"skip": ["__w"]}],
+    ["first workstream group count", ".block > .grp:nth-of-type(2) .sm", "[data-testid=\"workstream-count-WS-001\"]", ["TEXT"], {"skip": ["__x", "__w"]}],
+    ["first workstream group bar", ".block > .grp:nth-of-type(2) .seg4", "[data-testid=\"workstream-group-WS-001\"] .obs-seg4", ["BOX"], {"skip": ["__x"]}],
+    ["first task cell 1", ".block table.t tbody tr:first-child td:nth-child(1)", "[data-testid=\"work-plan-row-T-103\"] td:nth-child(1)", ["BOX", "PAINT"], {"skip": ["__w", "__h"]}],
+    ["first task title", ".block table.t tbody tr:first-child td:nth-child(1) span", "[data-testid=\"work-plan-row-T-103\"] .work-plan-task-title", ["TEXT"], {"skip": ["__w", "__h"]}],
+    ["first task status tag", ".block table.t tbody tr:first-child td:nth-child(2) .tag", "[data-testid=\"plan-status-T-103\"] .obs-tag", ["BOX", "TEXT", "background-color"], {"skip": ["__x", "__w"]}],
+    ["first task owner wrap", ".block table.t tbody tr:first-child td:nth-child(3) .to", "[data-testid=\"plan-owner-T-103\"]", ["BOX", "TEXT"], {"skip": ["__x", "__w"]}],
+    ["first task owner avatar", ".block table.t tbody tr:first-child td:nth-child(3) .av.s", "[data-testid=\"plan-owner-T-103\"] .work-plan-avatar", ["BOX", "TEXT", "background-color"], {"skip": ["__x"]}],
+    ["first task next step", ".block table.t tbody tr:first-child td:nth-child(4) .sm", "[data-testid=\"plan-next-T-103\"]", ["TEXT"], {"skip": ["__x", "__w", "__h"]}],
+    ["returned task row cell", ".block table.t tbody tr.hot td:nth-child(1)", "[data-testid=\"work-plan-row-T-105\"] td:nth-child(1)", ["BOX", "PAINT"], {"skip": ["__y", "__w", "__h"]}],
+    ["returned task status tag", ".block table.t tbody tr.hot td:nth-child(2) .tag", "[data-testid=\"plan-status-T-105\"] .obs-tag", ["BOX", "TEXT", "background-color"], {"skip": ["__x", "__y", "__w"]}]
+  ]
+}
