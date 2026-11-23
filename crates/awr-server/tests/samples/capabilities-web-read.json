@@ -1,0 +1,715 @@
+{
+  "action_authorization": "tmcp_010_shared_decision",
+  "agent_review": {
+    "approval_basis": "agent_review",
+    "command": "review.decide",
+    "completion_supported": true,
+    "cross_workstream_adoption": "human_independent_only",
+    "dependency_acceptance_mode": "agent_reviewed_caller_asserted_reconciled",
+    "dependency_adoption": "explicit_v2_same_stream_per_predecessor",
+    "execution_basis": "caller_asserted_reconciled",
+    "existing_same_stream_policies": "unchanged",
+    "human_approval": false,
+    "legacy_human_review_aliases": [
+      "review.accept",
+      "review.return"
+    ],
+    "policy": "caller_managed_execution_and_agent_review",
+    "requires": [
+      "agent_actor",
+      "agent_review_membership_grant",
+      "live_review_delegation",
+      "distinct_author_actor_and_client"
+    ],
+    "team_independent_acceptance": false,
+    "unmapped_agent_dependencies": "blocked"
+  },
+  "approved_artifact_exports": {
+    "adoption_action": "execution.request_and_report_own",
+    "adoption_args": [
+      "session_id",
+      "expected_session_version",
+      "expected_responsibility_version",
+      "export_id",
+      "expected_export_version",
+      "expected_disclosure_sha256",
+      "expected_adoption_version"
+    ],
+    "adoption_available": true,
+    "adoption_command": "delivery.adopt",
+    "commands": [
+      "delivery.export.publish",
+      "delivery.export.revoke"
+    ],
+    "content_query": "artifact.content",
+    "content_selector": "export_id",
+    "current_contract_only": false,
+    "historical_fixed_delivery_available": true,
+    "publication_action": "delivery.finalize",
+    "publish_args": [
+      "session_id",
+      "expected_session_version",
+      "consumer_work_id",
+      "expected_consumer_contract_hash",
+      "expected_consumer_ownership_version",
+      "receipt_id",
+      "expected_artifact_sha256"
+    ],
+    "query": "delivery.exports",
+    "read_scope": "exact_consumer_work",
+    "requires": "current_selected_receipt_and_exact_original_review",
+    "revoke_args": [
+      "session_id",
+      "expected_session_version",
+      "export_id",
+      "expected_export_version"
+    ],
+    "segment_query": "artifact.segment",
+    "upstream_source_access": false
+  },
+  "artifact_content": true,
+  "artifact_segments": {
+    "complete_read": "Follow next_query until end_of_artifact; concatenate contiguous ranges from 0 and verify the full length and sha256.",
+    "default_raw_bytes": 2048,
+    "encoding": "base64",
+    "expected_sha256_required": true,
+    "max_mcp_result_bytes": 18432,
+    "max_raw_bytes": 4096,
+    "query": "artifact.segment"
+  },
+  "authentication": "bearer_per_request",
+  "authorization": "transactional_workstream_grants",
+  "business_role_presets": {
+    "action_ceilings": {
+      "administrator": [
+        "work.read",
+        "access.manage_project",
+        "audit.read_project",
+        "directory.manage_project"
+      ],
+      "deliverer": [
+        "work.read",
+        "session.maintain_own",
+        "delivery.finalize"
+      ],
+      "developer": [
+        "work.read",
+        "session.maintain_own",
+        "claim.manage_own",
+        "execution.request_and_report_own",
+        "planning.propose",
+        "delivery.submit_and_request_review"
+      ],
+      "observer": [
+        "work.read"
+      ],
+      "reviewer": [
+        "work.read",
+        "session.maintain_own",
+        "review.decide"
+      ],
+      "supervisor": [
+        "work.read",
+        "work.assign",
+        "session.maintain_own",
+        "planning.propose",
+        "planning.edit_draft",
+        "planning.approve",
+        "planning.publish",
+        "audit.read_project",
+        "directory.manage_project"
+      ]
+    },
+    "explicit_combined_duties": true,
+    "omitted_on_update": "preserve_existing_declaration",
+    "role_names_grant_authority": false,
+    "roles": [
+      "observer",
+      "developer",
+      "reviewer",
+      "supervisor",
+      "deliverer",
+      "administrator"
+    ],
+    "semantics": "membership_grants_intersect_declared_ceiling_then_one_live_delegation"
+  },
+  "claim_semantics": "coordination_only",
+  "command_preconditions": "project_revision_v1",
+  "command_status_query": "command.inspect",
+  "commands": [
+    "admission.decide",
+    "decision.request",
+    "decision.respond",
+    "decision.cancel",
+    "task.assign",
+    "task.accept_assignment",
+    "task.claim_available",
+    "session.start",
+    "session.checkpoint",
+    "session.end",
+    "claim.acquire",
+    "claim.renew",
+    "claim.release",
+    "execution.prepare",
+    "execution.cancel",
+    "execution.start",
+    "execution.report",
+    "execution.attest",
+    "execution.reconcile",
+    "handoff.propose",
+    "handoff.inspect",
+    "handoff.accept",
+    "handoff.reject",
+    "handoff.cancel",
+    "handoff.timeout",
+    "evidence.submit",
+    "delivery.evidence.submit",
+    "review.open",
+    "review.accept",
+    "review.return",
+    "review.decide",
+    "work.rework",
+    "work.complete",
+    "delivery.submit_and_request_review",
+    "delivery.register_pr",
+    "delivery.observe_pr",
+    "delivery.finalize",
+    "delivery.export.publish",
+    "delivery.export.revoke",
+    "delivery.adopt",
+    "delivery.connector.configure",
+    "delivery.route.configure",
+    "delivery.route.reuse",
+    "delivery.candidate.select",
+    "delivery.inspection.reserve",
+    "delivery.facts.ingest",
+    "delivery.source.prepare",
+    "delivery.source.renew",
+    "delivery.source.write",
+    "delivery.source.confirm",
+    "delivery.source.abandon",
+    "delivery.integration.prepare",
+    "delivery.integration.reject_prepared"
+  ],
+  "controlled_content_reads": true,
+  "delegation_action_intersection": "tmcp_030_ws016_intersect",
+  "delivery_routes": {
+    "configure": "delivery.route.configure",
+    "discover": "delivery.routes",
+    "reuse": "delivery.route.reuse",
+    "reuse_action": "work.assign",
+    "rights_created": false,
+    "when": "Before dispatch or claim of unconfigured repository work; report-only work needs no route."
+  },
+  "dependency_exports": false,
+  "domain_entry_authorization": "shared_command_gate",
+  "execution_admission": true,
+  "execution_admission_scope": "same_client_current_lease_lexical_project_resources",
+  "execution_dispatch": false,
+  "execution_intents": true,
+  "execution_modes": [
+    "caller_managed",
+    "reference_write_v1"
+  ],
+  "execution_reconciliation": true,
+  "execution_report_authority": "caller_asserted",
+  "execution_reports": true,
+  "execution_start": true,
+  "execution_trust_authority": "explicit_operator_grant_and_actor_kind",
+  "frontend_filtering": false,
+  "handoff": {
+    "accept_selector": "inspection_request_id",
+    "acceptance_rechecks": [
+      "actual_settlement",
+      "member_client_session",
+      "package_version",
+      "current_context",
+      "artifact_and_dependency_versions",
+      "authority",
+      "fence"
+    ],
+    "caller_assurances_are_authority": false,
+    "clock": "database",
+    "consumption_proof": "delivered_to_authenticated_client_not_model_cognition",
+    "handoff_starts_execution": false,
+    "inspection_command": "handoff.inspect",
+    "package_source": "current_recorded_checkpoint_and_scoped_facts",
+    "protocol": "awr-team-handoff-consumption-v1",
+    "query_is_consumption_receipt": false
+  },
+  "identity": {
+    "actor_id": "mcp-human",
+    "business_roles": [
+      "observer"
+    ],
+    "can_manage_members": false,
+    "can_read_project_audit": false,
+    "client_id": "mcp-cli",
+    "membership_action_ceiling": [
+      "work.read"
+    ],
+    "role": "developer"
+  },
+  "lease_ttl_seconds": {
+    "max": 3600,
+    "min": 1
+  },
+  "local_file_access": "not_server_acl_or_confidentiality_sandbox",
+  "neutral_delivery": {
+    "background_scheduling": false,
+    "command_source_snapshot": "args.source_snapshot_id",
+    "domain_finalization": false,
+    "facts_query": "delivery.neutral.inspect",
+    "integration": {
+      "action": "delivery.finalize",
+      "commands": [
+        "delivery.integration.prepare",
+        "delivery.integration.reject_prepared"
+      ],
+      "connector_versions": "delivery.neutral.inspect connectors",
+      "decision_id": "review.decide receipt or review.inspect decisions",
+      "preparation_executes_repository": false,
+      "query": "delivery.integration.inspect",
+      "query_request_id": "IntegrationRequest.request_id; also returned as data.integration_id",
+      "retry_outcome": "delivery.neutral.outcome with the original client command request_id",
+      "worker_dispatch_exposed": false
+    },
+    "management": "eligible_human_or_system_with_explicit_scope",
+    "outcome_identity": "current_actor_client_and_actual_work",
+    "outcome_query": "delivery.neutral.outcome",
+    "protocol": "awr-delivery-sync-v1",
+    "read_consistency": "repeatable_read",
+    "repository_effects": false,
+    "review_submission": {
+      "artifact_read": "submission.artifacts[].query",
+      "evidence_binding": "args.delivery_payload.delivery_candidate_digest",
+      "evidence_command": "delivery.evidence.submit",
+      "inspectability_is_acceptance": false,
+      "opening_and_approval": "current_candidate_and_readable_bound_manifest",
+      "peer_paths_allowed": false,
+      "queries": [
+        "delivery.neutral.inspect",
+        "review.inspect"
+      ],
+      "requires": "configured_delivery_or_selected_candidate"
+    },
+    "source_status_query": "delivery.source.status",
+    "submission_query": "delivery.submission.describe"
+  },
+  "old_client_write_boundary": "legacy_unscoped_team_entrypoints_refuse_enabled_projects",
+  "operator_enabled_backup": "logical_manifest_fencing_and_ownership_rebuild_v1",
+  "operator_history_migration": "sessions_inactive_claims_events_v1",
+  "operator_recovery_inspection": "schema_owner_cli_read_only_enabled_projects",
+  "ops_audit": {
+    "chat_text_collected": false,
+    "deny_capacity_per_project": 1000,
+    "non_repudiation": "not_claimed_against_db_owner",
+    "project_wide_action": "audit.read_project",
+    "protocol": "awr-ops-audit-v1",
+    "queries": [
+      "audit.history",
+      "audit.export",
+      "audit.count"
+    ],
+    "token_billing_collected": false,
+    "tool_io_collected": false
+  },
+  "ordinary_decisions": {
+    "commands": [
+      "decision.request",
+      "decision.respond",
+      "decision.cancel"
+    ],
+    "context_field": "ordinary_decisions",
+    "execution_permission_granted": false,
+    "formal_acceptance_granted": false,
+    "one_open_question_per_work": true,
+    "query": "decisions.list",
+    "request_authority": "current_owned_live_claim",
+    "response_authority": "selected_current_member_and_owned_session",
+    "version": 1
+  },
+  "permission_policy_id": "awr-team-mcp-permission-v2",
+  "permission_policy_version": 2,
+  "planning": {
+    "actions": [
+      "planning.propose",
+      "planning.edit_draft",
+      "planning.approve",
+      "planning.publish"
+    ],
+    "approval_bound_to_candidate_digest": true,
+    "approve_publish_separated": true,
+    "codec": "awr-team-planning-v1",
+    "cross_workstream_policy": {
+      "adoption_available": true,
+      "adoption_version_policies": [
+        "current_contract",
+        "fixed_delivery"
+      ],
+      "declaration_only": false,
+      "historical_fixed_delivery_available": true,
+      "review_assurance": [
+        "team_independent",
+        "simulated_member_independent"
+      ],
+      "version_policy": [
+        "fixed_delivery",
+        "current_contract"
+      ]
+    },
+    "execution_settlement": {
+      "declaration_only": true,
+      "mode": "independent_workspace_v1",
+      "omission": "retain_source",
+      "removal_supported": false,
+      "workspace_id": "opaque_identity"
+    },
+    "forge_completion_via_status_allowed": false,
+    "hard_delete_history_allowed": false,
+    "source_writeback": "tmcp_022",
+    "suggestion_adds_formal_work": false,
+    "suggestion_claimable": false,
+    "supported_candidate_codecs": [
+      "awr-team-planning-v1",
+      "awr-team-planning-v2",
+      "awr-team-planning-v3",
+      "awr-team-planning-v4",
+      "awr-team-planning-v5",
+      "awr-team-planning-v6"
+    ]
+  },
+  "planning_mcp": {
+    "arbitrary_file_edit": false,
+    "direct_done": false,
+    "idempotent_request_id": true,
+    "outcome_query": "planning.outcome",
+    "sql_tools": false,
+    "tools": [
+      "awr_team_planning_suggest",
+      "awr_team_planning_draft",
+      "awr_team_planning_preview",
+      "awr_team_planning_approve",
+      "awr_team_planning_reject",
+      "awr_team_planning_publish",
+      "awr_team_planning_outcome"
+    ]
+  },
+  "planning_writeback": {
+    "atomic_activation_and_receipt": true,
+    "barrier_lock_order": "ws023",
+    "cancel_expiry_session_end_prove_process_stopped": false,
+    "durable_selective_admission": true,
+    "idempotent_request_id": true,
+    "original_request_identity_bound": true,
+    "precise_patch_fingerprint_recovery": true,
+    "project_claim_barrier_retained_when_unproven": true,
+    "queryable_activation_receipt": true,
+    "runtime_fields_writable_via_source": false,
+    "selective_replan": "ws032",
+    "server_derived_preflight_before_source_write": true,
+    "source_status_is_completion_receipt": false,
+    "source_writeback": "tmcp_022"
+  },
+  "previous_epoch_reconciliation": true,
+  "project_entry": "work.next",
+  "project_period_updates": {
+    "command": "update.record",
+    "fact_snapshots": "immutable_task_counts_with_authorized_projection",
+    "history": "immutable_versions_with_separate_current_pointer",
+    "queries": [
+      "updates.list",
+      "update.inspect"
+    ],
+    "read_authority": "current_project_or_workstream_read_delegation_no_task_promotion",
+    "record_authority": "supervisor_duty_and_project_scoped_edit_planning_delegation",
+    "record_tool": "awr_team_update_record",
+    "sentence_provenance": "caller_supplied",
+    "version": 1
+  },
+  "protocol": "awr-team-workstream",
+  "protocol_version": 1,
+  "queries": [
+    "capabilities",
+    "workstreams.list",
+    "work.list",
+    "work.graph",
+    "work.search",
+    "work.next",
+    "work.inbox",
+    "task.assignees",
+    "work.prepare",
+    "work.admission",
+    "work.snapshot",
+    "work.observe",
+    "events.list",
+    "session.inspect",
+    "work.recovery",
+    "command.inspect",
+    "claim.inspect",
+    "execution.inspect",
+    "handoff.inspect",
+    "handoff.list",
+    "dependencies.list",
+    "evidence.inspect",
+    "review.inspect",
+    "review.rounds",
+    "completion.inspect",
+    "delivery.inspect",
+    "delivery.neutral.inspect",
+    "delivery.routes",
+    "delivery.submission.describe",
+    "delivery.neutral.outcome",
+    "delivery.source.status",
+    "delivery.integration.inspect",
+    "source.content",
+    "artifact.content",
+    "artifact.segment",
+    "delivery.exports",
+    "planning.outcome",
+    "planning.candidates",
+    "sources.inspect",
+    "documents.list",
+    "decisions.list",
+    "updates.list",
+    "update.inspect",
+    "audit.history",
+    "audit.export",
+    "audit.count",
+    "audit.requests",
+    "audit.development"
+  ],
+  "reference_runner": {
+    "effects": "bounded_file_writes",
+    "fencing_class": "uncontrolled",
+    "max_plan_bytes": 1048576,
+    "requires": "system_actor_with_explicit_attestation_grant",
+    "transport": "operator_local_cli_or_library"
+  },
+  "reference_runner_effects": "operator_local_bounded_files_require_explicit_attestation_grant",
+  "scope_id": "main",
+  "scope_main_semantics": "historical_team_rows_retain_scope_id_main_while_workstream_id_isolates",
+  "semantic_layers": {
+    "availability": "work_readiness_and_the_other_layers_are_answered_only_for_works_the_caller_is_authorized_to_see",
+    "basis": "awr-semantic-contract-five-layers",
+    "layers": {
+      "completion_validity": {
+        "commands": [
+          "evidence.submit",
+          "review.open",
+          "review.accept",
+          "review.return",
+          "review.decide",
+          "work.complete"
+        ],
+        "queries": [
+          "completion.inspect",
+          "evidence.inspect",
+          "review.inspect"
+        ],
+        "without_team_operation": [
+          {
+            "entry": "intake inspect",
+            "reason": "intake of an existing ledger is a personal-mode operation"
+          },
+          {
+            "entry": "host confirm_ordinary",
+            "reason": "no ordinary completion without evidence and review in a Team"
+          }
+        ]
+      },
+      "context_completeness": {
+        "commands": [
+          "session.checkpoint"
+        ],
+        "queries": [
+          "work.prepare",
+          "source.content",
+          "artifact.content"
+        ],
+        "without_team_operation": [
+          {
+            "entry": "context compile",
+            "reason": "no standalone context pack; work.prepare returns the completeness and the context hash"
+          },
+          {
+            "entry": "branch context",
+            "reason": "Team scopes work by workstream, not by branch"
+          }
+        ]
+      },
+      "delivery_observation": {
+        "commands": [
+          "execution.report",
+          "delivery.observe_pr",
+          "delivery.facts.ingest"
+        ],
+        "queries": [
+          "work.observe",
+          "execution.inspect",
+          "delivery.inspect"
+        ],
+        "without_team_operation": [
+          {
+            "entry": "client hook",
+            "reason": "no hook receiver; a host reports through session.checkpoint and execution.report"
+          },
+          {
+            "entry": "workflow ack",
+            "reason": "no acknowledgement of a consumed context hash"
+          }
+        ]
+      },
+      "execution_admission": {
+        "commands": [
+          "admission.decide",
+          "session.start",
+          "session.end",
+          "claim.acquire",
+          "claim.renew",
+          "claim.release",
+          "execution.prepare",
+          "execution.start"
+        ],
+        "queries": [
+          "work.admission",
+          "claim.inspect",
+          "session.inspect",
+          "execution.inspect"
+        ],
+        "without_team_operation": [
+          {
+            "entry": "client bind",
+            "reason": "identity is a bearer token on every request, not a binding of a client"
+          }
+        ]
+      },
+      "work_readiness": {
+        "commands": [],
+        "queries": [
+          "work.list",
+          "work.next",
+          "work.inbox",
+          "work.prepare"
+        ],
+        "without_team_operation": []
+      }
+    },
+    "unsupported_operation": "Unsupported",
+    "version": 1
+  },
+  "session_feedback": {
+    "billing_collected": false,
+    "checkpoint_optional_fields": [
+      "client_info",
+      "progress",
+      "usage"
+    ],
+    "declared_phases": [
+      "starting",
+      "implementing",
+      "testing",
+      "waiting_user",
+      "blocked",
+      "ready_for_review",
+      "waiting_dependency",
+      "reviewing",
+      "reworking",
+      "integrating",
+      "delivered"
+    ],
+    "nonterminal": true,
+    "provenance": "caller_declared",
+    "read": "work.observe",
+    "snapshot_consistency": "repeatable_read",
+    "snapshot_read": "work.snapshot",
+    "stale_after_ms": 900000,
+    "start_optional_fields": [
+      "client_info"
+    ],
+    "usage_aggregation": "none",
+    "usage_scope": "host_session",
+    "version": 1,
+    "visibility": "work_read_business_summary"
+  },
+  "simulated_member_review": {
+    "admission_rechecks_origin": true,
+    "approval_basis": "simulated_member_independent_review",
+    "command": "review.decide",
+    "completion_requires": [
+      "artifact_bytes",
+      "successful_execution",
+      "workspace_settlement",
+      "exact_immutable_review_basis",
+      "confirmed_integration_when_a_candidate_is_selected"
+    ],
+    "completion_supported": true,
+    "cross_workstream_adoption_policy": "explicit_v6_version_policy",
+    "cross_workstream_adoption_supported": true,
+    "default_receipt": "member_summary_and_basis_digest",
+    "dependency_acceptance_mode": "simulated_member_independent",
+    "dependency_adoption": "explicit_v5_same_stream_per_predecessor",
+    "details": "review.inspect",
+    "finalization_action": "delivery.finalize",
+    "finalizer_requires": "current_explicit_delivery_authority",
+    "historical_origin_backfill": false,
+    "human_approval": false,
+    "integration_operation": "fast_forward",
+    "origin_capture": [
+      "execution.prepare",
+      "evidence.submit",
+      "review.open"
+    ],
+    "policy": "caller_managed_execution_and_simulated_member_review",
+    "preparation_executes_repository": false,
+    "repository_integration_supported": true,
+    "requires": [
+      "explicit_simulated_members",
+      "unique_active_agent_binding",
+      "active_member_actor_and_membership",
+      "agent_review_membership_grant",
+      "live_review_delegation",
+      "distinct_original_member_actor_and_client"
+    ],
+    "shared_controller_allowed": true,
+    "team_independent_acceptance": false,
+    "unmapped_dependencies": "blocked",
+    "v5_dependency_scope": "same_workstream"
+  },
+  "source_content": true,
+  "trusted_execution_results": true,
+  "trusted_executor_upgrade": "never_from_product_roles",
+  "unattributed_history_adoption": false,
+  "unsupported_capabilities": "refused",
+  "work_guidance": {
+    "action_permissions": "one_current_covering_grant",
+    "basis": "shared_current_collaboration_facts",
+    "max_basis_items": 3,
+    "observe_default_max_bytes": 65536,
+    "optional_advice_in_context_hash": false,
+    "provider_webhook_required": false,
+    "queries": [
+      "work.prepare",
+      "work.snapshot",
+      "work.observe",
+      "work.inbox"
+    ],
+    "version": 1
+  },
+  "work_inbox": {
+    "advisory_only": true,
+    "basis": "current_persistent_facts",
+    "deduplication": "semantic_item_key",
+    "default_max_bytes": 65536,
+    "handled_items": "disappear_on_refresh",
+    "max_basis_items": 3,
+    "pagination": "last_evaluated_visible_work",
+    "provider_webhook_required": false,
+    "query": "work.inbox",
+    "version": 1
+  },
+  "write_authorization_phases": [
+    "admission_write_grant",
+    "effect_active_or_special"
+  ]
+}
