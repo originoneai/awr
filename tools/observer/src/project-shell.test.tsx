@@ -5,7 +5,7 @@ import { defaultVisibleText } from './lib/human-language-guard';
 import { demoOverviewModelResponse } from './test-fixtures/overview-model';
 import { DEMO_OVERVIEW, DEMO_PROJECTS, renderApp, stubFetch } from './test-utils';
 
-const TAB_LABELS = ['概览', '工作计划', '协作依赖', '成果与验收', '项目知识'];
+const TAB_LABELS = ['概览', '工作计划', '依赖', '成果与验收', '项目知识'];
 
 const RICH_PROJECTS = {
   ...DEMO_PROJECTS,

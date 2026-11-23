@@ -422,7 +422,7 @@ const zhCN = {
     tabs: {
       overview: '概览',
       plan: '工作计划',
-      deps: '协作依赖',
+      deps: '依赖',
       acceptance: '成果与验收',
       knowledge: '项目知识',
     },

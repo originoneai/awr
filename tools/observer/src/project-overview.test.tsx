@@ -263,6 +263,32 @@ describe('ProjectOverview prototype structure and interactions', () => {
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/team/write'))).toBe(false);
   });
 
+  it('shows at most four waiting answers in the rail while the count says how many there are', async () => {
+    const model = makeRichModel() as unknown as { input: { decisions: { items: Array<Record<string, unknown>> } } };
+    const extra = ['T-101', 'T-103', 'T-106', 'T-110'].map((taskId, index) => ({
+      id: `Q-10${index}`, taskId, state: 'open', current: true, question: `合成问题 ${index + 1}`,
+      allowedResponderIds: ['M-001'], createdAtUnixMs: NOW - (index + 1) * 3_600_000,
+    }));
+    model.input.decisions.items = [...model.input.decisions.items, ...extra];
+    setupOverview({ model });
+    await screen.findByTestId('project-instrument');
+    await waitFor(() => expect(screen.getByTestId('project-waiting-answers-count').textContent).toBe('6'));
+    expect(screen.getAllByTestId('project-waiting-answer-item')).toHaveLength(4);
+  });
+
+  it('names at most two blocked tasks per workstream row', async () => {
+    const model = makeRichModel() as unknown as { input: { dependencies: { items: Array<Record<string, unknown>> } } };
+    model.input.dependencies.items = [
+      ...model.input.dependencies.items,
+      { id: 'D-3', consumerTaskId: 'T-110', providerTaskId: 'T-102', satisfied: false, sinceUnixMs: NOW - 86_400_000 },
+    ];
+    setupOverview({ model });
+    const row = await screen.findByTestId('workstream-row-WS-FE');
+    await waitFor(() => expect(row.textContent).toContain('订单页面联调'));
+    const named = ['订单页面联调', '空状态检查', '错误提示文案'].filter((title) => row.textContent?.includes(title));
+    expect(named).toHaveLength(2);
+  });
+
   it('opens a count-matched detail panel for every KPI and navigates from workstreams, basis, decisions, activity and updates', async () => {
     const user = userEvent.setup();
     const { router } = setupOverview();

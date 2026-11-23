@@ -8,7 +8,7 @@
     "geometryExclusions": [
       "Probe coordinates are anchored at the project page title (.hero h1 / [data-testid=\"project-title\"]), excluding shell-only header/sidebar offsets.",
       "Canonical demo server/demo-organization.js returns 2 open decisions (omitting data.project_questions) and 1 period update (canonicalPeriodUpdates slices to 1), and /api/team/activity returns structured operation verbs rather than prototype prose; container heights (__h) and downstream vertical positions (__y) that depend on item count or text length are skipped with no style skips.",
-      "Tab 3 label uses '协作依赖' per AC 1 (prototype uses '依赖'), shifting later tab x coordinates (__x) slightly while keeping identical tab typography and spacing."
+      "Tab 3 label is the prototype's '依赖' (supervisor decision in the review of PR 738: the prototype is the acceptance standard)."
     ]
   },
   "pairs": [
