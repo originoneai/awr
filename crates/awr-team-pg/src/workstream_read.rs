@@ -1634,7 +1634,7 @@ pub(crate) async fn read(
             "default_raw_bytes":2048,"max_raw_bytes":WorkstreamQuery::MAX_ARTIFACT_SEGMENT_BYTES,
             "max_mcp_result_bytes":WorkstreamQuery::MAX_ARTIFACT_SEGMENT_WIRE_BYTES,
             "encoding":"base64","complete_read":"Follow next_query until end_of_artifact; concatenate contiguous ranges from 0 and verify the full length and sha256."});
-        caps["identity"] = navigation::identity(auth);
+        caps["identity"] = navigation::identity_with_person(tx, tenant, project, auth).await?;
         caps["ordinary_decisions"] = json!({"version":1,"query":"decisions.list",
             "commands":["decision.request","decision.respond","decision.cancel"],
             "request_authority":"current_owned_live_claim","response_authority":"selected_current_member_and_owned_session",

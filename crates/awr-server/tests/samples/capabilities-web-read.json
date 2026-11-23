@@ -248,6 +248,8 @@
     "membership_action_ceiling": [
       "work.read"
     ],
+    "person_display_name": "MCP member",
+    "person_id": "mcp-human",
     "role": "developer"
   },
   "lease_ttl_seconds": {

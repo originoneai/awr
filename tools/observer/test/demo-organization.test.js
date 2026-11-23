@@ -709,10 +709,46 @@ test('only the full demo publishes approvals and the demo viewer scope, and memb
   assert.equal(denied.input, undefined, 'restricted composition cannot expose approval facts');
 });
 
-test('demo work.next identity has no person_id and Agent audit records expose their own disclosure', () => {
+test('demo overview models never bypass capabilities with the fixture viewer shortcut', async () => {
+  for (const demoVariant of ['full', 'canonical']) {
+    const harness = bridgeForTest({ demoVariant, demoTimestampShiftMs: 0, now: () => fixture.now_unix_ms });
+    const demo = harness.bridge.TEAM.demoOrganization;
+    const originalQuery = demo.query;
+    const originalUpstream = demo.upstream;
+    demo.query = (project, query) => {
+      const response = originalQuery(project, query);
+      if (query.op !== 'capabilities') return response;
+      const body = clone(response);
+      delete body.identity.person_id;
+      delete body.identity.person_display_name;
+      return body;
+    };
+    demo.upstream = (project, query) => {
+      const response = originalUpstream(project, query);
+      if (query.op !== 'capabilities') return response;
+      const body = clone(response.json);
+      delete body.identity.person_id;
+      delete body.identity.person_display_name;
+      return { ...response, json: body };
+    };
+    const model = await harness.call('GET /api/team/overview-model',
+      `/api/team/overview-model?project=${demoVariant === 'canonical' ? '' : 'P-001'}`);
+    assert.equal(model.ok, true, `${demoVariant}: ${JSON.stringify(model)}`);
+    assert.equal(Object.hasOwn(model.input.options.views ?? {}, 'me'), false, demoVariant);
+    assert.equal(demo.data.viewer.person_id, fixture.viewer.person_id,
+      'the fixture still has a viewer that a shortcut would expose');
+  }
+});
+
+test('demo capabilities and work.next publish the same viewer person fields as the real service', () => {
   const demo = createDemoOrganization({ variant: 'full', timestampShiftMs: 0 });
+  const capabilities = demo.query('P-001', { protocol_version: 1, op: 'capabilities' });
   const next = demo.query('P-001', { protocol_version: 1, op: 'work.next' });
-  assert.equal(Object.hasOwn(next.data.identity, 'person_id'), false);
+  for (const identity of [capabilities.identity, next.data.identity]) {
+    assert.equal(identity.person_id, fixture.viewer.person_id);
+    assert.equal(identity.person_display_name, fixture.people.find((person) =>
+      person.person_id === fixture.viewer.person_id).display_name);
+  }
   assert.equal(next.data.identity.actor_id, fixture.viewer.actor_id);
   assert.equal(next.data.identity.client_id, fixture.viewer.client_id);
   assert.deepEqual(next.data.identity.business_roles, fixture.viewer.business_roles);

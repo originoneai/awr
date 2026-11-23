@@ -252,13 +252,13 @@ async fn login_web(server: &str, bearer: &str) -> String {
         .to_owned()
 }
 
-async fn web_caps(server: &str, cookie: Option<&str>, key: &str) -> (u16, Value) {
+async fn web_query(server: &str, cookie: Option<&str>, key: &str, op: &str) -> (u16, Value) {
     let request = web::http()
         .post(format!("{server}/web/projects/{key}/query"))
         .header("host", "awr.example")
         .header("origin", web::ISSUER)
         .header("x-awr-web", "1")
-        .json(&json!({"protocol_version":1,"op":"capabilities"}));
+        .json(&json!({"protocol_version":1,"op":op}));
     let request = match cookie {
         Some(cookie) => request.header("cookie", cookie),
         None => request,
@@ -266,6 +266,10 @@ async fn web_caps(server: &str, cookie: Option<&str>, key: &str) -> (u16, Value)
     let response = request.send().await.unwrap();
     let status = response.status().as_u16();
     (status, response.json().await.unwrap())
+}
+
+async fn web_caps(server: &str, cookie: Option<&str>, key: &str) -> (u16, Value) {
+    web_query(server, cookie, key, "capabilities").await
 }
 
 #[tokio::test]
@@ -322,6 +326,14 @@ async fn capabilities_publish_duty_action_ceilings_from_the_shared_enforcement_f
         .await
         .unwrap();
     assert_eq!(applied.status(), reqwest::StatusCode::OK);
+    owner
+        .execute(
+            "INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status)
+             VALUES($1,$2,'mcp-human','MCP member','active')",
+            &[&TENANT, &PROJECT],
+        )
+        .await
+        .unwrap();
 
     let member = mcp(&server.url, MEMBER_TOKEN).await;
     let member_caps = caps(&member).await;
@@ -329,6 +341,8 @@ async fn capabilities_publish_duty_action_ceilings_from_the_shared_enforcement_f
         member_caps["identity"]["business_roles"],
         json!(["observer"])
     );
+    assert_eq!(member_caps["identity"]["person_id"], "mcp-human");
+    assert_eq!(member_caps["identity"]["person_display_name"], "MCP member");
     assert_eq!(
         member_caps["identity"]["membership_action_ceiling"],
         json!(["work.read"])
@@ -347,8 +361,12 @@ async fn capabilities_publish_duty_action_ceilings_from_the_shared_enforcement_f
     assert_eq!(browser_caps["protocol"], "awr-team-workstream");
     assert_published_ceilings(&browser_caps["business_role_presets"]);
     save_verbatim("capabilities-web-read.json", &browser_caps);
+    let (status, browser_next) = web_query(&server.url, Some(&cookie), "one", "work.next").await;
+    assert_eq!(status, 200, "{browser_next}");
+    assert_eq!(browser_next["data"]["identity"], browser_caps["identity"]);
+    save_verbatim("work-next-web-read.json", &browser_next);
 
-    // The committed sample is re-parsed and must carry the same catalog.
+    // The committed samples are re-parsed and keep the live identity and catalog.
     let sample_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/samples/capabilities-web-read.json");
     let sample: Value = serde_json::from_slice(&std::fs::read(&sample_path).unwrap()).unwrap();
@@ -357,11 +375,18 @@ async fn capabilities_publish_duty_action_ceilings_from_the_shared_enforcement_f
         "the committed sample matches the live reply"
     );
     assert_published_ceilings(&sample["business_role_presets"]);
+    assert_eq!(sample["identity"], browser_caps["identity"]);
     assert_eq!(sample["identity"]["business_roles"], json!(["observer"]));
     assert_eq!(
         sample["identity"]["membership_action_ceiling"],
         json!(["work.read"])
     );
+    let next_sample_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/samples/work-next-web-read.json");
+    let next_sample: Value =
+        serde_json::from_slice(&std::fs::read(next_sample_path).unwrap()).unwrap();
+    assert_eq!(next_sample["data"]["identity"], browser_caps["identity"]);
+    assert!(next_sample["data"]["items"].is_array());
     let sample_text = sample.to_string();
     for banned in ["secret", "password", "awr1."] {
         assert!(

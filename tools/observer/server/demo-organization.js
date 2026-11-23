@@ -725,6 +725,8 @@ function createDemoOrganization({ variant = 'full',
       client_id: data.viewer.client_id,
       role: data.viewer.role,
       business_roles: [...data.viewer.business_roles],
+      person_id: data.viewer.person_id,
+      person_display_name: personById.get(data.viewer.person_id)?.display_name ?? null,
     };
   }
 
