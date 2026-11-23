@@ -336,12 +336,77 @@ function canonicalPeriodUpdates(data, projectId) {
   return completeSlice(items);
 }
 
+/** Verbatim AWR-PPD-061 business duty presets matching Rust BusinessRole::action_ceiling. */
+const DEMO_BUSINESS_ROLE_PRESETS = {
+  action_ceilings: {
+    administrator: [
+      'work.read',
+      'access.manage_project',
+      'audit.read_project',
+      'directory.manage_project',
+    ],
+    deliverer: [
+      'work.read',
+      'session.maintain_own',
+      'delivery.finalize',
+    ],
+    developer: [
+      'work.read',
+      'session.maintain_own',
+      'claim.manage_own',
+      'execution.request_and_report_own',
+      'planning.propose',
+      'delivery.submit_and_request_review',
+    ],
+    observer: [
+      'work.read',
+    ],
+    reviewer: [
+      'work.read',
+      'session.maintain_own',
+      'review.decide',
+    ],
+    supervisor: [
+      'work.read',
+      'work.assign',
+      'session.maintain_own',
+      'planning.propose',
+      'planning.edit_draft',
+      'planning.approve',
+      'planning.publish',
+      'audit.read_project',
+      'directory.manage_project',
+    ],
+  },
+  explicit_combined_duties: true,
+  omitted_on_update: 'preserve_existing_declaration',
+  role_names_grant_authority: false,
+  roles: [
+    'observer',
+    'developer',
+    'reviewer',
+    'supervisor',
+    'deliverer',
+    'administrator',
+  ],
+  semantics: 'membership_grants_intersect_declared_ceiling_then_one_live_delegation',
+};
+
 /** Demo-only organization projection for the canonical Members page. The synthetic fixture
  * deliberately uses one stable person ID per person across its three projects; real person IDs
  * remain project-scoped and no live organization directory is inferred from them. Duties and
  * project memberships are recorded fixture facts, not page-side guesses. */
 function canonicalOrganizationDirectory(data) {
   const memberIds = new Set(data.people.map((member) => member.person_id));
+  const visibleDepartmentIds = new Set([
+    ...data.projects.flatMap((project) => [project.group_id, project.parent_department_id]),
+    ...data.people.map((member) => member.group_id),
+  ]);
+  const allDepartments = data.organization.departments
+    .filter((department) => visibleDepartmentIds.has(department.id))
+    .map((department) => ({
+      key: department.id, name: department.name, parentKey: department.parent_id ?? null,
+    }));
   const departments = data.organization.departments.filter((department) =>
     data.people.some((member) => member.group_id === department.id));
   const departmentById = new Map(departments.map((department) => [department.id, {
@@ -351,6 +416,7 @@ function canonicalOrganizationDirectory(data) {
     configured: true,
     organization: data.organization.name,
     departments: [...departmentById.values()],
+    allDepartments,
     updated_at_ms: data.now_unix_ms,
     members: data.people.filter((member) => memberIds.has(member.person_id)).map((member) => ({
       personId: member.person_id,
@@ -361,6 +427,259 @@ function canonicalOrganizationDirectory(data) {
       projects: data.projects.filter((project) => project.member_person_ids.includes(member.person_id))
         .map((project) => ({ key: project.key, name: project.title })),
     })),
+  };
+}
+
+/**
+ * Canonical department-level recorded facts carried alongside the demo portfolio read
+ * (`variant === 'canonical'` only). Mirrors prototype VIEWS[2] from the fixture's own
+ * tasks, goals, updates, group waits, pending decisions and lessons.
+ */
+function canonicalDepartmentFacts(data) {
+  const departmentsById = new Map(data.organization.departments.map((d) => [d.id, d]));
+  const peopleById = new Map([...data.people, ...(data.view_roles ?? [])].map((p) => [p.person_id, p]));
+  const projectsById = new Map(data.projects.map((p) => [p.project_id, p]));
+  const tasksById = new Map(data.tasks.map((t) => [t.work_id, t]));
+  const goalsById = new Map(data.goals.map((g) => [g.goal_id, g]));
+
+  const dependentsOf = (workId) => data.tasks.filter((t) =>
+    (t.dependencies || []).some((d) => d.provider_work_id === workId));
+  const behindCount = (workId, seen = new Set()) => {
+    if (seen.has(workId)) return seen.size;
+    seen.add(workId);
+    for (const dep of dependentsOf(workId)) behindCount(dep.work_id, seen);
+    return seen.size;
+  };
+  const wholeDays = (atUnixMs) => (typeof atUnixMs === 'number' && Number.isFinite(atUnixMs) && atUnixMs <= data.now_unix_ms
+    ? Math.floor((data.now_unix_ms - atUnixMs) / DAY) : null);
+
+  const shiftMs = data.now_unix_ms - completeOrganization.now_unix_ms;
+  const curMonthBase = utcCalendarMonth(completeOrganization.now_unix_ms, 0);
+  const prevMonthBase = utcCalendarMonth(completeOrganization.now_unix_ms, 1);
+  const curMonth = { startUnixMs: curMonthBase.startUnixMs + shiftMs, endUnixMs: curMonthBase.endUnixMs + shiftMs };
+  const prevMonth = { startUnixMs: prevMonthBase.startUnixMs + shiftMs, endUnixMs: prevMonthBase.endUnixMs + shiftMs };
+  const inRange = (t, range) => statusOf(t) === 'verified'
+    && typeof t.verified_at_unix_ms === 'number'
+    && t.verified_at_unix_ms >= range.startUnixMs && t.verified_at_unix_ms <= range.endUnixMs;
+  const currentVerified = data.tasks.filter((t) => inRange(t, curMonth)).map((t) => ({
+    id: t.work_id,
+    title: t.title,
+    project_key: projectsById.get(t.project_id)?.key ?? t.project_id,
+    project_title: projectsById.get(t.project_id)?.title ?? null,
+    owner_name: peopleById.get(t.owner_person_id)?.display_name ?? null,
+    verified_at_unix_ms: t.verified_at_unix_ms ?? null,
+  }));
+  const previousVerifiedCount = data.tasks.filter((t) => inRange(t, prevMonth)).length;
+
+  const projectTitles = Object.fromEntries(data.projects.map((p) => [p.key, p.title]));
+  const projectLeads = Object.fromEntries(data.projects.map((p) => [
+    p.key,
+    peopleById.get(CANONICAL_PROJECT_LEADS[p.project_id] ?? p.lead_person_id)?.display_name ?? '',
+  ]).filter(([, name]) => Boolean(name)));
+
+  const crossGroupWaits = (data.waits_between_groups ?? []).map((wait) => {
+    const task = tasksById.get(wait.work_id);
+    const proj = task ? projectsById.get(task.project_id) : null;
+    const who = departmentsById.get(wait.source_group)?.name ?? wait.source_group;
+    const on = wait.external_party ?? departmentsById.get(wait.target_group)?.name ?? wait.target_group;
+    return {
+      id: wait.wait_id,
+      who,
+      on,
+      what: wait.what,
+      kind: wait.kind === 'ext' ? 'external' : wait.kind,
+      days: wholeDays(wait.started_at_unix_ms),
+      started_at_unix_ms: wait.started_at_unix_ms ?? null,
+      behind: wait.work_id ? behindCount(wait.work_id) : null,
+      task_id: wait.work_id ?? null,
+      task_title: task?.title ?? null,
+      project_key: proj?.key ?? null,
+    };
+  }).sort((a, b) => (b.behind ?? -1) - (a.behind ?? -1) || (b.days ?? -1) - (a.days ?? -1));
+
+  const deptQuestions = (data.project_questions ?? []).filter((q) =>
+    q.state === 'open' && (q.allowed_responder_person_ids ?? []).includes('M-010'));
+  const pending = (data.pending ?? []).filter((item) => item.recipient_role === 'department').map((item) => {
+    const proj = projectsById.get(item.project_id);
+    const matchingQuestion = deptQuestions.find((q) => q.project_id === item.project_id && q.question === item.title);
+    const since = matchingQuestion?.created_at_unix_ms ?? item.created_at_unix_ms ?? null;
+    return {
+      id: matchingQuestion?.decision_id ?? item.pending_id,
+      kind: item.kind === '决定' ? 'decision' : item.kind === '回答' ? 'answer' : 'decision',
+      title: item.title,
+      description: item.description ?? null,
+      from: item.source ?? null,
+      since_unix_ms: since,
+      days: wholeDays(since),
+      project_key: proj?.key ?? item.project_id,
+      project_title: proj?.title ?? null,
+      task_id: item.work_id ?? null,
+      person_id: item.pending_id === 'A-006' ? 'M-004' : null,
+      copy_text: item.copy_text ?? null,
+      agent_guidance: item.agent_guidance ?? null,
+    };
+  });
+
+  // Build the two department blocker chains from the fixture's open review queue and external wait.
+  const chains = [];
+  const reviewerQueue = data.tasks.filter((t) => statusOf(t) === 'review' && t.wait?.waiting_on_name === '许宁');
+  const ordersProj = projectsById.get('P-001');
+  const ordersGoal = goalsById.get('GOAL-001');
+  const ordersWaitTask = tasksById.get('T-103');
+  if (reviewerQueue.length > 0 && ordersProj) {
+    const firstPending = pending[0];
+    const queue = reviewerQueue.map((t) => ({
+      title: t.title.split('：')[0].replace('提交失败的', '').replace('订单', ''),
+      days: wholeDays(t.wait?.started_at_unix_ms),
+    }));
+    const inboxUrl = firstPending
+      ? `/inbox?scope=${encodeURIComponent(firstPending.project_key)}&item=${encodeURIComponent(firstPending.id)}`
+      : '/inbox';
+    chains.push({
+      id: 'dept-review-capacity',
+      tab: '复核人手',
+      footer: '周宁昨天请你决定：能不能多一位复核人。',
+      cta: { label: '看这个决定', to: inboxUrl },
+      nodes: [
+        {
+          id: 'dept-review-root',
+          kind: 'root',
+          root: true,
+          kicker: '卡在这里',
+          title: '只有一位复核人',
+          owner_name: '许宁',
+          queue,
+          foot_note: `${queue.length} 件在排队，都等同一位复核人`,
+          to: inboxUrl,
+        },
+        ...(ordersWaitTask ? [{
+          id: 'dept-review-task',
+          kind: 'task',
+          kicker: departmentsById.get(ordersProj.group_id)?.name ?? '应用小组',
+          title: ordersWaitTask.title,
+          meta: '在等接口第 3 版',
+          status: 'waiting',
+          to: `/tasks/${encodeURIComponent(ordersWaitTask.work_id)}?scope=${encodeURIComponent(ordersProj.key)}`,
+        }] : []),
+        {
+          id: 'dept-review-project',
+          kind: 'project',
+          kicker: '项目',
+          title: ordersProj.title,
+          meta: '本周承诺有风险',
+          health: 'risk',
+          to: `/projects/${encodeURIComponent(ordersProj.key)}`,
+        },
+        ...(ordersGoal ? [{
+          id: 'dept-review-goal',
+          kind: 'goal',
+          kicker: '目标',
+          title: ordersGoal.title,
+          health: ordersGoal.health,
+          foot_note: '有风险',
+          to: `/goals/${encodeURIComponent(ordersGoal.goal_id)}?scope=${encodeURIComponent(ordersProj.key)}`,
+        }] : []),
+      ],
+    });
+  }
+  const extTask = tasksById.get('T-303');
+  const onboardProj = projectsById.get('P-003');
+  const onboardGoal = goalsById.get('GOAL-003');
+  if (extTask && onboardProj) {
+    const extDays = wholeDays(extTask.wait?.started_at_unix_ms);
+    const onboardUpdates = data.updates.filter((u) => u.project_id === onboardProj.project_id)
+      .sort((a, b) => b.recorded_at_unix_ms - a.recorded_at_unix_ms);
+    const staleDays = onboardUpdates[0] ? wholeDays(onboardUpdates[0].recorded_at_unix_ms) : null;
+    chains.push({
+      id: 'dept-external-account',
+      tab: '甲方账号',
+      footer: `郑岚 ${extDays ?? 9} 天前把这件事报给了最高层，还没有回答。`,
+      cta: null,
+      nodes: [
+        {
+          id: 'dept-ext-root',
+          kind: 'root',
+          root: true,
+          kicker: '卡在这里',
+          title: '甲方没给测试环境账号',
+          meta: extDays !== null ? `${extDays} 天` : null,
+          owner_name: '甲方',
+          owner_external: true,
+          to: `/tasks/${encodeURIComponent(extTask.work_id)}?scope=${encodeURIComponent(onboardProj.key)}`,
+        },
+        {
+          id: 'dept-ext-project',
+          kind: 'project',
+          kicker: '项目',
+          title: onboardProj.title,
+          meta: staleDays !== null ? `整个项目停住，${staleDays} 天没有更新` : '整个项目停住',
+          health: 'none',
+          to: `/projects/${encodeURIComponent(onboardProj.key)}`,
+        },
+        ...(onboardGoal ? [{
+          id: 'dept-ext-goal',
+          kind: 'goal',
+          kicker: '目标',
+          title: onboardGoal.title,
+          health: onboardGoal.health,
+          foot_note: '没有更新',
+          to: `/goals/${encodeURIComponent(onboardGoal.goal_id)}?scope=${encodeURIComponent(onboardProj.key)}`,
+        }] : []),
+      ],
+    });
+  }
+
+  const lessonById = new Map((data.lessons ?? []).map((l) => [l.lesson_id, l]));
+  const lessons = [
+    { id: 'L-002', why: '被平台小组采用' },
+    { id: 'L-003', why: '本月新增' },
+  ].flatMap(({ id, why }) => {
+    const lesson = lessonById.get(id);
+    if (!lesson) return [];
+    return [{
+      id: lesson.lesson_id,
+      title: lesson.title,
+      stage: lesson.stage,
+      author_name: peopleById.get(lesson.author_person_id)?.display_name ?? null,
+      why,
+      used: lesson.usage_records.length,
+      passed: lesson.usage_records.filter((r) => r.outcome === 'passed').length,
+      not_applicable: lesson.usage_records.filter((r) => r.outcome === 'not_applicable').length,
+    }];
+  });
+
+  const deptUpdate = data.projects.length === 3 ? {
+    id: null,
+    health: 'risk',
+    sentence: '3 个项目里 1 个有风险：订单协作平台只有一位复核人，排着 3 件。另有 1 个项目 12 天没有更新。',
+    author_person_id: 'M-010',
+    author_name: '部门负责人',
+    written_at_unix_ms: data.now_unix_ms - 2 * DAY,
+  } : null;
+
+  return {
+    department_name: departmentsById.get('G-004')?.name ?? null,
+    viewer_person_id: 'M-010',
+    department_update: deptUpdate,
+    project_titles: projectTitles,
+    project_leads: projectLeads,
+    monthly_verified: {
+      current: { count: currentVerified.length, items: currentVerified },
+      previous: { count: previousVerifiedCount },
+    },
+    cross_group_waits: crossGroupWaits,
+    pending,
+    chains,
+    lessons,
+    usage: data.projects.length === 3 ? {
+      collected_groups: ['应用小组'],
+      missing_groups: ['平台小组', '交付小组'],
+      by_project: {},
+    } : {
+      collected_groups: [],
+      missing_groups: [...new Set(data.projects.map((p) => departmentsById.get(p.group_id)?.name).filter(Boolean))],
+      by_project: {},
+    },
   };
 }
 
@@ -1670,6 +1989,7 @@ function createDemoOrganization({ variant = 'full',
     switch (query.op) {
       case 'capabilities': return {
         protocol: 'awr-team-workstream', protocol_version: 1,
+        business_role_presets: clone(DEMO_BUSINESS_ROLE_PRESETS),
         identity: { ...viewerIdentity(), can_manage_members: false, can_read_project_audit: true,
           membership_action_ceiling: ['work.read'] },
         queries: ['capabilities', 'workstreams.list', 'work.list', 'work.graph', 'work.search', 'work.next', 'work.inbox',
@@ -1923,6 +2243,107 @@ function createDemoOrganization({ variant = 'full',
     } }, setCookie: [] };
   }
 
+  function portfolioOverview(query = {}) {
+    const units = new Map(data.organization.departments.map((department) => [department.id, department]));
+    const currentWeekStart = utcMondayWeek(data.now_unix_ms).startUnixMs;
+    const fixtureWeekStart = utcMondayWeek(completeOrganization.now_unix_ms).startUnixMs;
+    const items = data.projects.map((proj) => {
+      if (variant === 'restricted' && proj.project_id === 'P-003') {
+        return { project_id: proj.project_id, project_key: proj.key, read: { status: 'not_read', reason: 'no_read_authority' } };
+      }
+      if (variant === 'partial' && proj.project_id === 'P-001') {
+        return { project_id: proj.project_id, project_key: proj.key, read: { status: 'not_read', reason: 'read_failed' } };
+      }
+      const tasks = data.tasks.filter((item) => item.project_id === proj.project_id);
+      let verified = 0;
+      let deliveredUnverified = 0;
+      let inProgress = 0;
+      let notStarted = 0;
+      for (const t of tasks) {
+        const st = statusOf(t);
+        if (st === 'verified') verified += 1;
+        else if (st === 'claimed') deliveredUnverified += 1;
+        else if (st === 'ready' || st === 'planned') notStarted += 1;
+        else inProgress += 1;
+      }
+      const openDecisions = data.decisions.filter((d) => d.project_id === proj.project_id && d.state === 'open');
+      const openReviews = tasks.flatMap((t) => (t.delivery?.rounds || []).filter((r) => r.state === 'open'));
+      const depWaits = tasks.filter((t) => t.wait?.kind === 'dep');
+      const openTimes = [
+        ...openDecisions.map((d) => d.created_at_unix_ms),
+        ...openReviews.map((r) => r.opened_at_unix_ms),
+        ...depWaits.map((t) => t.wait?.started_at_unix_ms),
+      ].filter((value) => typeof value === 'number' && Number.isFinite(value));
+      const group = units.get(proj.group_id);
+      const parent = group?.parent_id ? units.get(group.parent_id) : null;
+      const latestRaw = data.updates.filter((u) => u.project_id === proj.project_id)
+        .sort((left, right) => right.starts_on.localeCompare(left.starts_on)
+          || right.recorded_at_unix_ms - left.recorded_at_unix_ms)[0] ?? null;
+      let latestUpdate = null;
+      if (latestRaw) {
+        const startsOnMs = Date.parse(`${latestRaw.starts_on}T00:00:00Z`);
+        const weeksBeforeFixtureNow = Math.round((fixtureWeekStart - startsOnMs) / WEEK);
+        const startsAt = currentWeekStart - weeksBeforeFixtureNow * WEEK;
+        latestUpdate = {
+          update_id: latestRaw.update_id,
+          period_kind: latestRaw.period_kind,
+          period_key: latestRaw.period_key,
+          starts_on: isoUtcDate(startsAt),
+          ends_on: isoUtcDate(startsAt + WEEK - DAY),
+          status: latestRaw.status,
+          summary: latestRaw.summary,
+          author: person(latestRaw.author_person_id),
+          recorded_at_unix_ms: latestRaw.recorded_at_unix_ms,
+        };
+      }
+      return {
+        project_id: proj.project_id,
+        project_key: proj.key,
+        project_status: 'active',
+        coordinator_epoch: `epoch-${proj.project_id}-47`,
+        project_revision: '47',
+        responsible_person: null,
+        directory: {
+          registered: Boolean(group),
+          group: group ? { id: group.id, name: group.name } : null,
+          departments: parent ? [{ id: parent.id, name: parent.name }] : [],
+        },
+        works: {
+          total: tasks.length,
+          not_started: notStarted,
+          in_progress: inProgress,
+          delivered_unverified: deliveredUnverified,
+          verified,
+          completed_without_independent_review: 0,
+          retired: 0,
+          hidden_work_count: 0,
+        },
+        waits: {
+          decision: openDecisions.length,
+          review: openReviews.length,
+          dependency: depWaits.length,
+          oldest_open_unix_ms: openTimes.length ? Math.min(...openTimes) : null,
+        },
+        latest_update: latestUpdate,
+        read: { status: 'complete' },
+      };
+    });
+    const paged = page(items, query, 200);
+    return {
+      protocol_version: 1,
+      op: 'portfolio.overview',
+      selection_basis: 'member',
+      data: {
+        as_of: { at_unix_ms: data.now_unix_ms },
+        execution_authorized: false,
+        projects: paged.items,
+        total_projects: paged.total,
+        truncated: paged.truncated,
+        next_cursor: paged.next_cursor,
+      },
+    };
+  }
+
   return {
     variant,
     data,
@@ -1931,6 +2352,7 @@ function createDemoOrganization({ variant = 'full',
     directory,
     connections,
     revokeConnection,
+    portfolioOverview,
     projects: () => clone(data.projects),
     session: () => ({
       ok: true,
@@ -1946,5 +2368,5 @@ function createDemoOrganization({ variant = 'full',
 module.exports = {
   createDemoOrganization, DemoReadError, DEMO_VARIANTS, DEMO_FUTURE_READ_OPS,
   canonicalOverviewInput, demoOverviewAsOf, canonicalProjectList, canonicalPeriodUpdates,
-  canonicalOrganizationDirectory, canonicalPerspectiveFacts,
+  canonicalOrganizationDirectory, canonicalPerspectiveFacts, canonicalDepartmentFacts,
 };

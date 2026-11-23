@@ -1155,6 +1155,15 @@ test('canonical directory and shell facts establish all four perspectives withou
     { id: 'G-003', name: '交付小组', parent_id: 'G-005' },
   ]);
   assert.notEqual(projectDirectory(directory), null, 'the real directory validator accepts the complete hierarchy');
+  const capabilitiesSample = JSON.parse(
+    require('node:fs').readFileSync(
+      require('node:path').resolve(__dirname, '../../../crates/awr-server/tests/samples/capabilities-web-read.json'),
+      'utf8',
+    ),
+  );
+  const demoCapabilities = demo.query('P-001', { protocol_version: 1, op: 'capabilities' });
+  assert.deepEqual(demoCapabilities.business_role_presets, capabilitiesSample.business_role_presets,
+    'demo capabilities publish the verbatim AWR-PPD-061 business duty action ceilings');
 
   const bridge = bridgeForTest({ demoVariant: 'canonical', demoTimestampShiftMs: 0 });
   const reply = await bridge.call('GET /api/team/shell', '/api/team/shell');

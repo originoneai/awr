@@ -1,6 +1,7 @@
-import { act, renderHook } from '@testing-library/react';
+import { act, render, renderHook, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { PerspectiveFacts } from './types';
+import { PerspectiveProvider, usePerspective } from './PerspectiveProvider';
+import { unknownPerspectiveFacts, type PerspectiveFacts } from './types';
 import { PERSPECTIVE_STORAGE_KEY, usePerspectiveSelection } from './usePerspectiveSelection';
 
 function narrowFacts(): PerspectiveFacts {
@@ -43,5 +44,61 @@ describe('usePerspectiveSelection programmatic authorization', () => {
     expect(accepted).toBe(true);
     expect(result.current.selected).toBe('lead');
     expect(setItem).toHaveBeenCalledWith(PERSPECTIVE_STORAGE_KEY, 'lead');
+  });
+});
+
+function Probe() {
+  const { selected } = usePerspective();
+  return <div data-testid="selected-perspective">{selected}</div>;
+}
+
+function deptFacts(): PerspectiveFacts {
+  return {
+    supervisedGroupCount: 1,
+    memberGroupProjectCount: 1,
+    visibleProjectGroupCount: 3,
+    visibleProjectDepartmentCount: 1,
+    canViewAllProjects: false,
+    directory: { groupsRegistered: true, departmentsRegistered: true },
+    pending: { me: null, lead: null, dept: null, top: null },
+  };
+}
+
+describe('PerspectiveProvider deferred URL cleanup while shell facts load', () => {
+  it('stays fail-closed while loading without erasing a requested perspective, then opens it once authorized', () => {
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <PerspectiveProvider facts={unknownPerspectiveFacts()} loading requestedPerspective="dept" onChange={onChange}>
+        <Probe />
+      </PerspectiveProvider>,
+    );
+    expect(screen.getByTestId('selected-perspective').textContent).toBe('me');
+    expect(onChange).not.toHaveBeenCalled();
+
+    rerender(
+      <PerspectiveProvider facts={deptFacts()} loading={false} requestedPerspective="dept" onChange={onChange}>
+        <Probe />
+      </PerspectiveProvider>,
+    );
+    expect(screen.getByTestId('selected-perspective').textContent).toBe('dept');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('cleans an unauthorized requested perspective once loading finishes', () => {
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <PerspectiveProvider facts={unknownPerspectiveFacts()} loading requestedPerspective="dept" onChange={onChange}>
+        <Probe />
+      </PerspectiveProvider>,
+    );
+    expect(onChange).not.toHaveBeenCalled();
+
+    rerender(
+      <PerspectiveProvider facts={narrowFacts()} loading={false} requestedPerspective="dept" onChange={onChange}>
+        <Probe />
+      </PerspectiveProvider>,
+    );
+    expect(screen.getByTestId('selected-perspective').textContent).toBe('me');
+    expect(onChange).toHaveBeenCalledWith('me');
   });
 });

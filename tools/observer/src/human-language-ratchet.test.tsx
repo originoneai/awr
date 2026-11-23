@@ -279,7 +279,6 @@ const DELIVERED = {
 const REPORTER_SENTENCES = {
   plan: [IN_REVIEW.next, ...IN_REVIEW.report],
   planDelivered: [DELIVERED.next, ...DELIVERED.report],
-  overview: [IN_REVIEW.next],
 } as const;
 
 describe('the real-shaped pages show a reporter as written, with long identifiers cut and machine names in words', () => {

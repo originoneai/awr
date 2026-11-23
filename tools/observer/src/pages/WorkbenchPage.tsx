@@ -7,6 +7,12 @@ import { deriveOverview } from '../core/overview';
 import { EmptyState, Notice, PageHeader } from '../components/display';
 import { ObservationForbidden } from '../components/states';
 import { FreshnessBadge } from '../components/FreshnessBadge';
+import { DepartmentWorkbench } from '../components/workbench/DepartmentWorkbench';
+import {
+  buildDepartmentWorkbenchModel,
+  portfolioClockOffsetUnixMs,
+  portfolioReadMomentUnixMs,
+} from '../components/workbench/department-model';
 import { WorkbenchFrame, type WorkbenchFrameState } from '../components/workbench/WorkbenchFrame';
 import {
   buildMyWorkModel,
@@ -16,25 +22,32 @@ import {
 import { isAuthError } from '../lib/api';
 import { readClockOffsetUnixMs, readMomentUnixMs, referenceNowUnixMs, useDisplayTimeZone } from '../lib/display-clock';
 import { usePerspective } from '../lib/perspective/PerspectiveProvider';
-import { overviewModelQueryOptions, projectsQueryOptions } from '../lib/queries';
+import { overviewModelQueryOptions, portfolioQueryOptions, projectsQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
 import { useScope } from '../lib/scope';
-import type { TeamOverviewModelResponse } from '../lib/types';
+import type { TeamFreshness, TeamOverviewModelResponse } from '../lib/types';
 
 interface WorkbenchOverviewResponse extends TeamOverviewModelResponse {
   /** Reserved for AWR-PPD-012. No period-update read is issued by this page. */
   latestPeriodUpdate?: WorkbenchPeriodUpdate | null;
 }
 
-function StatePage({ children, testId, freshness }: {
+const FAILED_FRESHNESS: TeamFreshness = {
+  report_received: { status: 'not_measured' },
+  authoritative: { status: 'failed' },
+  page_read: { status: 'failed' },
+};
+
+function StatePage({ children, testId, freshness, heading }: {
   children: React.ReactNode;
   testId: string;
-  freshness?: TeamOverviewModelResponse['freshness'];
+  freshness?: TeamFreshness;
+  heading?: string;
 }) {
   const { t } = useTranslation();
   return (
     <div className="obs-workbench" data-testid={testId}>
-      <PageHeader title={t('workbench.home.headingMe')} />
+      <PageHeader title={heading ?? t('workbench.home.headingMe')} />
       <FreshnessBadge freshness={freshness} />
       {children}
     </div>
@@ -51,28 +64,37 @@ export function WorkbenchPage() {
   // derivation clock walked forward with real time; the browser clock is only the
   // fallback while no model has answered.
   const displayTimeZone = useDisplayTimeZone();
-  const projects = useQuery(projectsQueryOptions(revoked));
+  const isDepartment = selected === 'dept';
+  const isMe = selected === 'me';
+
+  const projects = useQuery({
+    ...projectsQueryOptions(revoked),
+    enabled: !revoked && !isDepartment,
+  });
   const projectItems = projects.data?.projects;
   const onlyProject = projectItems?.length === 1 ? projectItems[0].key : null;
   const effectiveProject = projectKey ?? onlyProject;
-  const invalidScope = Boolean(projectKey && projectItems && !projectItems.some((project) => project.key === projectKey));
-  const needsSelection = !projectKey && (projectItems?.length ?? 0) > 1;
+  const invalidScope = Boolean(!isDepartment && projectKey && projectItems && !projectItems.some((project) => project.key === projectKey));
+  const needsSelection = !isDepartment && !projectKey && (projectItems?.length ?? 0) > 1;
   const modelQuery = useQuery({
     ...overviewModelQueryOptions(effectiveProject, revoked),
-    enabled: Boolean(effectiveProject) && !invalidScope && !needsSelection && !revoked,
+    enabled: isMe && Boolean(effectiveProject) && !invalidScope && !needsSelection && !revoked,
   });
+  // Department projects uses a single composed portfolio read (AWR-PPD-060) and never fans out per project.
+  const portfolioQuery = useQuery(portfolioQueryOptions(revoked, isDepartment));
+
   const modelResponse = modelQuery.data as WorkbenchOverviewResponse | undefined;
   const modelInput = modelResponse?.input;
   const personId = modelInput?.options?.views?.me?.personId ?? null;
 
   const derived = useMemo(() => {
-    if (!modelInput?.options || !effectiveProject) return null;
+    if (!isMe || !modelInput?.options || !effectiveProject) return null;
     const input = {
       ...modelInput,
       options: workbenchInputOptions(modelInput.options, effectiveProject, personId),
     };
     return deriveOverview(input);
-  }, [effectiveProject, modelInput, personId]);
+  }, [effectiveProject, isMe, modelInput, personId]);
 
   const projectTitles = useMemo(() => {
     const titles: Record<string, string> = {};
@@ -82,10 +104,54 @@ export function WorkbenchPage() {
     return titles;
   }, [projectItems]);
 
+  if (isDepartment) {
+    const deptHeading = t('workbench.department.heading');
+    if (revoked || isAuthError(portfolioQuery.error)) {
+      return <ObservationForbidden />;
+    }
+    if (portfolioQuery.isPending) {
+      return (
+        <StatePage testId="workbench-loading" heading={deptHeading}>
+          <Spin aria-label={t('workbench.department.loading')} />
+        </StatePage>
+      );
+    }
+    const portfolio = portfolioQuery.data;
+    if (portfolioQuery.isError || !portfolio) {
+      return (
+        <StatePage testId="workbench-failed" heading={deptHeading} freshness={FAILED_FRESHNESS}>
+          <Notice tone="warning" title={t('workbench.department.failedTitle')}>
+            {t('workbench.department.failedDescription')}
+          </Notice>
+        </StatePage>
+      );
+    }
+    const referenceUnixMs = referenceNowUnixMs(portfolioClockOffsetUnixMs(portfolio));
+    const deptModel = buildDepartmentWorkbenchModel(portfolio, i18n.language, {
+      readAtUnixMs: portfolioReadMomentUnixMs(portfolio),
+      referenceUnixMs,
+      timeZone: displayTimeZone,
+    });
+    const state: WorkbenchFrameState = portfolio.ordering === 'incomparable'
+      || portfolio.freshness.authoritative.status === 'not_measured'
+      ? 'unknown'
+      : deptModel.coverage.totalProjects === 0 && deptModel.projects.length === 0
+        ? 'empty'
+        : !deptModel.coverage.complete ? 'partial' : 'data';
+    return (
+      <DepartmentWorkbench
+        model={deptModel}
+        freshness={portfolio.freshness}
+        referenceUnixMs={referenceUnixMs}
+        state={state}
+      />
+    );
+  }
+
   if (revoked || invalidScope || isAuthError(projects.error) || isAuthError(modelQuery.error)) {
     return <ObservationForbidden />;
   }
-  if (selected !== 'me') {
+  if (!isMe) {
     return (
       <StatePage testId="workbench-not-open" freshness={modelResponse?.freshness}>
         <EmptyState title={t('workbench.home.notOpenTitle')} description={t('workbench.home.notOpenDescription')} />
