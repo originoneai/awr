@@ -1,7 +1,7 @@
 use crate::error::{PgError, PgResult};
 use tokio_postgres::Client;
 
-pub const EXPECTED_SCHEMA_VERSION: i32 = 66;
+pub const EXPECTED_SCHEMA_VERSION: i32 = 68;
 const MIGRATIONS: &[(&str, i32)] = &[
     (include_str!("../migrations/20260917000001_init.sql"), 1),
     (
@@ -263,6 +263,12 @@ const MIGRATIONS: &[(&str, i32)] = &[
     (
         include_str!("../migrations/20261119000066_portfolio_read_policies.sql"),
         66,
+    ),
+    // Number 67 belongs to a parallel change that has not landed; the list is
+    // ordered by version and `migrate` applies only versions above the current one.
+    (
+        include_str!("../migrations/20261123000068_credential_client_name.sql"),
+        68,
     ),
 ];
 

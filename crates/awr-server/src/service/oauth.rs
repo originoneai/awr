@@ -558,6 +558,24 @@ async fn consent(State(state): State<Arc<StateData>>, headers: HeaderMap, body: 
             oauth_error(OAuthError::Unavailable)
         };
     }
+    // AWR-PPD-062: the name the client registered for itself is recorded with the
+    // credential the member is approving, so audit reads can name that client. It is
+    // self-reported display text and grants nothing; the connection itself keeps
+    // deriving from the live credential on every operation.
+    if state
+        .store
+        .connections()
+        .record_client_name(
+            &project.tenant_id,
+            &project.project_id,
+            credential,
+            &view.client_name,
+        )
+        .await
+        .is_err()
+    {
+        return oauth_error(OAuthError::Unavailable);
+    }
     match oauth
         .store
         .approve(&transaction, &cookie, credential.to_owned(), Instant::now())

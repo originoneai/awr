@@ -7,7 +7,7 @@ import i18n from './i18n';
 import { compactTimeText } from './core/observation';
 import { defaultVisibleText, findForbiddenVisibleText } from './lib/human-language-guard';
 import { revokeObservationReads } from './lib/queries';
-import type { TeamActivityItem } from './lib/types';
+import type { TeamActivityActorKind, TeamActivityItem } from './lib/types';
 import { DEMO_PROJECTS, renderApp } from './test-utils';
 
 const NOW = 1_800_000_000_000;
@@ -21,22 +21,36 @@ function liveFixture(name: string) {
   return JSON.parse(readFileSync(resolve(`src/test-fixtures/activity/${name}`), 'utf8'));
 }
 
+type Identity = {
+  name?: string | null;
+  /** The client's self-registered name (AWR-PPD-062). */
+  client?: string | null;
+  /** The recorded actor kind; omitted leaves the kind out of the reply, as an older server does. */
+  kind?: TeamActivityActorKind | null;
+  /** Whether the row carries a client id at all. Real requests all do; the demo used to leave it out. */
+  withClientId?: boolean;
+};
+
 function event(
   id: string,
   action: string,
   workId: string | null = WORK_A,
   actorId = KNOWN_ACTOR,
   offset = 0,
-  identity: { name?: string | null; client?: string | null; clientAttributed?: boolean } = {},
+  identity: Identity = {},
 ): TeamActivityItem {
-  // AWR-PPD-055 reply shape: the audit carries its own actor/client disclosure.
-  const attributed = identity.clientAttributed ?? offset % 2 === 0;
+  // AWR-PPD-055 reply shape: the audit carries its own actor/client disclosure, and
+  // AWR-PPD-062 adds the actor's kind. Every real request records a client id.
   return {
     id,
     action,
     actor_id: actorId,
-    client_id: identity.client != null && attributed ? `synthetic-client-${offset}` : null,
-    actor: { person_id: KNOWN_PERSON, display_name: identity.name === undefined ? 'Alex Example' : identity.name },
+    client_id: identity.withClientId ?? true ? `synthetic-client-${offset}` : null,
+    actor: {
+      person_id: KNOWN_PERSON,
+      display_name: identity.name === undefined ? 'Alex Example' : identity.name,
+      ...(identity.kind === undefined ? {} : { kind: identity.kind }),
+    },
     client: { display_name: identity.client ?? null },
     created_at_unix_ms: NOW - offset * 60_000,
     credential_id: null,
@@ -261,12 +275,12 @@ describe('activity prototype structure and product language', () => {
 
   it('writes the audit\'s own disclosure: client (name) for agent runs, name (via client) for people, and no raw ids', async () => {
     const items = [
-      event('agent-run', 'execution.report', WORK_A, KNOWN_ACTOR, 0, { name: 'Alex Example', client: 'Synthetic Client', clientAttributed: true }),
-      event('via-client', 'task.assign', WORK_B, KNOWN_ACTOR, 1, { name: 'Alex Example', client: 'Synthetic Client', clientAttributed: false }),
-      event('no-client', 'review.decide', WORK_A, KNOWN_ACTOR, 2, { name: 'Alex Example', client: null }),
-      event('undisclosed', 'decision.request', WORK_B, MISSING_ACTOR, 3, { name: null, client: null }),
+      event('agent-run', 'execution.report', WORK_A, KNOWN_ACTOR, 0, { name: 'Alex Example', client: 'Synthetic Client', kind: 'agent' }),
+      event('via-client', 'task.assign', WORK_B, KNOWN_ACTOR, 1, { name: 'Alex Example', client: 'Synthetic Client', kind: 'human' }),
+      event('no-client', 'review.decide', WORK_A, KNOWN_ACTOR, 2, { name: 'Alex Example', client: null, kind: 'agent' }),
+      event('undisclosed', 'decision.request', WORK_B, MISSING_ACTOR, 3, { name: null, client: null, kind: null }),
       legacyEvent('legacy', 'update.record', null, MISSING_ACTOR, 4),
-      event('machine-name', 'planning.propose', null, KNOWN_ACTOR, 5, { name: 'observer-host-native-20261031T203834Z', client: null }),
+      event('machine-name', 'planning.propose', null, KNOWN_ACTOR, 5, { name: 'observer-host-native-20261031T203834Z', client: null, kind: 'agent' }),
     ];
     setupActivity({ development: activityPayload(items) });
     renderApp('/activity?project=demo');
@@ -288,8 +302,8 @@ describe('activity prototype structure and product language', () => {
 
   it('keeps the client unnamed when only one side of the attribution is disclosed', async () => {
     const items = [
-      event('client-null-attributed', 'execution.report', WORK_A, KNOWN_ACTOR, 0, { name: 'Alex Example', client: null, clientAttributed: true }),
-      event('client-name-unattributed', 'task.assign', WORK_B, KNOWN_ACTOR, 1, { name: null, client: 'Synthetic Client' }),
+      event('client-null-attributed', 'execution.report', WORK_A, KNOWN_ACTOR, 0, { name: 'Alex Example', client: null, kind: 'agent' }),
+      event('client-name-unattributed', 'task.assign', WORK_B, KNOWN_ACTOR, 1, { name: null, client: 'Synthetic Client', kind: 'human' }),
     ];
     setupActivity({ development: activityPayload(items) });
     renderApp('/activity?project=demo');
@@ -297,6 +311,33 @@ describe('activity prototype structure and product language', () => {
     expect(tableRows()[0].textContent).toContain('Alex Example');
     expect(tableRows()[0].textContent).not.toContain('Synthetic Client');
     expect(tableRows()[1].textContent).toContain('未登记姓名（通过 Synthetic Client）');
+  });
+
+  // AWR-PPD-062: the recorded actor kind decides who acted. Every real request carries
+  // a client id, so its presence or absence says nothing and no longer takes part.
+  it('follows the recorded actor kind, whatever the row\'s client id says', async () => {
+    const items = [
+      event('agent-without-client-id', 'execution.report', WORK_A, KNOWN_ACTOR, 0, { client: 'Synthetic Client', kind: 'agent', withClientId: false }),
+      event('human-with-client-id', 'task.assign', WORK_B, KNOWN_ACTOR, 1, { client: 'Synthetic Client', kind: 'human', withClientId: true }),
+      event('kind-withheld', 'review.decide', WORK_A, KNOWN_ACTOR, 2, { client: 'Synthetic Client', kind: null, withClientId: true }),
+      event('kind-missing', 'decision.request', WORK_B, KNOWN_ACTOR, 3, { client: 'Synthetic Client', withClientId: false }),
+      event('system-actor', 'planning.propose', null, KNOWN_ACTOR, 4, { client: 'Synthetic Client', kind: 'system', withClientId: true }),
+      event('agent-undisclosed-person', 'update.record', null, KNOWN_ACTOR, 5, { name: null, client: 'Synthetic Client', kind: 'agent', withClientId: true }),
+    ];
+    setupActivity({ development: activityPayload(items) });
+    renderApp('/activity?project=demo');
+    await waitFor(() => expect(tableRows()).toHaveLength(6));
+    const who = () => tableRows().map((row) => row.querySelector('td:nth-child(2)')?.textContent);
+    expect(who()).toEqual([
+      'Synthetic Client（Alex Example）',
+      'Alex Example（通过 Synthetic Client）',
+      'Alex Example',
+      'Alex Example',
+      'Alex Example',
+      'Synthetic Client（未登记姓名）',
+    ]);
+    expect(document.body.textContent).not.toContain('synthetic-client-');
+    expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('page-activity')))).toEqual([]);
   });
 
   it('uses task titles, never work keys, and makes only rows with a resolved task navigable', async () => {
@@ -449,7 +490,7 @@ describe('activity prototype structure and product language', () => {
   it('keeps a machine-shaped client name out of the sentence', async () => {
     const items = [
       event('machine-client', 'execution.report', WORK_A, KNOWN_ACTOR, 0, {
-        name: 'Alex Example', client: 'observer-host-native-20261031T203834Z', clientAttributed: true,
+        name: 'Alex Example', client: 'observer-host-native-20261031T203834Z', kind: 'agent',
       }),
     ];
     setupActivity({ development: activityPayload(items) });

@@ -144,6 +144,13 @@ before issuing a code; cancellation consumes the transaction and returns
 echoed into the retry page or errors.
 
 Client names and callbacks are escaped and explicitly labeled as self-registered.
+Approval also records the client's registered name with the credential the member
+entered (`credentials.client_name`, schema 68): the server drops control characters
+and keeps at most 120 characters before the write, the first approved connection
+names a credential and later connections through it keep that name. The name is
+self-reported display text that the activity ledger discloses under the
+`directory.read` gate; it grants nothing, and every operation still derives its
+authority from the live credential.
 The page uses no scripts or external assets. Responses set no-store, frame
 protection and a restrictive CSP. Consent forms use `Referrer-Policy: same-origin`
 so browsers preserve the issuer Origin on the form POST without sending a

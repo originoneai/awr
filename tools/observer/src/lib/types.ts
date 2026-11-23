@@ -135,13 +135,21 @@ export interface TeamOverviewModelResponse {
 
 export type TeamIdentity = NonNullable<TeamOverviewResponse['identity']>;
 
+/** The recorded kind of the actor behind an audit row. */
+export type TeamActivityActorKind = 'agent' | 'human' | 'system';
+
 /** AWR-PPD-055: the audit's own identity disclosure. Absent or null fields mean the
- *  directory-read gate did not disclose them; older replies carry no object at all. */
+ *  directory-read gate did not disclose them; older replies carry no object at all.
+ *  AWR-PPD-062: `kind` is the actor's recorded kind and follows the same gate. */
 export interface TeamActivityIdentity {
   person_id?: string | null;
   display_name?: string | null;
+  kind?: TeamActivityActorKind | null;
 }
 
+/** AWR-PPD-062: `display_name` is the name the client registered for itself when the
+ *  member approved a connection with the credential behind the row. Self-reported text
+ *  for display only; null when nothing was recorded or the gate withheld it. */
 export interface TeamActivityClient {
   display_name?: string | null;
 }

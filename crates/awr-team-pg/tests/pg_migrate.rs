@@ -3,6 +3,238 @@ mod common;
 use awr_team_pg::{EXPECTED_SCHEMA_VERSION, check_schema, migrate};
 use serde_json::{Value, json};
 
+async fn credentials_shape(admin: &tokio_postgres::Client) -> (Vec<String>, Vec<String>) {
+    let columns = admin
+        .query(
+            "SELECT column_name FROM information_schema.columns
+             WHERE table_schema='awr_team' AND table_name='credentials' ORDER BY ordinal_position",
+            &[],
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.get::<_, String>(0))
+        .collect::<Vec<_>>();
+    let constraints = admin
+        .query(
+            "SELECT conname FROM pg_constraint WHERE conrelid='awr_team.credentials'::regclass
+             ORDER BY conname",
+            &[],
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.get::<_, String>(0))
+        .collect::<Vec<_>>();
+    (columns, constraints)
+}
+
+// AWR-PPD-062 (schema 68): the upgrade adds exactly one nullable column to
+// `credentials` and nothing else. Existing credentials read NULL from it. Numbers skip
+// 67 on this branch: that version belongs to a change that has not landed, and the
+// migration list applies by version.
+#[tokio::test]
+async fn schema68_adds_only_a_nullable_client_name_and_keeps_old_credentials_null() {
+    let (_guard, admin, db) = common::historical_team_schema(66).await;
+    admin
+        .batch_execute(
+            "INSERT INTO awr_team.tenants(id,name,status)
+               VALUES('name-tenant','Synthetic names','active'),('other-name-tenant','Other','active');
+             INSERT INTO awr_team.actors(tenant_id,id,kind,display_name,status)
+               VALUES('name-tenant','member','human','Synthetic Member','active');
+             INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status)
+               VALUES('name-tenant','name-project','names','team','epoch','active');
+             INSERT INTO awr_team.project_memberships(tenant_id,project_id,actor_id,role)
+               VALUES('name-tenant','name-project','member','worker');
+             INSERT INTO awr_team.credentials(tenant_id,id,actor_id,client_id,secret_hash)
+               VALUES('name-tenant','old-credential','member','old-client','hash-a'),
+                     ('name-tenant','scoped-credential','member','old-client','hash-b');
+             UPDATE awr_team.credentials SET project_id='name-project'
+               WHERE tenant_id='name-tenant' AND id='scoped-credential'",
+        )
+        .await
+        .unwrap();
+    let (columns_before, constraints_before) = credentials_shape(&admin).await;
+    assert!(!columns_before.iter().any(|column| column == "client_name"));
+    let old_row: Value = admin
+        .query_one(
+            "SELECT to_jsonb(c) FROM awr_team.credentials c
+             WHERE tenant_id='name-tenant' AND id='old-credential'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+
+    let ddl = include_str!("../migrations/20261123000068_credential_client_name.sql");
+    assert!(
+        admin
+            .batch_execute(&ddl.replace(
+                "UPDATE awr_team.schema_state",
+                "SELECT 1/0; UPDATE awr_team.schema_state"
+            ))
+            .await
+            .is_err()
+    );
+    admin.batch_execute("ROLLBACK").await.unwrap();
+    let (columns_rolled_back, constraints_rolled_back) = credentials_shape(&admin).await;
+    assert_eq!(columns_rolled_back, columns_before);
+    assert_eq!(constraints_rolled_back, constraints_before);
+    assert_eq!(
+        admin
+            .query_one("SELECT version FROM awr_team.schema_state", &[])
+            .await
+            .unwrap()
+            .get::<_, i32>(0),
+        66
+    );
+
+    migrate(&admin).await.unwrap();
+    migrate(&admin).await.unwrap();
+    check_schema(&admin).await.unwrap();
+    assert_eq!(EXPECTED_SCHEMA_VERSION, 68);
+    let mut expected_columns = columns_before.clone();
+    expected_columns.push("client_name".to_owned());
+    let (columns_after, constraints_after) = credentials_shape(&admin).await;
+    assert_eq!(columns_after, expected_columns);
+    let added: Vec<_> = constraints_after
+        .iter()
+        .filter(|name| !constraints_before.contains(name))
+        .collect();
+    assert_eq!(added.len(), 1, "one bound on the new column: {added:?}");
+    let column = admin
+        .query_one(
+            "SELECT is_nullable,data_type,column_default FROM information_schema.columns
+             WHERE table_schema='awr_team' AND table_name='credentials' AND column_name='client_name'",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(column.get::<_, String>(0), "YES");
+    assert_eq!(column.get::<_, String>(1), "text");
+    assert_eq!(column.get::<_, Option<String>>(2), None);
+
+    // Credentials that predate the upgrade carry no name, and their row is otherwise unchanged.
+    let old_rows = admin
+        .query(
+            "SELECT id,client_name FROM awr_team.credentials WHERE tenant_id='name-tenant' ORDER BY id",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(old_rows.len(), 2);
+    assert!(
+        old_rows
+            .iter()
+            .all(|row| row.get::<_, Option<String>>(1).is_none())
+    );
+    let mut expected_row = old_row;
+    expected_row["client_name"] = Value::Null;
+    assert_eq!(
+        admin
+            .query_one(
+                "SELECT to_jsonb(c) FROM awr_team.credentials c
+                 WHERE tenant_id='name-tenant' AND id='old-credential'",
+                &[],
+            )
+            .await
+            .unwrap()
+            .get::<_, Value>(0),
+        expected_row
+    );
+
+    // The column keeps the registered bound: 1..=120 characters and no control character.
+    for (value, accepted) in [
+        ("'Synthetic Client'", true),
+        ("repeat('x',120)", true),
+        ("repeat('客',120)", true),
+        ("E'bad\\nname'", false),
+        ("repeat('x',121)", false),
+        ("''", false),
+    ] {
+        let statement = format!(
+            "UPDATE awr_team.credentials SET client_name={value}
+             WHERE tenant_id='name-tenant' AND id='old-credential'"
+        );
+        assert_eq!(
+            admin.execute(&statement, &[]).await.is_ok(),
+            accepted,
+            "database bound answered {value} differently"
+        );
+        admin
+            .execute(
+                "UPDATE awr_team.credentials SET client_name=NULL
+                 WHERE tenant_id='name-tenant' AND id='old-credential'",
+                &[],
+            )
+            .await
+            .unwrap();
+    }
+
+    // Tenant isolation and the app role's write path carry over to the new column.
+    awr_team_pg::Bootstrap::grant_app(&admin, "awr_app")
+        .await
+        .unwrap();
+    let app = common::app_client(&db).await;
+    app.batch_execute(
+        "SELECT set_config('awr.tenant_id','other-name-tenant',false),
+                set_config('awr.project_id','name-project',false)",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        app.query_one("SELECT count(*) FROM awr_team.credentials", &[])
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        0
+    );
+    app.batch_execute(
+        "SELECT set_config('awr.tenant_id','name-tenant',false),
+                set_config('awr.project_id','name-project',false)",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        app.execute(
+            "UPDATE awr_team.credentials SET client_name='App Written'
+             WHERE tenant_id='name-tenant' AND id='scoped-credential'",
+            &[],
+        )
+        .await
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        app.query_one(
+            "SELECT client_name FROM awr_team.credentials
+             WHERE tenant_id='name-tenant' AND id='old-credential'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get::<_, Option<String>>(0),
+        None
+    );
+
+    // The established old-binary gate refuses a schema newer than it understands.
+    admin
+        .execute(
+            "UPDATE awr_team.schema_state SET version=$1 WHERE component='awr_team'",
+            &[&(EXPECTED_SCHEMA_VERSION + 1)],
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        check_schema(&admin).await,
+        Err(awr_team_pg::PgError::SchemaIncompatible(_))
+    ));
+    assert!(matches!(
+        migrate(&admin).await,
+        Err(awr_team_pg::PgError::SchemaIncompatible(_))
+    ));
+}
+
 #[tokio::test]
 async fn schema64_project_updates_are_atomic_versioned_and_isolated() {
     let (_guard, admin, db) = common::historical_team_schema(63).await;

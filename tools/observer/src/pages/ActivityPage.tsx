@@ -189,18 +189,19 @@ export function ActivityPage() {
   function actorText(event: OperationEvent): string {
     // AWR-PPD-055: the audit record carries its own identity disclosure. The person's
     // display name is the fact; a machine identifier in that field is never shown as a
-    // name. The client is named only when the record discloses it. The sentence form
-    // follows the record's client attribution (client_id): attributed to a client reads
-    // "client (name)", unattributed reads "name (via client)". The server's audit does not
-    // name clients yet (AWR-PPD-062) and does not say whether an Agent or a person acted, so
-    // on live data only the person's name shows today; the demo carries both facts.
+    // name. The client is named only when the record discloses it (AWR-PPD-062: the name
+    // the client registered for itself). The sentence form follows the recorded actor
+    // kind: an Agent's run reads "client (name)", a person acting through a client reads
+    // "name (via client)". Every real request carries a client id, so that id cannot
+    // tell the two apart. Without a recorded kind the record cannot say who acted, so
+    // only the person's name shows.
     const recordedName = typeof event.actor?.display_name === 'string' ? event.actor.display_name.trim() : '';
     const name = recordedName && readsAsName(recordedName) ? recordedName : t('activity.unregisteredName');
     const recordedClient = typeof event.client?.display_name === 'string' ? event.client.display_name.trim() : '';
     if (!recordedClient || !readsAsName(recordedClient)) return name;
-    return event.client_id
-      ? t('activity.actorByClient', { client: recordedClient, name })
-      : t('activity.actorViaClient', { client: recordedClient, name });
+    if (event.actor?.kind === 'agent') return t('activity.actorByClient', { client: recordedClient, name });
+    if (event.actor?.kind === 'human') return t('activity.actorViaClient', { client: recordedClient, name });
+    return name;
   }
 
   function taskFor(workId: string | null): ResolvedTask | null {
