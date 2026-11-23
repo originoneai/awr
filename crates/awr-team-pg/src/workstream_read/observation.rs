@@ -266,6 +266,7 @@ pub(super) async fn read_for_prepare(
         data["ordinary_decisions"] =
             super::decisions::context(tx, tenant, project, auth, work).await?;
     }
+    data["lessons"] = Box::pin(super::lessons::context(tx, tenant, project, auth, work)).await?;
     let owns_session = data["session"]["actor_id"] == auth.actor_id
         && data["session"]["client_id"] == auth.client_id;
     // Keep the added read futures on the heap. Preparation is nested inside

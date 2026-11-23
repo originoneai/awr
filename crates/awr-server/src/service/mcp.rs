@@ -1210,6 +1210,55 @@ fn add_remaining_closed_command_schemas(command: &mut Value) {
     }
 }
 
+fn add_lesson_input_schema(command: &mut Value, query: &mut Value) {
+    let text = |limit: u64| json!({"type":"string","minLength":1,"maxLength":limit,"x-nonblank-utf8":true,"x-max-utf8-bytes":limit});
+    let identity = json!({"type":"string","minLength":1,"maxLength":128,"x-identity-utf8":{"maxUtf8Bytes":128,"rejectControls":true}});
+    let content = json!({"type":"object","additionalProperties":false,
+        "required":["title","original_words","when_to_use","not_applicable","observed_result","scope","dependencies"],
+        "properties":{"title":text(200),"original_words":text(8192),"when_to_use":text(2048),
+            "not_applicable":text(2048),"observed_result":text(2048),
+            "scope":{"type":"object","additionalProperties":false,"required":["path_prefixes","task_tags"],
+                "properties":{"path_prefixes":{"type":"array","maxItems":20,"items":text(1024)},
+                    "task_tags":{"type":"array","maxItems":20,"items":identity}},
+                "anyOf":[{"properties":{"path_prefixes":{"minItems":1}}},{"properties":{"task_tags":{"minItems":1}}}]},
+            "dependencies":{"type":"object","additionalProperties":false,"required":["documents","decision_ids"],
+                "properties":{"documents":{"type":"array","maxItems":20,"items":{"type":"object","additionalProperties":false,
+                    "required":["path","sha256"],"properties":{"path":text(1024),"sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"}}}},
+                    "decision_ids":{"type":"array","maxItems":20,"items":identity}}}}});
+    command["properties"]["args"]["properties"].as_object_mut().unwrap().extend(
+        json!({"content":content,"lesson_id":identity,"expected_lesson_version":{"type":"string","pattern":"^[1-9][0-9]*$"}}).as_object().unwrap().clone());
+    for op in [
+        "lesson.propose",
+        "lesson.confirm",
+        "lesson.revoke",
+        "lesson.mark_not_applicable",
+        "lesson.promote",
+    ] {
+        let mut required = vec!["session_id", "expected_session_version"];
+        if op == "lesson.propose" {
+            required.push("content");
+        } else {
+            required.extend(["lesson_id", "expected_lesson_version"]);
+        }
+        if op == "lesson.mark_not_applicable" {
+            required.push("reason");
+        }
+        let optional = if op == "lesson.confirm" {
+            vec!["content"]
+        } else {
+            vec![]
+        };
+        add_closed_command_args_schema(command, op, &required, &optional);
+        if op == "lesson.mark_not_applicable" {
+            command["allOf"].as_array_mut().unwrap().last_mut().unwrap()["then"]["properties"]["args"]
+                ["properties"]["reason"] = text(2048);
+        }
+    }
+    query["allOf"].as_array_mut().unwrap().push(json!({
+        "if":{"properties":{"op":{"const":"lessons.list"}},"required":["op"]},
+        "then":{"required":["work_id"],"not":{"required":["session_id"]}}}));
+}
+
 fn catalog() -> Vec<Tool> {
     let mut query = json!({"type":"object","additionalProperties":false,
     "required":["protocol_version","op"],"properties":{
@@ -1493,6 +1542,7 @@ fn catalog() -> Vec<Tool> {
             "then":{"properties":{"args":args}}}));
     }
     add_remaining_closed_command_schemas(&mut command);
+    add_lesson_input_schema(&mut command, &mut query);
     command["properties"]["args"]["properties"]["session_id"] = nullable_session_id;
     command["properties"]["args"]["properties"]["expected_session_version"] =
         nullable_expected_session_version;
@@ -1667,11 +1717,11 @@ fn catalog() -> Vec<Tool> {
     vec![
         input_contracts::tool(),
         Tool::new("awr_team_query",
-            "Scoped Team reads. Begin with capabilities (current identity/permissions), then work.next (own sessions and scoped task navigation). Consume work.prepare before any claim or execution. Use work.snapshot for context and observation in one read transaction, within max_context_bytes; its context_hash remains compatible with work.prepare. Supervisors use selector-free work.inbox. work.list / work.search summaries carry an execution liveness fact: the active/ended state of the work's session of record under its current ownership version (the work.observe selector: live claim, active session, latest checkpoint, then newer session id), plus that session's last checkpoint time; it names no session, client or actor, reads no checkpoint content, and grants no authority. work.observe shares bounded neutral candidate/check/review/integration/publication facts and independently scoped role guidance with prepare/snapshot/inbox, preserving context hashes. Follow one action.op and its optional action.query; recheck_on names refresh triggers. Required context and unknown effects retain priority. max_context_bytes bounds the full observation response. Receipt access and unknown model/usage remain explicit. audit.requests and audit.development provide paged metadata/history under the same personal/project permission boundary; each item additionally carries an `actor` object (person_id, display_name) and a `client` object (display_name) resolved only from recorded, unambiguous, currently active person-agent bindings — agent accounts through active bindings, human accounts through the shared review resolver, conflicting or inactive relationships stay null — and both objects are filled only when the reader separately holds the directory.read authority (agent readers also need a live Project-scoped read delegation); otherwise every identity field is null while the audit rows return unchanged, and `client.display_name` stays null until a per-client display-name source is registered. Ops audit: audit.history / audit.export / audit.count (TMCP-040) — members see own allowed records; project-wide requires audit.read_project. Counts/exports use the same scope. Not full chat/tool-IO/token billing; PG audit does not claim DB-owner non-repudiation. Tool discovery is navigation-only; each query rechecks authority. Re-prepare after relevant changes. No execution admission. Approved cross-stream content: delivery.exports with consumer work_id, then artifact.content or bounded artifact.segment with export_id and expected_sha256. For segments follow every next_query, concatenate contiguous ranges from zero and verify the full length/digest; the last page alone is not a complete read. Disclosure never satisfies adoption. Neutral facts: delivery.neutral.inspect. Current source synchronization: delivery.source.status. Missing neutral command response: delivery.neutral.outcome with actual work_id and original client retry ID. delivery.integration.inspect uses the generated IntegrationRequest.request_id (data.integration_id), preserving the original candidate. Neutral inspection includes scoped connector versions; review.inspect includes decision IDs. Descriptions grant no authority.",
+            "Read task-scoped lessons through lessons.list and own confirmation candidates through work.inbox; use work_id for lessons.list. Lesson attribution is recorded by the author’s Agent and carries no personnel evaluation score. Scoped Team reads. Begin with capabilities (current identity/permissions), then work.next (own sessions and scoped task navigation). Consume work.prepare before any claim or execution. Use work.snapshot for context and observation in one read transaction, within max_context_bytes; its context_hash remains compatible with work.prepare. Supervisors use selector-free work.inbox. work.list / work.search summaries carry an execution liveness fact: the active/ended state of the work's session of record under its current ownership version (the work.observe selector: live claim, active session, latest checkpoint, then newer session id), plus that session's last checkpoint time; it names no session, client or actor, reads no checkpoint content, and grants no authority. work.observe shares bounded neutral candidate/check/review/integration/publication facts and independently scoped role guidance with prepare/snapshot/inbox, preserving context hashes. Follow one action.op and its optional action.query; recheck_on names refresh triggers. Required context and unknown effects retain priority. max_context_bytes bounds the full observation response. Receipt access and unknown model/usage remain explicit. audit.requests and audit.development provide paged metadata/history under the same personal/project permission boundary; each item additionally carries an `actor` object (person_id, display_name) and a `client` object (display_name) resolved only from recorded, unambiguous, currently active person-agent bindings — agent accounts through active bindings, human accounts through the shared review resolver, conflicting or inactive relationships stay null — and both objects are filled only when the reader separately holds the directory.read authority (agent readers also need a live Project-scoped read delegation); otherwise every identity field is null while the audit rows return unchanged, and `client.display_name` stays null until a per-client display-name source is registered. Ops audit: audit.history / audit.export / audit.count (TMCP-040) — members see own allowed records; project-wide requires audit.read_project. Counts/exports use the same scope. Not full chat/tool-IO/token billing; PG audit does not claim DB-owner non-repudiation. Tool discovery is navigation-only; each query rechecks authority. Re-prepare after relevant changes. No execution admission. Approved cross-stream content: delivery.exports with consumer work_id, then artifact.content or bounded artifact.segment with export_id and expected_sha256. For segments follow every next_query, concatenate contiguous ranges from zero and verify the full length/digest; the last page alone is not a complete read. Disclosure never satisfies adoption. Neutral facts: delivery.neutral.inspect. Current source synchronization: delivery.source.status. Missing neutral command response: delivery.neutral.outcome with actual work_id and original client retry ID. delivery.integration.inspect uses the generated IntegrationRequest.request_id (data.integration_id), preserving the original candidate. Neutral inspection includes scoped connector versions; review.inspect includes decision IDs. Descriptions grant no authority.",
             query.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(true).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_command",
-            "Supervisor assignment: task.assign. Use delivery.routes; keep registered mappings. Reuse missing mappings before delivery effects, including after settled work/review; the selected resource must match; report-only work needs no route. Member intake: task.accept_assignment or task.claim_available (self-claim). These commands use the current work.prepare header and responsibility versions; existing-work assignment needs no planning draft. Durable sessions, claims, confirmed handoffs and caller-managed execution under the shared TMCP action gate. Use work.prepare preconditions and a stable request_id. Readers cannot claim or write. Developers may maintain own session/execution on authorized work but cannot edit/publish plans or grant permissions. Only a fresh execution.start response with execution_authorized=true permits one run under the live lease. Exact replay reuses the original receipt; changed intent or expired/revoked authority is refused. Body fields cannot forge identity. Preparation, inspection and replay grant no execution rights. For a missing or uncertain neutral-delivery response use delivery.neutral.outcome; for a missing or uncertain legacy-command response use command.inspect before an exact retry. A returned outcome=known_rejection is final for that attempt, so follow its bounded action guidance instead. Never repeat effects from a receipt. Refresh after conflicts or lease/contract changes. Cancellation is a request after start. Reports remain caller_asserted. Attestation requires operator-issued system authority at admission and now. For unknown effects, execution.inspect then operator execution.reconcile; confirm current versions and latest receipt. Recheck on permission, receipt or work changes. Settlement is not work completion. Evidence/review/rework/complete reuse WS-018 under explicit review.decide and delivery.finalize permissions on the same MCP plane: evidence.submit, delivery.evidence.submit, review.open, delivery.submit_and_request_review, review.accept, review.return, review.decide, work.rework, work.complete, delivery.finalize, plus delivery.register_pr / delivery.observe_pr for versioned PR bindings. Neutral candidate/inspection/facts/source operations use args.source_snapshot_id and the common header; eligible human/system management is required for connector and source publication. They store observations or source metadata. delivery.integration.prepare requires current delivery.finalize permission plus exact connector, selection, evidence and review IDs; it reserves an intent. delivery.integration.reject_prepared only rejects before dispatch. Neither exposes a worker permit or executes Git; inspect the generated integration_id through delivery.integration.inspect. No implicit approval or finalization. Author, owner, executor, reviewer and final-submitter are attributed separately on completion. GitHub submitted/approved/merged are distinct from AWR acceptance; URL, green CI, admin role or already-merged cannot skip acceptance. Head/contract/artifact mismatch invalidates approvals. Independence is by person; a second agent of the same person is not team-independent. The explicit caller_managed_execution_and_simulated_member_review policy supports review.decide only when capabilities.simulated_member_review is present: unique active member bindings, explicit Agent review grants and live Review delegation, with member/actor/client distinct from the immutable executor, submitter and round opener. One controller may operate distinct simulated members. Inspect full origins through review.inspect; default receipts carry short summaries. Simulated finalization requires current delivery.finalize authority, actual artifact bytes, settled successful execution and the exact immutable review basis. Repository-capable completion policies with a configured delivery chain and selected candidate require its confirmed integration (IntegrationNotConfirmed otherwise). Without a configured chain, artifact review follows its completion policy; repository integration remains unconfirmed. Agents need an explicit live finalize_delivery delegation; Review or development grants are insufficient. Neutral fast-forward integration eligibility reuses that basis; preparation grants no repository rights or effect. Default completion receipts add only a basis summary; human/team-human approval flags stay false. Recheck after authority, source, evidence or review changes. AWR acceptance, repository integration and confirmed source publication remain distinct facts. Explicit caller_managed_execution_and_agent_review contracts allow review.decide with both agent_review membership and live Review delegation, a distinct author actor/client, and false human/team-acceptance flags; completion additionally requires artifact bytes, matching input/output bindings and a successful caller report reconciled by an authorized operator. Its evidence stays caller_asserted. Same-stream inputs require explicit per-edge dependency_acceptance: V2 agent_reviewed_caller_asserted_reconciled or V5 simulated_member_independent. Omitted Agent or simulated inputs remain blocked; original selected receipt, current contract and immutable review must match. Approved disclosure uses delivery.export.publish/revoke under delivery.finalize; capabilities.approved_artifact_exports lists exact arguments. V6 current_contract cross-stream inputs require delivery.exports, exact artifact.content, then consumer delivery.adopt under execution.request_and_report_own with a live session and responsibility/export/disclosure/adoption selectors from fresh work.prepare. Pool members and their pending assignees may adopt before claiming/accepting; reading alone cannot unlock work. All intake, start and finalization gates revalidate the selected adoption. Revocation or relevant version/proof changes require re-prepare and suitable republication/adoption. fixed_delivery adopts a source-pinned historical export replayed under the awr-approved-artifact-export-v2 codec against its recorded provider_source_snapshot_id; it stays valid across provider progress until its pinned artifact is revoked or unavailable; never substitute current_contract for a fixed_delivery edge. Adoption and replays grant no execution rights. PR facts require fact_source+observed_at: Agent verification uses operator_recorded_observation; authorized_human_github_verification requires an actual human observation. No webhook auto-sync claim. Completion receipts are for WS-030 adoption and omit provider-private sessions.",
+            "Record and confirm reusable lessons through lesson.propose / lesson.confirm; revoke your own lesson with lesson.revoke, report a bounded reason with lesson.mark_not_applicable, and promote a confirmed lesson through lesson.promote with supervisor duty. Use a current task-bound own Agent session and stable request_id. The server derives person, source task and session; supplied attribution fields are refused. Original words are recorded by the author’s Agent, verbatim, with candidate visibility limited to that person until confirmation. Withdrawal is terminal; reads clear withdrawn content. Lesson content and feedback stay out of audit and replay receipts. Supervisor assignment: task.assign. Use delivery.routes; keep registered mappings. Reuse missing mappings before delivery effects, including after settled work/review; the selected resource must match; report-only work needs no route. Member intake: task.accept_assignment or task.claim_available (self-claim). These commands use the current work.prepare header and responsibility versions; existing-work assignment needs no planning draft. Durable sessions, claims, confirmed handoffs and caller-managed execution under the shared TMCP action gate. Use work.prepare preconditions and a stable request_id. Readers cannot claim or write. Developers may maintain own session/execution on authorized work but cannot edit/publish plans or grant permissions. Only a fresh execution.start response with execution_authorized=true permits one run under the live lease. Exact replay reuses the original receipt; changed intent or expired/revoked authority is refused. Body fields cannot forge identity. Preparation, inspection and replay grant no execution rights. For a missing or uncertain neutral-delivery response use delivery.neutral.outcome; for a missing or uncertain legacy-command response use command.inspect before an exact retry. A returned outcome=known_rejection is final for that attempt, so follow its bounded action guidance instead. Never repeat effects from a receipt. Refresh after conflicts or lease/contract changes. Cancellation is a request after start. Reports remain caller_asserted. Attestation requires operator-issued system authority at admission and now. For unknown effects, execution.inspect then operator execution.reconcile; confirm current versions and latest receipt. Recheck on permission, receipt or work changes. Settlement is not work completion. Evidence/review/rework/complete reuse WS-018 under explicit review.decide and delivery.finalize permissions on the same MCP plane: evidence.submit, delivery.evidence.submit, review.open, delivery.submit_and_request_review, review.accept, review.return, review.decide, work.rework, work.complete, delivery.finalize, plus delivery.register_pr / delivery.observe_pr for versioned PR bindings. Neutral candidate/inspection/facts/source operations use args.source_snapshot_id and the common header; eligible human/system management is required for connector and source publication. They store observations or source metadata. delivery.integration.prepare requires current delivery.finalize permission plus exact connector, selection, evidence and review IDs; it reserves an intent. delivery.integration.reject_prepared only rejects before dispatch. Neither exposes a worker permit or executes Git; inspect the generated integration_id through delivery.integration.inspect. No implicit approval or finalization. Author, owner, executor, reviewer and final-submitter are attributed separately on completion. GitHub submitted/approved/merged are distinct from AWR acceptance; URL, green CI, admin role or already-merged cannot skip acceptance. Head/contract/artifact mismatch invalidates approvals. Independence is by person; a second agent of the same person is not team-independent. The explicit caller_managed_execution_and_simulated_member_review policy supports review.decide only when capabilities.simulated_member_review is present: unique active member bindings, explicit Agent review grants and live Review delegation, with member/actor/client distinct from the immutable executor, submitter and round opener. One controller may operate distinct simulated members. Inspect full origins through review.inspect; default receipts carry short summaries. Simulated finalization requires current delivery.finalize authority, actual artifact bytes, settled successful execution and the exact immutable review basis. Repository-capable completion policies with a configured delivery chain and selected candidate require its confirmed integration (IntegrationNotConfirmed otherwise). Without a configured chain, artifact review follows its completion policy; repository integration remains unconfirmed. Agents need an explicit live finalize_delivery delegation; Review or development grants are insufficient. Neutral fast-forward integration eligibility reuses that basis; preparation grants no repository rights or effect. Default completion receipts add only a basis summary; human/team-human approval flags stay false. Recheck after authority, source, evidence or review changes. AWR acceptance, repository integration and confirmed source publication remain distinct facts. Explicit caller_managed_execution_and_agent_review contracts allow review.decide with both agent_review membership and live Review delegation, a distinct author actor/client, and false human/team-acceptance flags; completion additionally requires artifact bytes, matching input/output bindings and a successful caller report reconciled by an authorized operator. Its evidence stays caller_asserted. Same-stream inputs require explicit per-edge dependency_acceptance: V2 agent_reviewed_caller_asserted_reconciled or V5 simulated_member_independent. Omitted Agent or simulated inputs remain blocked; original selected receipt, current contract and immutable review must match. Approved disclosure uses delivery.export.publish/revoke under delivery.finalize; capabilities.approved_artifact_exports lists exact arguments. V6 current_contract cross-stream inputs require delivery.exports, exact artifact.content, then consumer delivery.adopt under execution.request_and_report_own with a live session and responsibility/export/disclosure/adoption selectors from fresh work.prepare. Pool members and their pending assignees may adopt before claiming/accepting; reading alone cannot unlock work. All intake, start and finalization gates revalidate the selected adoption. Revocation or relevant version/proof changes require re-prepare and suitable republication/adoption. fixed_delivery adopts a source-pinned historical export replayed under the awr-approved-artifact-export-v2 codec against its recorded provider_source_snapshot_id; it stays valid across provider progress until its pinned artifact is revoked or unavailable; never substitute current_contract for a fixed_delivery edge. Adoption and replays grant no execution rights. PR facts require fact_source+observed_at: Agent verification uses operator_recorded_observation; authorized_human_github_verification requires an actual human observation. No webhook auto-sync claim. Completion receipts are for WS-030 adoption and omit provider-private sessions.",
             command.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(false).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_update_record",
@@ -4952,6 +5002,97 @@ mod tests {
                 .contains("omitted for this client"),
             "the full description is untouched"
         );
+    }
+
+    #[test]
+    fn lesson_catalog_closes_attribution_fields_and_exposes_each_operation() {
+        let tools = catalog();
+        let command = &tools
+            .iter()
+            .find(|t| t.name == "awr_team_command")
+            .unwrap()
+            .input_schema;
+        for op in [
+            "lesson.propose",
+            "lesson.confirm",
+            "lesson.revoke",
+            "lesson.mark_not_applicable",
+            "lesson.promote",
+        ] {
+            assert!(
+                command["properties"]["op"]["enum"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!(op))
+            );
+            let branch = command["allOf"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|b| b["if"]["properties"]["op"]["const"] == op)
+                .unwrap();
+            let args = &branch["then"]["properties"]["args"];
+            assert_eq!(args["additionalProperties"], false);
+            let required = args["required"].as_array().unwrap();
+            for key in ["session_id", "expected_session_version"] {
+                assert!(required.contains(&json!(key)));
+            }
+            for forbidden in [
+                "author_person_id",
+                "person_id",
+                "source_work_id",
+                "source_session_id",
+            ] {
+                assert!(
+                    args["properties"].get(forbidden).is_none(),
+                    "{op}: {forbidden}"
+                );
+            }
+            if op == "lesson.propose" {
+                assert!(required.contains(&json!("content")));
+                let c = &args["properties"]["content"];
+                assert_eq!(c["additionalProperties"], false);
+                assert_eq!(c["properties"]["original_words"]["maxLength"], 8192);
+                assert_eq!(c["properties"]["scope"]["additionalProperties"], false);
+                assert_eq!(
+                    c["properties"]["dependencies"]["additionalProperties"],
+                    false
+                );
+            } else {
+                for key in ["lesson_id", "expected_lesson_version"] {
+                    assert!(required.contains(&json!(key)));
+                }
+                assert_eq!(
+                    args["properties"].get("content").is_some(),
+                    op == "lesson.confirm"
+                );
+                assert_eq!(
+                    args["properties"].get("reason").is_some(),
+                    op == "lesson.mark_not_applicable"
+                );
+            }
+        }
+        let query = &tools
+            .iter()
+            .find(|t| t.name == "awr_team_query")
+            .unwrap()
+            .input_schema;
+        let branch = query["allOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|b| b["if"]["properties"]["op"]["const"] == "lessons.list")
+            .unwrap();
+        assert_eq!(branch["then"]["required"], json!(["work_id"]));
+        let description = tools
+            .iter()
+            .find(|t| t.name == "awr_team_command")
+            .unwrap()
+            .description
+            .as_deref()
+            .unwrap();
+        assert!(description.starts_with("Record and confirm reusable lessons"));
+        assert!(description.contains("server derives person, source task and session"));
     }
 
     #[test]

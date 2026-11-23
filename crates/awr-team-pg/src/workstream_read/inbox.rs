@@ -682,18 +682,29 @@ pub(super) async fn read(
         };
     let binding = hash(
         &json!({"reader":auth.binding,"snapshot":auth.snapshot,"catalog":auth.catalog,
-        "grants":auth.grant_versions,"op":"work.inbox"}),
+        "grants":auth.grant_versions,"op":"work.inbox","cursor_codec":"lesson_slots_v1"}),
     )?;
     let page = cursor(q, &binding)?;
     let limit = i64::from(q.limit.unwrap_or(20));
-    // Filter before pagination; private tasks never influence ordering or counts.
-    let rows = tx.query("SELECT c.work_id,c.title,c.contract_hash,o.workstream_id,o.ownership_version,c.definition_state
+    // Page task conditions and individual own confirmations in one stable order.
+    // The separator is excluded by work-id validation, so task and lesson cursors stay distinct.
+    let rows = tx.query("SELECT c.work_id,c.title,c.contract_hash,o.workstream_id,o.ownership_version,c.definition_state, slot.lesson_id, slot.page_key
         FROM awr_team.work_contracts c JOIN awr_team.workstream_snapshot_ownership o
           USING(tenant_id,project_id,snapshot_id,scope_id,work_id)
-        WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.snapshot_id=$3 AND c.work_id>$5
+        CROSS JOIN LATERAL (
+          SELECT ''::text lesson_id,c.work_id || chr(1) page_key
+          UNION ALL SELECT l.id,c.work_id || chr(1) || l.id FROM awr_team.lessons l
+            WHERE l.tenant_id=c.tenant_id AND l.project_id=c.project_id AND l.work_id=c.work_id
+              AND l.stage='candidate' AND l.status='active' AND $9 IN ('agent','human')
+              AND (($9='human' AND l.author_person_id=$10) OR EXISTS(SELECT 1 FROM awr_team.person_agent_bindings b JOIN awr_team.persons p
+                ON (p.tenant_id,p.project_id,p.id)=(b.tenant_id,b.project_id,b.person_id)
+                WHERE b.tenant_id=c.tenant_id AND b.project_id=c.project_id AND b.agent_id=$10
+                  AND b.person_id=l.author_person_id AND b.status='active' AND p.status='active'))
+        ) slot
+        WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.snapshot_id=$3 AND slot.page_key COLLATE \"C\">$5
           AND (o.workstream_id=ANY($4) OR EXISTS(SELECT 1 FROM unnest($7::text[],$8::text[]) allowed(work_id,workstream_id)
             WHERE allowed.work_id=c.work_id AND allowed.workstream_id=o.workstream_id))
-        ORDER BY c.work_id LIMIT $6", &[&tenant,&project,&auth.snapshot,&streams,&page.key,&(limit+1),&tasks,&owners]).await?;
+        ORDER BY slot.page_key COLLATE \"C\" LIMIT $6", &[&tenant,&project,&auth.snapshot,&streams,&page.key,&(limit+1),&tasks,&owners,&auth.actor_kind,&auth.actor_id]).await?;
     let mut items = Vec::new();
     for row in rows.iter().take(limit as usize) {
         let work: String = row.get(0);
@@ -715,6 +726,36 @@ pub(super) async fn read(
         .await?;
         let ready = observed["dependencies_ready_advisory"] == true;
         let hint = condition(auth, &observed, stream_id, &work, ready);
+        // Each candidate has its own slot; recovery/review conditions retain their task slot.
+        let lesson_id: String = row.get(6);
+        let hint = if lesson_id.is_empty() {
+            hint
+        } else {
+            let lesson = tx
+                .query_opt(
+                    "SELECT title.content_json->>'title',title.version FROM awr_team.lessons title
+                WHERE tenant_id=$1 AND project_id=$2 AND id=$3 AND author_person_id=$4",
+                    &[
+                        &tenant,
+                        &project,
+                        &lesson_id,
+                        &crate::workstream_command::lessons::reader_person(
+                            tx, tenant, project, &reader,
+                        )
+                        .await?,
+                    ],
+                )
+                .await?;
+            lesson.map(|l| {
+                json!({"code":"confirm_lesson","type":"确认经验",
+                    "when":"your Agent recorded a lesson candidate awaiting your confirmation",
+                    "because":["only the attributed person may confirm or revise this candidate"],
+                    "lesson_id":lesson_id,"lesson_version":l.get::<_,i64>(1).to_string(),"lesson_title":l.get::<_,String>(0),
+                    "action":{"op":"work.observe","query":{"protocol_version":1,"op":"work.observe","work_id":work,"workstream_id":stream},
+                        "note":"Review the candidate in your own Agent, then confirm, revise and confirm, or revoke it."},
+                    "recheck_on":"lesson, session or permission change"})
+            })
+        };
         if let Some(hint) = hint {
             let mut collaboration = observed["collaboration"].clone();
             // Query timing describes this read, not a change in the underlying facts.
@@ -724,17 +765,22 @@ pub(super) async fn read(
             let semantic = json!({"work":work,"contract":observed["contract_hash"],"code":hint["code"],
                 "responsibility":observed["responsibility"]["version"],"runtime":observed["runtime"],
                 "progress":{"phase":observed["progress"]["phase"],"blockers":observed["progress"]["blockers"]},
-                "waiting_user":observed["waiting_user"],"collaboration":collaboration,"dependencies_ready":ready});
+                "waiting_user":observed["waiting_user"],"collaboration":collaboration,"dependencies_ready":ready,
+                "lesson_id":hint["lesson_id"],"lesson_version":hint["lesson_version"]});
+            let title = hint["lesson_title"]
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| row.get::<_, String>(1));
             items.push(json!({"item_key":hash(&semantic)?,"work_id":work,"workstream_id":stream,
-                "contract_hash":observed["contract_hash"],"title":row.get::<_,String>(1).chars().take(160).collect::<String>(),
-                "title_truncated":row.get::<_,String>(1).chars().count()>160,
+                "contract_hash":observed["contract_hash"],"title":title.chars().take(160).collect::<String>(),
+                "title_truncated":title.chars().count()>160,
                 "guidance":hint,"next_query":hint["action"]["query"]}));
         }
     }
     let next = if rows.len() > limit as usize {
         next_cursor(
             &binding,
-            &rows[limit as usize - 1].get::<_, String>(0),
+            &rows[limit as usize - 1].get::<_, String>(7),
             0,
             -1,
         )

@@ -10,6 +10,7 @@ pub(crate) mod decisions;
 mod delivery;
 pub(crate) mod executions;
 pub(crate) mod handoffs;
+pub(crate) mod lessons;
 pub(crate) mod reviews;
 pub(crate) mod task_intake;
 mod updates;
@@ -30,6 +31,11 @@ use tokio_postgres::Transaction;
 
 pub(crate) const COMMANDS: &[&str] = &[
     "admission.decide",
+    "lesson.propose",
+    "lesson.confirm",
+    "lesson.revoke",
+    "lesson.mark_not_applicable",
+    "lesson.promote",
     "decision.request",
     "decision.respond",
     "decision.cancel",
@@ -128,6 +134,7 @@ struct End {
 enum Action {
     Admission(admission::Action),
     Decision(decisions::Action),
+    Lesson(lessons::Action),
     Start(Start),
     Checkpoint(Checkpoint),
     End(End),
@@ -211,6 +218,12 @@ impl WorkstreamCommand {
             return Ok(Action::Export(
                 crate::cross_workstream_exports::Action::parse(&self.op, self.args.clone())?,
             ));
+        }
+        if self.op.starts_with("lesson.") {
+            return Ok(Action::Lesson(lessons::Action::parse(
+                &self.op,
+                self.args.clone(),
+            )?));
         }
         match self.op.as_str() {
             "decision.request" | "decision.respond" | "decision.cancel" => Ok(Action::Decision(
@@ -724,6 +737,12 @@ impl WorkstreamCommandStore {
             Action::Admission(a) => {
                 admission::apply(&tx, tenant, project, &auth, &command, a).await?
             }
+            Action::Lesson(a) => {
+                Box::pin(lessons::apply(
+                    &tx, tenant, project, &auth, &command, ownership, a,
+                ))
+                .await?
+            }
             Action::Decision(a) => {
                 decisions::apply(&tx, tenant, project, &auth, &command, ownership, a).await?
             }
@@ -950,6 +969,7 @@ async fn apply(
         | Action::Review(_)
         | Action::Intake(_)
         | Action::Admission(_)
+        | Action::Lesson(_)
         | Action::Decision(_)
         | Action::Delivery(_)
         | Action::Export(_)
