@@ -16,10 +16,13 @@ const UPDATE_LATE_AFTER_DAYS = 7;
 /** Optional project-list facts. Their absence is not silently replaced with a health judgement. */
 export interface ProjectPeriodUpdate {
   id?: string | null;
+  periodLabel?: string | null;
   startsOn?: string | null;
   endsOn?: string | null;
   status?: string | null;
   summary?: string | null;
+  authorPersonId?: string | null;
+  authorName?: string | null;
   recordedAtUnixMs?: number | null;
 }
 
