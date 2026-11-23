@@ -404,6 +404,25 @@ fn preview_records_history_refs_rules_coverage_and_is_byte_for_byte_read_only() 
 }
 
 #[test]
+fn a_commit_adding_exactly_half_of_the_current_files_counts_as_a_bulk_import() {
+    // The rule is "reaches half": 2 of 4 current files added in one commit is a bulk import,
+    // 1 of 4 is not.
+    let p = Project::new("bulk-half");
+    p.init();
+    p.write("a.txt", "a\n");
+    p.commit_all("Add the first file");
+    p.write("b.txt", "b\n");
+    p.commit_all("Add the second file");
+    p.write("c.txt", "c\n");
+    p.write("d.txt", "d\n");
+    p.commit_all("Add two files at once");
+    let facts = Project::facts(&p.preview(&[]));
+    assert_eq!(commit(&facts, "Add two files at once")["bulk_import"], true);
+    assert_eq!(commit(&facts, "Add the second file")["bulk_import"], false);
+    assert_eq!(commit(&facts, "Add the first file")["bulk_import"], false);
+}
+
+#[test]
 fn completed_receipt_repeats_the_exact_fact_coverage() {
     let p = Project::new("receipt");
     p.init();
