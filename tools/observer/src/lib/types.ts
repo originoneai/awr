@@ -642,6 +642,65 @@ export interface ProjectDocumentsData {
   as_of: { at_unix_ms: number; source_snapshot_id: string; project_revision: string };
 }
 
+export interface TaskAcceptanceEvidenceItem {
+  criterion_id?: string | null;
+  text: string;
+  state: 'ok' | 'bad' | 'wait' | 'none';
+  detail?: string | null;
+}
+
+export interface TaskTimelineEntry {
+  id?: string | null;
+  at_unix_ms: number;
+  who: string;
+  what: string;
+  next?: string | null;
+  note?: string | null;
+  tone?: 'now' | 'ok' | 'bad' | null;
+}
+
+export interface TaskDependencyVersionDetail {
+  provider_work_id: string;
+  required_version_label?: string | null;
+  adopted_version_label?: string | null;
+  available_version_label?: string | null;
+}
+
+export interface ProjectGoalRecord {
+  goal_id: string;
+  project_id: string;
+  title: string;
+  status?: string | null;
+  health?: string | null;
+  summary?: string | null;
+}
+
+export interface ProjectGoalsData {
+  items: ProjectGoalRecord[];
+  total: number;
+  next_cursor: string | null;
+  truncated?: boolean;
+  as_of?: { at_unix_ms: number };
+}
+
+export interface ProjectLessonRecord {
+  lesson_id: string;
+  project_id: string;
+  title: string;
+  stage: 'candidate' | 'project' | 'group' | string;
+  state?: string | null;
+  author?: { person_id?: string | null; display_name?: string | null } | null;
+  tasks?: string[] | null;
+}
+
+export interface ProjectLessonsData {
+  items: ProjectLessonRecord[];
+  total: number;
+  next_cursor: string | null;
+  truncated?: boolean;
+  as_of?: { at_unix_ms: number };
+}
+
 export interface WorkSnapshotData {
   context_complete?: boolean;
   work_id?: string;
@@ -653,7 +712,7 @@ export interface WorkSnapshotData {
     observed_at_unix_ms?: number | null;
     progress?: Record<string, unknown> | null;
     reporting?: { client_reported_at_unix_ms?: number | null } & Record<string, unknown>;
-    client?: { actor_id?: string; actor_name?: string; client_id?: string; capabilities?: Record<string, unknown> };
+    client?: { product?: string | null; actor_id?: string; actor_name?: string; client_id?: string; capabilities?: Record<string, unknown> };
     runtime?: { state?: string; work_version?: string; selected_completion_id?: string | null };
     responsibility?: Record<string, unknown>;
     session?: Record<string, unknown> | null;
@@ -683,6 +742,14 @@ export interface WorkSnapshotData {
     action?: { op?: string; note?: string };
   } | null;
   next_step?: string | null;
+  /** Per-criterion evidence (PPD-040 / canonical demo); absent until the read supplies it. */
+  acceptance_evidence?: TaskAcceptanceEvidenceItem[] | null;
+  /** Optional delivery version label (canonical demo); live derives from delivery rounds. */
+  delivery_version_label?: string | null;
+  /** Optional checkpoint timeline entries (canonical demo); live uses audit.development. */
+  timeline?: TaskTimelineEntry[] | null;
+  /** Optional dependency version labels (canonical demo); live uses dependencies.list. */
+  dependency_details?: TaskDependencyVersionDetail[] | null;
 }
 
 export interface ReviewDecision {

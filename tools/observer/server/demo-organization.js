@@ -777,7 +777,7 @@ function createDemoOrganization({ variant = 'full',
       tests: task.report.tests,
       artifacts: [
         ...task.report.artifacts,
-        ...(round ? [{ label: 'review round', reference: round.round_id }] : []),
+        ...(variant !== 'canonical' && round ? [{ label: 'review round', reference: round.round_id }] : []),
       ],
       origin: {
         actor_id: `${task.owner_person_id}-agent`,
@@ -1152,6 +1152,33 @@ function createDemoOrganization({ variant = 'full',
         version: 1, consistency: 'repeatable_read', queried_at_unix_ms: data.now_unix_ms,
         project_revision: '47', source_snapshot_id: sourceSnapshot(projectId), coordinator_epoch: `epoch-${projectId}-47`,
       },
+      // Canonical demo-only task facts mirroring future reads (PPD-040 per-criterion evidence,
+      // checkpoint timeline, delivery version label, dependency version labels); live and
+      // other demo variants omit these so the page renders its honest fallback wording.
+      ...(variant === 'canonical' ? {
+        acceptance_evidence: work.acceptance.map((criterion) => ({
+          criterion_id: criterion.criterion_id,
+          text: criterion.text,
+          state: criterion.evidence_state,
+          detail: criterion.evidence_detail,
+        })),
+        delivery_version_label: work.delivery?.version_label ?? null,
+        timeline: work.timeline.map((entry) => ({
+          id: entry.activity_id,
+          at_unix_ms: entry.at_unix_ms,
+          who: entry.who,
+          what: entry.what,
+          next: entry.next,
+          note: entry.note,
+          tone: entry.tone,
+        })),
+        dependency_details: work.dependencies.map((dependency) => ({
+          provider_work_id: dependency.provider_work_id,
+          required_version_label: dependency.required_version_label,
+          adopted_version_label: dependency.adopted_version_label,
+          available_version_label: dependency.available_version_label,
+        })),
+      } : {}),
     });
   }
 

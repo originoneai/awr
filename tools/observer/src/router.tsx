@@ -8,10 +8,11 @@ import { PlaceholderPage, type PlaceholderPageKey } from './pages/PlaceholderPag
 import { AgentConnectPage } from './pages/AgentConnectPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { ProjectShell } from './pages/ProjectShell';
+import { TaskPage } from './pages/TaskPage';
 import { WorkbenchPage } from './pages/WorkbenchPage';
 import { RootLayout } from './RootLayout';
 
-type NewPlaceholderKey = 'lessons' | 'task' | 'person' | 'goal' | 'document' | 'update' | 'takeover';
+type NewPlaceholderKey = 'lessons' | 'person' | 'goal' | 'document' | 'update' | 'takeover';
 
 /** The shared placeholder resolves nav labels at runtime; this adapter adds only keys declared above. */
 function placeholder(pageKey: NewPlaceholderKey) {
@@ -33,7 +34,7 @@ export const routes: RouteObject[] = [
       { path: 'projects', element: <ProjectsPage /> },
       // ProjectShell routes all five project pages: overview, plan, dependencies, acceptance and knowledge.
       { path: 'projects/:project', element: <ProjectShell /> },
-      { path: 'tasks/:task', element: placeholder('task') },
+      { path: 'tasks/:task', element: <TaskPage /> },
       { path: `${PERSON_ROUTE_BASE}/:id`, element: placeholder('person') },
       // Keep previously shared member links working while new rows use the designed person route.
       { path: 'members/:member', element: placeholder('person') },

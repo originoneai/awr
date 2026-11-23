@@ -19,6 +19,8 @@ import type {
   PlanningCandidatesData,
   RequiredSourcesData,
   ProjectDocumentsData,
+  ProjectGoalsData,
+  ProjectLessonsData,
   OrdinaryDecision,
   OrdinaryDecisionsData,
 } from './types';
@@ -221,7 +223,7 @@ export function activityQueryOptions(project: string | null, revoked = false, wo
 
 interface TeamReadQuery {
   protocol_version: 1;
-  op: 'work.next' | 'work.inbox' | 'work.snapshot' | 'review.inspect' | 'source.content' | 'planning.candidates' | 'sources.inspect' | 'documents.list' | 'decisions.list';
+  op: 'work.next' | 'work.inbox' | 'work.snapshot' | 'review.inspect' | 'source.content' | 'planning.candidates' | 'sources.inspect' | 'documents.list' | 'decisions.list' | 'goals.list' | 'lessons.list';
   work_id?: string;
   workstream_id?: string;
   review_round_id?: string;
@@ -262,6 +264,48 @@ export function projectDocumentsQueryOptions(project: string, search: string, cu
     retry: (count, error) => !(error instanceof ApiError && error.code === 'Unsupported') && retryRead(count, error),
     refetchInterval: SNAPSHOT_POLL_INTERVAL_MS,
   } satisfies UseQueryOptions<TeamReadResponse<ProjectDocumentsData>>;
+}
+
+export function taskDocumentsQueryOptions(project: string | null, workId: string, revoked: boolean) {
+  return {
+    queryKey: ['team', 'documents.list', 'work', project, workId],
+    meta: { failureScope: 'object' },
+    queryFn: ({ signal }: { signal: AbortSignal }) => teamRead<ProjectDocumentsData>(project ?? '', {
+      protocol_version: 1, op: 'documents.list', work_id: workId, limit: 20, max_context_bytes: 262144,
+    }, signal),
+    enabled: Boolean(project && workId) && !revoked,
+    ...readQueryDefaults,
+    retry: (count, error) => !(error instanceof ApiError && error.code === 'Unsupported') && retryRead(count, error),
+    refetchInterval: SNAPSHOT_POLL_INTERVAL_MS,
+  } satisfies UseQueryOptions<TeamReadResponse<ProjectDocumentsData>>;
+}
+
+export function projectGoalsQueryOptions(project: string | null, revoked: boolean) {
+  return {
+    queryKey: ['team', 'goals.list', project],
+    meta: { failureScope: 'object' },
+    queryFn: ({ signal }: { signal: AbortSignal }) => teamRead<ProjectGoalsData>(project ?? '', {
+      protocol_version: 1, op: 'goals.list', limit: 20,
+    }, signal),
+    enabled: Boolean(project) && !revoked,
+    ...readQueryDefaults,
+    retry: (count, error) => !(error instanceof ApiError && error.code === 'Unsupported') && retryRead(count, error),
+    refetchInterval: SNAPSHOT_POLL_INTERVAL_MS,
+  } satisfies UseQueryOptions<TeamReadResponse<ProjectGoalsData>>;
+}
+
+export function projectLessonsQueryOptions(project: string | null, revoked: boolean) {
+  return {
+    queryKey: ['team', 'lessons.list', project],
+    meta: { failureScope: 'object' },
+    queryFn: ({ signal }: { signal: AbortSignal }) => teamRead<ProjectLessonsData>(project ?? '', {
+      protocol_version: 1, op: 'lessons.list', limit: 50,
+    }, signal),
+    enabled: Boolean(project) && !revoked,
+    ...readQueryDefaults,
+    retry: (count, error) => !(error instanceof ApiError && error.code === 'Unsupported') && retryRead(count, error),
+    refetchInterval: SNAPSHOT_POLL_INTERVAL_MS,
+  } satisfies UseQueryOptions<TeamReadResponse<ProjectLessonsData>>;
 }
 
 function teamRead<T>(project: string, query: TeamReadQuery, signal?: AbortSignal) {
