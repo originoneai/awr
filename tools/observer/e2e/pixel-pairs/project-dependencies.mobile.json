@@ -1,0 +1,31 @@
+{
+  "page": "project-dependencies",
+  "proto": "#p=project&id=orders&tab=deps",
+  "app": "/projects/P-001?tab=deps",
+  "ready": "[data-testid=\"project-deps-cols\"]",
+  "protoReady": ".cols2 .block table.t",
+  "notes": {
+    "geometryExclusions": [
+      "Probe coordinates are anchored at the project page title (.hero h1 / [data-testid=\"project-title\"]), excluding the mobile shell offset.",
+      "At 390px the available-now column hides (hideOnSmall: true, matching prototype .hide-s at <=860px), the chain stacks vertically, and .cols2 collapses to one column; data-driven heights (__h), widths (__w), and downstream vertical positions (__y) are skipped with zero style skips."
+    ]
+  },
+  "pairs": [
+    ["project title", ".hero h1", "[data-testid=\"project-title\"]", ["TEXT", "margin-top", "margin-bottom"]],
+    ["tabs bar", ".tabs2", ".project-tabs .ant-tabs-nav", ["BOX", "border-bottom-color", "margin-bottom"], {"skip": ["__w", "__y"]}],
+    ["chain instrument card", ".inst", "[data-testid=\"project-deps-chains\"]", ["BOX", "PAINT", "margin-bottom"], {"skip": ["__w", "__h", "__y"]}],
+    ["chain canvas", ".inst .why", "[data-testid=\"project-deps-chains\"] .obs-chain-block", ["BOX", "PAINT"], {"skip": ["__w", "__h", "__y"]}],
+    ["chain heading", ".why-head h2", "[data-testid=\"project-deps-chain-head\"] h2", ["TEXT", "margin-top", "margin-bottom"], {"skip": ["__y"]}],
+    ["chain count tag", ".why-head .tag", "[data-testid=\"project-deps-chain-count\"]", ["BOX", "TEXT", "background-color", "box-shadow"], {"skip": ["__w", "__y"]}],
+    ["chain root node", ".chain .cn.root", "[data-testid=\"project-deps-chains\"] .obs-chain-node-root", ["BOX", "PAINT"], {"skip": ["__w", "__h", "__y"]}],
+    ["versions block", ".cols2 > .block:first-child", "[data-testid=\"project-deps-versions\"] .obs-section", ["BOX", "PAINT"], {"skip": ["__y", "__w", "__h"]}],
+    ["versions block head", ".cols2 > .block:first-child .block-head", "[data-testid=\"project-deps-versions\"] .ant-card-head", ["BOX", "border-bottom-color"], {"skip": ["__y", "__w"]}],
+    ["versions block title", ".cols2 > .block:first-child .block-head h2", "[data-testid=\"project-deps-versions\"] .obs-section-title", ["TEXT"], {"skip": ["__y"]}],
+    ["versions pnote", ".cols2 > .block:first-child .pnote", "[data-testid=\"project-deps-pnote\"]", ["BOX", "TEXT", "border-top-color"], {"skip": ["__y", "__w", "__h"]}],
+    ["blockers block", ".cols2 > .block:last-child", "[data-testid=\"project-deps-blockers\"] .obs-section", ["BOX", "PAINT"], {"skip": ["__y", "__w", "__h"]}],
+    ["blockers block head", ".cols2 > .block:last-child .block-head", "[data-testid=\"project-deps-blockers\"] .ant-card-head", ["BOX", "border-bottom-color"], {"skip": ["__y", "__w"]}],
+    ["blocker row 1 title", ".cols2 > .block:last-child .rows > button:first-child .tt", "[data-testid=\"project-deps-blocker-row\"]:first-child .project-deps-blocker-title", ["TEXT"], {"skip": ["__x", "__y", "__w"]}],
+    ["blocker row 1 meta", ".cols2 > .block:last-child .rows > button:first-child .mm", "[data-testid=\"project-deps-blocker-row\"]:first-child .project-deps-blocker-meta", ["TEXT", "margin-top"], {"skip": ["__x", "__y", "__w"]}],
+    ["blocker row 1 behind", ".cols2 > .block:last-child .rows > button:first-child .x", "[data-testid=\"project-deps-blocker-row\"]:first-child .project-deps-blocker-behind", ["TEXT", "padding-top"], {"skip": ["__x", "__y", "__w"]}]
+  ]
+}

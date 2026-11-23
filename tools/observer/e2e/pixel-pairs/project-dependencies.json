@@ -1,0 +1,51 @@
+{
+  "page": "project-dependencies",
+  "proto": "#p=project&id=orders&tab=deps",
+  "app": "/projects/P-001?tab=deps",
+  "ready": "[data-testid=\"project-deps-cols\"]",
+  "protoReady": ".cols2 .block table.t",
+  "notes": {
+    "geometryExclusions": [
+      "Probe coordinates are anchored at the project page title (.hero h1 / [data-testid=\"project-title\"]), excluding shell-only header/sidebar offsets.",
+      "Canonical demo fixtures/demo-organization.json has 2 dependencies for P-001 (T-103->T-102 and T-106->T-103, omitting T-103->T-104) and 4 derived chains in overview-model (vs 2 curated chains in prototype PCHAINS.orders); container heights (__h), content-driven widths (__w), and downstream vertical positions (__y) that depend on item count or text length are skipped with zero style skips.",
+      "On [chain switch], computed margin-left resolves from margin-left: auto (remaining flex space after 4 vs 2 chain buttons) and is omitted rather than skipped; all visual box and paint properties of the switch are checked."
+    ]
+  },
+  "pairs": [
+    ["project title", ".hero h1", "[data-testid=\"project-title\"]", ["TEXT", "margin-top", "margin-bottom"]],
+    ["back button", ".back", "[data-testid=\"project-back\"]", ["BOX", "TEXT", "margin-top"], {"skip": ["__y"]}],
+    ["tabs bar", ".tabs2", ".project-tabs .ant-tabs-nav", ["BOX", "border-bottom-color", "margin-bottom"], {"skip": ["__w"]}],
+    ["active tab", ".tabs2 button[aria-selected=\"true\"]", ".project-tabs .ant-tabs-tab-active .ant-tabs-tab-btn", ["TEXT"], {"skip": ["__x", "__h", "__y"]}],
+    ["chain instrument card", ".inst", "[data-testid=\"project-deps-chains\"]", ["BOX", "PAINT", "margin-bottom"], {"skip": ["__w", "__h"]}],
+    ["chain canvas", ".inst .why", "[data-testid=\"project-deps-chains\"] .obs-chain-block", ["BOX", "PAINT"], {"skip": ["__w", "__h"]}],
+    ["chain heading", ".why-head h2", "[data-testid=\"project-deps-chain-head\"] h2", ["TEXT", "margin-top", "margin-bottom"]],
+    ["chain count tag", ".why-head .tag", "[data-testid=\"project-deps-chain-count\"]", ["BOX", "TEXT", "background-color", "box-shadow"], {"skip": ["__w"]}],
+    ["chain switch", ".why-head .seg", ".project-deps-chain-switch", ["display", "padding-top", "padding-right", "padding-bottom", "padding-left", "margin-top", "margin-bottom", "border-top-width", "border-top-left-radius", "column-gap", "row-gap", "background-color"], {"skip": ["__x", "__w"]}],
+    ["chain switch active", ".why-head .seg button[aria-pressed=\"true\"]", ".project-deps-chain-switch button[aria-pressed=\"true\"]", ["TEXT", "background-color", "box-shadow"], {"skip": ["__x", "__w", "__h"]}],
+    ["chain root node", ".chain .cn.root", "[data-testid=\"project-deps-chains\"] .obs-chain-node-root", ["BOX", "PAINT"], {"skip": ["__w", "__h"]}],
+    ["chain root kicker", ".chain .cn.root .k", "[data-testid=\"project-deps-chains\"] .obs-chain-node-root .obs-chain-kicker", ["TEXT"], {"skip": ["__w"]}],
+    ["chain root title", ".chain .cn.root .t", "[data-testid=\"project-deps-chains\"] .obs-chain-node-root .obs-chain-title", ["TEXT"], {"skip": ["__w"]}],
+    ["chain connector", ".chain .cx.hotx", "[data-testid=\"project-deps-chains\"] .obs-chain-connector[data-hot=\"true\"]", ["TEXT"], {"skip": ["__x", "__y", "__w", "__h"]}],
+    ["chain footer", ".why-foot", "[data-testid=\"project-deps-chains\"] .obs-chain-footer", ["BOX", "TEXT"], {"skip": ["__y", "__w", "__h"]}],
+    ["two column grid", ".cols2", "[data-testid=\"project-deps-cols\"]", ["BOX"], {"skip": ["__y", "__w", "__h"]}],
+    ["versions block", ".cols2 > .block:first-child", "[data-testid=\"project-deps-versions\"] .obs-section", ["BOX", "PAINT"], {"skip": ["__y", "__w", "__h"]}],
+    ["versions block head", ".cols2 > .block:first-child .block-head", "[data-testid=\"project-deps-versions\"] .ant-card-head", ["BOX", "border-bottom-color"], {"skip": ["__y", "__w"]}],
+    ["versions block title", ".cols2 > .block:first-child .block-head h2", "[data-testid=\"project-deps-versions\"] .obs-section-title", ["TEXT"], {"skip": ["__y"]}],
+    ["versions block count", ".cols2 > .block:first-child .block-head .n", "[data-testid=\"project-deps-versions-count\"]", ["TEXT"], {"skip": ["__x", "__y"]}],
+    ["versions table header", ".cols2 > .block:first-child table.t thead th:first-child", "[data-testid=\"project-deps-versions\"] .obs-data-table thead th:first-child", ["TEXT", "padding-left", "border-bottom-color"], {"skip": ["__y", "__w"]}],
+    ["versions table cell 1", ".cols2 > .block:first-child table.t tbody tr:first-child td:first-child", "[data-testid=\"project-deps-versions\"] .obs-data-table tbody tr:first-child td:first-child", ["TEXT", "background-color", "padding-top", "padding-bottom", "padding-left"], {"skip": ["__y", "__w", "__h"]}],
+    ["versions table requirement", ".cols2 > .block:first-child table.t tbody tr:first-child td:nth-child(2) .sm", "[data-testid=\"project-deps-versions\"] .project-deps-req", ["TEXT"], {"skip": ["__x", "__y", "__w"]}],
+    ["versions status changed tag", ".cols2 > .block:first-child table.t tbody tr:first-child .tag", "[data-testid=\"project-deps-versions\"] [data-dep-status=\"changed\"]", ["BOX", "TEXT", "background-color"], {"skip": ["__x", "__y", "__w"]}],
+    ["versions status none tag", ".cols2 > .block:first-child table.t tbody tr:last-child .tag", "[data-testid=\"project-deps-versions\"] [data-dep-status=\"none\"]", ["BOX", "TEXT", "background-color"], {"skip": ["__x", "__y", "__w"]}],
+    ["versions pnote", ".cols2 > .block:first-child .pnote", "[data-testid=\"project-deps-pnote\"]", ["BOX", "TEXT", "border-top-color"], {"skip": ["__y", "__w", "__h"]}],
+    ["blockers block", ".cols2 > .block:last-child", "[data-testid=\"project-deps-blockers\"] .obs-section", ["BOX", "PAINT"], {"skip": ["__x", "__y", "__w", "__h"]}],
+    ["blockers block head", ".cols2 > .block:last-child .block-head", "[data-testid=\"project-deps-blockers\"] .ant-card-head", ["BOX", "border-bottom-color"], {"skip": ["__x", "__y", "__w"]}],
+    ["blockers block title", ".cols2 > .block:last-child .block-head h2", "[data-testid=\"project-deps-blockers\"] .obs-section-title", ["TEXT"], {"skip": ["__x", "__y"]}],
+    ["blockers block count", ".cols2 > .block:last-child .block-head .n", "[data-testid=\"project-deps-blockers-count\"]", ["TEXT"], {"skip": ["__x", "__y"]}],
+    ["blocker row 1", ".cols2 > .block:last-child .rows > button:first-child", "[data-testid=\"project-deps-blocker-row\"]:first-child .project-deps-blocker-row", ["BOX", "background-color"], {"skip": ["__x", "__y", "__w", "__h"]}],
+    ["blocker row 1 lamp", ".cols2 > .block:last-child .rows > button:first-child .lamp", "[data-testid=\"project-deps-blocker-row\"]:first-child .obs-lamp", ["BOX", "background-color", "border-top-left-radius"], {"skip": ["__x", "__y"]}],
+    ["blocker row 1 title", ".cols2 > .block:last-child .rows > button:first-child .tt", "[data-testid=\"project-deps-blocker-row\"]:first-child .project-deps-blocker-title", ["TEXT"], {"skip": ["__x", "__y", "__w"]}],
+    ["blocker row 1 meta", ".cols2 > .block:last-child .rows > button:first-child .mm", "[data-testid=\"project-deps-blocker-row\"]:first-child .project-deps-blocker-meta", ["TEXT", "margin-top"], {"skip": ["__x", "__y", "__w"]}],
+    ["blocker row 1 behind", ".cols2 > .block:last-child .rows > button:first-child .x", "[data-testid=\"project-deps-blocker-row\"]:first-child .project-deps-blocker-behind", ["TEXT", "padding-top"], {"skip": ["__x", "__y", "__w"]}]
+  ]
+}
