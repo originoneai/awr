@@ -31,6 +31,8 @@ For a suspected public value, use `awr intake review --source docs/notes.md --wr
 
 The scanner records filenames, sizes, document hashes and observed Git state; a document the secret boundary refuses gets no hash (see the [data boundary](reference/secret-boundaries.md)). It skips hidden/vendor/build directories and symlinks and has explicit resource limits. It does not infer business completion from code filenames or Git commits. Arbitrary spreadsheet/Word/PDF ledgers still require conversion or an explicit adapter; unrecognized states remain unknown.
 
+A takeover preview adds a deterministic [fact baseline](reference/takeover-command.md#deterministic-fact-baseline) in its external state directory. It records commits reachable from all refs, local and remote branches, tags, whitelisted rule files, submodules, and exact coverage counts. Stable fact identifiers support later workstream and reviewer contracts. The baseline labels history as `recorded_unverified`; completion credit still requires acceptance evidence. Its commit ceiling is 100,000 by default, and its coverage distinguishes full, capped, shallow, empty, detached, and non-Git inputs.
+
 ## Organize and recheck
 
 ```sh
