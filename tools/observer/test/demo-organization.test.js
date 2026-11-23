@@ -363,9 +363,10 @@ test('every exposed read operation answers through the real bridge validation pa
     { op: 'dependencies.list', work_id: 'T-103', workstream_id: 'WS-001' },
     { op: 'session.inspect', session_id: 'session-t-101' },
     { op: 'source.content', source_path: document.path, expected_sha256: document.sha256, max_context_bytes: 262144 },
-    ...[...DEMO_FUTURE_READ_OPS].map((op) => op === 'update.inspect' ? { op, update_id: 'U-001' }
-      : op === 'goal.inspect' ? { op, goal_id: 'GOAL-001' }
-        : op === 'lesson.inspect' ? { op, lesson_id: 'L-001' } : { op }),
+    { op: 'updates.list' },
+    { op: 'update.inspect', update_id: 'U-001' },
+    ...[...DEMO_FUTURE_READ_OPS].map((op) => op === 'goal.inspect' ? { op, goal_id: 'GOAL-001' }
+      : op === 'lesson.inspect' ? { op, lesson_id: 'L-001' } : { op }),
   ];
   assert.equal(queries.length + 1, 48, '48 unique reads, including the seeded review.inspect');
   for (const query of queries) {
@@ -1155,6 +1156,15 @@ test('canonical directory and shell facts establish all four perspectives withou
     { id: 'G-003', name: '交付小组', parent_id: 'G-005' },
   ]);
   assert.notEqual(projectDirectory(directory), null, 'the real directory validator accepts the complete hierarchy');
+  const capabilitiesSample = JSON.parse(
+    require('node:fs').readFileSync(
+      require('node:path').resolve(__dirname, '../../../crates/awr-server/tests/samples/capabilities-web-read.json'),
+      'utf8',
+    ),
+  );
+  const demoCapabilities = demo.query('P-001', { protocol_version: 1, op: 'capabilities' });
+  assert.deepEqual(demoCapabilities.business_role_presets, capabilitiesSample.business_role_presets,
+    'demo capabilities publish the verbatim AWR-PPD-061 business duty action ceilings');
 
   const bridge = bridgeForTest({ demoVariant: 'canonical', demoTimestampShiftMs: 0 });
   const reply = await bridge.call('GET /api/team/shell', '/api/team/shell');

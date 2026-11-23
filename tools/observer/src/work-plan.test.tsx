@@ -1,40 +1,22 @@
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { axe, toHaveNoViolations } from 'jest-axe';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from './i18n';
-import { formatUnixMs } from './lib/format';
 import { defaultVisibleText, findForbiddenVisibleText } from './lib/human-language-guard';
 import { isObservationReadRevoked } from './lib/queries';
-import type { TeamWork } from './lib/types';
-import {
-  DEMO_ACTIVITY,
-  DEMO_PROJECT_OVERVIEW,
-  DEMO_PROJECT_WORKS,
-  DEMO_PROJECTS,
-  DEMO_REVIEW,
-  demoWorkSnapshot,
-  renderApp,
-} from './test-utils';
+import type { ProjectListModel } from './components/projects/project-list-model';
+import { WORK_PLAN_FILTERS } from './components/projects/work-plan-model';
+import { demoOverviewModelResponse, emptyOverviewModelResponse } from './test-fixtures/overview-model';
+import { myWorkInput } from './test-fixtures/workbench';
+import type { PlanningCandidatesData, RequiredSourcesData, TeamOverviewResponse } from './lib/types';
+import { DEMO_PROJECTS, renderApp } from './test-utils';
 
 expect.extend(toHaveNoViolations);
 
-/** A checkpoint in the shape the service returns, with plain sentences so the default text can be checked. */
-const CHECKPOINT = {
-  phase: 'ready_for_review',
-  summary: 'The status and keyword filters are finished and waiting for review.',
-  completed: ['Filters combine status and keyword.', 'Checks cover an empty list.'],
-  blockers: [],
-  tests: [{ name: 'npm test', outcome: 'passed', reference: 'node --test: 5 passed' }, { name: 'smoke run', outcome: 'failed', reference: 'exit 1' }],
-  artifacts: [{ label: 'development branch', reference: 'refs/heads/issue-filter-api@abc123' }],
-  next_action: 'Wait for the independent review.',
-  provenance: 'caller_declared',
-  stale: false,
-  contract_matches_current: true,
-  checkpoint_id: 'checkpoint-1',
-  reported_at_unix_ms: 1761839700000,
-  origin: { actor_name: 'Lin Agent' },
-};
+const NOW = Date.UTC(2026, 10, 19, 12, 0, 0);
+const DAY = 86_400_000;
+const DIGEST = 'a'.repeat(64);
 
 function json(payload: unknown) {
   return new Response(JSON.stringify(payload), {
@@ -43,54 +25,226 @@ function json(payload: unknown) {
   });
 }
 
-function makeTwoStreamWorks(count: number) {
-  return Array.from({ length: count }, (_, index) => ({
-    ...DEMO_PROJECT_WORKS[0],
-    key: `W${index + 1}`,
-    title: `Observed plan task ${index + 1}`,
-    workstream_id: index % 2 === 0 ? 'WS1' : 'WS2',
-    contract_hash: `contract-${index + 1}`,
-  }));
+function makeRichProjects() {
+  return {
+    ...DEMO_PROJECTS,
+    projects: [{
+      key: 'demo',
+      title: '订单协作平台',
+      role: 'admin',
+      leadPersonId: 'M-001',
+      groupName: '应用小组',
+    }],
+  };
 }
 
-function makePlanOverview(works: TeamWork[]) {
+function makeRichOverview(overrides: Partial<TeamOverviewResponse> = {}): TeamOverviewResponse {
   return {
-    ...DEMO_PROJECT_OVERVIEW,
-    works,
+    ok: true,
+    project: 'demo',
+    freshness: {
+      report_received: { status: 'measured', at_unix_ms: NOW - 12 * 60_000 },
+      authoritative: { status: 'measured', at_unix_ms: NOW },
+      page_read: { status: 'measured', at_unix_ms: NOW },
+    },
+    workstreams: [
+      { id: 'WS-001', external_key: 'WS-001', title: '前端' },
+      { id: 'WS-002', external_key: 'WS-002', title: '后端' },
+      { id: 'WS-003', external_key: 'WS-003', title: '验证' },
+    ],
+    works: [
+      { key: 'T-103', title: '订单页面联调', status: 'claimed', owner_person: '林悦', agent: null, next_step: '接口第 3 版通过复核后，改用第 3 版重新联调提交流程', detail_loaded: false, workstream_id: 'WS-001', contract_hash: 'h1' },
+      { key: 'T-107', title: '订单列表分页', status: 'completed', owner_person: '林悦', agent: null, next_step: '没有下一步', detail_loaded: false, workstream_id: 'WS-001', contract_hash: 'h2' },
+      { key: 'T-114', title: '错误提示文案', status: 'claimed', owner_person: '林悦', agent: null, next_step: '提交复核', detail_loaded: false, workstream_id: 'WS-001', contract_hash: 'h3' },
+      { key: 'T-101', title: '订单查询接口', status: 'completed', owner_person: '陈宇', agent: null, next_step: '没有下一步', detail_loaded: false, workstream_id: 'WS-002', contract_hash: 'h4' },
+      { key: 'T-102', title: '接口第 3 版：提交与错误反馈', status: 'claimed', owner_person: '陈宇', agent: null, next_step: '等许宁复核；通过后林悦的页面联调改用第 3 版', detail_loaded: false, workstream_id: 'WS-002', contract_hash: 'h5' },
+      { key: 'T-105', title: '登录异常处理', status: 'claimed', owner_person: '陈宇', agent: null, next_step: '周宁决定返工还是接受现状', detail_loaded: false, workstream_id: 'WS-002', contract_hash: 'h6' },
+      { key: 'T-106', title: '业务验收', status: 'planned', owner_person: '许宁', agent: null, next_step: '等订单页面联调', detail_loaded: false, workstream_id: 'WS-003', contract_hash: 'h7' },
+    ],
     coverage: {
-      ...DEMO_PROJECT_OVERVIEW.coverage,
-      works_enumerated: works.length,
-      scope: { ...DEMO_PROJECT_OVERVIEW.coverage.scope, enumerated: works.length },
+      scope: { status: 'succeeded', enumerated: 7, truncated: false, next_cursor: null },
+      streams: [
+        { workstream_id: 'WS-001', status: 'succeeded', works_enumerated: 3, works_total: 3, truncated: false, next_cursor: null, read_at_unix_ms: NOW },
+        { workstream_id: 'WS-002', status: 'succeeded', works_enumerated: 3, works_total: 3, truncated: false, next_cursor: null, read_at_unix_ms: NOW },
+        { workstream_id: 'WS-003', status: 'succeeded', works_enumerated: 1, works_total: 1, truncated: false, next_cursor: null, read_at_unix_ms: NOW },
+      ],
+      failed: 0,
+      truncated: false,
+      works_enumerated: 7,
+      works_total: 7,
+      succeeded: 3,
+    },
+    ...overrides,
+  };
+}
+
+function makeRichModel(overrides: Partial<ProjectListModel> = {}): ProjectListModel {
+  const input = myWorkInput({
+    options: {
+      nowUnixMs: NOW,
+      stalledAfterDays: 1,
+      views: { me: { personId: 'M-002', projectId: 'demo' } },
+    },
+    members: {
+      coverage: 'complete',
+      items: [
+        { personId: 'M-001', displayName: '周宁' },
+        { personId: 'M-002', displayName: '林悦' },
+        { personId: 'M-003', displayName: '陈宇' },
+        { personId: 'M-004', displayName: '许宁' },
+      ],
+    },
+    tasks: {
+      coverage: 'complete',
+      items: [
+        { id: 'T-103', title: '订单页面联调', projectId: 'demo', ownerPersonId: 'M-002', agentName: 'Claude 桌面', agentActive: true, started: true, acceptance: [{ evidence: [] }], report: { completed: false, reportedAtUnixMs: NOW - 12 * 60_000 }, submittedResultAtUnixMs: null, integrated: false, externalWait: null, commitments: [] },
+        { id: 'T-107', title: '订单列表分页', projectId: 'demo', ownerPersonId: 'M-002', started: true, agentActive: false, acceptance: [{ evidence: [{ passed: true, current: true }] }], report: { completed: true, reportedAtUnixMs: NOW - 3 * DAY }, submittedResultAtUnixMs: NOW - 3 * DAY, verifiedAtUnixMs: NOW - 3 * DAY, integrated: true, externalWait: null, commitments: [] },
+        { id: 'T-114', title: '错误提示文案', projectId: 'demo', ownerPersonId: 'M-002', started: true, agentActive: false, acceptance: [{ evidence: [] }], report: { completed: true, reportedAtUnixMs: NOW - DAY }, submittedResultAtUnixMs: null, integrated: false, externalWait: null, commitments: [] },
+        { id: 'T-101', title: '订单查询接口', projectId: 'demo', ownerPersonId: 'M-003', started: true, agentActive: false, acceptance: [{ evidence: [{ passed: true, current: true }] }], report: { completed: true, reportedAtUnixMs: NOW - 5 * DAY }, submittedResultAtUnixMs: NOW - 5 * DAY, verifiedAtUnixMs: NOW - 5 * DAY, integrated: true, externalWait: null, commitments: [] },
+        { id: 'T-102', title: '接口第 3 版：提交与错误反馈', projectId: 'demo', ownerPersonId: 'M-003', started: true, agentActive: false, acceptance: [{ evidence: [{ passed: true, current: true }] }], report: { completed: false, reportedAtUnixMs: NOW - 2 * DAY }, submittedResultAtUnixMs: NOW - 2 * DAY, integrated: false, externalWait: null, commitments: [] },
+        { id: 'T-105', title: '登录异常处理', projectId: 'demo', ownerPersonId: 'M-003', started: true, agentActive: false, acceptance: [{ evidence: [{ passed: false, current: true }] }], report: { completed: false, reportedAtUnixMs: NOW - 2 * DAY }, submittedResultAtUnixMs: NOW - 2 * DAY, integrated: false, externalWait: null, commitments: [] },
+        { id: 'T-106', title: '业务验收', projectId: 'demo', ownerPersonId: 'M-004', started: false, agentActive: false, acceptance: [{ evidence: [] }], report: null, submittedResultAtUnixMs: null, integrated: false, externalWait: null, commitments: [] },
+      ],
+    },
+    dependencies: {
+      coverage: 'complete',
+      items: [
+        { id: 'D-1', consumerTaskId: 'T-103', providerTaskId: 'T-102', satisfied: false, sinceUnixMs: NOW - 2 * DAY },
+        { id: 'D-2', consumerTaskId: 'T-106', providerTaskId: 'T-103', satisfied: false, sinceUnixMs: NOW - 2 * DAY },
+      ],
+    },
+    reviewRounds: {
+      coverage: 'complete',
+      items: [
+        { id: 'R-107', taskId: 'T-107', roundIndex: 1, current: true, state: 'approved', independent: true, authorPersonId: 'M-002', reviewerPersonId: 'M-004' },
+        { id: 'R-101', taskId: 'T-101', roundIndex: 2, current: true, state: 'approved', independent: true, authorPersonId: 'M-003', reviewerPersonId: 'M-004' },
+        { id: 'R-102', taskId: 'T-102', roundIndex: 1, current: true, state: 'open', independent: true, authorPersonId: 'M-003', reviewerPersonId: 'M-004', openedAtUnixMs: NOW - 2 * DAY },
+        { id: 'R-105', taskId: 'T-105', roundIndex: 1, current: true, state: 'rejected', independent: true, authorPersonId: 'M-003', reviewerPersonId: 'M-004', openedAtUnixMs: NOW - 2 * DAY },
+      ],
+    },
+    decisions: { coverage: 'complete', items: [] },
+    handoffs: { coverage: 'complete', items: [] },
+    approvals: {
+      coverage: 'complete',
+      items: [
+        {
+          id: 'A-004',
+          kind: 'plan-approval',
+          recipientPersonId: 'M-001',
+          projectId: 'demo',
+          title: '“完善异常恢复”拆成了 4 件事',
+          sinceUnixMs: NOW - 3 * 3_600_000,
+        },
+      ],
+    },
+    activity: { coverage: 'complete', items: [] },
+  });
+  const base = demoOverviewModelResponse(input) as unknown as ProjectListModel;
+  return {
+    ...base,
+    project: 'demo',
+    read_at_unix_ms: Date.now(),
+    ...overrides,
+  };
+}
+
+function makePlanningCandidates(items?: PlanningCandidatesData['items']): PlanningCandidatesData {
+  return {
+    items: items ?? [
+      {
+        candidate_id: 'PC-001',
+        state: 'drafting',
+        draft_revision: 1,
+        author: { display_name: '陈宇的 Agent' },
+        updated_at_unix_ms: Date.UTC(2026, 10, 19, 9, 10, 0),
+        baseline: { matches_current: true },
+        current_diff: {
+          counts: { added: 4, removed: 0, changed: 0, unchanged: 0 },
+          items: [
+            { work_id: 'PW-001', title: '网络中断后恢复未提交的表单', kind: 'added' },
+            { work_id: 'PW-002', title: '提交超时后的自动重试', kind: 'added' },
+            { work_id: 'PW-003', title: '重试几次由谁来定', kind: 'added' },
+            { work_id: 'PW-004', title: '异常恢复的验收场景', kind: 'added' },
+          ],
+        },
+        approval: { value: null, reason: 'not_approved' },
+        publication: { value: null, reason: 'not_published' },
+        activation: { value: null, reason: 'not_activated' },
+        rejection: { value: null, reason: 'not_rejected' },
+      },
+    ],
+    total: (items ?? [null]).length,
+    next_cursor: null,
+    as_of: { at_unix_ms: NOW },
+  };
+}
+
+function makeRequiredSources(): RequiredSourcesData {
+  return {
+    items: [
+      { source_position: 1, path: 'docs/GOALS.md', status: 'consistent', reason: null },
+    ],
+    total: 1,
+    next_cursor: null,
+    collection: { complete: true, required_total: 1, checked_at_unix_ms: NOW },
+    as_of: { at_unix_ms: NOW },
+  };
+}
+
+function readEnvelope(data: unknown) {
+  return {
+    ok: true,
+    result: { data },
+    freshness: {
+      report_received: { status: 'not_measured' },
+      authoritative: { status: 'measured', at_unix_ms: NOW },
+      page_read: { status: 'measured', at_unix_ms: NOW },
     },
   };
 }
 
-function makeActivity(items: unknown[], overrides: Record<string, unknown> = {}) {
-  return { ...DEMO_ACTIVITY, data: { ...DEMO_ACTIVITY.data, ...overrides, items } };
+interface SetupOptions {
+  path?: string;
+  projects?: unknown;
+  overview?: unknown | (() => Promise<Response>);
+  model?: unknown | (() => Promise<Response>);
+  planning?: unknown;
+  sources?: unknown;
+  goals?: unknown;
+  displayTimeZone?: string;
 }
 
 function setupPlan({
-  path = '/projects/demo?tab=plan&work=W1',
-  overview = DEMO_PROJECT_OVERVIEW,
-  activity = DEMO_ACTIVITY,
-  review = DEMO_REVIEW,
-  snapshot = demoWorkSnapshot,
-}: {
-  path?: string;
-  overview?: unknown;
-  activity?: unknown;
-  review?: unknown;
-  snapshot?: (workId: string) => unknown;
-} = {}) {
+  path = '/projects/demo?tab=plan',
+  projects = makeRichProjects(),
+  overview = makeRichOverview(),
+  model = makeRichModel(),
+  planning = readEnvelope(makePlanningCandidates()),
+  sources = readEnvelope(makeRequiredSources()),
+  goals = readEnvelope({
+    items: [{ goal_id: 'GOAL-001', project_id: 'demo', title: '订单从查询到提交在一个页面完成' }],
+    total: 1,
+    next_cursor: null,
+  }),
+  displayTimeZone = 'UTC',
+}: SetupOptions = {}) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    if (url.includes('/api/team/projects')) return json(DEMO_PROJECTS);
-    if (url.includes('/api/team/overview')) return json(overview);
-    if (url.includes('/api/team/activity')) return json(activity);
+    if (url.includes('/api/team/shell')) {
+      return json({ ok: true, source: 'demo', organizationName: '示例组织', perspective: null, displayTimeZone });
+    }
+    if (url.includes('/api/team/projects')) return json(projects);
+    if (url.includes('/api/team/overview-model')) {
+      return typeof model === 'function' ? model() : json(model);
+    }
+    if (url.includes('/api/team/overview')) {
+      return typeof overview === 'function' ? overview() : json(overview);
+    }
     if (url.includes('/api/team/read')) {
-      const request = JSON.parse(String(init?.body)) as { query: { op: string; work_id?: string } };
-      if (request.query.op === 'work.snapshot') return json(snapshot(request.query.work_id ?? ''));
-      if (request.query.op === 'review.inspect') return json(review);
+      const request = JSON.parse(String(init?.body)) as { query: { op: string } };
+      if (request.query.op === 'planning.candidates') return json(planning);
+      if (request.query.op === 'sources.inspect') return json(sources);
+      if (request.query.op === 'goals.list') return json(goals);
     }
     return json({ ok: false, error: { code: 'NoRoute', message: url } });
   });
@@ -99,803 +253,353 @@ function setupPlan({
 }
 
 afterEach(async () => {
+  cleanup();
   vi.unstubAllGlobals();
-  await i18n.changeLanguage('zh-CN');
+  await act(async () => { await i18n.changeLanguage('zh-CN'); });
 });
 
-describe('effective plan table', () => {
-  it('says how far each work has come from its own read, in the list and in the detail header, with the same fallbacks as the overview', async () => {
-    const works = [
-      DEMO_PROJECT_WORKS[0],
-      DEMO_PROJECT_WORKS[1],
-      { ...DEMO_PROJECT_WORKS[1], key: 'W3', title: 'Third task', status: 'open' },
-      { ...DEMO_PROJECT_WORKS[1], key: 'W4', title: 'Fourth task', status: null },
-    ];
-    setupPlan({
-      path: '/projects/demo?tab=plan&work=W1',
-      overview: makePlanOverview(works),
-      snapshot: (workId) => {
-        if (workId === 'W3' || workId === 'W4') return { ok: false, error: { code: 'ReadTimeout', message: 'slow' } };
-        const response = demoWorkSnapshot(workId) as { result: { data: { observation: { progress: Record<string, unknown> | null } } } };
-        response.result.data.observation.progress = workId === 'W1' ? { phase: 'ready_for_review' } : null;
-        return response;
-      },
-    });
-    await waitFor(() => {
-      expect(screen.getByTestId('plan-status-W1').textContent).toBe('待评审');
-      expect(screen.getByTestId('plan-status-W2').textContent).toBe('已认领');
-      expect(screen.getByTestId('plan-status-W3').textContent).toBe('进行中');
-      expect(screen.getByTestId('plan-status-W4').textContent).toBe('未知');
-    });
-    expect(screen.getByTestId('plan-detail-status').textContent).toBe('待评审');
-    expect(screen.getByTestId('plan-status-W1').querySelector('.ant-badge-status-dot')?.className).toContain('ant-badge-status-warning');
-    expect(screen.getByTestId('plan-status-W4').querySelector('.ant-badge-status-dot')?.className).toContain('ant-badge-status-default');
-  });
-
-  it('says loading in the list while a work\'s own read is pending', async () => {
-    let release: () => void = () => undefined;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    const original = demoWorkSnapshot;
-    const { fetchMock } = setupPlan({ path: '/projects/demo?tab=plan', snapshot: (workId) => original(workId) });
-    const impl = fetchMock.getMockImplementation()!;
-    fetchMock.mockImplementation(async (input, init) => {
-      if (String(init?.body ?? '').includes('"work.snapshot"')) await gate;
-      return impl(input, init);
-    });
-    await waitFor(() => expect(screen.getByTestId('plan-status-W1').textContent).toBe('加载中…'));
-    expect(screen.getByTestId('plan-owner-W1').textContent).toBe('加载中…');
-    await act(async () => { release(); });
-    await waitFor(() => expect(screen.getByTestId('plan-status-W1').textContent).toBe('已认领'));
-    expect(screen.getByTestId('plan-owner-W1').textContent).toBe('未提供');
-  });
-
-  it('refreshes the progress words of the list slowly, ten minutes, and the selected work\'s own detail fast', async () => {
-    const { queryClient } = setupPlan({ path: '/projects/demo?tab=plan' });
-    await waitFor(() => expect(screen.getByTestId('plan-status-W2').textContent).toBe('已认领'));
-    // every observer of every listed work's read, by work: the cadence each observer asks for
-    const cadences = () => Object.fromEntries(queryClient.getQueryCache().getAll()
-      .filter((query) => query.queryKey[0] === 'team' && query.queryKey[1] === 'work.snapshot' && query.queryKey[2] === 'demo')
-      .map((query) => [String(query.queryKey[3]), query.observers.map((observer) => observer.options.refetchInterval).sort()]));
-    expect(cadences()).toEqual({ W1: [600000], W2: [600000] });
-    // selecting a work adds the detail's own fast observer for that work only
-    await userEvent.setup().click(screen.getByRole('link', { name: 'Build the filter API' }));
-    await screen.findByTestId('plan-detail');
-    await waitFor(() => expect(cadences()).toEqual({ W1: [5000, 600000], W2: [600000] }));
-  });
-
-  it('reads snapshots only for the works on the visible page', async () => {
-    const { fetchMock } = setupPlan({ path: '/projects/demo?tab=plan', overview: makePlanOverview(makeTwoStreamWorks(61)) });
-    await waitFor(() => expect(screen.getAllByRole('link', { name: /Observed plan task/ })).toHaveLength(60));
-    const reads = () => fetchMock.mock.calls
-      .filter(([, init]) => String(init?.body ?? '').includes('"work.snapshot"'))
-      .map(([, init]) => (JSON.parse(String(init?.body)) as { query: { work_id: string } }).query.work_id);
-    await waitFor(() => expect(new Set(reads()).size).toBe(60));
-    expect(reads()).toHaveLength(60);
-    expect(reads()).not.toContain('W60');
-  }, 20_000);
-
-  it('reads each listed work once, shared with the selected work\'s detail', async () => {
-    const { fetchMock } = setupPlan();
-    await waitFor(() => expect(screen.getByTestId('plan-status-W2').textContent).toBe('已认领'));
-    const snapshotReads = fetchMock.mock.calls.filter(([, init]) => String(init?.body ?? '').includes('"work.snapshot"'));
-    expect(snapshotReads.map(([, init]) => (JSON.parse(String(init?.body)) as { query: { work_id: string } }).query.work_id).sort()).toEqual(['W1', 'W2']);
-  });
-
-  it('renders real groups and fields, filters by workstream, and disables board view', async () => {
-    const { router } = setupPlan({ path: '/projects/demo?tab=plan' });
-    expect(await screen.findByRole('link', { name: 'Build the filter API' })).toBeTruthy();
-    expect(screen.getByTestId('workstream-group-WS1').textContent).toContain('Backend workstream');
-    expect(screen.getByTestId('workstream-group-WS2').textContent).toContain('Frontend workstream');
-    await waitFor(() => expect(screen.getByTestId('plan-status-W1').textContent).toBe('已认领'));
-    expect(screen.getByTestId('plan-owner-W1').textContent).toBe('未提供');
-    expect(screen.getByRole('radio', { name: '看板' })).toHaveProperty('disabled', true);
-    expect(screen.queryByRole('button', { name: '提出需求' })).toBeNull();
-
-    expect(screen.getByRole('combobox', { name: '工作线筛选' })).toBeTruthy();
-    await act(() => router.navigate('/projects/demo?tab=plan&stream=WS1'));
-    expect(screen.getByRole('link', { name: 'Build the filter API' })).toBeTruthy();
-    await waitFor(() => expect(screen.queryByRole('link', { name: 'Prepare the support page' })).toBeNull());
-  });
-
-  it.each([59, 60])('renders every work on page one without consuming group rows: %i', async (count) => {
-    setupPlan({ path: '/projects/demo?tab=plan', overview: makePlanOverview(makeTwoStreamWorks(count)) });
-    await waitFor(() => expect(screen.getAllByRole('link', { name: /Observed plan task/ })).toHaveLength(count));
-    expect(screen.getByRole('link', { name: `Observed plan task ${count}` })).toBeTruthy();
-    expect(document.querySelector('[data-testid="plan-progress-table"] .ant-pagination')).toBeNull();
-    expect(screen.getByTestId('plan-pagination')).toBeTruthy();
-  }, 20_000);
-
-  it('renders the correct sixty works on page two across two workstreams', async () => {
-    setupPlan({
-      path: '/projects/demo?tab=plan&page=2',
-      overview: makePlanOverview(makeTwoStreamWorks(140)),
-    });
-    await waitFor(() => expect(screen.getAllByRole('link', { name: /Observed plan task/ })).toHaveLength(60));
-    expect(screen.getByRole('link', { name: 'Observed plan task 121' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Observed plan task 139' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Observed plan task 2' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Observed plan task 100' })).toBeTruthy();
-    expect(screen.queryByRole('link', { name: 'Observed plan task 120' })).toBeNull();
-    expect(screen.queryByRole('link', { name: 'Observed plan task 102' })).toBeNull();
-  }, 20_000);
-
-  it('clamps an out-of-range page and keeps standalone pagination visible', async () => {
-    setupPlan({ path: '/projects/demo?tab=plan&page=5' });
-    expect(await screen.findByTestId('plan-progress-table')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Build the filter API' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Prepare the support page' })).toBeTruthy();
-    expect(screen.getByTestId('plan-pagination')).toBeTruthy();
-    expect(document.querySelector('.ant-pagination-item-active')?.textContent).toBe('1');
-  });
-
-  it('selects work through the URL and restores the detail after navigation', async () => {
+describe('WorkPlanPage (AWR-PPO-042)', () => {
+  it('renders pending breakdown callout with exact copy, inbox link, and no approve button (AC #1)', async () => {
     const user = userEvent.setup();
-    const { router } = setupPlan({ path: '/projects/demo?tab=plan&work=W1' });
-    await screen.findByTestId('plan-detail');
-    await waitFor(() => expect(screen.getByTestId('plan-detail').textContent).toContain('Build the filter API'));
-    await user.click(screen.getByRole('link', { name: 'Prepare the support page' }));
-    expect(router.state.location.search).toContain('tab=plan');
-    expect(router.state.location.search).toContain('work=W2');
-    expect((await screen.findByTestId('plan-detail')).textContent).toContain('Prepare the support page');
-  });
-});
+    const { router } = setupPlan();
 
-describe('work detail requirements and source state', () => {
-  it('renders requirements, materials, progress, a product next step and report time', async () => {
-    const longNote = 'Batch progress with next_action/open_loops. Stop and report workspace execution before publication. '.repeat(4);
-    setupPlan({
-      snapshot: (workId) => {
-        const response = demoWorkSnapshot(workId);
-        response.result.data.guidance.action.note = longNote;
-        return response;
-      },
+    const callout = await screen.findByTestId('work-plan-pending-callout');
+    expect(callout.textContent).toContain('有一份新的拆解等批准：');
+    expect(callout.textContent).toContain('“完善异常恢复”拆成了 4 件任务，陈宇的 Agent 今天 09:10 提的。批准之前它们不会出现在下面。');
+    expect(screen.queryByRole('button', { name: /批准|发布|认领|退回|Approve|Publish|Claim|Reject/i })).toBeNull();
+
+    await user.click(screen.getByTestId('work-plan-pending-open'));
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/inbox');
+      expect(router.state.location.search).toContain('scope=demo');
+      expect(router.state.location.search).toContain('detail=plan-approval%3AA-004%3AM-001');
     });
-    await screen.findByTestId('plan-detail');
-    await waitFor(() => expect(screen.getByTestId('plan-detail').textContent).toContain('Keep support filters useful'));
-    expect(screen.getByTestId('plan-detail').textContent).toContain('Do not mutate input records');
-    expect(screen.getByTestId('required-spec-name').textContent).toBe('support');
-    expect(defaultVisibleText(screen.getByTestId('plan-detail'))).not.toContain('docs/support.md');
-    expect(screen.getByTestId('plan-detail').textContent).toContain('用于当前工作');
-    expect(screen.getByTestId('plan-runtime-state').textContent).toBe('已认领');
-    expect(screen.getByTestId('plan-guidance').textContent).toBe('未报告下一步');
-    expect(screen.getByTestId('plan-detail').textContent).not.toContain('session.checkpoint');
-    expect(screen.getByTestId('plan-detail').textContent).not.toContain('Batch progress');
-    expect(screen.getByTestId('last-report-W1').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN'));
-    expect(screen.getByTestId('last-report-W1').textContent).not.toBe(formatUnixMs(1761839900000, 'zh-CN'));
-    // Agent protocol guidance belongs in retained service records.
-
-    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-    expect(screen.queryByTestId("technical-guidance-op")).toBeNull();
-    expect(screen.queryByTestId("technical-guidance-note")).toBeNull();
-    expect(screen.queryByTestId("technical-next-step")).toBeNull();
-    // The material name is visible while source fingerprints stay off the interface.
-    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-    expect(screen.queryByTestId("technical-detail-required_specs[0].path")).toBeNull();
-    expect(screen.queryByTestId("technical-detail-required_specs[0].sha256")).toBeNull();
-    expect(screen.queryByTestId("technical-detail-required_specs[0].byte_length")).toBeNull();
   });
 
-  it('shows the reported next action and marks stale feedback without raw fields', async () => {
-    setupPlan({
-      snapshot: (workId) => {
-        const response = demoWorkSnapshot(workId) as {
-          result: { data: { observation: { progress: Record<string, unknown> } } };
-        };
-        response.result.data.observation.progress = { ...response.result.data.observation.progress, next_action: 'Review the contract first' };
-        response.result.data.observation.progress.stale = true;
-        return response;
-      },
+  it('omits the pending breakdown callout once reads settle with no pending breakdown (AC #1)', async () => {
+    const modelNoApproval = makeRichModel();
+    modelNoApproval.input.approvals = { coverage: 'complete', items: [] };
+    const { queryClient } = setupPlan({
+      model: modelNoApproval,
+      planning: readEnvelope(makePlanningCandidates([])),
     });
-    await waitFor(() => expect(screen.getByTestId('plan-guidance').textContent).toBe('Review the contract first'));
-    expect(screen.getByTestId('last-report-W1').textContent).toBe(`${formatUnixMs(1761839800000, 'zh-CN')}可能已过期`);
-    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-    expect(screen.queryByTestId("technical-next-action")).toBeNull();
-    // why the note is (not) there stays checkable: the service's flag and the work's own state, verbatim
-    expect(screen.queryByTestId("technical-client-stale")).toBeNull();
-    expect(screen.queryByTestId("technical-runtime-state")).toBeNull();
-    expect(screen.queryByTestId("technical-completion-id")).toBeNull();
-    expect(screen.queryByTestId("technical-observed-at")).toBeNull();
-  });
 
-  it('shows a product progress report without raw checkpoint fields', async () => {
-    setupPlan({
-      snapshot: (workId) => {
-        const response = demoWorkSnapshot(workId) as { result: { data: { observation: { progress: Record<string, unknown> | null } } } };
-        response.result.data.observation.progress = { ...CHECKPOINT };
-        return response;
-      },
+    await screen.findByTestId('workstream-group-WS-001');
+    // Wait until both reads that can trigger the callout have actually settled before asserting absence.
+    await waitFor(() => {
+      expect(queryClient.getQueryState(['team', 'planning.candidates', 'demo', null, null])?.status).toBe('success');
+      expect(queryClient.getQueryState(['team', 'overview-model', 'demo'])?.status).toBe('success');
     });
-    const block = await screen.findByTestId('progress-report');
-    expect(within(block).getByTestId('progress-report-summary').textContent).toBe(CHECKPOINT.summary);
-    expect(within(block).getByTestId('progress-report-completed').textContent).toContain('Checks cover an empty list.');
-    expect(within(block).getByTestId('progress-report-blockers').textContent).toBe('未报告阻塞');
-    expect(within(block).getByTestId('progress-report-tests').textContent).toContain('npm test');
-    expect(within(block).getByTestId('progress-report-tests').textContent).toContain('已通过');
-    expect(within(block).getByTestId('progress-report-tests').textContent).toContain('失败');
-    expect(within(block).getByTestId('progress-report-artifacts').textContent).toContain('开发分支');
-    expect(within(block).getByTestId('progress-report-declaration').textContent).toContain('Lin Agent');
-    expect(within(block).getByTestId('progress-report-declaration').textContent).toContain('系统未核验');
-    expect(block.textContent).not.toContain('{');
-    expect(block.textContent).not.toContain('refs/heads');
-    expect(findForbiddenVisibleText(defaultVisibleText(block))).toEqual([]);
-    expect(within(block).queryByTestId('progress-report-contract')).toBeNull();
-
-    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-    expect(screen.queryByTestId("technical-detail-progress.checkpoint_id")).toBeNull();
-    expect(screen.queryByTestId("technical-detail-progress.artifacts")).toBeNull();
+    expect(screen.queryByTestId('work-plan-pending-callout')).toBeNull();
   });
 
-  it('wires the work being finished into the checkpoint: a stale checkpoint is marked on an open work and not on a finished one', async () => {
-    const { unmount } = setupPlan({
-      snapshot: (workId) => {
-        const response = demoWorkSnapshot(workId) as { result: { data: { observation: { progress: Record<string, unknown> | null } } } };
-        response.result.data.observation.progress = { ...CHECKPOINT, stale: true };
-        return response;
-      },
+  it('renders all 5 filters with counts, goal link, completion legend, and exact count-to-row match (AC #2 & #5)', async () => {
+    const user = userEvent.setup();
+    const { router } = setupPlan();
+
+    await screen.findByTestId('workstream-group-WS-001');
+
+    const expectedCounts: Record<(typeof WORK_PLAN_FILTERS)[number], { label: string; count: number }> = {
+      all: { label: '全部 7', count: 7 },
+      open: { label: '没做完 5', count: 5 },
+      review: { label: '等复核 1', count: 1 },
+      claimed: { label: '标了完成 1', count: 1 },
+      done: { label: '已核验 2', count: 2 },
+    };
+
+    for (const filterId of WORK_PLAN_FILTERS) {
+      const btn = screen.getByTestId(`work-plan-filter-${filterId}`);
+      expect(btn.textContent).toBe(expectedCounts[filterId].label);
+      await user.click(btn);
+      await waitFor(() => expect(btn.getAttribute('aria-pressed')).toBe('true'));
+      const rows = document.querySelectorAll('[data-testid^="work-plan-row-"]');
+      expect(rows).toHaveLength(expectedCounts[filterId].count);
+    }
+
+    // Legend is rendered beside the filters.
+    expect(screen.getByTestId('work-plan-filters').textContent).toContain('核验过');
+    expect(screen.getByTestId('work-plan-filters').textContent).toContain('标了完成，没核验');
+
+    // Goal link navigates to the goal detail page.
+    const goalLink = screen.getByTestId('work-plan-goal-link');
+    expect(goalLink.textContent).toBe('目标：订单从查询到提交在一个页面完成');
+    await user.click(goalLink);
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/goals/GOAL-001');
+      expect(router.state.location.search).toContain('scope=demo');
     });
-    expect((await screen.findByTestId('progress-report-declaration')).textContent).toContain('可能已过期');
-    unmount();
-    setupPlan({
-      snapshot: (workId) => {
-        const response = demoWorkSnapshot(workId) as { result: { data: { runtime: { state: string }; observation: { progress: Record<string, unknown> | null } } } };
-        response.result.data.runtime.state = 'completed';
-        response.result.data.observation.progress = { ...CHECKPOINT, stale: true };
-        return response;
-      },
+  });
+
+  it('omits goal link gracefully when goals.list is Unsupported', async () => {
+    const { queryClient } = setupPlan({
+      goals: { ok: false, error: { code: 'Unsupported', message: 'not exposed' } },
     });
-    expect((await screen.findByTestId('progress-report-declaration')).textContent).not.toContain('可能已过期');
-  });
-
-  it('keeps report meaning while removing long identifiers from the product interface', async () => {
-    const hash = '5f7eb2fe9c563e4d355aa64a527e0aef754116c1';
-    setupPlan({
-      snapshot: (workId) => {
-        const response = demoWorkSnapshot(workId) as { result: { data: { observation: { progress: Record<string, unknown> | null } } } };
-        response.result.data.observation.progress = { ...CHECKPOINT, summary: `Merged ${hash} into main.`, completed: [`Published ${hash}.`] };
-        return response;
-      },
+    await screen.findByTestId('workstream-group-WS-001');
+    await waitFor(() => {
+      expect(queryClient.getQueryState(['team', 'goals.list', 'demo'])?.status).toBe('error');
     });
-    const block = await screen.findByTestId('progress-report');
-    expect(within(block).getByTestId('progress-report-summary').textContent).toBe('Merged 相关记录 into main.');
-    expect(within(block).getByTestId('progress-report-completed').textContent).toContain('Published 相关记录.');
-    expect(block.textContent).not.toContain(hash);
-    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-    expect(screen.queryByTestId("technical-detail-progress.summary")).toBeNull();
+    expect(screen.queryByTestId('work-plan-goal-link')).toBeNull();
+    expect(screen.queryByTestId('work-plan-failed')).toBeNull();
+    expect(screen.queryByTestId('work-plan-partial')).toBeNull();
   });
 
-  it('warns on the checkpoint when the task changed after it was written', async () => {
-    setupPlan({
-      snapshot: (workId) => {
-        const response = demoWorkSnapshot(workId) as { result: { data: { observation: { progress: Record<string, unknown> | null } } } };
-        response.result.data.observation.progress = { ...CHECKPOINT, contract_matches_current: false };
-        return response;
-      },
+  it('groups by workstream with header bar, highlights returned row, navigates to task page, and matches group count on click (AC #3 & #5)', async () => {
+    const user = userEvent.setup();
+    const { router } = setupPlan();
+
+    await screen.findByTestId('workstream-group-WS-001');
+    expect(screen.getByTestId('plan-progress-table').textContent).toContain('按工作线看');
+
+    // All 3 workstreams render with headers, counts, and completion bars.
+    const g1 = screen.getByTestId('workstream-group-WS-001');
+    expect(within(g1).getByText('前端')).toBeTruthy();
+    expect(within(g1).getByTestId('workstream-count-WS-001').textContent).toBe('3 件');
+    expect(within(g1).getByRole('img')).toBeTruthy();
+
+    // Returned task T-105 is highlighted; non-returned T-103 is not.
+    expect(screen.getByTestId('work-plan-row-T-105').getAttribute('data-highlighted')).toBe('true');
+    expect(screen.getByTestId('work-plan-row-T-103').getAttribute('data-highlighted')).toBeNull();
+
+    // Status tag, owner with avatar, and next step render in each row.
+    expect(screen.getByTestId('plan-status-T-105').textContent).toBe('复核退回');
+    expect(screen.getByTestId('plan-owner-T-103').textContent).toContain('林悦');
+    expect(screen.getByTestId('plan-next-T-103').textContent).toContain('接口第 3 版通过复核后');
+
+    // Clicking a workstream's count scopes to that workstream with exact count === rendered rows.
+    await user.click(screen.getByTestId('workstream-count-WS-001'));
+    await waitFor(() => {
+      expect(router.state.location.search).toContain('stream=WS-001');
+      expect(document.querySelectorAll('[data-testid^="work-plan-row-"]')).toHaveLength(3);
     });
-    const note = await screen.findByTestId('progress-report-contract');
-    expect(note.textContent).toBe('这份汇报写成之后，任务要求有变化，内容可能已不适用');
-  });
-
-  it('constrains long required-spec text with ellipsis and a zero-min-width flex child', async () => {
-    const longSpec = 'Required source text with a very long immutable locator and validation payload. '.repeat(8);
-    setupPlan({
-      snapshot: (workId) => {
-        const response = demoWorkSnapshot(workId);
-        response.result.data.required_specs[0].text = longSpec;
-        return response;
-      },
+    await user.click(screen.getByTestId('work-plan-stream-reset'));
+    await waitFor(() => {
+      expect(router.state.location.search).not.toContain('stream=');
+      expect(document.querySelectorAll('[data-testid^="work-plan-row-"]')).toHaveLength(7);
     });
-    const text = await screen.findByTestId('required-spec-text');
-    expect(text.textContent).toContain('用于当前工作');
-    expect(text.textContent).not.toContain(longSpec);
-    expect(text.parentElement?.style.minWidth).toBe('0px');
-  });
 
-  it('shows material availability without source fingerprints', async () => {
-
-    setupPlan();
-    const card = await screen.findByTestId('source-state-card');
-    expect(card.textContent).toContain('部分资料还需补充');
-    for (const raw of ['epoch-1', 'contract-1', 'enabled', 'project_revision', 'authority_version', 'selection_basis']) expect(card.textContent).not.toContain(raw);
-    expect(card.textContent).not.toContain('已同步');
-    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-  });
-
-  it('marks a missing attribution triple as not provided, never synchronized', async () => {
-    setupPlan({
-      snapshot: (workId) => {
-        const response = demoWorkSnapshot(workId) as {
-          result: {
-            source_snapshot_id?: string;
-            coordinator_epoch?: string;
-            project_revision?: string;
-          };
-        };
-        delete response.result.source_snapshot_id;
-        delete response.result.coordinator_epoch;
-        delete response.result.project_revision;
-        return response;
-      },
+    // Clicking a task row navigates to the dedicated task page.
+    await user.click(screen.getByTestId('work-plan-row-T-103'));
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/tasks/T-103');
+      expect(router.state.location.search).toContain('scope=demo');
     });
-    const card = await screen.findByTestId('source-state-card');
-    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-    expect(screen.queryByTestId("source-snapshot-id")).toBeNull();
-    expect(screen.queryByTestId("source-project-revision")).toBeNull();
-    expect(screen.queryByTestId("source-coordinator-epoch")).toBeNull();
-    expect(card.textContent).not.toContain('已同步');
   });
 
-  it('uses the recorded plan and document views instead of later-slice placeholders', async () => {
-    setupPlan();
-    expect((await screen.findByTestId('plan-changes')).textContent).toContain('计划变更');
-    expect((await screen.findByTestId('plan-materials')).textContent).toContain('资料准备情况');
-    expect(screen.queryByTestId('plan-candidates-placeholder')).toBeNull();
-    expect(screen.queryByTestId('plan-source-set-placeholder')).toBeNull();
-  });
-});
+  it('supports keyboard Enter navigation from a task row to its detail page (AC #3)', async () => {
+    const user = userEvent.setup();
+    const { router } = setupPlan();
 
-describe('work detail review outcomes', () => {
-  function reviewedSnapshot(workId: string, state: string, current: boolean | undefined) {
-    const response = demoWorkSnapshot(workId);
-    return {
-      ...response,
-      result: {
-        ...response.result,
-        data: {
-          ...response.result.data,
-          observation: {
-            ...response.result.data.observation,
-            progress: { ...CHECKPOINT, stale: true },
-            collaboration: { review: { id: `review-${workId}`, state, current_candidate: current } },
+    const row = await screen.findByTestId('work-plan-row-T-105');
+    row.focus();
+    await user.keyboard('{Enter}');
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/tasks/T-105');
+      expect(router.state.location.search).toContain('scope=demo');
+    });
+  });
+
+  it('preserves plan changes, document readiness, and returned-plan explanation (AC #4)', async () => {
+    const rejectedCandidates = makePlanningCandidates([
+      {
+        candidate_id: 'PC-REJ-1',
+        state: 'rejected',
+        draft_revision: 2,
+        author: { display_name: '陈宇' },
+        updated_at_unix_ms: NOW - 3_600_000,
+        baseline: { matches_current: true },
+        current_diff: {
+          counts: { added: 1, removed: 0, changed: 0, unchanged: 0 },
+          items: [{ work_id: 'PW-9', title: '补充重试上限说明', kind: 'added' }],
+        },
+        approval: { value: null, reason: 'not_approved' },
+        publication: { value: null, reason: 'not_published' },
+        activation: { value: null, reason: 'not_activated' },
+        rejection: {
+          value: {
+            actor_id: 'M-001',
+            display_name: '周宁',
+            at_unix_ms: NOW - 1_800_000,
+            reason: '需要先明确超时重试的最大次数',
           },
+          reason: null,
         },
       },
-    };
-  }
-
-  it('discovers the current review on normal navigation and separates it from the earlier Agent report', async () => {
-    const { fetchMock } = setupPlan({ snapshot: (workId) => reviewedSnapshot(workId, 'approved', true) });
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole('tab', { name: '成果' }));
-    expect(await screen.findByTestId('plan-review')).toBeTruthy();
-    expect(defaultVisibleText(screen.getByTestId('plan-review'))).not.toContain('artifact-digest-1');
-    const reads = fetchMock.mock.calls
-      .filter(([, init]) => String(init?.body ?? '').includes('"review.inspect"'))
-      .map(([, init]) => JSON.parse(String(init?.body)).query);
-    expect(reads).toEqual([{ protocol_version: 1, op: 'review.inspect', work_id: 'W1', review_round_id: 'review-W1' }]);
-    expect(screen.getByTestId('plan-status-W1').textContent).toContain('上次汇报：待评审');
-    expect(screen.getByTestId('plan-status-W1').textContent).toContain('复核：已批准');
-    expect(screen.getByTestId('plan-detail-status').textContent).toBe(screen.getByTestId('plan-status-W1').textContent);
-    expect(screen.getByTestId('plan-status-W1').textContent).not.toMatch(/已完成|已交付|已合并/);
-  });
-
-  it('keeps an explicitly selected historical round instead of replacing it with the discovered current round', async () => {
-    const { fetchMock } = setupPlan({
-      path: '/projects/demo?tab=plan&work=W1&review_round_id=earlier-review',
-      snapshot: (workId) => reviewedSnapshot(workId, 'approved', true),
-    });
-    await userEvent.setup().click(await screen.findByRole('tab', { name: '成果' }));
-    expect(await screen.findByTestId('plan-review')).toBeTruthy();
-    const reads = fetchMock.mock.calls
-      .filter(([, init]) => String(init?.body ?? '').includes('"review.inspect"'))
-      .map(([, init]) => JSON.parse(String(init?.body)).query);
-    expect(reads).toEqual([{ protocol_version: 1, op: 'review.inspect', work_id: 'W1', review_round_id: 'earlier-review' }]);
-    expect(screen.getByTestId('plan-historical-review').textContent).toContain('正在查看此前的复核');
-  });
-
-  it('discovers each work own round after normal navigation without carrying over the previous work round', async () => {
-    const { fetchMock, router } = setupPlan({ snapshot: (workId) => reviewedSnapshot(workId, 'approved', true) });
-    const reads = () => fetchMock.mock.calls
-      .filter(([, init]) => String(init?.body ?? '').includes('"review.inspect"'))
-      .map(([, init]) => JSON.parse(String(init?.body)).query);
-    await waitFor(() => expect(reads()).toHaveLength(1));
-    await act(async () => { await router.navigate('/projects/demo?tab=plan&work=W2'); });
-    await waitFor(() => expect(reads()).toHaveLength(2));
-    expect(reads().map((read) => [read.work_id, read.review_round_id])).toEqual([
-      ['W1', 'review-W1'], ['W2', 'review-W2'],
     ]);
-  });
 
-  it.each([
-    ['open', true, '复核：进行中'],
-    ['rejected', true, '复核：已拒绝'],
-    ['approved', false, '此前成果的复核：已批准'],
-    ['approved', undefined, '复核：已批准（是否最新尚未确认）'],
-  ])('attributes %s review with candidate currentness %s without upgrading work completion', async (state, current, expected) => {
-    setupPlan({ snapshot: (workId) => reviewedSnapshot(workId, state, current) });
-    await waitFor(() => expect(screen.getByTestId('plan-status-W1').textContent).toContain(expected));
-    expect(screen.getByTestId('plan-status-W1').textContent).toContain('上次汇报：待评审');
-    expect(screen.getByTestId('plan-status-W1').textContent).not.toMatch(/已完成|已交付|已合并/);
-  });
-
-  it('renders localized review decisions with exact metadata and no narrative', async () => {
-    const user = userEvent.setup();
-    setupPlan({ path: '/projects/demo?tab=plan&work=W1&review_round_id=round-1' });
-    await user.click(await screen.findByRole('tab', { name: '成果' }));
-    const review = await screen.findByTestId('plan-review');
-    const decision = within(review).getByTestId('review-decision-decision-1');
-    expect(within(decision).getByTestId('review-decision-code').textContent).toBe('批准');
-    expect(decision.textContent).toContain('成员独立复核（模拟）');
-    expect(decision.textContent).toContain('人工批准');
-    expect(defaultVisibleText(review)).not.toContain('author-agent-1');
-    expect(defaultVisibleText(review)).not.toContain('artifact-digest-1');
-    expect(defaultVisibleText(review)).not.toContain('bundle-hash-1');
-    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-    expect(within(review).queryByText('author-agent-1')).toBeNull();
-    expect(within(review).queryByText('artifact-digest-1')).toBeNull();
-    expect(within(review).queryByText('bundle-hash-1')).toBeNull();
-    expect(review.querySelector('[data-testid="review-narrative"]')).toBeNull();
-    expect(review.textContent).toContain('尚未开放');
-  });
-
-  it('presents a missing review as absent rather than an error', async () => {
-    const user = userEvent.setup();
-    setupPlan({
-      path: '/projects/demo?tab=plan&work=W1&review_round_id=round-1',
-      review: {
-        ...DEMO_REVIEW,
-        result: { ...DEMO_REVIEW.result, data: { review: null } },
-      },
+    const { container } = setupPlan({
+      planning: readEnvelope(rejectedCandidates),
     });
-    await user.click(await screen.findByRole('tab', { name: '成果' }));
-    expect(await screen.findByTestId('review-absent')).toBeTruthy();
-    expect(screen.queryByTestId('state-partial')).toBeNull();
+
+    const changes = await screen.findByTestId('plan-changes');
+    const materials = await screen.findByTestId('plan-materials');
+    expect(changes.textContent).toContain('计划变更');
+    expect(changes.textContent).toContain('已退回，需调整');
+    expect(changes.textContent).toContain('周宁 退回');
+    expect(changes.textContent).toContain('需要先明确超时重试的最大次数');
+    expect(changes.textContent).toContain('等待 Agent 根据退回原因调整方案后重新提交');
+    expect(materials.textContent).toContain('资料准备情况');
+    expect(materials.textContent).toContain('所需资料已齐备');
+    expect(materials.textContent).toContain('项目目标');
+
+    // No diagnostic disclosures or forbidden technical terms.
+    expect(container.querySelector('details, pre, code, [data-testid="technical-details"]')).toBeNull();
+    expect(findForbiddenVisibleText(defaultVisibleText(container))).toEqual([]);
   });
 
-  it('does not request review.inspect without a verified review round id', async () => {
+  it('shows prototype empty-filter copy when active filter matches 0 tasks', async () => {
     const user = userEvent.setup();
-    const { fetchMock } = setupPlan();
-    await user.click(await screen.findByRole('tab', { name: '成果' }));
-    expect((await screen.findByTestId('review-round-unavailable')).textContent)
-      .toContain('暂时无法读取这次检查');
-    const reviewCalls = fetchMock.mock.calls.filter(([, init]) => String(init?.body ?? '').includes('"review.inspect"'));
-    expect(reviewCalls).toHaveLength(0);
-  });
-});
-
-describe('work detail history', () => {
-  it('filters development history by work and presents product events', async () => {
-    const user = userEvent.setup();
-    const { fetchMock } = setupPlan();
-    await user.click(await screen.findByRole('tab', { name: '历史' }));
-    const history = await screen.findByTestId('plan-history');
-    const step = await within(history).findByTestId('recent-step-0');
-    expect(within(step).getByTestId('recent-step-text').textContent).toBe('变更授权');
-    expect(within(step).getByTestId('recent-step-time').textContent).toBe(formatUnixMs(1761839700000, 'zh-CN'));
-    for (const hidden of ['access.changed', 'actor-raw-17', 'audit.development', 'not_observed']) {
-      expect(defaultVisibleText(history)).not.toContain(hidden);
-    }
-    expect(within(history).getByTestId('recent-changes-all').getAttribute('href')).toBe('/activity?project=demo&work=W1');
-    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-    expect(screen.queryByTestId("recent-step-technical-0")).toBeNull();
-    expect(screen.queryByTestId("technical-detail-development_source")).toBeNull();
-    expect(screen.queryByTestId("technical-detail-unknown_means")).toBeNull();
-    const urls = fetchMock.mock.calls.map(([input]) => String(input))
-      .filter((url) => url.includes('/api/team/activity'));
-    expect(urls).toHaveLength(1);
-    expect(urls[0]).toContain('kind=development');
-    expect(urls[0]).toContain('work_id=W1');
-    expect(urls[0]).not.toContain('kind=requests');
-  });
-
-  it('uses empty for a successful empty history read', async () => {
-    const user = userEvent.setup();
-    setupPlan({ activity: makeActivity([]) });
-    await user.click(await screen.findByRole('tab', { name: '历史' }));
-    const history = await screen.findByTestId('plan-history');
-    expect(await within(history).findByTestId('state-empty')).toBeTruthy();
-  });
-
-  it('presents Unsupported as unavailable in this mode', async () => {
-    const user = userEvent.setup();
-    setupPlan({ activity: { ok: false, error: { code: 'Unsupported', message: 'demo' } } });
-    await user.click(await screen.findByRole('tab', { name: '历史' }));
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1200));
+    const overviewNoClaimed = makeRichOverview({
+      works: makeRichOverview().works.filter((w) => w.key !== 'T-114'),
     });
-    expect(screen.getByTestId('activity-unavailable').textContent).toContain('此模式不可用');
-  });
-
-  it('presents history failure as partial failure', async () => {
-    const user = userEvent.setup();
-    setupPlan({ activity: { ok: false, error: { code: 'ReadTimeout', message: 'slow' } } });
-    await user.click(await screen.findByRole('tab', { name: '历史' }));
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1200));
-    });
-    const history = screen.getByTestId('plan-history');
-    expect(history.textContent).toContain('部分读取失败');
-    expect(history.textContent).not.toContain('ReadTimeout');
-    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-    expect(within(history).queryByText('ReadTimeout')).toBeNull();
-  });
-
-  it('discloses earlier records and caps the newest history at ten steps', async () => {
-    const user = userEvent.setup();
-    const items = Array.from({ length: 22 }, (_, index) => ({
-      ...DEMO_ACTIVITY.data.items[0],
-      id: `activity-${index + 1}`,
-      action: index % 2 === 0 ? 'work.snapshot' : 'execution.start',
-      created_at_unix_ms: 1761839700000 + index * 1000,
-    }));
-    setupPlan({ activity: makeActivity(items, { next_cursor: 'older-2' }) });
-    await user.click(await screen.findByRole('tab', { name: '历史' }));
-    const history = await screen.findByTestId('plan-history');
-    await waitFor(() => expect(history.querySelectorAll('li[data-testid^="recent-step-"]')).toHaveLength(10));
-    expect(within(history.querySelector('li[data-testid="recent-step-0"]') as HTMLElement).getByTestId('recent-step-text').textContent).toBe('开始执行');
-    expect(within(history).getByTestId('recent-changes-more')).toBeTruthy();
-    expect(history.textContent).toContain('还有更早的记录');
-  });
-
-});
-
-describe('work plan localization and accessibility', () => {
-  it('renders new plan strings in English', async () => {
-    setupPlan();
-    await screen.findByTestId('plan-detail');
-    await act(() => i18n.changeLanguage('en-US'));
-    expect(await screen.findByText('Effective plan')).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'Requirements & progress' })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'Outcomes' })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'History' })).toBeTruthy();
-    expect(within(screen.getByTestId('source-state-card')).getByText('Some required material is still missing')).toBeTruthy();
-    expect(screen.queryByText('Source state')).toBeNull();
-  });
-
-  it('has no axe violations', async () => {
-    const { container } = setupPlan();
-    await screen.findByTestId('plan-detail');
-    const results = await axe(container, {
-      rules: { 'color-contrast': { enabled: false } },
-    });
-    expect(results).toHaveNoViolations();
-  });
-});
-
-describe('work-plan review round 2: sub-read failures and behavior pins', () => {
-  it('a Forbidden review read degrades only its own tab, not the whole panel', async () => {
-    setupPlan({
-      path: '/projects/demo?tab=plan&work=W1&review_round_id=round-1',
-      review: { ok: false, error: { code: 'Forbidden', message: 'access denied' } },
-    });
-    // The work itself is readable: requirements stay visible with real content.
-    expect(await screen.findByTestId('plan-runtime-state')).toBeTruthy();
-    expect(screen.queryByTestId('state-forbidden')).toBeNull();
-    const user = userEvent.setup();
-    await user.click(screen.getByRole('tab', { name: '成果' }));
-    const partial = await screen.findByTestId('state-partial');
-    expect(partial.textContent).not.toContain('Forbidden');
-    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-    expect(within(partial).queryByText('Forbidden')).toBeNull();
-  });
-
-  it('a missing progress report time reads 尚未读取, never the current clock', async () => {
-    setupPlan({
-      snapshot: (workId) => {
-        const response = demoWorkSnapshot(workId) as {
-          result: { data: { observation: { progress: { reported_at_unix_ms?: number } } } };
-        };
-        delete response.result.data.observation.progress.reported_at_unix_ms;
-        return response;
-      },
-    });
-    const cell = await screen.findByTestId('last-report-W1');
-    await waitFor(() => expect(cell.textContent).toBe('尚未读取'));
-    expect(cell.textContent).not.toBe(formatUnixMs(Date.now(), 'zh-CN'));
-  });
-
-  it('a work in a workstream the overview does not list shows under its own id', async () => {
-    const works = [
-      DEMO_PROJECT_WORKS[0],
-      { ...DEMO_PROJECT_WORKS[1], key: 'W-orphan', title: 'Orphan task', workstream_id: 'WS-unlisted' },
-    ];
-    setupPlan({ overview: makePlanOverview(works) });
-    expect(await screen.findByTestId('workstream-group-WS-unlisted')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Orphan task' })).toBeTruthy();
-  });
-
-  it('a failed scope with zero enumerated is not the empty state', async () => {
-    const overview = {
-      ...DEMO_PROJECT_OVERVIEW,
-      works: [],
-      coverage: {
-        ...DEMO_PROJECT_OVERVIEW.coverage,
-        scope: { ...DEMO_PROJECT_OVERVIEW.coverage.scope, status: 'failed', enumerated: 0, error_code: 'DatabaseUnavailable' },
-        failed: 1,
-      },
+    const modelNoClaimed = makeRichModel();
+    modelNoClaimed.input.tasks = {
+      coverage: 'complete',
+      items: (modelNoClaimed.input.tasks.items ?? []).filter((t) => t.id !== 'T-114'),
     };
-    setupPlan({ overview });
-    await waitFor(() => expect(screen.getByTestId('state-partial')).toBeTruthy());
-    expect(screen.queryByTestId('state-empty')).toBeNull();
+    setupPlan({ overview: overviewNoClaimed, model: modelNoClaimed });
+
+    await screen.findByTestId('workstream-group-WS-001');
+    const claimedBtn = screen.getByTestId('work-plan-filter-claimed');
+    expect(claimedBtn.textContent).toBe('标了完成 0');
+    await user.click(claimedBtn);
+    expect(await screen.findByTestId('work-plan-filter-empty')).toBeTruthy();
+    expect(screen.getByTestId('work-plan-filter-empty').textContent).toBe('这个筛选下没有任务。');
+    expect(document.querySelectorAll('[data-testid^="work-plan-row-"]')).toHaveLength(0);
   });
 
-  it('a failed work.snapshot renders a partial failure, not a blank pane', async () => {
-    setupPlan({ snapshot: () => ({ ok: false, error: { code: 'ReadTimeout', message: 'slow' } }) });
-    const partial = await screen.findByTestId('state-partial', undefined, { timeout: 5000 });
-    expect(partial.textContent).not.toContain('ReadTimeout');
-    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-    expect(within(partial).queryByText('ReadTimeout')).toBeNull();
-  });
+  it.each(['zh-CN', 'en-US'] as const)('renders all 7 read states cleanly with freshness & coverage in %s (AC #6)', async (language) => {
+    await act(async () => { await i18n.changeLanguage(language); });
 
-  it('changing the page clears the selected work', async () => {
-    const works = makeTwoStreamWorks(61);
-    const { router } = setupPlan({ overview: makePlanOverview(works), path: '/projects/demo?tab=plan&work=W1' });
-    await screen.findByRole('link', { name: 'Observed plan task 1' });
-    const user = userEvent.setup();
-    await user.click(screen.getByRole('listitem', { name: '2' }));
-    await waitFor(() => expect(router.state.location.search).not.toContain('work='));
-    expect(router.state.location.search).toContain('page=2');
-  });
+    // 1. Loading
+    let releaseLoading: () => void = () => undefined;
+    const gate = new Promise<Response>((resolve) => {
+      releaseLoading = () => resolve(json(makeRichOverview()));
+    });
+    const loadingView = setupPlan({
+      overview: () => gate,
+      model: () => new Promise<Response>(() => undefined),
+    });
+    expect(await screen.findByTestId('work-plan-loading')).toBeTruthy();
+    expect(screen.getByTestId('work-plan-loading').textContent).toContain(language === 'zh-CN' ? '正在读取工作计划' : 'Loading work plan');
+    releaseLoading();
+    loadingView.unmount();
 
-  it('Enter and Space select a row', async () => {
-    const { router } = setupPlan({ path: '/projects/demo?tab=plan' });
-    const rowLink = await screen.findByRole('link', { name: 'Build the filter API' });
-    const user = userEvent.setup();
-    const row = rowLink.closest('tr')!;
-    await user.click(row);
-    await waitFor(() => expect(router.state.location.search).toContain('work=W1'));
-    row.focus();
-    await user.keyboard('[Enter]');
-    await waitFor(() => expect(router.state.location.search).toContain('work=W1'));
-    await user.keyboard('[Space]');
-    await waitFor(() => expect(router.state.location.search).toContain('work=W1'));
-  });
+    // 2. Data (plus axe check including heading-order!)
+    const dataView = setupPlan();
+    await screen.findByTestId('workstream-group-WS-001');
+    expect(screen.getByTestId('work-plan-coverage')).toBeTruthy();
+    expect(screen.getByTestId('freshness-badge')).toBeTruthy();
+    expect(screen.getByTestId('coverage-summary')).toBeTruthy();
+    expect(dataView.container.textContent).not.toMatch(/\b(undefined|null|NaN)\b/);
+    expect(findForbiddenVisibleText(defaultVisibleText(dataView.container))).toEqual([]);
+    const axeResults = await axe(dataView.container, { rules: { 'color-contrast': { enabled: false } } });
+    expect(axeResults).toHaveNoViolations();
+    dataView.unmount();
 
-  it('the owner cell prefers owner_person over agent when both are set', async () => {
-    const works = [{ ...DEMO_PROJECT_WORKS[0], owner_person: 'lin', agent: { id: 'agent-x', state: 'running' } }];
-    setupPlan({ overview: makePlanOverview(works) });
-    const cell = await screen.findByTestId('plan-owner-W1');
-    expect(cell.textContent).toBe('lin');
-    expect(cell.textContent).not.toContain('agent-x');
-  });
-
-  it('shows each responsible member from the current work snapshot without extra reads', async () => {
-    const { fetchMock } = setupPlan({
-      path: '/projects/demo?tab=plan',
-      snapshot: (workId) => {
-        const response = demoWorkSnapshot(workId);
-        return {
-          ...response,
-          result: {
-            ...response.result,
-            data: {
-              ...response.result.data,
-              observation: {
-                ...response.result.data.observation,
-                progress: CHECKPOINT,
-                responsibility: {
-                  relation: 'owned_by_other',
-                  owner: `member_${workId.toLowerCase()}`,
-                  owner_name: workId === 'W1' ? 'Lin Wei' : 'Mei Chen',
-                  version: '1',
-                },
-              },
-            },
-          },
-        };
+    // 3. Empty
+    const emptyOverview = makeRichOverview({
+      works: [],
+      workstreams: [],
+      coverage: {
+        scope: { status: 'succeeded', enumerated: 0, truncated: false, next_cursor: null },
+        streams: [],
+        works_enumerated: 0,
+        works_total: 0,
+        succeeded: 0,
+        failed: 0,
+        truncated: false,
       },
     });
-    await waitFor(() => {
-      expect(screen.getByTestId('plan-owner-W1').textContent).toBe('Lin Wei');
-      expect(screen.getByTestId('plan-owner-W2').textContent).toBe('Mei Chen');
+    const emptyModel = { ...emptyOverviewModelResponse(), project: 'demo' } as unknown as ProjectListModel;
+    const emptyView = setupPlan({
+      overview: emptyOverview,
+      model: emptyModel,
+      planning: readEnvelope(makePlanningCandidates([])),
     });
-    const reads = fetchMock.mock.calls
-      .filter(([, init]) => String(init?.body ?? '').includes('"work.snapshot"'))
-      .map(([, init]) => (JSON.parse(String(init?.body)) as { query: { work_id: string } }).query.work_id);
-    expect(reads.sort()).toEqual(['W1', 'W2']);
-    expect(screen.getByTestId('plan-owner-W1').textContent).not.toContain('Lin Agent');
-  });
+    expect(await screen.findByTestId('work-plan-empty')).toBeTruthy();
+    expect(screen.getByTestId('freshness-badge')).toBeTruthy();
+    expect(emptyView.container.textContent).not.toMatch(/\b(undefined|null|NaN)\b/);
+    emptyView.unmount();
 
-  it('does not present a failed owner read or a bare member identifier as a person', async () => {
-    setupPlan({
-      path: '/projects/demo?tab=plan',
-      snapshot: (workId) => {
-        if (workId === 'W1') return { ok: false, error: { code: 'ReadTimeout', message: 'slow' } };
-        const response = demoWorkSnapshot(workId);
-        response.result.data.observation.responsibility.owner = 'member_internal_002';
-        return response;
+    // 4. Failed
+    const failedView = setupPlan({
+      overview: { ok: false, error: { code: 'ReadTimeout', message: 'slow' } },
+      model: { ok: false, error: { code: 'ReadTimeout', message: 'slow' } },
+    });
+    expect(await screen.findByTestId('work-plan-failed', undefined, { timeout: 5000 })).toBeTruthy();
+    expect(screen.queryByTestId('work-plan-empty')).toBeNull();
+    expect(screen.getByTestId('freshness-badge')).toBeTruthy();
+    expect(failedView.container.textContent).not.toContain('ReadTimeout');
+    failedView.unmount();
+
+    // 5. Partial failure
+    const partialOverview = makeRichOverview({
+      coverage: {
+        ...makeRichOverview().coverage,
+        failed: 1,
+        streams: [
+          ...makeRichOverview().coverage.streams,
+          { workstream_id: 'WS-FAIL', status: 'failed', error_code: 'Unavailable', read_at_unix_ms: NOW },
+        ],
       },
     });
-    await waitFor(() => {
-      expect(screen.getByTestId('plan-status-W1').textContent).toBe('未知');
-      expect(screen.getByTestId('plan-status-W2').textContent).toBe('已认领');
-    });
-    expect(screen.getByTestId('plan-owner-W1').textContent).toBe('未提供');
-    expect(screen.getByTestId('plan-owner-W2').textContent).toBe('未提供');
-    expect(screen.getByTestId('plan-owner-W2').textContent).not.toContain('member_internal_002');
-  });
+    const partialView = setupPlan({ overview: partialOverview });
+    expect(await screen.findByTestId('work-plan-partial')).toBeTruthy();
+    expect(screen.getByTestId('coverage-stream-WS-FAIL')).toBeTruthy();
+    // Unconfirmed counts must show — rather than guessing 0.
+    expect(screen.getByTestId('work-plan-filter-all').textContent).toContain('—');
+    expect(screen.getByTestId('work-plan-filter-done').textContent).toContain('—');
+    expect(partialView.container.textContent).not.toContain('Unavailable');
+    partialView.unmount();
 
-  it('review reads are keyed per (work, round) with the right ids', async () => {
-    const { fetchMock, router } = setupPlan({ path: '/projects/demo?tab=plan&work=W1&review_round_id=round-1' });
-    const reviewCalls = () => fetchMock.mock.calls
-      .filter(([, init]) => String(init?.body ?? '').includes('review.inspect'))
-      .map(([, init]) => JSON.parse(String(init?.body)).query);
-    await waitFor(() => expect(reviewCalls().length).toBe(1));
-    expect(reviewCalls()[0]).toMatchObject({ work_id: 'W1', review_round_id: 'round-1' });
-    // Select another work: a new (work, round) pair must be read, not cached.
-    await act(async () => {
-      await router.navigate('/projects/demo?tab=plan&work=W2&review_round_id=round-1');
+    // 6. Unknown outcome (incomparable ordering)
+    const unknownView = setupPlan({
+      model: makeRichModel({ ordering: 'incomparable' }),
     });
-    await waitFor(() => expect(reviewCalls().length).toBe(2));
-    expect(reviewCalls()[1]).toMatchObject({ work_id: 'W2', review_round_id: 'round-1' });
-    // Another round of the same work: a third distinct read.
-    await act(async () => {
-      await router.navigate('/projects/demo?tab=plan&work=W2&review_round_id=round-2');
-    });
-    await waitFor(() => expect(reviewCalls().length).toBe(3));
-    expect(reviewCalls()[2]).toMatchObject({ work_id: 'W2', review_round_id: 'round-2' });
-    // Back to an already-read pair: any further read must again name that
-    // exact pair (a background refetch of the same object is fine; an answer
-    // for the wrong object is not). Exactly three distinct pairs were read.
-    await act(async () => {
-      await router.navigate('/projects/demo?tab=plan&work=W1&review_round_id=round-1');
-    });
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    const pairs = new Set(reviewCalls().map((query) => `${query.work_id}::${query.review_round_id}`));
-    expect(pairs).toEqual(new Set(['W1::round-1', 'W2::round-1', 'W2::round-2']));
-    for (const query of reviewCalls().slice(3)) {
-      expect(query).toMatchObject({ work_id: 'W1', review_round_id: 'round-1' });
-    }
-  });
-});
+    expect(await screen.findByTestId('work-plan-unknown')).toBeTruthy();
+    expect(screen.getByTestId('work-plan-filter-open').textContent).toContain('—');
+    expect(screen.getByTestId('workstream-bar-unknown-WS-001')).toBeTruthy();
+    expect(screen.getByTestId('plan-status-T-103').textContent).toBe(language === 'zh-CN' ? '未知' : 'Unknown');
+    unknownView.unmount();
 
-describe('work-plan review round 3: three remaining pins', () => {
-  it('a Forbidden activity read degrades only the history tab, not the panel', async () => {
-    setupPlan({
-      path: '/projects/demo?tab=plan&work=W1',
-      activity: { ok: false, error: { code: 'Forbidden', message: 'access denied' } },
+    // 7. Revoked
+    const revokedView = setupPlan({
+      overview: { ok: false, error: { code: 'Forbidden', message: 'denied' } },
     });
-    // Requirements and the source-state card stay visible with real content.
-    expect(await screen.findByTestId('plan-runtime-state')).toBeTruthy();
-    expect(screen.getByTestId('source-state-card')).toBeTruthy();
-    expect(screen.queryByTestId('state-forbidden')).toBeNull();
-    const user = userEvent.setup();
-    await user.click(screen.getByRole('tab', { name: '历史' }));
-    const partial = await screen.findByTestId('state-partial');
-    expect(partial.textContent).not.toContain('Forbidden');
-    expect(document.querySelector('[data-testid="technical-details"]')).toBeNull();
-    expect(within(partial).queryByText('Forbidden')).toBeNull();
-  });
+    expect(await screen.findByTestId('state-forbidden')).toBeTruthy();
+    expect(screen.queryByText('订单页面联调')).toBeNull();
+    await waitFor(() => expect(isObservationReadRevoked(revokedView.queryClient)).toBe(true));
+    revokedView.unmount();
+  }, 30_000);
 
-  it('Space on a focused row changes the selected work', async () => {
-    const { router } = setupPlan({ path: '/projects/demo?tab=plan' });
-    const rowLink = await screen.findByRole('link', { name: 'Build the filter API' });
-    const row = rowLink.closest('tr')!;
-    row.focus();
-    expect(document.activeElement).toBe(row);
-    const user = userEvent.setup();
-    await user.keyboard('[Space]');
-    await waitFor(() => expect(router.state.location.search).toContain('work=W1'));
+  it('never leaks raw member IDs or technical fields in owner or next-step cells', async () => {
+    const overview = makeRichOverview({
+      works: [
+        {
+          key: 'T-901',
+          title: '合法任务标题',
+          status: 'claimed',
+          owner_person: 'member_internal_001',
+          agent: { id: 'agent-raw-01', state: 'running' },
+          next_step: `Run session.checkpoint with ${DIGEST}`,
+          detail_loaded: false,
+          workstream_id: 'WS-001',
+          contract_hash: 'h9',
+        },
+      ],
+    });
+    const model = makeRichModel();
+    model.input.tasks = {
+      coverage: 'complete',
+      items: [
+        { id: 'T-901', title: '合法任务标题', projectId: 'demo', ownerPersonId: null, started: true, agentActive: true, acceptance: [{ evidence: [] }], report: null, submittedResultAtUnixMs: null, integrated: false, externalWait: null, commitments: [] },
+      ],
+    };
+    const { container } = setupPlan({ overview, model });
+    expect(await screen.findByTestId('work-plan-row-T-901')).toBeTruthy();
+    expect(screen.getByTestId('plan-owner-T-901').textContent).toBe('未提供');
+    expect(container.textContent).not.toContain('member_internal_001');
+    expect(container.textContent).not.toContain('agent-raw-01');
+    expect(container.textContent).not.toContain(DIGEST);
   });
-
-  it.each(['Forbidden', 'SessionExpired'])(
-    'a work-level auth error (%s) revokes the whole observation',
-    async (code) => {
-      const calls: string[] = [];
-      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(input);
-        const body = String(init?.body ?? '');
-        if (url.includes('/api/team/projects')) { calls.push('projects'); return json(DEMO_PROJECTS); }
-        if (url.includes('/api/team/overview')) { calls.push('overview'); return json(DEMO_PROJECT_OVERVIEW); }
-        if (url.includes('/api/team/activity')) { calls.push('activity'); return json(DEMO_ACTIVITY); }
-        if (url.includes('/api/team/read')) {
-          const op = JSON.parse(body).query.op as string;
-          calls.push(op);
-          if (op === 'work.snapshot') return json({ ok: false, error: { code, message: 'revoked' } });
-          if (op === 'review.inspect') return json(DEMO_REVIEW);
-        }
-        return json({ ok: false, error: { code: 'NoRoute', message: url } });
-      });
-      vi.stubGlobal('fetch', fetchMock);
-      const { queryClient } = renderApp('/projects/demo?tab=plan&work=W1');
-      // The work-level auth error revokes GLOBALLY (the panel's own guard
-      // would show the forbidden state either way, so assert the global
-      // revocation state itself): no further read goes out afterwards.
-      await screen.findByTestId('state-forbidden');
-      await waitFor(() => expect(isObservationReadRevoked(queryClient)).toBe(true));
-      const settled = calls.length;
-      await new Promise((resolve) => setTimeout(resolve, 1200));
-      expect(calls.length).toBe(settled);
-      expect(calls).toContain('work.snapshot');
-    },
-  );
 });

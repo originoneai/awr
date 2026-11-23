@@ -8,6 +8,9 @@ import type {
   TeamIdentity,
   TeamOverviewResponse,
   TeamOverviewModelResponse,
+  TeamPeriodUpdateResponse,
+  TeamPeriodUpdatesResponse,
+  TeamPortfolioResponse,
   TeamProjectsResponse,
   TeamReadResponse,
   TeamShellResponse,
@@ -47,6 +50,7 @@ export const readQueryDefaults = {
 export const queryKeys = {
   shell: ['team', 'shell'] as const,
   projects: ['team', 'projects'] as const,
+  portfolio: ['team', 'portfolio'] as const,
   overview: (project: string | null) => ['team', 'overview', project] as const,
   overviewModel: (project: string | null) => ['team', 'overview-model', project] as const,
   capabilities: (project: string | null) => ['team', 'capabilities', project] as const,
@@ -61,6 +65,10 @@ export const queryKeys = {
     ['team', 'work.snapshot', project, workId, workstreamId] as const,
   sourceContent: (project: string, sourcePath: string, expectedSha256: string, workId?: string) =>
     ['team', 'source.content', project, sourcePath, expectedSha256, ...(workId ? [workId] : [])] as const,
+  periodUpdates: (project: string | null, cursor: string | null = null) =>
+    ['team', 'updates.list', project, cursor] as const,
+  periodUpdate: (project: string | null, updateId: string | null) =>
+    ['team', 'update.inspect', project, updateId] as const,
 };
 
 /**
@@ -142,6 +150,44 @@ export function overviewModelQueryOptions(project: string | null, revoked = fals
     ...readQueryDefaults,
     refetchInterval: POLL_INTERVAL_MS,
   } satisfies UseQueryOptions<TeamOverviewModelResponse>;
+}
+
+/**
+ * Single member-scoped portfolio composition (AWR-PPD-060): one read summarizes every
+ * visible project without N per-project calls. Applies the same authoritative ordering
+ * and revocation guards as overviewModelQueryOptions.
+ */
+export function portfolioQueryOptions(revoked = false, enabled = true) {
+  return {
+    queryKey: queryKeys.portfolio,
+    queryFn: async ({ signal, client }: { signal: AbortSignal; client: QueryClient }) => {
+      const state = revocationState(client);
+      if (revoked || state.revoked) throw new DOMException('Observation access revoked', 'AbortError');
+      signal.throwIfAborted();
+      const incoming = await apiGet<TeamPortfolioResponse>('/api/team/portfolio');
+      signal.throwIfAborted();
+      if (state.revoked) throw new DOMException('Observation access revoked', 'AbortError');
+      const result = incoming?.result;
+      const data = result?.data;
+      if (incoming?.ok !== true || result?.protocol_version !== 1 || result?.op !== 'portfolio.overview'
+        || result?.selection_basis !== 'member' || data?.execution_authorized !== false
+        || !Array.isArray(data?.projects) || !Number.isSafeInteger(data?.total_projects)
+        || data.total_projects < data.projects.length || typeof data?.truncated !== 'boolean') {
+        throw new ApiError('InvalidResponse', 'Portfolio observations are incomplete');
+      }
+      const held = state.portfolio.held;
+      if (held && incoming.freshness?.authoritative && held.freshness?.authoritative) {
+        const verdict = compareAuthoritative(held.freshness.authoritative, incoming.freshness.authoritative);
+        if (verdict === 'keep') return held;
+        if (verdict === 'incomparable') return { ...held, ordering: 'incomparable' as const };
+      }
+      state.portfolio.held = incoming;
+      return incoming;
+    },
+    enabled: enabled && !revoked,
+    ...readQueryDefaults,
+    refetchInterval: POLL_INTERVAL_MS,
+  } satisfies UseQueryOptions<TeamPortfolioResponse>;
 }
 
 /** Capabilities is the flat discovery response; object reads carry a data envelope. */
@@ -420,14 +466,357 @@ export function workSnapshotQueryOptions(
   } satisfies UseQueryOptions<TeamReadResponse<WorkSnapshotData>>;
 }
 
+const PLANE_STATES = new Set(['measured', 'stale', 'failed', 'not_measured']);
+const PERIOD_UPDATE_ENVELOPE_KEYS = [
+  'protocol_version', 'scope_id', 'selection_basis', 'coordinator_epoch',
+  'project_status', 'source_snapshot_id', 'project_revision', 'data',
+] as const;
+const PERIOD_UPDATE_AS_OF_KEYS = ['at_unix_ms', 'source_snapshot_id', 'project_revision'] as const;
+const PERIOD_UPDATE_RECORD_KEYS = [
+  'update_id', 'period_kind', 'period_key', 'starts_on', 'ends_on', 'status', 'summary',
+  'author', 'recorded_at_unix_ms', 'version', 'supersedes_update_id', 'fact_snapshot_ref', 'current',
+] as const;
+const PERIOD_UPDATE_AUTHOR_KEYS = ['person_id', 'display_name'] as const;
+const PERIOD_UPDATE_LIST_DATA_KEYS = [
+  'project_id', 'items', 'next_cursor', 'truncated', 'as_of', 'execution_authorized',
+] as const;
+const PERIOD_UPDATE_INSPECT_DATA_KEYS = [
+  'project_id', 'update', 'fact_snapshot', 'fact_snapshot_coverage', 'as_of', 'execution_authorized',
+] as const;
+const PERIOD_UPDATE_FACT_SNAPSHOT_KEYS = [
+  'verified', 'completed_without_independent_review', 'waits_opened', 'waits_cleared',
+  'review_returned', 'delivered_unverified', 'decisions_made',
+] as const;
+const PERIOD_UPDATE_WAIT_KINDS = new Set(['decision', 'dependency', 'review', 'external', 'unknown']);
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasExactKeys(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
+  return isPlainRecord(value) && Object.keys(value).length === keys.length
+    && keys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+}
+
+function isBoundedId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 128 && !/[\x00-\x1f\x7f]/.test(value);
+}
+
+function isBoundedCursor(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 4096 && !/[\x00-\x1f\x7f]/.test(value);
+}
+
+function validCalendarDate(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const day = Number(value.slice(8, 10));
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [0, 31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month] ?? 0;
+  return year >= 1 && month >= 1 && month <= 12 && day >= 1 && day <= days;
+}
+
+function validPeriodKey(kind: unknown, key: unknown): boolean {
+  if (typeof key !== 'string' || key.length === 0 || key.length > 64 || /[\p{Cc}]/u.test(key)) return false;
+  if (kind === 'week') return /^\d{4}-W(0[1-9]|[1-4]\d|5[0-3])$/.test(key);
+  if (kind === 'month') return /^\d{4}-(0[1-9]|1[0-2])$/.test(key);
+  return false;
+}
+
+function validBridgeFreshness(value: unknown): boolean {
+  if (!hasExactKeys(value, ['report_received', 'authoritative', 'page_read'])) return false;
+  return ['report_received', 'authoritative', 'page_read'].every((plane) => {
+    const entry = value[plane];
+    return isPlainRecord(entry) && typeof entry.status === 'string' && PLANE_STATES.has(entry.status);
+  });
+}
+
+function validBridgeWrapper(value: unknown): value is Record<string, unknown> {
+  if (!isPlainRecord(value) || value.ok !== true || !validBridgeFreshness(value.freshness)) return false;
+  const allowed = new Set(['ok', 'result', 'query', 'freshness']);
+  return Object.keys(value).every((key) => allowed.has(key))
+    && Object.prototype.hasOwnProperty.call(value, 'result');
+}
+
+function validPeriodUpdateEnvelope(result: unknown): result is Record<string, unknown> {
+  return hasExactKeys(result, PERIOD_UPDATE_ENVELOPE_KEYS)
+    && result.protocol_version === 1
+    && result.scope_id === 'main'
+    && result.selection_basis === 'project'
+    && isBoundedId(result.coordinator_epoch)
+    && isBoundedId(result.project_status)
+    && isBoundedId(result.source_snapshot_id)
+    && typeof result.project_revision === 'string' && /^(0|[1-9]\d*)$/.test(result.project_revision)
+    && Number.isSafeInteger(Number(result.project_revision))
+    && isPlainRecord(result.data);
+}
+
+function validPeriodUpdateAsOf(asOf: unknown, result: Record<string, unknown>): boolean {
+  return hasExactKeys(asOf, PERIOD_UPDATE_AS_OF_KEYS)
+    && typeof asOf.at_unix_ms === 'number' && Number.isSafeInteger(asOf.at_unix_ms) && asOf.at_unix_ms >= 0
+    && asOf.source_snapshot_id === result.source_snapshot_id
+    && asOf.project_revision === result.project_revision;
+}
+
+function validPeriodUpdateRecord(item: unknown, requireCurrent: boolean): item is Record<string, unknown> {
+  if (!hasExactKeys(item, PERIOD_UPDATE_RECORD_KEYS)
+    || !isBoundedId(item.update_id)
+    || (item.period_kind !== 'week' && item.period_kind !== 'month')
+    || !validPeriodKey(item.period_kind, item.period_key)
+    || !validCalendarDate(item.starts_on)
+    || !validCalendarDate(item.ends_on)
+    || item.ends_on < item.starts_on
+    || (item.status !== 'ok' && item.status !== 'risk' && item.status !== 'off')
+    || typeof item.summary !== 'string' || item.summary.trim().length === 0
+    || Array.from(item.summary).length > 200 || /[\p{Cc}]/u.test(item.summary)
+    || !hasExactKeys(item.author, PERIOD_UPDATE_AUTHOR_KEYS)
+    || !isBoundedId(item.author.person_id)
+    || typeof item.author.display_name !== 'string' || item.author.display_name.trim().length === 0
+    || Array.from(item.author.display_name).length > 128 || /[\p{Cc}]/u.test(item.author.display_name)
+    || typeof item.recorded_at_unix_ms !== 'number' || !Number.isSafeInteger(item.recorded_at_unix_ms)
+    || item.recorded_at_unix_ms < 0
+    || typeof item.version !== 'string' || !/^[1-9]\d*$/.test(item.version)
+    || !Number.isSafeInteger(Number(item.version))
+    || !(item.fact_snapshot_ref === null || isBoundedId(item.fact_snapshot_ref))
+    || (requireCurrent ? item.current !== true : typeof item.current !== 'boolean')) {
+    return false;
+  }
+  return item.version === '1'
+    ? item.supersedes_update_id === null
+    : isBoundedId(item.supersedes_update_id) && item.supersedes_update_id !== item.update_id;
+}
+
+function validCountedWorkIds(value: unknown, unique: boolean): boolean {
+  if (!hasExactKeys(value, ['count', 'work_ids'])
+    || !Array.isArray(value.work_ids)
+    || typeof value.count !== 'number' || !Number.isSafeInteger(value.count)
+    || value.count !== value.work_ids.length) {
+    return false;
+  }
+  for (let i = 0; i < value.work_ids.length; i += 1) {
+    const id = value.work_ids[i];
+    if (!isBoundedId(id)) return false;
+    if (i > 0 && (unique ? (value.work_ids[i - 1] as string) >= id : (value.work_ids[i - 1] as string) > id)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function validWaitMetric(value: unknown): boolean {
+  if (!hasExactKeys(value, ['count', 'kinds'])
+    || !Array.isArray(value.kinds)
+    || typeof value.count !== 'number' || !Number.isSafeInteger(value.count) || value.count < 0) {
+    return false;
+  }
+  const seenKinds = new Set<string>();
+  let total = 0;
+  for (const entry of value.kinds) {
+    if (!hasExactKeys(entry, ['kind', 'count', 'work_ids'])
+      || typeof entry.kind !== 'string' || !PERIOD_UPDATE_WAIT_KINDS.has(entry.kind) || seenKinds.has(entry.kind)
+      || !Array.isArray(entry.work_ids) || entry.work_ids.length === 0
+      || typeof entry.count !== 'number' || !Number.isSafeInteger(entry.count)
+      || entry.count !== entry.work_ids.length) {
+      return false;
+    }
+    for (let i = 0; i < entry.work_ids.length; i += 1) {
+      const id = entry.work_ids[i];
+      if (!isBoundedId(id)) return false;
+      if (i > 0 && (entry.work_ids[i - 1] as string) > id) return false;
+    }
+    seenKinds.add(entry.kind);
+    total += entry.count;
+  }
+  return total === value.count;
+}
+
+function validPeriodUpdateFactSnapshot(snapshot: unknown): boolean {
+  return hasExactKeys(snapshot, PERIOD_UPDATE_FACT_SNAPSHOT_KEYS)
+    && validCountedWorkIds(snapshot.verified, true)
+    && validCountedWorkIds(snapshot.completed_without_independent_review, true)
+    && validWaitMetric(snapshot.waits_opened)
+    && validWaitMetric(snapshot.waits_cleared)
+    && validCountedWorkIds(snapshot.review_returned, true)
+    && validCountedWorkIds(snapshot.delivered_unverified, true)
+    && validCountedWorkIds(snapshot.decisions_made, false);
+}
+
+function validPeriodUpdateFactSnapshotCoverage(coverage: unknown): boolean {
+  return hasExactKeys(coverage, ['complete', 'hidden_work_count'])
+    && typeof coverage.complete === 'boolean'
+    && typeof coverage.hidden_work_count === 'number' && Number.isSafeInteger(coverage.hidden_work_count)
+    && coverage.hidden_work_count >= 0
+    && coverage.complete === (coverage.hidden_work_count === 0);
+}
+
+function comparePeriodUpdateKeyDesc(left: Record<string, unknown>, right: Record<string, unknown>): number {
+  for (const field of ['starts_on', 'ends_on', 'period_key', 'update_id'] as const) {
+    if (left[field] !== right[field]) return (left[field] as string) > (right[field] as string) ? -1 : 1;
+  }
+  return 0;
+}
+
+export function validatePeriodUpdatesResponse(
+  incoming: unknown,
+  project: string,
+  cursor: string | null = null,
+): incoming is TeamPeriodUpdatesResponse {
+  if (!validBridgeWrapper(incoming) || !validPeriodUpdateEnvelope(incoming.result)) return false;
+  const data = incoming.result.data as Record<string, unknown>;
+  if (!hasExactKeys(data, PERIOD_UPDATE_LIST_DATA_KEYS)
+    || data.project_id !== project
+    || !Array.isArray(data.items) || data.items.length > 100
+    || !(data.next_cursor === null || isBoundedCursor(data.next_cursor))
+    || (cursor !== null && data.next_cursor === cursor)
+    || typeof data.truncated !== 'boolean' || data.truncated !== (data.next_cursor !== null)
+    || data.execution_authorized !== false
+    || !validPeriodUpdateAsOf(data.as_of, incoming.result)) {
+    return false;
+  }
+  const seenIds = new Set<string>();
+  for (let i = 0; i < data.items.length; i += 1) {
+    const item = data.items[i];
+    if (!validPeriodUpdateRecord(item, true)) return false;
+    const id = item.update_id as string;
+    if (seenIds.has(id)) return false;
+    if (i > 0 && comparePeriodUpdateKeyDesc(data.items[i - 1] as Record<string, unknown>, item) >= 0) return false;
+    seenIds.add(id);
+  }
+  return true;
+}
+
+export function validatePeriodUpdateResponse(
+  incoming: unknown,
+  project: string,
+  updateId: string,
+): incoming is TeamPeriodUpdateResponse {
+  if (!validBridgeWrapper(incoming) || !validPeriodUpdateEnvelope(incoming.result)) return false;
+  const data = incoming.result.data as Record<string, unknown>;
+  if (!hasExactKeys(data, PERIOD_UPDATE_INSPECT_DATA_KEYS)
+    || data.project_id !== project
+    || data.execution_authorized !== false
+    || !validPeriodUpdateAsOf(data.as_of, incoming.result)
+    || !validPeriodUpdateRecord(data.update, false)
+    || data.update.update_id !== updateId) {
+    return false;
+  }
+  if (data.update.fact_snapshot_ref === null) {
+    return data.fact_snapshot === null && data.fact_snapshot_coverage === null;
+  }
+  return validPeriodUpdateFactSnapshot(data.fact_snapshot)
+    && validPeriodUpdateFactSnapshotCoverage(data.fact_snapshot_coverage);
+}
+
+/**
+ * Project period updates list (AWR-PPD-012): reads `/api/team/updates` with strict
+ * reply-shape validation, observation-contract authoritative ordering, and immediate
+ * revocation clearing. Malformed replies throw `InvalidResponse` (partial-failure path)
+ * without polluting the query cache or sibling queries.
+ */
+export function periodUpdatesQueryOptions(
+  project: string | null,
+  cursor: string | null = null,
+  revoked = false,
+) {
+  return {
+    queryKey: queryKeys.periodUpdates(project, cursor),
+    queryFn: async ({ signal, client }: { signal: AbortSignal; client: QueryClient }) => {
+      const state = revocationState(client);
+      if (revoked || state.revoked) throw new DOMException('Observation access revoked', 'AbortError');
+      const projectKey = project ?? '';
+      const orderingKey = `${projectKey}\0${cursor ?? ''}`;
+      const ordering = state.periodUpdates.get(orderingKey) ?? {};
+      state.periodUpdates.set(orderingKey, ordering);
+      signal.throwIfAborted();
+      const params = new URLSearchParams({ project: projectKey });
+      if (cursor !== null) params.set('cursor', cursor);
+      const incoming = await apiGet<TeamPeriodUpdatesResponse>(`/api/team/updates?${params.toString()}`);
+      signal.throwIfAborted();
+      if (state.revoked) throw new DOMException('Observation access revoked', 'AbortError');
+      if (!validatePeriodUpdatesResponse(incoming, projectKey, cursor)) {
+        throw new ApiError('InvalidResponse', 'Period updates observations failed contract validation');
+      }
+      const held = ordering.held;
+      if (held) {
+        const verdict = compareAuthoritative(held.freshness.authoritative, incoming.freshness.authoritative);
+        if (verdict === 'keep') return held;
+        if (verdict === 'incomparable') return { ...held, ordering: 'incomparable' as const };
+      }
+      ordering.held = incoming;
+      return incoming;
+    },
+    enabled: Boolean(project) && !revoked,
+    ...readQueryDefaults,
+    refetchInterval: POLL_INTERVAL_MS,
+  } satisfies UseQueryOptions<TeamPeriodUpdatesResponse>;
+}
+
+/**
+ * Single project period update inspection (AWR-PPD-012): reads `/api/team/update`
+ * with strict reply-shape validation (including PPD-011 immutable fact snapshots),
+ * observation-contract authoritative ordering, and immediate revocation clearing.
+ */
+export function periodUpdateQueryOptions(
+  project: string | null,
+  updateId: string | null,
+  revoked = false,
+) {
+  return {
+    queryKey: queryKeys.periodUpdate(project, updateId),
+    queryFn: async ({ signal, client }: { signal: AbortSignal; client: QueryClient }) => {
+      const state = revocationState(client);
+      if (revoked || state.revoked) throw new DOMException('Observation access revoked', 'AbortError');
+      const projectKey = project ?? '';
+      const idKey = updateId ?? '';
+      const orderingKey = `${projectKey}\0${idKey}`;
+      const ordering = state.periodUpdate.get(orderingKey) ?? {};
+      state.periodUpdate.set(orderingKey, ordering);
+      signal.throwIfAborted();
+      const params = new URLSearchParams({ project: projectKey, id: idKey });
+      const incoming = await apiGet<TeamPeriodUpdateResponse>(`/api/team/update?${params.toString()}`);
+      signal.throwIfAborted();
+      if (state.revoked) throw new DOMException('Observation access revoked', 'AbortError');
+      if (!validatePeriodUpdateResponse(incoming, projectKey, idKey)) {
+        throw new ApiError('InvalidResponse', 'Period update observation failed contract validation');
+      }
+      const held = ordering.held;
+      if (held) {
+        const verdict = compareAuthoritative(held.freshness.authoritative, incoming.freshness.authoritative);
+        if (verdict === 'keep') return held;
+        if (verdict === 'incomparable') return { ...held, ordering: 'incomparable' as const };
+      }
+      ordering.held = incoming;
+      return incoming;
+    },
+    enabled: Boolean(project && updateId) && !revoked,
+    ...readQueryDefaults,
+    refetchInterval: POLL_INTERVAL_MS,
+  } satisfies UseQueryOptions<TeamPeriodUpdateResponse>;
+}
+
 interface OverviewModelOrdering {
   held?: TeamOverviewModelResponse;
+}
+
+interface PortfolioOrdering {
+  held?: TeamPortfolioResponse;
+}
+
+interface PeriodUpdatesOrdering {
+  held?: TeamPeriodUpdatesResponse;
+}
+
+interface PeriodUpdateOrdering {
+  held?: TeamPeriodUpdateResponse;
 }
 
 interface RevocationState {
   revoked: boolean;
   listeners: Set<() => void>;
   overviewModels: Map<string, OverviewModelOrdering>;
+  portfolio: PortfolioOrdering;
+  periodUpdates: Map<string, PeriodUpdatesOrdering>;
+  periodUpdate: Map<string, PeriodUpdateOrdering>;
 }
 
 const revocationStates = new WeakMap<QueryClient, RevocationState>();
@@ -435,7 +824,14 @@ const revocationStates = new WeakMap<QueryClient, RevocationState>();
 function revocationState(queryClient: QueryClient) {
   let state = revocationStates.get(queryClient);
   if (!state) {
-    state = { revoked: false, listeners: new Set(), overviewModels: new Map() };
+    state = {
+      revoked: false,
+      listeners: new Set(),
+      overviewModels: new Map(),
+      portfolio: {},
+      periodUpdates: new Map(),
+      periodUpdate: new Map(),
+    };
     revocationStates.set(queryClient, state);
   }
   return state;
@@ -458,6 +854,9 @@ export function subscribeToObservationRevocation(queryClient: QueryClient, liste
 export function revokeObservationReads(queryClient: QueryClient) {
   const state = revocationState(queryClient);
   state.overviewModels.clear();
+  state.portfolio.held = undefined;
+  state.periodUpdates.clear();
+  state.periodUpdate.clear();
   if (!state.revoked) {
     state.revoked = true;
     notifyRevocation(queryClient);

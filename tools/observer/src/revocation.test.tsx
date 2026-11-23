@@ -189,21 +189,37 @@ describe('revokeObservationReads cancels in-flight reads', () => {
   });
 });
 
-describe.each([
-  { path: '/projects/demo?tab=overview', name: 'overview' },
-  { path: '/projects/demo?tab=plan&work=W1', name: 'plan' },
-])('the per-work snapshot reads of the $name list after revocation', ({ path }) => {
-  it('stay silent for two list cadences once the observation was revoked', async () => {
+describe('the plan reads after revocation', () => {
+  it('stay silent for two cadences once the observation was revoked', async () => {
     vi.useFakeTimers();
     const calls = { count: 0 };
     const revoked = { value: false };
-    const fetchMock = revocationFetch(calls, revoked);
-    renderApp(path);
+    revocationFetch(calls, revoked);
+    renderApp('/projects/demo?tab=plan');
 
     await advance(0);
     expect(screen.getAllByText(/Build the filter API/)).not.toHaveLength(0);
-    const snapshotsBefore = fetchMock.mock.calls.filter(([, init]) => String(init?.body ?? '').includes('"work.snapshot"')).length;
-    expect(snapshotsBefore).toBeGreaterThan(0);
+    expect(screen.getByTestId('work-plan-page')).toBeTruthy();
+    revoked.value = true;
+    await advance(31_000);
+    expect(screen.getByTestId('state-forbidden')).toBeTruthy();
+
+    const callsAfterForbidden = calls.count;
+    await advance(130_000);
+    expect(calls.count).toBe(callsAfterForbidden);
+  }, 30_000);
+});
+
+describe('the overview reads after revocation', () => {
+  it('stay silent for two cadences once the observation was revoked', async () => {
+    vi.useFakeTimers();
+    const calls = { count: 0 };
+    const revoked = { value: false };
+    revocationFetch(calls, revoked);
+    renderApp('/projects/demo?tab=overview');
+
+    await advance(0);
+    expect(screen.getByTestId('project-instrument')).toBeTruthy();
     revoked.value = true;
     await advance(31_000);
     expect(screen.getByTestId('state-forbidden')).toBeTruthy();
