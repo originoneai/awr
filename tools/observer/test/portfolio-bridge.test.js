@@ -290,3 +290,66 @@ test('portfolio fixtures contain no credentials or private source prose', () => 
     }
   }
 });
+
+test('portfolio bridge serves demo organization variants and stays within 60 upstream calls/min for 40 projects', async () => {
+  const { createDemoOrganization } = require('../server/demo-organization');
+  const demo = createDemoOrganization({ variant: 'canonical' });
+  const demoReply = demo.portfolioOverview();
+  assert.equal(demoReply.protocol_version, 1);
+  assert.equal(demoReply.op, 'portfolio.overview');
+  assert.equal(demoReply.selection_basis, 'member');
+  assert.equal(demoReply.data.execution_authorized, false);
+  assert.equal(demoReply.data.total_projects, 3);
+  assert.equal(demoReply.data.projects.length, 3);
+
+  const partialDemo = createDemoOrganization({ variant: 'partial' });
+  const partialReply = partialDemo.portfolioOverview();
+  assert.equal(partialReply.data.projects.filter((p) => p.read.status === 'not_read').length, 1);
+
+  const emptyDemo = createDemoOrganization({ variant: 'empty' });
+  assert.equal(emptyDemo.portfolioOverview().data.total_projects, 0);
+
+  // Measure upstream calls for a 40-project portfolio at the 5s visible-page cadence (12 polls/min).
+  const fortyProjects = Array.from({ length: 40 }, (_, i) => ({
+    ...MEMBER.data.projects[0],
+    project_id: `pf-40-${String(i + 1).padStart(2, '0')}`,
+    project_key: `pf-40-${String(i + 1).padStart(2, '0')}`,
+  }));
+  const fortyReply = {
+    ...MEMBER,
+    data: { ...MEMBER.data, projects: fortyProjects, total_projects: 40, truncated: false, next_cursor: null },
+  };
+  let sessionCalls = 0;
+  let portfolioCalls = 0;
+  let perProjectCalls = 0;
+  const upstream = await startUpstream((request, response) => {
+    if (request.url === '/v1/web/session') {
+      sessionCalls += 1;
+      jsonReply(response, { ok: true, session_id: 'ws_40', expires_at_ms: MEMBER.data.as_of.at_unix_ms + 60000 });
+      return;
+    }
+    if (request.url === '/v1/web/portfolio/overview' && request.method === 'POST') {
+      portfolioCalls += 1;
+      collectBody(request, () => jsonReply(response, fortyReply));
+      return;
+    }
+    perProjectCalls += 1;
+    jsonReply(response, { code: 'NotFound' }, 404);
+  });
+  const bridge = await startBridge(upstream.base, () => MEMBER.data.as_of.at_unix_ms + 1000);
+  try {
+    // 12 polls = 1 full minute at POLL_INTERVAL_MS (5000ms).
+    for (let poll = 0; poll < 12; poll += 1) {
+      const reply = await read(bridge.base, '/api/team/portfolio', 'ws_40');
+      assert.equal(reply.ok, true);
+      assert.equal(reply.result.data.projects.length, 40);
+    }
+    const totalUpstreamCallsPerMinute = sessionCalls + portfolioCalls + perProjectCalls;
+    assert.equal(perProjectCalls, 0);
+    assert.equal(portfolioCalls, 12);
+    assert.ok(totalUpstreamCallsPerMinute <= 60, `expected <= 60 upstream calls/min, got ${totalUpstreamCallsPerMinute}`);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});

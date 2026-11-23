@@ -115,3 +115,21 @@ The Chinese templates are:
 The English catalog carries the same keys and placeholders. The running-Agent rule requires known
 zero pending and waiting totals plus a known Agent total. If any of those three totals is unknown,
 the unknown sentence takes precedence over both activity and calm claims.
+
+## Department generated sentence table
+
+`tools/observer/src/components/workbench/department-model.ts` evaluates `DEPT_VERDICT_RULES` in
+order whenever a department period update is absent. Status rollup always picks the worst status
+across projects (`off` > `risk` > `none` > `ok`); an unreadable project keeps the rollup at or
+above `none`. Every generated source line states that the sentence came from project facts and that
+the rollup uses the worst status.
+
+| Rule | Selection | Sentence key |
+| ---- | --------- | ------------ |
+| `dept-empty` | `total === 0` | `empty` |
+| `dept-partial` | `notRead > 0 || truncated` | `partial` |
+| `dept-off` | `off > 0` | `off` |
+| `dept-risk-and-noupdate` | `risk > 0 && noUpdate > 0` | `riskAndNoUpdate` |
+| `dept-risk` | `risk > 0` | `risk` |
+| `dept-noupdate` | `noUpdate > 0` | `noUpdate` |
+| `dept-ok` | `true` | `ok` |

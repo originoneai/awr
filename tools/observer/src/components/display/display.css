@@ -1084,6 +1084,10 @@ button.obs-chain-node {
   font-weight: var(--ant-font-weight-strong);
 }
 
+.obs-chain-avatar[data-external="true"] {
+  border-radius: var(--craft-radius-tag);
+}
+
 .obs-chain-title {
   font-size: var(--ant-font-size);
   line-height: var(--craft-leading-body);

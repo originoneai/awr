@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import enUS from '../../i18n/en-US';
 import zhCN from '../../i18n/zh-CN';
+import { DEPT_VERDICT_RULES, departmentVocabulary } from './department-model';
 import { KPI_NOTE_RULES, VERDICT_RULES, workbenchVocabulary } from './model';
 
 function flatten(value: unknown, prefix = ''): Record<string, string> {
@@ -22,16 +23,25 @@ describe('workbench vocabulary and verdict rule table', () => {
     for (const [key, text] of Object.entries(zh)) {
       expect(en[key].match(/\{\{[^}]+\}\}/g)?.sort()).toEqual(text.match(/\{\{[^}]+\}\}/g)?.sort());
     }
+    const deptZh = flatten(departmentVocabulary('zh-CN'));
+    const deptEn = flatten(departmentVocabulary('en-US'));
+    expect(Object.keys(deptEn).sort()).toEqual(Object.keys(deptZh).sort());
+    for (const [key, text] of Object.entries(deptZh)) {
+      expect(deptEn[key].match(/\{\{[^}]+\}\}/g)?.sort()).toEqual(text.match(/\{\{[^}]+\}\}/g)?.sort());
+    }
     expect(Object.keys(flatten(enUS.workbench)).sort()).toEqual(Object.keys(flatten(zhCN.workbench)).sort());
   });
 
   it('counts every Chinese and English workbench sentence pair reviewed for meaning', () => {
     const homeCount = Object.keys(flatten(zhCN.workbench.home)).length;
+    const deptHomeCount = Object.keys(flatten(zhCN.workbench.department)).length;
     const modelCount = Object.keys(flatten(workbenchVocabulary('zh-CN'))).length;
-    const count = homeCount + modelCount;
-    console.log(`Reviewed workbench sentence pairs: ${count} (home ${homeCount}, model ${modelCount})`);
-    expect(count).toBe(161);
-    expect(count).toBeGreaterThan(0);
+    const deptModelCount = Object.keys(flatten(departmentVocabulary('zh-CN'))).length;
+    const count = homeCount + modelCount + deptHomeCount + deptModelCount;
+    console.log(`Reviewed workbench sentence pairs: ${count} (home ${homeCount}, model ${modelCount}, deptHome ${deptHomeCount}, deptModel ${deptModelCount})`);
+    expect(homeCount + modelCount).toBe(161);
+    expect(deptHomeCount).toBeGreaterThan(0);
+    expect(deptModelCount).toBeGreaterThan(0);
   });
 
   it('keeps internal identifiers, hashes, protocol fields and raw status codes out of all workbench copy', () => {
@@ -39,6 +49,9 @@ describe('workbench vocabulary and verdict rule table', () => {
     for (const language of ['zh-CN', 'en-US'] as const) {
       for (const [key, text] of Object.entries(flatten(workbenchVocabulary(language)))) {
         expect(forbidden.test(text), `${language} ${key}: ${text}`).toBe(false);
+      }
+      for (const [key, text] of Object.entries(flatten(departmentVocabulary(language)))) {
+        expect(forbidden.test(text), `${language} dept ${key}: ${text}`).toBe(false);
       }
       for (const [key, text] of Object.entries(flatten(language === 'zh-CN' ? zhCN.workbench : enUS.workbench))) {
         expect(forbidden.test(text), `${language} ${key}: ${text}`).toBe(false);
@@ -64,7 +77,9 @@ describe('workbench vocabulary and verdict rule table', () => {
   });
 
   it('checks every KPI note rule against the implementation and bilingual fact templates', () => {
-    const section = readFileSync('../../docs/dev/reference/workbench-verdict.md', 'utf8').split('## KPI note rule table')[1];
+    const section = readFileSync('../../docs/dev/reference/workbench-verdict.md', 'utf8')
+      .split('## KPI note rule table')[1]
+      .split('## Department generated sentence table')[0];
     const rows = [...section.matchAll(/^\| `([^`]+)` \| `([^`]+)` \| `([^`]+)` \|/gm)].map((match) => ({
       id: match[1], selection: match[2], sentenceKey: match[3],
     }));
@@ -76,6 +91,24 @@ describe('workbench vocabulary and verdict rule table', () => {
       for (const language of ['zh-CN', 'en-US'] as const) {
         const catalog = workbenchVocabulary(language);
         expect(catalog.metrics[rule.sentenceKey], `${language} ${rule.id}`).toBeTruthy();
+      }
+    }
+  });
+
+  it('checks every department verdict rule against the implementation and bilingual catalogs', () => {
+    const section = readFileSync('../../docs/dev/reference/workbench-verdict.md', 'utf8')
+      .split('## Department generated sentence table')[1];
+    const rows = [...section.matchAll(/^\| `([^`]+)` \| `([^`]+)` \| `([^`]+)` \|/gm)].map((match) => ({
+      id: match[1], selection: match[2], sentenceKey: match[3],
+    }));
+    expect(rows.length).toBe(DEPT_VERDICT_RULES.length);
+    expect(rows.map((row) => row.id)).toEqual(DEPT_VERDICT_RULES.map((rule) => rule.id));
+    for (const [index, rule] of DEPT_VERDICT_RULES.entries()) {
+      expect(rule.selection).toBe(rows[index].selection);
+      expect(rule.sentenceKey).toBe(rows[index].sentenceKey);
+      for (const language of ['zh-CN', 'en-US'] as const) {
+        const catalog = departmentVocabulary(language);
+        expect(catalog.verdict.sentences[rule.sentenceKey], `${language} ${rule.id}`).toBeTruthy();
       }
     }
   });
