@@ -43,6 +43,134 @@ pub const SOURCE_BINDING_FILE: &str = "source_binding.json";
 pub const SOURCE_PROVENANCE_FILE: &str = "source_provenance.json";
 pub const WORKSTREAMS_FILE: &str = "workstreams.json";
 
+/// Decode goal facts from the byte-verified, explicitly registered ledger.
+/// The shared adapter preserves source vocabulary and redacts sensitive values.
+pub(crate) fn registered_goal_ledger(files: &[Value]) -> PgResult<Vec<awr_core::Goal>> {
+    use awr_source::{ParseContext, SourceAdapter};
+    let restored = files_from_ref(&json!({"files":files}))?;
+    let binding_bytes = restored
+        .iter()
+        .find(|(path, _)| path == SOURCE_BINDING_FILE)
+        .ok_or(PgError::SourceDivergence)?;
+    let binding: SoleSourceBinding =
+        serde_json::from_slice(&binding_bytes.1).map_err(|_| PgError::SourceDivergence)?;
+    let path = binding
+        .ledger_relative_path
+        .as_deref()
+        .ok_or(PgError::SourceDivergence)?;
+    let bytes = &restored
+        .iter()
+        .find(|(name, _)| name == path)
+        .ok_or(PgError::SourceDivergence)?
+        .1;
+    let manifest = awr_source::Manifest::parse("[project]\nname='Registered goals'\n[[sources]]\ndomain='ledger'\nrole='primary'\npath='ledger.yaml'\nadapter='yaml-workstream-ledger-v1'\n")
+        .map_err(|_| PgError::SourceDivergence)?;
+    let source = awr_core::Source {
+        id: awr_core::Id::from(1),
+        project_id: awr_core::Id::from(1),
+        domain: "ledger".into(),
+        role: "primary".into(),
+        locator: format!("project://{path}"),
+        format: "yaml".into(),
+        adapter: "yaml-workstream-ledger-v1".into(),
+        revision: 0,
+        fingerprint: String::new(),
+        freshness: awr_core::Freshness::Fresh,
+        config: json!({}),
+    };
+    let snapshot = awr_source::SourceSnapshot {
+        locator: source.locator.clone(),
+        bytes: bytes.clone(),
+        fingerprint: awr_source::fingerprint(bytes),
+        content_review: None,
+    };
+    let context = ParseContext {
+        source: &source,
+        existing_ids: BTreeMap::new(),
+    };
+    awr_source::YamlWorkstreamLedgerAdapter
+        .parse(&snapshot, &context, &manifest.sources[0])
+        .map_err(|_| PgError::SourceDivergence)
+        .and_then(|batch| {
+            if batch.goals.iter().any(|goal| {
+                let key = &goal.meta.external_key;
+                key.is_empty() || key.len() > 128 || key.chars().any(char::is_control)
+            }) {
+                return Err(PgError::SourceDivergence);
+            }
+            Ok(batch.goals)
+        })
+}
+
+#[cfg(test)]
+mod goal_source_tests {
+    use super::*;
+
+    fn file(path: &str, text: &str) -> Value {
+        json!({"path":path,"text":text,"bytes":text.len(),"sha256":sha256_hex(text.as_bytes())})
+    }
+
+    #[test]
+    fn registered_goals_preserve_source_status_and_alias_criteria_without_scanning_other_files() {
+        let mut files = vec![
+            file(
+                SOURCE_BINDING_FILE,
+                r#"{"kind":"server_directory","locator":"/synthetic","ledger_relative_path":"ledger.yaml"}"#,
+            ),
+            file(
+                "ledger.yaml",
+                "workstreams:\n  version: 1\n  definitions:\n    - id: '00000000000000000000000001'\n      external_key: delivery\n      title: Delivery\n      state: active\n      authority_version: 1\n      goal_keys: []\n      acceptance_contracts: []\ngoals:\n  target:\n    title: Recorded title\n    status: ' Confirmed '\n    acceptance: [First check, Second check]\n",
+            ),
+            file(
+                "other.yaml",
+                "goals:\n  unrelated:\n    title: HIDDEN SOURCE\n",
+            ),
+        ];
+        let goals = registered_goal_ledger(&files).unwrap();
+        assert_eq!(goals.len(), 1);
+        assert_eq!(goals[0].meta.external_key, "target");
+        assert_eq!(goals[0].title, "Recorded title");
+        assert_eq!(goals[0].status, " Confirmed ");
+        assert_eq!(
+            goals[0].success_criteria,
+            vec!["First check", "Second check"]
+        );
+        files[1]["text"] = json!("tampered");
+        assert!(matches!(
+            registered_goal_ledger(&files),
+            Err(PgError::SnapshotDrift(_))
+        ));
+    }
+
+    #[test]
+    fn absent_registration_and_invalid_ledger_fail_with_existing_bounded_categories() {
+        assert!(matches!(
+            registered_goal_ledger(&[]),
+            Err(PgError::SourceDivergence)
+        ));
+        let mut files = vec![
+            file(
+                SOURCE_BINDING_FILE,
+                r#"{"kind":"server_directory","locator":"/synthetic","ledger_relative_path":"ledger.yaml"}"#,
+            ),
+            file("ledger.yaml", "goals: [RAW SOURCE SENTINEL]"),
+        ];
+        let error = registered_goal_ledger(&files).unwrap_err();
+        assert!(matches!(error, PgError::SourceDivergence));
+        assert!(!error.to_string().contains("RAW SOURCE"));
+        for key in ["x".repeat(129), "目".repeat(43)] {
+            files[1] = file(
+                "ledger.yaml",
+                &json!({"goals":[{"id":key,"title":"Recorded title"}]}).to_string(),
+            );
+            assert!(matches!(
+                registered_goal_ledger(&files),
+                Err(PgError::SourceDivergence)
+            ));
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SourceFile {
     pub path: String,

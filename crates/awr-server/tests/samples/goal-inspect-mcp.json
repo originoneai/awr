@@ -1,0 +1,50 @@
+{
+  "coordinator_epoch": "epoch-a",
+  "data": {
+    "as_of": {
+      "at_unix_ms": 1795415577294,
+      "project_revision": "4",
+      "source_snapshot_id": "01M83HQ4JRP4K4VJA9RH4YEXQZ"
+    },
+    "execution_authorized": false,
+    "goal": {
+      "department_reason": "goal_department_not_registered",
+      "departments": [],
+      "goal_id": "ship",
+      "hidden_task_count": 1,
+      "key": "ship",
+      "kind": "goal",
+      "status": "confirmed",
+      "success_criteria": [
+        "Reviewed delivery"
+      ],
+      "tasks": [
+        {
+          "key": "a",
+          "status": "planned",
+          "title": "Visible task",
+          "work_id": "a"
+        },
+        {
+          "key": "c",
+          "status": "planned",
+          "title": "Supporting task",
+          "work_id": "c"
+        }
+      ],
+      "title": "Ship reviewed outcome",
+      "uncovered": false
+    },
+    "next_cursor": null,
+    "orphan_work": [],
+    "read_only": true,
+    "total": 2,
+    "truncated": false
+  },
+  "project_revision": "4",
+  "project_status": "active",
+  "protocol_version": 1,
+  "scope_id": "main",
+  "selection_basis": "project",
+  "source_snapshot_id": "01M83HQ4JRP4K4VJA9RH4YEXQZ"
+}

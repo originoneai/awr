@@ -631,6 +631,8 @@ pub(crate) async fn resolve_agent_read_delegation(
                     | "sources.inspect"
                     | "documents.list"
                     | "decisions.list"
+                    | "goals.list"
+                    | "goal.inspect"
                     | "updates.list"
                     | "update.inspect"
                     | "handoff.list"
@@ -685,6 +687,8 @@ pub(crate) async fn resolve_agent_read_delegation(
                 | "dependencies.list"
                 | "decisions.list"
                 | "documents.list"
+                | "goals.list"
+                | "goal.inspect"
         )
     {
         let mut scope = NavigationReadScope::default();

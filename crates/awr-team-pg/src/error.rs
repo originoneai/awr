@@ -431,6 +431,7 @@ impl PgError {
             "execution_id",
             "handoff_id",
             "update_id",
+            "goal_id",
             "evidence_id",
             "review_round_id",
             "artifact_id",
