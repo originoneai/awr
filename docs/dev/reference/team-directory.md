@@ -70,6 +70,7 @@ The Observer **Members & Agents** page reads `/v1/web/projects/{project}/directo
 | `departments[].key` | `plan.departments[].id` selected by `project_department_ids` | Stable department identity within the project directory. |
 | `departments[].name` | `plan.departments[].name` | Display name; names are not identities. |
 | `departments[].parentKey` | `plan.departments[].parent_id` | Parent department key, or `null` when the field is absent or null at the top level. |
+| `allDepartments[]` | `plan.departments[]` | Every validated department in the project directory, carrying the same `key`, `name` and `parentKey` fields in declaration order so views can render the full hierarchy including ancestor departments. |
 | `updated_at_ms` | `updated_at_ms` | Directory maintenance time. |
 | `members[].personId` | `members[].member_ref.person_id` | Stable person identity in the bound project. |
 | `members[].name` | `members[].display_name` | Display name when available; not an identity. |

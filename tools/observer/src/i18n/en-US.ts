@@ -231,6 +231,18 @@ const enUS: Messages = {
       roles: {
         observer: 'Read only', developer: 'Developer', reviewer: 'Reviewer', supervisor: 'Supervisor', deliverer: 'Deliverer', administrator: 'Administrator',
       },
+      abilities: {
+        readWork: 'See projects and tasks',
+        executeAndSubmit: 'Accept tasks, advance work, and submit results',
+        reviewOthers: 'Review someone else’s results',
+        assignAndPlan: 'Assign work, approve and publish plans',
+        confirmIntegration: 'Confirm reviewed results are integrated',
+        manageAccess: 'Manage members and permissions',
+        readAudit: 'Read the project audit records',
+      },
+      allowed: 'Included',
+      notIncluded: 'Not included',
+      cellUnknown: 'Not provided',
     },
     statusTitle: 'How to read statuses', statusLabelHeader: 'Page label', statusMeaningHeader: 'Meaning',
     taskStatus: {
@@ -252,6 +264,8 @@ const enUS: Messages = {
     },
     organizationTitle: 'Organization and departments',
     organizationNote: 'The current member directory has one flat department level. Which department a group belongs to is not recorded yet; department and executive summaries depend on it.',
+    organizationHierarchyNote: 'Departments are arranged by the parent links recorded in the project directory; department and executive summaries follow the same hierarchy.',
+    organizationNoDepartments: 'No departments have been registered under this organization',
     vocabularyTitle: 'Page vocabulary', vocabularyName: 'Software development', vocabularyMeta: 'Tasks, acceptance criteria, review and workstreams',
     vocabularyNote: 'Other industries only have a reserved place: the words change while the page structure stays the same. Not available now.',
     evidenceTitle: 'What counts as evidence',
