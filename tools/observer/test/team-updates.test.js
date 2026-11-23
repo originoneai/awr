@@ -255,6 +255,15 @@ test('updates.list contract rejects every missing field, extra field, wrong type
     assert.equal(reply.error.code, 'BadGateway', `missing data.${key}`);
     assert.equal(reply.result, undefined);
   }
+  // A reply that claims it may execute is not a read and is refused, whatever else it carries.
+  for (const value of [true, null, 'false', 0]) {
+    upstreamReply = baseList();
+    upstreamReply.data.execution_authorized = value;
+    const reply = await call('GET', `/api/team/updates?project=${SAMPLE_PROJECT}`);
+    assert.equal(reply.ok, false, `execution_authorized ${JSON.stringify(value)}`);
+    assert.equal(reply.error.code, 'BadGateway', `execution_authorized ${JSON.stringify(value)}`);
+    assert.equal(reply.result, undefined);
+  }
   for (const key of Object.keys(baseList().data.as_of)) {
     upstreamReply = baseList();
     delete upstreamReply.data.as_of[key];
