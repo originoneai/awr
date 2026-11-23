@@ -363,9 +363,10 @@ test('every exposed read operation answers through the real bridge validation pa
     { op: 'dependencies.list', work_id: 'T-103', workstream_id: 'WS-001' },
     { op: 'session.inspect', session_id: 'session-t-101' },
     { op: 'source.content', source_path: document.path, expected_sha256: document.sha256, max_context_bytes: 262144 },
-    ...[...DEMO_FUTURE_READ_OPS].map((op) => op === 'update.inspect' ? { op, update_id: 'U-001' }
-      : op === 'goal.inspect' ? { op, goal_id: 'GOAL-001' }
-        : op === 'lesson.inspect' ? { op, lesson_id: 'L-001' } : { op }),
+    { op: 'updates.list' },
+    { op: 'update.inspect', update_id: 'U-001' },
+    ...[...DEMO_FUTURE_READ_OPS].map((op) => op === 'goal.inspect' ? { op, goal_id: 'GOAL-001' }
+      : op === 'lesson.inspect' ? { op, lesson_id: 'L-001' } : { op }),
   ];
   assert.equal(queries.length + 1, 48, '48 unique reads, including the seeded review.inspect');
   for (const query of queries) {
