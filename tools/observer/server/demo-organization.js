@@ -336,12 +336,77 @@ function canonicalPeriodUpdates(data, projectId) {
   return completeSlice(items);
 }
 
+/** Verbatim AWR-PPD-061 business duty presets matching Rust BusinessRole::action_ceiling. */
+const DEMO_BUSINESS_ROLE_PRESETS = {
+  action_ceilings: {
+    administrator: [
+      'work.read',
+      'access.manage_project',
+      'audit.read_project',
+      'directory.manage_project',
+    ],
+    deliverer: [
+      'work.read',
+      'session.maintain_own',
+      'delivery.finalize',
+    ],
+    developer: [
+      'work.read',
+      'session.maintain_own',
+      'claim.manage_own',
+      'execution.request_and_report_own',
+      'planning.propose',
+      'delivery.submit_and_request_review',
+    ],
+    observer: [
+      'work.read',
+    ],
+    reviewer: [
+      'work.read',
+      'session.maintain_own',
+      'review.decide',
+    ],
+    supervisor: [
+      'work.read',
+      'work.assign',
+      'session.maintain_own',
+      'planning.propose',
+      'planning.edit_draft',
+      'planning.approve',
+      'planning.publish',
+      'audit.read_project',
+      'directory.manage_project',
+    ],
+  },
+  explicit_combined_duties: true,
+  omitted_on_update: 'preserve_existing_declaration',
+  role_names_grant_authority: false,
+  roles: [
+    'observer',
+    'developer',
+    'reviewer',
+    'supervisor',
+    'deliverer',
+    'administrator',
+  ],
+  semantics: 'membership_grants_intersect_declared_ceiling_then_one_live_delegation',
+};
+
 /** Demo-only organization projection for the canonical Members page. The synthetic fixture
  * deliberately uses one stable person ID per person across its three projects; real person IDs
  * remain project-scoped and no live organization directory is inferred from them. Duties and
  * project memberships are recorded fixture facts, not page-side guesses. */
 function canonicalOrganizationDirectory(data) {
   const memberIds = new Set(data.people.map((member) => member.person_id));
+  const visibleDepartmentIds = new Set([
+    ...data.projects.flatMap((project) => [project.group_id, project.parent_department_id]),
+    ...data.people.map((member) => member.group_id),
+  ]);
+  const allDepartments = data.organization.departments
+    .filter((department) => visibleDepartmentIds.has(department.id))
+    .map((department) => ({
+      key: department.id, name: department.name, parentKey: department.parent_id ?? null,
+    }));
   const departments = data.organization.departments.filter((department) =>
     data.people.some((member) => member.group_id === department.id));
   const departmentById = new Map(departments.map((department) => [department.id, {
@@ -351,6 +416,7 @@ function canonicalOrganizationDirectory(data) {
     configured: true,
     organization: data.organization.name,
     departments: [...departmentById.values()],
+    allDepartments,
     updated_at_ms: data.now_unix_ms,
     members: data.people.filter((member) => memberIds.has(member.person_id)).map((member) => ({
       personId: member.person_id,
@@ -1925,6 +1991,7 @@ function createDemoOrganization({ variant = 'full',
     switch (query.op) {
       case 'capabilities': return {
         protocol: 'awr-team-workstream', protocol_version: 1,
+        business_role_presets: clone(DEMO_BUSINESS_ROLE_PRESETS),
         identity: { ...viewerIdentity(), can_manage_members: false, can_read_project_audit: true,
           membership_action_ceiling: ['work.read'] },
         queries: ['capabilities', 'workstreams.list', 'work.list', 'work.graph', 'work.search', 'work.next', 'work.inbox',
