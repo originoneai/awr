@@ -6,137 +6,31 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
+import { settle } from './geometry/shared.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const evidence = path.resolve(process.env.OBSERVER_EVIDENCE_DIR ?? path.join(root, '../../.local/ppo-057/browser'));
-const results = [];
-const failures = [];
-let server;
-let browser;
 
-async function startServer(variant) {
-  server = spawn(process.execPath, ['server.js', '--demo', '--demo-variant', variant, '--port', '0'], {
-    cwd: root,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, AWR_OBSERVER_DEMO_VARIANT: variant },
-  });
-  let output = '';
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error(`Observer did not start for ${variant}: ${output}`)), 10_000);
-    server.stdout.on('data', (chunk) => {
-      output += String(chunk);
-      const match = output.match(/URL\s+(http:\/\/127\.0\.0\.1:\d+)/);
-      if (match) {
-        clearTimeout(timeout);
-        resolve(match[1]);
-      }
-    });
-    server.stderr.on('data', (chunk) => { output += String(chunk); });
-    server.once('exit', (code) => {
-      clearTimeout(timeout);
-      reject(new Error(`Observer exited (${code}) for ${variant}: ${output}`));
-    });
-  });
-}
+// Register each page module here: adding a new page check takes one module under
+// e2e/geometry/<page>.mjs and one line in this list.
+export const registeredPageModules = [
+  'workbench',
+  'project-plan',
+  'project-acceptance',
+  'project-knowledge',
+  'activity',
+  'inbox',
+  'projects',
+  'members',
+];
 
-async function stopServer() {
-  if (!server || server.killed) return;
-  const stopped = new Promise((resolve) => server.once('exit', resolve));
-  server.kill('SIGTERM');
-  await stopped;
-  server = undefined;
-}
-
-async function settle(page) {
-  await page.waitForLoadState('domcontentloaded');
-  await page.waitForFunction(() => document.querySelectorAll('.ant-spin-spinning').length === 0, null, { timeout: 20_000 });
-  await page.waitForTimeout(250);
-}
-
-async function workbenchQueue(page) {
-  await page.getByTestId('workbench-frame').waitFor();
-  assert.equal(await page.locator('.obs-kpi').count(), 4, 'workbench has four KPI cells');
-  assert.equal(await page.locator('.obs-workbench-instrument').count(), 1, 'workbench has one verdict instrument');
-  assert.equal(await page.locator('.obs-detail-panel').count(), 1, 'workbench has one detail panel');
-  assert.ok(await page.locator('.obs-chain-node-root').count() <= 1, 'one visible chain has at most one root');
-  if (await page.locator('.obs-chain-node-root').count()) {
-    assert.equal(await page.locator('.obs-chain-node-root .obs-lamp[data-lamp="blocked"]').count(), 1, 'chain root is red');
-  }
-  const geometry = await page.evaluate(() => {
-    const title = getComputedStyle(document.querySelector('.obs-page-title'));
-    const panel = getComputedStyle(document.querySelector('.obs-detail-panel'));
-    const body = getComputedStyle(document.querySelector('.obs-workbench-body'));
-    const rail = document.querySelector('.obs-todo-rail').getBoundingClientRect();
-    return {
-      titleSize: title.fontSize,
-      titleLeading: title.lineHeight,
-      panelRadius: panel.borderTopLeftRadius,
-      bodyColumns: body.gridTemplateColumns.split(' ').length,
-      railWidth: Math.round(rail.width),
-      overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-    };
-  });
-  assert.deepEqual([geometry.titleSize, geometry.titleLeading, geometry.panelRadius], ['22px', '28px', '16px']);
-  assert.equal(geometry.overflow, false, 'workbench has no horizontal overflow');
-  if (page.viewportSize().width >= 1240) {
-    assert.equal(geometry.bodyColumns, 2);
-    assert.equal(geometry.railWidth, 348);
-  } else {
-    assert.equal(geometry.bodyColumns, 1);
-  }
-  await page.locator('.obs-kpi').first().click();
-  const detail = await page.getByTestId('workbench-metric-detail').waitFor();
-  const detailCount = Number(await page.getByTestId('workbench-metric-detail').getAttribute('data-count'));
-  assert.equal(await page.locator('#workbench-metric-detail, [data-testid="workbench-metric-detail"]').locator('.obs-row-item').count(), detailCount,
-    'KPI detail rows equal the number');
-  await page.getByRole('button', { name: /返回工作台|Back to workbench/ }).click();
-  await page.getByRole('tab', { name: /我在等|Waiting on others/ }).click();
-  await settle(page);
-}
-
-async function planDetail(page) {
-  await page.getByTestId('work-plan-page').waitFor();
-  await page.getByTestId('plan-status-T-101').waitFor().catch(() => {});
-  await settle(page);
-}
-
-async function acceptanceDetail(page) {
-  await page.getByTestId('acceptance-evidence-chain').waitFor();
-  await settle(page);
-  const earlier = page.getByRole('button', { name: /第 1 次复核|Review 1/ });
-  if (await earlier.count()) {
-    await earlier.first().click();
-    await page.getByTestId('acceptance-review-round-t-101-1').waitFor();
-    const latest = page.getByRole('button', { name: /返回最近一次复核|Return to latest review/ });
-    if (await latest.count()) await latest.click();
-  }
-  const artifact = page.locator('[data-testid^="artifact-expand-"]').first();
-  if (await artifact.count()) {
-    await artifact.click();
-    await page.locator('[data-testid^="artifact-read-content-"]').first().waitFor();
-    await page.locator('[data-testid^="artifact-digest-"]').first().waitFor();
-  }
-  await settle(page);
-}
-
-async function documentDetail(page) {
-  await page.getByTestId('project-document-library').waitFor();
-  const read = page.getByRole('button', { name: /读取全文|Read full/ });
-  if (await read.count()) {
-    await read.first().click();
-    await page.getByTestId('library-document-text').waitFor();
-  }
-  await settle(page);
-}
-
-const fullRoutes = [
-  { name: 'workbench', path: '/workbench?scope=P-001', action: workbenchQueue },
+export const fullRoutes = [
+  { name: 'workbench', path: '/workbench?scope=P-001' },
   { name: 'projects', path: '/projects' },
   { name: 'project-overview', path: '/projects/P-001?tab=overview' },
-  { name: 'project-plan', path: '/projects/P-001?tab=plan&work=T-101', action: planDetail },
+  { name: 'project-plan', path: '/projects/P-001?tab=plan&work=T-101' },
   { name: 'project-dependencies', path: '/projects/P-001?tab=deps&work=T-103' },
-  { name: 'project-acceptance', path: '/projects/P-001?tab=acceptance&work=T-101', action: acceptanceDetail },
-  { name: 'project-knowledge', path: '/projects/P-001?tab=knowledge', action: documentDetail },
+  { name: 'project-acceptance', path: '/projects/P-001?tab=acceptance&work=T-101' },
+  { name: 'project-knowledge', path: '/projects/P-001?tab=knowledge' },
   { name: 'project-confirmations', path: '/projects/P-001?tab=knowledge&knowledge=confirmations' },
   { name: 'notify-plan', path: '/projects/P-002?tab=plan&work=T-206' },
   { name: 'onboard-plan', path: '/projects/P-003?tab=plan&work=T-303' },
@@ -156,7 +50,7 @@ const fullRoutes = [
   { name: 'takeover-pending', path: '/takeover', pending: true },
 ];
 
-const variantRoutes = {
+export const variantRoutes = {
   empty: [
     { name: 'projects', path: '/projects' },
     // Without a selected project the page first asks for one organization directory; a
@@ -166,7 +60,7 @@ const variantRoutes = {
   ],
   single: [
     { name: 'projects', path: '/projects' },
-    { name: 'project-plan', path: '/projects/P-001?tab=plan&work=T-101', action: planDetail },
+    { name: 'project-plan', path: '/projects/P-001?tab=plan&work=T-101' },
   ],
   restricted: [
     // In the restricted variant every composed overview read denies with Forbidden; the
@@ -183,160 +77,56 @@ const variantRoutes = {
   ],
 };
 
-/* The canonical variant exists so the workbench can be compared with the prototype with
-   every fact known. The server promises are asserted, and so are the page's four KPI
-   numbers: under the canonical variant they must equal the prototype's [2, 1, 2, 3]; a
-   red number assertion means the page or the derivation regressed. */
-const canonicalWorkbenchRecords = [];
-
-async function recordCanonicalWorkbench(page) {
-  await settle(page);
-  await page.getByTestId('workbench-frame').waitFor();
-  const pageNumbers = await page.evaluate(() =>
-    [...document.querySelectorAll('.obs-kpis .obs-kpi-value')]
-      .map((element) => (element.textContent ?? '').trim())
-      .map((text) => (/^(\d+)/.exec(text) ?? [])[0] ?? null));
-  assert.deepEqual(pageNumbers, ['2', '1', '2', '3'],
-    'the canonical workbench KPI numbers must equal the prototype [2, 1, 2, 3]');
-  const response = await page.request
-    .get(new URL('/api/team/overview-model?project=P-001', page.url()).href);
-  assert.equal(response.status(), 200);
-  const model = await response.json();
-  assert.equal(model.ok, true);
-  for (const [plane, detail] of Object.entries(model.coverage)) {
-    assert.deepEqual(detail, { status: 'complete', missing: [] }, `canonical ${plane} coverage`);
-  }
-  assert.deepEqual(model.input.options.views.me, { personId: 'M-002', projectId: 'P-001' });
-  assert.equal(model.input.tasks.items.length, 14);
-  assert.equal(model.input.approvals.items.length, 2);
-  // Demo clock decoupling (the #709 review decision): read times and every freshness
-  // measurement report the moment the server answered, so the badge reads measured on
-  // any day the demo runs. The derivation clock stays on the whole-week fixture time
-  // and keeps trailing the answer by at most half a week.
-  assert.equal(model.freshness.authoritative.status, 'measured',
-    `canonical authoritative status ${model.freshness.authoritative.status}`);
-  assert.ok(typeof model.freshness.authoritative.age_ms === 'number'
-    && model.freshness.authoritative.age_ms >= 0 && model.freshness.authoritative.age_ms < 60_000,
-    `canonical authoritative age ${model.freshness.authoritative.age_ms} is not the answer moment's age`);
-  assert.ok(Math.abs(model.input.options.nowUnixMs - model.read_at_unix_ms) <= 3.5 * 24 * 3600 * 1000,
-    'the canonical "now" stays within half a week of the real read');
-  // End-to-end default clock check: the fixture's "now" is a Thursday 12:00 UTC, and the
-  // whole-week rounding keeps it there through the real server.js startup path.
-  assert.equal(new Date(model.input.options.nowUnixMs).getUTCDay(), 4,
-    'the demo clock keeps the fixture weekday');
-  assert.equal(model.input.options.nowUnixMs % (24 * 3600 * 1000), (12 * 3600 * 1000),
-    'the demo clock keeps the fixture time of day');
-  canonicalWorkbenchRecords.push({
-    route: '/workbench?scope=P-001&perspective=me',
-    prototypeNumbers: [2, 1, 2, 3],
-    pageNumbers,
-    modelReadAtUnixMs: model.read_at_unix_ms,
-    modelNowUnixMs: model.input.options.nowUnixMs,
-  });
+export async function loadPageModules(moduleNames = registeredPageModules) {
+  return Promise.all(moduleNames.map(async (id) => {
+    const loaded = await import(`./geometry/${id}.mjs`);
+    return loaded.default;
+  }));
 }
 
-/* The canonical variant also serves the project-list facts the page needs for its
-   prototype comparison: recorded leads and groups, period updates and the takeover
-   row. These assertions are the page-level oracle — they fail when the demo stops
-   reproducing the prototype's projects table. */
-const canonicalProjectsRecords = [];
+export function buildPageRegistry(modules) {
+  const names = new Set();
+  const reportKeys = new Set();
+  const canonicalKeys = new Set();
+  const routeActions = new Map();
+  const geometryModules = [];
+  const canonicalModules = [];
 
-async function recordCanonicalProjects(page) {
-  await settle(page);
-  await page.getByTestId('projects-table').waitFor();
-  // innerText flattens the DOM (links, fragments) into one string with incidental
-  // whitespace; both sides are normalised the same way so the glyphs are compared.
-  const flat = (text) => text.replace(/\s+/g, '');
-  const lead = flat(await page.getByTestId('projects-lead').innerText());
-  assert.equal(lead, flat('4 个项目，1 个有风险，1 个没有更新，1 个刚接管'),
-    'the canonical projects lead sentence must equal the prototype');
-  const rows = page.locator('.projects-table tbody tr.ant-table-row');
-  assert.equal(await rows.count(), 4, 'the canonical projects table has the prototype four rows');
-  const statusTexts = [];
-  for (let index = 0; index < 4; index += 1) {
-    statusTexts.push((await rows.nth(index).locator('.obs-tag').innerText()).trim());
-  }
-  assert.deepEqual(statusTexts, ['有风险', '正常', '没有更新', '刚接管'],
-    'the four status labels must equal the prototype');
-  const sentences = [];
-  const updatedTexts = [];
-  for (let index = 0; index < 4; index += 1) {
-    sentences.push((await rows.nth(index).locator('.projects-summary-text').innerText()).trim());
-  }
-  assert.deepEqual(sentences, [
-    '接口第 3 版的复核拖了两天，页面联调在等',
-    '试运行第二周，没有新问题',
-    '上一次更新是 12 天前',
-    '读到 4 条工作线，按验收核验过的是 0 项，有 4 个问题要回答',
-  ], 'the four one-sentence cells must equal the prototype');
-  const wide = (page.viewportSize()?.width ?? 0) >= 1240;
-  if (wide) {
-    for (let index = 0; index < 4; index += 1) {
-      updatedTexts.push((await rows.nth(index).locator('.projects-update-time').innerText()).trim());
+  for (const mod of modules) {
+    assert.ok(mod && typeof mod.name === 'string' && mod.name.length > 0, 'page module must declare a non-empty name');
+    assert.ok(!names.has(mod.name), `duplicate page module name: ${mod.name}`);
+    names.add(mod.name);
+
+    if (mod.reportKey || mod.matches || mod.measure || mod.check) {
+      assert.equal(typeof mod.reportKey, 'string', `${mod.name}: reportKey must be a string`);
+      assert.ok(!reportKeys.has(mod.reportKey), `duplicate geometry reportKey: ${mod.reportKey}`);
+      assert.equal(typeof mod.matches, 'function', `${mod.name}: matches must be a function`);
+      assert.equal(typeof mod.measure, 'function', `${mod.name}: measure must be a function`);
+      assert.equal(typeof mod.check, 'function', `${mod.name}: check must be a function`);
+      reportKeys.add(mod.reportKey);
+      geometryModules.push(mod);
     }
-    assert.deepEqual(updatedTexts, ['今天', '3 天前', '12 天前', '刚刚'],
-      'the four update-column ages must equal the prototype');
-    // 该更新了 belongs to the third row alone.
-    assert.equal(await page.locator('.projects-table .projects-update-note').count(), 1,
-      'exactly one row is flagged 该更新了');
-    assert.equal((await rows.nth(2).locator('.projects-update-note').innerText()).trim(), '该更新了');
-  }
-  // The takeover row links its zero-verified-tasks fact (its completion column stays
-  // visible on small viewports).
-  assert.equal((await rows.nth(3).locator('.projects-no-verified').innerText()).trim(),
-    '接管后还没有按验收核验过的任务');
-  const ownerMeta = [];
-  for (let index = 0; index < 4; index += 1) {
-    ownerMeta.push((await rows.nth(index).locator('.projects-project-meta').innerText()).trim());
-  }
-  assert.deepEqual(ownerMeta, ['周宁 · 应用小组', '吴桐 · 平台小组', '郑岚 · 交付小组', '刚接管'],
-    'the four owner-and-group cells must equal the prototype');
-  canonicalProjectsRecords.push({ lead, statusTexts, sentences, updatedTexts, ownerMeta });
-}
 
-/* The canonical variant also serves the organization-wide directory the prototype's members
-   page reads: eight members, three groups, recorded duties, and each person's queue count
-   equal to the prototype (周宁 1、林悦 1、许宁 3, everyone else none). These assertions are
-   the page-level oracle; a red count means the demo facts or the queue rule drifted. */
-const canonicalMembersRecords = [];
+    if (mod.routeActions) {
+      for (const [routeName, action] of Object.entries(mod.routeActions)) {
+        assert.equal(typeof action, 'function', `${mod.name}: route action ${routeName} must be a function`);
+        assert.ok(!routeActions.has(routeName), `duplicate route action for ${routeName}`);
+        routeActions.set(routeName, action);
+      }
+    }
 
-async function recordCanonicalMembers(page) {
-  await settle(page);
-  await page.getByTestId('member-table').waitFor();
-  const rows = page.locator('.members-table tbody tr.ant-table-row');
-  assert.equal(await rows.count(), 8, 'the canonical members table has the prototype eight rows');
-  const names = [];
-  const duties = [];
-  for (let index = 0; index < 8; index += 1) {
-    names.push((await rows.nth(index).locator('.members-name').innerText()).trim());
-    duties.push((await rows.nth(index).locator('.members-group-cell .members-small').innerText()).trim());
+    if (mod.canonical) {
+      assert.equal(typeof mod.canonical.reportKey, 'string', `${mod.name}: canonical.reportKey must be a string`);
+      assert.ok(!canonicalKeys.has(mod.canonical.reportKey), `duplicate canonical reportKey: ${mod.canonical.reportKey}`);
+      assert.equal(typeof mod.canonical.route?.name, 'string', `${mod.name}: canonical.route.name must be a string`);
+      assert.equal(typeof mod.canonical.route?.path, 'string', `${mod.name}: canonical.route.path must be a string`);
+      assert.equal(typeof mod.canonical.route?.run, 'function', `${mod.name}: canonical.route.run must be a function`);
+      canonicalKeys.add(mod.canonical.reportKey);
+      canonicalModules.push(mod);
+    }
   }
-  assert.deepEqual(names, ['周宁', '林悦', '陈宇', '许宁', '吴桐', '赵衡', '郑岚', '何川'],
-    'the eight member names must equal the prototype order');
-  assert.deepEqual(duties, ['小组负责人', '开发', '开发', '复核', '小组负责人', '开发', '小组负责人', '开发'],
-    'the recorded duties must equal the prototype');
-  const pending = [];
-  for (let index = 0; index < 8; index += 1) {
-    pending.push((await rows.nth(index).locator('[data-testid^="member-pending-"]').innerText()).trim());
-  }
-  assert.deepEqual(pending, ['1 件', '1 件', '没有', '3 件', '没有', '没有', '没有', '没有'],
-    'the waiting-on-this-person counts must equal the prototype');
-  const summary = (await page.getByTestId('members-summary').innerText()).replace(/\s+/g, '');
-  assert.ok(summary.includes('8位成员，3个小组'),
-    `the members lead must count eight members and three groups (read ${summary})`);
-  assert.equal((await rows.nth(3).locator('[data-testid^="member-doing-"]').innerText()).trim(),
-    '复核“接口第 3 版”等 3 件',
-    'the recorded reviewer reads their review queue like the prototype');
-  assert.equal((await rows.nth(7).locator('[data-testid^="member-doing-"]').innerText()).trim(),
-    '在甲方的测试环境走通 5 步接入',
-    'a waiting task without an agent still reads as the doing work, like the prototype');
-  const wide = (page.viewportSize()?.width ?? 0) >= 1240;
-  if (wide) {
-    assert.equal((await rows.nth(3).locator('[data-testid^="member-projects-"]').innerText()).trim(),
-      '订单协作平台、统一通知服务',
-      'a member of two projects reads both in one row like the prototype');
-  }
-  canonicalMembersRecords.push({ names, duties, pending, summary });
+
+  return { geometryModules, routeActions, canonicalModules };
 }
 
 async function firstLoadGeometry(page) {
@@ -360,633 +150,227 @@ async function firstLoadGeometry(page) {
   });
 }
 
-/* Prototype metric basis: .head 24/16 desktop and 16/12 mobile; .filters gap 12,
-   margin-bottom 16; .seg gap/padding 2, radius 8; .seg button 28px, 13px, 0 10,
-   radius 6; .block radius 16; .block-head 48px and 0 20; .t th 40px/12px;
-   .pnote 12px 20px and 12px/16px. */
-async function activityGeometry(page) {
-  await page.getByTestId('page-activity').waitFor();
-  return page.evaluate(() => {
-    const read = (selector) => {
-      const element = document.querySelector(selector);
-      if (!element) return null;
-      const style = getComputedStyle(element);
-      const rect = element.getBoundingClientRect();
-      return {
-        height: rect.height,
-        paddingTop: style.paddingTop,
-        paddingBottom: style.paddingBottom,
-        paddingLeft: style.paddingLeft,
-        paddingRight: style.paddingRight,
-        marginBottom: style.marginBottom,
-        gap: style.gap,
-        borderRadius: style.borderRadius,
-        fontSize: style.fontSize,
-        lineHeight: style.lineHeight,
-        color: style.color,
-        textDecorationLine: style.textDecorationLine,
-      };
-    };
-    return {
-      header: read('.obs-page-header'),
-      filters: read('.activity-filters'),
-      segments: [...document.querySelectorAll('.activity-segment')].map((element) => {
-        const style = getComputedStyle(element);
-        return { gap: style.gap, paddingTop: style.paddingTop, borderRadius: style.borderRadius };
-      }),
-      options: [...document.querySelectorAll('.activity-segment button')].map((element) => {
-        const style = getComputedStyle(element);
-        return {
-          height: element.getBoundingClientRect().height,
-          fontSize: style.fontSize,
-          paddingLeft: style.paddingLeft,
-          paddingRight: style.paddingRight,
-          borderRadius: style.borderRadius,
-        };
-      }),
-      section: read('.activity-section'),
-      sectionHead: read('.activity-section .ant-card-head'),
-      sectionTitle: read('.activity-section .obs-section-title'),
-      tableHead: read('.activity-table thead th'),
-      firstTableHead: read('.activity-table thead th:first-child'),
-      taskLink: read('.activity-task-link'),
-      note: read('.activity-pnote'),
-      count: document.querySelector('.activity-section .obs-section-count')?.textContent ?? null,
-      rows: document.querySelectorAll('.activity-table tbody tr.ant-table-row').length,
-      rowHeights: [...document.querySelectorAll('.activity-table tbody tr.ant-table-row')]
-        .map((row) => row.getBoundingClientRect().height),
-      times: [...document.querySelectorAll('.activity-time')].map((cell) => cell.textContent),
-      headers: [...document.querySelectorAll('.activity-table thead th')].map((element) => element.textContent).filter(Boolean),
-    };
-  });
-}
-
-function checkActivityGeometry(metric, compact) {
+export async function runDemoOrganizationCheck({
+  evidenceDir = path.resolve(process.env.OBSERVER_EVIDENCE_DIR ?? path.join(root, '../../.local/ppo-057/browser')),
+  moduleNames = registeredPageModules,
+} = {}) {
+  const registry = buildPageRegistry(await loadPageModules(moduleNames));
+  const results = [];
   const failures = [];
-  const number = (value) => typeof value === 'number' ? value : Number.parseFloat(value ?? '');
-  const equal = (actual, expected, label) => {
-    if (Math.abs(number(actual) - expected) > 0.01) failures.push(`${label}: expected ${expected}, got ${actual}`);
-  };
-  equal(metric.header?.paddingTop, compact ? 16 : 24, 'page header top padding');
-  equal(metric.header?.paddingBottom, compact ? 12 : 16, 'page header bottom padding');
-  equal(metric.filters?.gap, 12, 'filter gap');
-  equal(metric.filters?.marginBottom, 16, 'filter bottom margin');
-  for (const segment of metric.segments) {
-    equal(segment.gap, 2, 'segment gap');
-    equal(segment.paddingTop, 2, 'segment padding');
-    equal(segment.borderRadius, 8, 'segment radius');
-  }
-  for (const option of metric.options) {
-    equal(option.height, 28, 'segment option height');
-    equal(option.fontSize, 13, 'segment option font size');
-    equal(option.paddingLeft, 10, 'segment option left padding');
-    equal(option.paddingRight, 10, 'segment option right padding');
-    equal(option.borderRadius, 6, 'segment option radius');
-  }
-  equal(metric.section?.borderRadius, 16, 'section radius');
-  equal(metric.sectionHead?.height, 48, 'section heading height');
-  equal(metric.sectionHead?.paddingLeft, 20, 'section heading horizontal padding');
-  equal(metric.sectionTitle?.fontSize, 14, 'section title font size');
-  equal(metric.sectionTitle?.lineHeight, 20, 'section title line height');
-  if (metric.taskLink) {
-    if (metric.taskLink.color !== 'rgb(17, 24, 39)') failures.push(`task link colour: ${metric.taskLink.color}`);
-    if (metric.taskLink.textDecorationLine !== 'none') failures.push(`task link default decoration: ${metric.taskLink.textDecorationLine}`);
-  }
-  if (metric.rowHeights.some((height) => height > 46.01)) {
-    failures.push(`activity rows exceed 46px: ${metric.rowHeights.join(', ')}`);
-  }
-  if (metric.times.some((text) => /\d{2}:\d{2}:\d{2}/.test(text ?? ''))) {
-    failures.push(`seconds remain in compact activity times: ${metric.times.join(', ')}`);
-  }
-  if (metric.tableHead) {
-    equal(metric.tableHead.height, 40, 'table heading height');
-    equal(metric.tableHead.fontSize, 12, 'table heading font size');
-  }
-  if (!compact && metric.firstTableHead) equal(metric.firstTableHead.paddingLeft, 20, 'first table heading padding');
-  equal(metric.note?.paddingTop, 12, 'note vertical padding');
-  equal(metric.note?.paddingLeft, 20, 'note horizontal padding');
-  equal(metric.note?.fontSize, 12, 'note font size');
-  equal(metric.note?.lineHeight, 16, 'note line height');
-  if (metric.count !== null) equal(metric.count, metric.rows, 'section count versus visible rows');
-  const expectedHeaders = compact ? ['什么时候', '谁', '做了什么'] : ['什么时候', '谁', '做了什么', '哪件任务'];
-  if (metric.headers.length && JSON.stringify(metric.headers) !== JSON.stringify(expectedHeaders)) {
-    failures.push(`table headings differ: ${JSON.stringify(metric.headers)}`);
-  }
-  return failures;
-}
+  const canonicalRecords = Object.fromEntries(
+    registry.canonicalModules.map((mod) => [mod.canonical.reportKey, []]),
+  );
+  const canonicalRoutes = registry.canonicalModules.map((mod) => ({
+    name: mod.canonical.route.name,
+    path: mod.canonical.route.path,
+    action: async (page) => {
+      await mod.canonical.route.run(page, (item) => {
+        canonicalRecords[mod.canonical.reportKey].push(item);
+      });
+    },
+  }));
 
-/* Prototype metric basis: .head 24/16 desktop and 16/12 mobile; .lead 20/28 (18/26
-   mobile) margin-bottom 20; .md 372px + 1fr, gap 24, single column under 1040;
-   .queue/.focus radius 16; .qrow 14/16 padding, 12 gap; .ki 32/8; .tt 500; .mm 12/16;
-   .age 12 nowrap; .focus-body 24/28 (20 mobile); h3 22/28 margin-top 12; .from 13px
-   gap 8; .ask 15/24 margin-top 20; .sec h4 12/16 margin 0 0 8; .ev li min-height 36,
-   6/12, radius 8, gap 10; .where 16/28/20 (16 mobile); .where-h gap 8 weight 500;
-   .sayline 8/8/8/12 radius 10 gap 12; .hint 12px margin-top 8; nav count/bell agree
-   with the queue length. */
-async function inboxGeometry(page) {
-  await page.getByTestId('page-inbox').waitFor();
-  return page.evaluate(() => {
-    const read = (selector) => {
-      const element = document.querySelector(selector);
-      if (!element) return null;
-      const style = getComputedStyle(element);
-      const rect = element.getBoundingClientRect();
-      return {
-        height: rect.height,
-        paddingTop: style.paddingTop,
-        paddingBottom: style.paddingBottom,
-        paddingLeft: style.paddingLeft,
-        paddingRight: style.paddingRight,
-        marginTop: style.marginTop,
-        marginBottom: style.marginBottom,
-        gap: style.columnGap || style.gap,
-        borderRadius: style.borderTopLeftRadius,
-        fontSize: style.fontSize,
-        lineHeight: style.lineHeight,
-        fontWeight: style.fontWeight,
-        color: style.color,
-      };
-    };
-    return {
-      head: read('.inbox-head'),
-      lead: read('.inbox-lead'),
-      leadText: document.querySelector('.inbox-lead')?.textContent ?? null,
-      md: (() => {
-        const element = document.querySelector('.inbox-md');
-        if (!element) return null;
-        return { display: getComputedStyle(element).display, columns: getComputedStyle(element).gridTemplateColumns, gap: getComputedStyle(element).columnGap };
-      })(),
-      queue: read('.inbox-queue'),
-      firstRow: read('.inbox-qrow'),
-      firstRowTitle: read('.inbox-qrow-title'),
-      firstRowMeta: read('.inbox-qrow-meta'),
-      firstRowAge: read('.inbox-qrow-age'),
-      kindIcon: (() => {
-        const element = document.querySelector('.inbox-ki');
-        if (!element) return null;
-        const rect = element.getBoundingClientRect();
-        return { width: rect.width, height: rect.height, radius: getComputedStyle(element).borderTopLeftRadius };
-      })(),
-      focus: read('.inbox-focus'),
-      focusBody: read('.inbox-focus-body'),
-      focusTitle: read('.inbox-focus-title'),
-      focusFrom: read('.inbox-focus-from'),
-      ask: read('.inbox-focus-ask'),
-      basisHeading: read('.inbox-sec h4'),
-      basisItem: read('.inbox-ev li'),
-      where: read('.inbox-where'),
-      whereHead: read('.inbox-where-head'),
-      sayline: read('.inbox-sayline'),
-      hint: read('.inbox-hint'),
-      queueRows: document.querySelectorAll('[data-testid="inbox-queue-row"]').length,
-      navCount: document.querySelector('[data-testid="inbox-count"]')?.textContent ?? null,
-      bellLabel: document.querySelector('[data-testid="inbox-bell"]')?.getAttribute('aria-label') ?? null,
-      bellDot: document.querySelectorAll('.ant-badge-dot').length,
-      pageText: document.querySelector('[data-testid="page-inbox"]')?.textContent ?? '',
-    };
-  });
-}
+  let server;
+  let browser;
 
-function checkInboxGeometry(metric, compact) {
-  const failures = [];
-  const number = (value) => typeof value === 'number' ? value : Number.parseFloat(value ?? '');
-  const equal = (actual, expected, label) => {
-    if (Math.abs(number(actual) - expected) > 0.01) failures.push(`${label}: expected ${expected}, got ${actual}`);
-  };
-  equal(metric.head?.paddingTop, compact ? 16 : 24, 'inbox head top padding');
-  equal(metric.head?.paddingBottom, compact ? 12 : 16, 'inbox head bottom padding');
-  equal(metric.lead?.fontSize, compact ? 18 : 20, 'lead font size');
-  equal(metric.lead?.lineHeight, compact ? 26 : 28, 'lead line height');
-  equal(metric.lead?.marginBottom, 20, 'lead bottom margin');
-  if (metric.md) {
-    if (metric.md.columns.split(' ').length !== (compact ? 1 : 2)) {
-      failures.push(`inbox columns: expected ${compact ? 'one' : 'two'} columns, got ${metric.md.columns}`);
-    }
-    equal(metric.md.gap, 24, 'inbox grid gap');
+  async function startServer(variant) {
+    server = spawn(process.execPath, ['server.js', '--demo', '--demo-variant', variant, '--port', '0'], {
+      cwd: root,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, AWR_OBSERVER_DEMO_VARIANT: variant },
+    });
+    let output = '';
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error(`Observer did not start for ${variant}: ${output}`)), 10_000);
+      server.stdout.on('data', (chunk) => {
+        output += String(chunk);
+        const match = output.match(/URL\s+(http:\/\/127\.0\.0\.1:\d+)/);
+        if (match) {
+          clearTimeout(timeout);
+          resolve(match[1]);
+        }
+      });
+      server.stderr.on('data', (chunk) => { output += String(chunk); });
+      server.once('exit', (code) => {
+        clearTimeout(timeout);
+        reject(new Error(`Observer exited (${code}) for ${variant}: ${output}`));
+      });
+    });
   }
-  equal(metric.queue?.borderRadius, 16, 'queue radius');
-  equal(metric.firstRow?.paddingTop, 14, 'queue row vertical padding');
-  equal(metric.firstRow?.paddingLeft, 16, 'queue row horizontal padding');
-  equal(metric.firstRow?.gap, 12, 'queue row gap');
-  equal(metric.firstRowTitle?.fontWeight, 500, 'queue row title weight');
-  equal(metric.firstRowMeta?.fontSize, 12, 'queue row meta size');
-  equal(metric.firstRowMeta?.lineHeight, 16, 'queue row meta leading');
-  equal(metric.firstRowAge?.fontSize, 12, 'queue row age size');
-  equal(metric.kindIcon?.width, 32, 'kind icon width');
-  equal(metric.kindIcon?.height, 32, 'kind icon height');
-  equal(metric.kindIcon?.radius, 8, 'kind icon radius');
-  equal(metric.focus?.borderRadius, 16, 'focus radius');
-  equal(metric.focusBody?.paddingTop, compact ? 20 : 24, 'focus body vertical padding');
-  equal(metric.focusBody?.paddingLeft, compact ? 20 : 28, 'focus body horizontal padding');
-  equal(metric.focusTitle?.fontSize, 22, 'focus title size');
-  equal(metric.focusTitle?.lineHeight, 28, 'focus title leading');
-  equal(metric.focusFrom?.fontSize, 13, 'focus from size');
-  equal(metric.ask?.fontSize, 15, 'ask size');
-  equal(metric.ask?.lineHeight, 24, 'ask leading');
-  equal(metric.ask?.marginTop, 20, 'ask top margin');
-  equal(metric.basisHeading?.fontSize, 12, 'basis heading size');
-  equal(metric.basisHeading?.marginBottom, 8, 'basis heading bottom margin');
-  if (metric.basisItem) {
-    equal(metric.basisItem.height < 36.01 ? 36 : 36, 36, 'basis item min height');
-    equal(metric.basisItem.paddingLeft, 12, 'basis item horizontal padding');
-    equal(metric.basisItem.borderRadius, 8, 'basis item radius');
-  }
-  equal(metric.where?.paddingTop, 16, 'where top padding');
-  equal(metric.where?.paddingLeft, compact ? 16 : 28, 'where horizontal padding');
-  equal(metric.where?.paddingBottom, compact ? 16 : 20, 'where bottom padding');
-  equal(metric.whereHead?.fontWeight, 500, 'where heading weight');
-  equal(metric.sayline?.paddingLeft, 12, 'sayline start padding');
-  equal(metric.sayline?.borderRadius, 10, 'sayline radius');
-  equal(metric.hint?.fontSize, 12, 'hint size');
-  // The three indicators are one number: queue rows, navigation pill and bell label.
-  // Below the compact breakpoint the prototype hides both the bell and the nav count.
-  if (compact) {
-    if (metric.navCount !== null) failures.push(`compact inbox shows the navigation pill ${metric.navCount}`);
-    if (metric.bellDot !== 0) failures.push('compact inbox shows the bell dot');
-  } else if (metric.queueRows === 0) {
-    if (metric.navCount !== null) failures.push(`empty inbox still shows the navigation pill ${metric.navCount}`);
-    if (metric.bellDot !== 0) failures.push('empty inbox still lights the bell dot');
-  } else {
-    if (metric.navCount !== String(metric.queueRows)) {
-      failures.push(`navigation count ${metric.navCount} does not match ${metric.queueRows} queue rows`);
-    }
-    if (!new RegExp(String(metric.queueRows)).test(metric.bellLabel ?? '')) {
-      failures.push(`bell label ${JSON.stringify(metric.bellLabel)} does not carry ${metric.queueRows}`);
-    }
-    if (metric.bellDot !== 1) failures.push(`bell dot count is ${metric.bellDot}, expected 1`);
-  }
-  return failures;
-}
 
-/* Prototype projects(): .head 24/16 desktop and 16/12 mobile; .lead 20/28 with a
-   20px bottom margin (18/26 mobile); .block radius 16; .block-head 48px and 0 20;
-   .t th 40px/12px; first/last cell inset 20px desktop and 16px mobile. */
-async function projectsGeometry(page) {
-  await page.locator('[data-testid="page-projects"], [data-testid="state-forbidden"]').first().waitFor();
-  return page.evaluate(() => {
-    const read = (selector) => {
-      const element = document.querySelector(selector);
-      if (!element) return null;
-      const style = getComputedStyle(element);
-      const rect = element.getBoundingClientRect();
-      return {
-        height: rect.height,
-        paddingTop: style.paddingTop,
-        paddingBottom: style.paddingBottom,
-        paddingLeft: style.paddingLeft,
-        marginBottom: style.marginBottom,
-        borderRadius: style.borderRadius,
-        fontSize: style.fontSize,
-        lineHeight: style.lineHeight,
-        fontWeight: style.fontWeight,
-        fontVariantNumeric: style.fontVariantNumeric,
-      };
-    };
-    return {
-      forbidden: Boolean(document.querySelector('[data-testid="state-forbidden"]')),
-      header: read('.obs-page-header'),
-      lead: read('.projects-lead'),
-      section: read('.projects-section'),
-      sectionHead: read('.projects-section .ant-card-head'),
-      sectionTitle: read('.projects-section .obs-section-title'),
-      tableHead: read('.projects-table thead th'),
-      firstTableHead: read('.projects-table thead th:first-child'),
-      completionUnknown: read('.projects-completion-unknown'),
-      count: document.querySelector('.projects-section .obs-section-count')?.textContent ?? null,
-      rows: document.querySelectorAll('.projects-table tbody tr.ant-table-row').length,
-      headers: [...document.querySelectorAll('.projects-table thead th')].map((element) => element.textContent).filter(Boolean),
-      freshness: Boolean(document.querySelector('.projects-footer [data-testid="freshness-badge"]')),
-    };
-  });
-}
-
-function checkProjectsGeometry(metric, compact) {
-  if (metric.forbidden) return [];
-  const failures = [];
-  const number = (value) => typeof value === 'number' ? value : Number.parseFloat(value ?? '');
-  const equal = (actual, expected, label) => {
-    if (Math.abs(number(actual) - expected) > 0.01) failures.push(`${label}: expected ${expected}, got ${actual}`);
-  };
-  equal(metric.header?.paddingTop, compact ? 16 : 24, 'project header top padding');
-  equal(metric.header?.paddingBottom, compact ? 12 : 16, 'project header bottom padding');
-  equal(metric.lead?.marginBottom, 20, 'project summary bottom margin');
-  equal(metric.lead?.fontSize, compact ? 18 : 20, 'project summary font size');
-  equal(metric.lead?.lineHeight, compact ? 26 : 28, 'project summary line height');
-  equal(metric.lead?.fontWeight, 500, 'project summary font weight');
-  equal(metric.section?.borderRadius, 16, 'project section radius');
-  equal(metric.sectionHead?.height, 48, 'project section heading height');
-  equal(metric.sectionHead?.paddingLeft, 20, 'project section heading horizontal padding');
-  equal(metric.sectionTitle?.fontSize, 14, 'project section title font size');
-  equal(metric.sectionTitle?.lineHeight, 20, 'project section title line height');
-  equal(metric.tableHead?.height, 40, 'project table heading height');
-  equal(metric.tableHead?.fontSize, 12, 'project table heading font size');
-  equal(metric.firstTableHead?.paddingLeft, compact ? 16 : 20, 'project first table heading padding');
-  if (metric.completionUnknown) {
-    equal(metric.completionUnknown.fontSize, 12, 'unknown completion font size');
-    equal(metric.completionUnknown.lineHeight, 16, 'unknown completion line height');
+  async function stopServer() {
+    if (!server || server.killed) return;
+    const stopped = new Promise((resolve) => server.once('exit', resolve));
+    server.kill('SIGTERM');
+    await stopped;
+    server = undefined;
   }
-  if (metric.count !== null && !Number.isNaN(Number(metric.count))) equal(metric.count, metric.rows, 'project section count versus detail rows');
-  const expectedHeaders = metric.rows === 0 && metric.count === '0' ? [] : compact
-    ? ['项目', '状态', '一句话', '完成得怎么样']
-    : ['项目', '状态', '一句话', '完成得怎么样', '更新'];
-  if (JSON.stringify(metric.headers) !== JSON.stringify(expectedHeaders)) {
-    failures.push(`project table headings differ: ${JSON.stringify(metric.headers)}`);
-  }
-  if (!metric.freshness) failures.push('project freshness badge is missing');
-  return failures;
-}
 
-/* Prototype metric basis: members() .head 24/16 desktop and 16/12 mobile;
-   .lead 20/28 (18/26 mobile) with 20px bottom margin; .block radius 16 and
-   .block-head 48px with 0 20 padding; .t th 40px/12px; .av 28px; .who gap 10;
-   .chip 22px, 12px text, 6px gap/radius and 0 8 padding; .chevc width 36;
-   .pnote 12px 20px and 12px/16px. */
-async function membersGeometry(page) {
-  await page.getByTestId('member-table').waitFor();
-  return page.evaluate(() => {
-    const read = (selector) => {
-      const element = document.querySelector(selector);
-      if (!element) return null;
-      const style = getComputedStyle(element);
-      const rect = element.getBoundingClientRect();
-      return {
-        width: rect.width,
-        height: rect.height,
-        paddingTop: style.paddingTop,
-        paddingBottom: style.paddingBottom,
-        paddingLeft: style.paddingLeft,
-        paddingRight: style.paddingRight,
-        marginBottom: style.marginBottom,
-        gap: style.gap,
-        borderRadius: style.borderRadius,
-        fontSize: style.fontSize,
-        lineHeight: style.lineHeight,
-        fontWeight: style.fontWeight,
-      };
-    };
-    return {
-      header: read('.obs-page-header'),
-      lead: read('.members-lead'),
-      section: read('.members-section'),
-      sectionHead: read('.members-section .ant-card-head'),
-      sectionTitle: read('.members-section .obs-section-title'),
-      tableHead: read('.members-table thead th'),
-      firstTableHead: read('.members-table thead th:first-child'),
-      avatar: read('.members-table tbody .members-avatar'),
-      who: read('.members-table tbody .members-who'),
-      chip: read('.members-table tbody .members-chip'),
-      navigation: read('.members-table tbody .obs-table-arrow-column'),
-      note: read('.members-pnote'),
-      borderCollapse: getComputedStyle(document.querySelector('.members-table table')).borderCollapse,
-      fixedArrows: document.querySelectorAll('.members-table .ant-table-cell-fix-end').length,
-      count: document.querySelector('.members-section .obs-section-count')?.textContent ?? null,
-      rows: document.querySelectorAll('.members-table tbody tr.ant-table-row').length,
-      headers: [...document.querySelectorAll('.members-table thead th')].map((element) => element.textContent).filter(Boolean),
-    };
-  });
-}
-
-function checkMembersGeometry(metric, compact) {
-  const failures = [];
-  const number = (value) => typeof value === 'number' ? value : Number.parseFloat(value ?? '');
-  const equal = (actual, expected, label) => {
-    if (Math.abs(number(actual) - expected) > 0.01) failures.push(`${label}: expected ${expected}, got ${actual}`);
-  };
-  equal(metric.header?.paddingTop, compact ? 16 : 24, 'members header top padding');
-  equal(metric.header?.paddingBottom, compact ? 12 : 16, 'members header bottom padding');
-  equal(metric.lead?.fontSize, compact ? 18 : 20, 'members lead font size');
-  equal(metric.lead?.lineHeight, compact ? 26 : 28, 'members lead line height');
-  equal(metric.lead?.fontWeight, 500, 'members lead weight');
-  equal(metric.lead?.marginBottom, 20, 'members lead bottom margin');
-  equal(metric.section?.borderRadius, 16, 'members section radius');
-  equal(metric.sectionHead?.height, 48, 'members section heading height');
-  equal(metric.sectionHead?.paddingLeft, 20, 'members section heading padding');
-  equal(metric.sectionTitle?.fontSize, 14, 'members section title size');
-  equal(metric.sectionTitle?.lineHeight, 20, 'members section title line height');
-  equal(metric.tableHead?.height, 40, 'members table heading height');
-  equal(metric.tableHead?.fontSize, 12, 'members table heading font size');
-  equal(metric.firstTableHead?.paddingLeft, compact ? 16 : 20, 'members first table heading padding');
-  equal(metric.avatar?.width, 28, 'members avatar width');
-  equal(metric.avatar?.height, 28, 'members avatar height');
-  equal(metric.who?.gap, 10, 'members avatar/name gap');
-  if (!compact) {
-    equal(metric.chip?.height, 22, 'members Agent chip height');
-    equal(metric.chip?.fontSize, 12, 'members Agent chip font size');
-    equal(metric.chip?.paddingLeft, 8, 'members Agent chip padding');
-    equal(metric.chip?.gap, 6, 'members Agent chip gap');
-    equal(metric.chip?.borderRadius, 6, 'members Agent chip radius');
-  }
-  equal(metric.navigation?.width, 36, 'members navigation column width');
-  equal(metric.note?.paddingTop, 12, 'members note vertical padding');
-  equal(metric.note?.paddingLeft, 20, 'members note horizontal padding');
-  equal(metric.note?.fontSize, 12, 'members note font size');
-  equal(metric.note?.lineHeight, 16, 'members note line height');
-  equal(metric.count, metric.rows, 'members section count versus visible rows');
-  const expectedHeaders = compact
-    ? ['成员', '小组 · 职责', '现在在做', '等本人处理的']
-    : ['成员', '小组 · 职责', '在哪些项目', '现在在做', 'Agent 连接', '等本人处理的'];
-  if (JSON.stringify(metric.headers) !== JSON.stringify(expectedHeaders)) failures.push(`members table headings differ: ${JSON.stringify(metric.headers)}`);
-  if (metric.borderCollapse !== 'collapse') failures.push(`members table border model: ${metric.borderCollapse}`);
-  if (metric.fixedArrows !== 0) failures.push(`members navigation must scroll with the prototype table, fixed cells: ${metric.fixedArrows}`);
-  return failures;
-}
-
-async function visit(baseUrl, variant, route, viewport) {
-  const context = await browser.newContext({
-    viewport,
-    colorScheme: 'light',
-    locale: 'zh-CN',
-  });
-  await context.addInitScript(() => {
-    localStorage.setItem('awr-observer-theme', 'light');
-    localStorage.setItem('i18nextLng', 'zh-CN');
-  });
-  const page = await context.newPage();
-  const pageErrors = [];
-  const requestFailures = [];
-  const apiErrors = [];
-  page.on('pageerror', (error) => pageErrors.push(error.message));
-  page.on('requestfailed', (request) => requestFailures.push(`${request.method()} ${request.url()} ${request.failure()?.errorText || ''}`));
-  page.on('response', async (response) => {
-    if (!response.url().includes('/api/team/')) return;
-    if (response.status() >= 400) {
-      apiErrors.push({ status: response.status(), url: response.url() });
-      return;
-    }
+  async function visit(baseUrl, variant, route, viewport) {
+    const context = await browser.newContext({
+      viewport,
+      colorScheme: 'light',
+      locale: 'zh-CN',
+    });
+    await context.addInitScript(() => {
+      localStorage.setItem('awr-observer-theme', 'light');
+      localStorage.setItem('i18nextLng', 'zh-CN');
+    });
+    const page = await context.newPage();
+    const pageErrors = [];
+    const requestFailures = [];
+    const apiErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    page.on('requestfailed', (request) => requestFailures.push(`${request.method()} ${request.url()} ${request.failure()?.errorText || ''}`));
+    page.on('response', async (response) => {
+      if (!response.url().includes('/api/team/')) return;
+      if (response.status() >= 400) {
+        apiErrors.push({ status: response.status(), url: response.url() });
+        return;
+      }
+      try {
+        const payload = await response.json();
+        if (payload?.ok === false) apiErrors.push({ code: payload.error?.code, url: response.url() });
+      } catch {
+        // Static assets are not JSON; API responses always are, so a JSON parse
+        // failure is itself a failed observation.
+        apiErrors.push({ code: 'InvalidJson', url: response.url() });
+      }
+    });
+    const actualPath = route.path;
+    const target = `${baseUrl}${actualPath}`;
     try {
-      const payload = await response.json();
-      if (payload?.ok === false) apiErrors.push({ code: payload.error?.code, url: response.url() });
-    } catch {
-      // Static assets are not JSON; API responses always are, so a JSON parse
-      // failure is itself a failed observation.
-      apiErrors.push({ code: 'InvalidJson', url: response.url() });
-    }
-  });
-  const actualPath = route.path;
-  const target = `${baseUrl}${actualPath}`;
-  try {
-    await page.goto(target);
-    const geometry = await firstLoadGeometry(page);
-    if (route.action) await route.action(page);
-    else await settle(page);
-    await page.waitForTimeout(350);
-    const body = await page.locator('body').innerText();
-    const activityMetric = route.name.startsWith('activity-') ? await activityGeometry(page) : null;
-    const inboxMetric = route.name === 'inbox' ? await inboxGeometry(page) : null;
-    const projectMetric = route.name === 'projects' ? await projectsGeometry(page) : null;
-    const membersMetric = route.name === 'members' ? await membersGeometry(page) : null;
-    const state = await page.evaluate(() => ({
-      width: document.documentElement.clientWidth,
-      scrollWidth: document.documentElement.scrollWidth,
-      pending: document.querySelectorAll('[data-testid="state-not-open"], [data-testid$="-placeholder"]').length,
-      title: document.title,
-    }));
-    const keyLeaks = body.match(/\b(?:T|P|WS|M|Q|DOC|GOAL|U|A|L|H|PC|PW)-\d{3}\b/g) || [];
-    const expectedKeyLeaks = route.expectedKeyLeaks || [];
-    const unexpectedKeyLeaks = keyLeaks.filter((key) => !expectedKeyLeaks.includes(key));
-    const missingExpectedKeys = expectedKeyLeaks.filter((key) => !keyLeaks.includes(key));
-    const forbiddenText = [
-      ...(body.match(/\b(?:undefined|null|NaN|Unsupported|BadGateway|ReadTimeout|protocol_version|workstream_id|contract_hash|source_snapshot_id|coordinator_epoch|execution_authorized|passed)\b/g) || []),
-      ...(body.match(/(?:^|\n)##+\s/g) || []),
-      ...unexpectedKeyLeaks,
-    ];
-    const expected = route.expectedErrors || [];
-    const unexpectedApiErrors = apiErrors.filter((error) => !expected.includes(error.code));
-    const screenshot = path.join(evidence, `${variant}-${route.name}-${viewport.width}x${viewport.height}.png`);
-    await page.screenshot({ path: screenshot, fullPage: true });
-    const record = {
-      variant,
-      route: actualPath,
-      intendedPending: route.pending === true,
-      pendingBlocks: state.pending,
-      viewport: `${viewport.width}x${viewport.height}`,
-      title: state.title,
-      screenshot,
-      bodyCharacters: body.length,
-      horizontalOverflow: state.scrollWidth > state.width,
-      firstLoadGeometry: geometry,
-      activityGeometry: activityMetric,
-      inboxGeometry: inboxMetric,
-      projectsGeometry: projectMetric,
-      membersGeometry: membersMetric,
-      pageErrors,
-      requestFailures,
-      apiErrors,
-      forbiddenText,
-      keyLeaks,
-      documentedKeyLeaks: expectedKeyLeaks,
-      keyLeakExemptionReason: route.keyLeakReason ?? null,
-      unexpectedKeyLeaks,
-      missingExpectedKeys,
-    };
-    results.push(record);
-    if (activityMetric) {
-      for (const failure of checkActivityGeometry(activityMetric, viewport.width <= 860)) {
-        failures.push(`${variant} ${route.path} ${viewport.width}: ${failure}`);
+      await page.goto(target);
+      const geometry = await firstLoadGeometry(page);
+      const action = route.action ?? registry.routeActions.get(route.name);
+      if (action) await action(page);
+      else await settle(page);
+      await page.waitForTimeout(350);
+      const body = await page.locator('body').innerText();
+      const pageGeometryMetrics = {};
+      const measuredModules = [];
+      for (const mod of registry.geometryModules) {
+        const metric = mod.matches(route) ? await mod.measure(page) : null;
+        pageGeometryMetrics[mod.reportKey] = metric;
+        if (metric) measuredModules.push({ mod, metric });
       }
-    }
-    if (inboxMetric) {
-      for (const failure of checkInboxGeometry(inboxMetric, viewport.width <= 860)) {
-        failures.push(`${variant} ${route.path} ${viewport.width}: ${failure}`);
+      const state = await page.evaluate(() => ({
+        width: document.documentElement.clientWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+        pending: document.querySelectorAll('[data-testid="state-not-open"], [data-testid$="-placeholder"]').length,
+        title: document.title,
+      }));
+      const keyLeaks = body.match(/\b(?:T|P|WS|M|Q|DOC|GOAL|U|A|L|H|PC|PW)-\d{3}\b/g) || [];
+      const expectedKeyLeaks = route.expectedKeyLeaks || [];
+      const unexpectedKeyLeaks = keyLeaks.filter((key) => !expectedKeyLeaks.includes(key));
+      const missingExpectedKeys = expectedKeyLeaks.filter((key) => !keyLeaks.includes(key));
+      const forbiddenText = [
+        ...(body.match(/\b(?:undefined|null|NaN|Unsupported|BadGateway|ReadTimeout|protocol_version|workstream_id|contract_hash|source_snapshot_id|coordinator_epoch|execution_authorized|passed)\b/g) || []),
+        ...(body.match(/(?:^|\n)##+\s/g) || []),
+        ...unexpectedKeyLeaks,
+      ];
+      const expected = route.expectedErrors || [];
+      const unexpectedApiErrors = apiErrors.filter((error) => !expected.includes(error.code));
+      const screenshot = path.join(evidenceDir, `${variant}-${route.name}-${viewport.width}x${viewport.height}.png`);
+      await page.screenshot({ path: screenshot, fullPage: true });
+      const record = {
+        variant,
+        route: actualPath,
+        intendedPending: route.pending === true,
+        pendingBlocks: state.pending,
+        viewport: `${viewport.width}x${viewport.height}`,
+        title: state.title,
+        screenshot,
+        bodyCharacters: body.length,
+        horizontalOverflow: state.scrollWidth > state.width,
+        firstLoadGeometry: geometry,
+        ...pageGeometryMetrics,
+        pageErrors,
+        requestFailures,
+        apiErrors,
+        forbiddenText,
+        keyLeaks,
+        documentedKeyLeaks: expectedKeyLeaks,
+        keyLeakExemptionReason: route.keyLeakReason ?? null,
+        unexpectedKeyLeaks,
+        missingExpectedKeys,
+      };
+      results.push(record);
+      const compact = viewport.width <= 860;
+      for (const { mod, metric } of measuredModules) {
+        for (const failure of mod.check(metric, compact)) {
+          failures.push(`${variant} ${route.path} ${viewport.width}: ${failure}`);
+        }
       }
+      if (missingExpectedKeys.length) failures.push(`${variant} ${route.path} ${viewport.width}: documented key leaks disappeared; remove the stale exemption ${missingExpectedKeys.join(', ')}`);
+      if (!body.trim()) failures.push(`${variant} ${route.path} ${viewport.width}: empty page`);
+      if (state.scrollWidth > state.width) failures.push(`${variant} ${route.path} ${viewport.width}: horizontal overflow ${state.scrollWidth}/${state.width}`);
+      if (geometry.centerSpread > 1) failures.push(`${variant} ${route.path} ${viewport.width}: breadcrumb centres differ by ${geometry.centerSpread}px`);
+      if (geometry.switcherHeights.some((height) => Math.abs(height - 28) > 0.01)) failures.push(`${variant} ${route.path} ${viewport.width}: switcher height is not 28px (${geometry.switcherHeights.join(', ')})`);
+      if (geometry.hasHeaderLimitation) failures.push(`${variant} ${route.path} ${viewport.width}: limitation text leaked into the header`);
+      if (pageErrors.length) failures.push(`${variant} ${route.path} ${viewport.width}: page errors ${pageErrors.join('; ')}`);
+      if (requestFailures.length) failures.push(`${variant} ${route.path} ${viewport.width}: request failures ${requestFailures.join('; ')}`);
+      if (unexpectedApiErrors.length) failures.push(`${variant} ${route.path} ${viewport.width}: API errors ${JSON.stringify(unexpectedApiErrors)}`);
+      if (forbiddenText.length) failures.push(`${variant} ${route.path} ${viewport.width}: visible forbidden text ${forbiddenText.join(', ')}`);
+      if (route.pending && state.pending === 0) failures.push(`${variant} ${route.path} ${viewport.width}: pending destination did not render its designed state`);
+    } catch (error) {
+      failures.push(`${variant} ${route.path} ${viewport.width}: ${error.stack || error}`);
+      results.push({ variant, route: route.path, viewport: `${viewport.width}x${viewport.height}`, fatal: String(error) });
+    } finally {
+      await context.close();
     }
-    if (projectMetric) {
-      for (const failure of checkProjectsGeometry(projectMetric, viewport.width <= 860)) {
-        failures.push(`${variant} ${route.path} ${viewport.width}: ${failure}`);
-      }
-    }
-    if (membersMetric) {
-      for (const failure of checkMembersGeometry(membersMetric, viewport.width <= 860)) {
-        failures.push(`${variant} ${route.path} ${viewport.width}: ${failure}`);
-      }
-    }
-    if (missingExpectedKeys.length) failures.push(`${variant} ${route.path} ${viewport.width}: documented key leaks disappeared; remove the stale exemption ${missingExpectedKeys.join(', ')}`);
-    if (!body.trim()) failures.push(`${variant} ${route.path} ${viewport.width}: empty page`);
-    if (state.scrollWidth > state.width) failures.push(`${variant} ${route.path} ${viewport.width}: horizontal overflow ${state.scrollWidth}/${state.width}`);
-    if (geometry.centerSpread > 1) failures.push(`${variant} ${route.path} ${viewport.width}: breadcrumb centres differ by ${geometry.centerSpread}px`);
-    if (geometry.switcherHeights.some((height) => Math.abs(height - 28) > 0.01)) failures.push(`${variant} ${route.path} ${viewport.width}: switcher height is not 28px (${geometry.switcherHeights.join(', ')})`);
-    if (geometry.hasHeaderLimitation) failures.push(`${variant} ${route.path} ${viewport.width}: limitation text leaked into the header`);
-    if (pageErrors.length) failures.push(`${variant} ${route.path} ${viewport.width}: page errors ${pageErrors.join('; ')}`);
-    if (requestFailures.length) failures.push(`${variant} ${route.path} ${viewport.width}: request failures ${requestFailures.join('; ')}`);
-    if (unexpectedApiErrors.length) failures.push(`${variant} ${route.path} ${viewport.width}: API errors ${JSON.stringify(unexpectedApiErrors)}`);
-    if (forbiddenText.length) failures.push(`${variant} ${route.path} ${viewport.width}: visible forbidden text ${forbiddenText.join(', ')}`);
-    if (route.pending && state.pending === 0) failures.push(`${variant} ${route.path} ${viewport.width}: pending destination did not render its designed state`);
-  } catch (error) {
-    failures.push(`${variant} ${route.path} ${viewport.width}: ${error.stack || error}`);
-    results.push({ variant, route: route.path, viewport: `${viewport.width}x${viewport.height}`, fatal: String(error) });
-  } finally {
-    await context.close();
   }
-}
 
-try {
-  await mkdir(evidence, { recursive: true });
-  browser = await chromium.launch({ headless: true });
-  for (const variant of ['full', 'empty', 'single', 'restricted', 'partial', 'canonical']) {
-    const baseUrl = await startServer(variant);
-    const routes = variant === 'full' ? fullRoutes
-      : variant === 'canonical'
-        ? [{
-          name: 'workbench-canonical',
-          path: '/workbench?scope=P-001&perspective=me',
-          // Record the default tab first (where the KPI numbers live), then take the
-          // same queue-and-detail walk the full variant uses, so the shared body checks
-          // see the same settled state they already guard for the full variant.
-          action: async (page) => {
-            await settle(page);
-            await recordCanonicalWorkbench(page);
-            await workbenchQueue(page);
-          },
-        }, {
-          name: 'projects-canonical',
-          path: '/projects',
-          action: async (page) => {
-            await settle(page);
-            await recordCanonicalProjects(page);
-          },
-        }, {
-          // The prototype's members page is organization-wide: without a selected project the
-          // canonical bridge serves that directory and the page reads it in one request.
-          name: 'members-canonical',
-          path: '/members',
-          action: async (page) => {
-            await settle(page);
-            await recordCanonicalMembers(page);
-          },
-        }]
+  try {
+    await mkdir(evidenceDir, { recursive: true });
+    browser = await chromium.launch({ headless: true });
+    for (const variant of ['full', 'empty', 'single', 'restricted', 'partial', 'canonical']) {
+      const baseUrl = await startServer(variant);
+      const routes = variant === 'full' ? fullRoutes
+        : variant === 'canonical' ? canonicalRoutes
         : variantRoutes[variant];
-    for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
-      for (const route of routes) await visit(baseUrl, variant, route, viewport);
+      for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+        for (const route of routes) await visit(baseUrl, variant, route, viewport);
+      }
+      await stopServer();
     }
+  } finally {
+    if (browser) await browser.close();
     await stopServer();
   }
-} finally {
-  if (browser) await browser.close();
-  await stopServer();
+
+  const documentedKeyLeaks = results.filter((item) => item.keyLeaks?.length).map((item) => ({
+    variant: item.variant,
+    route: item.route,
+    viewport: item.viewport,
+    keys: item.keyLeaks,
+    exempted: item.documentedKeyLeaks,
+    exemptionReason: item.keyLeakExemptionReason,
+    screenshot: item.screenshot,
+  }));
+  const report = {
+    basis: 'Real node server.js --demo responses; no browser request stubs',
+    viewports: ['1440x900 light', '390x844 light'],
+    visited: results.length,
+    failures,
+    documentedKeyLeaks,
+    ...canonicalRecords,
+    results,
+  };
+  await mkdir(evidenceDir, { recursive: true });
+  await writeFile(path.join(evidenceDir, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
+  console.log(JSON.stringify({
+    evidence: evidenceDir,
+    visited: results.length,
+    failures,
+    documentedKeyLeaks,
+    ...canonicalRecords,
+  }, null, 2));
+  assert.deepEqual(failures, []);
+  return report;
 }
 
-const documentedKeyLeaks = results.filter((item) => item.keyLeaks?.length).map((item) => ({
-  variant: item.variant,
-  route: item.route,
-  viewport: item.viewport,
-  keys: item.keyLeaks,
-  exempted: item.documentedKeyLeaks,
-  exemptionReason: item.keyLeakExemptionReason,
-  screenshot: item.screenshot,
-}));
-const report = {
-  basis: 'Real node server.js --demo responses; no browser request stubs',
-  viewports: ['1440x900 light', '390x844 light'],
-  visited: results.length,
-  failures,
-  documentedKeyLeaks,
-  canonicalWorkbenchRecords,
-  canonicalProjectsRecords,
-  canonicalMembersRecords,
-  results,
-};
-await mkdir(evidence, { recursive: true });
-await writeFile(path.join(evidence, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
-console.log(JSON.stringify({ evidence, visited: results.length, failures, documentedKeyLeaks,
-  canonicalWorkbenchRecords, canonicalProjectsRecords, canonicalMembersRecords }, null, 2));
-assert.deepEqual(failures, []);
+const isEntrypoint = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isEntrypoint) {
+  await runDemoOrganizationCheck();
+}
