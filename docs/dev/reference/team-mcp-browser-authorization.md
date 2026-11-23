@@ -150,7 +150,9 @@ and keeps at most 120 characters before the write, the first approved connection
 names a credential and later connections through it keep that name. The name is
 self-reported display text that the activity ledger discloses under the
 `directory.read` gate; it grants nothing, and every operation still derives its
-authority from the live credential.
+authority from the live credential. An omitted registration name or a legacy OAuth
+snapshot keeps this field null; the consent page's fallback label stays presentation
+text.
 The page uses no scripts or external assets. Responses set no-store, frame
 protection and a restrictive CSP. Consent forms use `Referrer-Policy: same-origin`
 so browsers preserve the issuer Origin on the form POST without sending a

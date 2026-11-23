@@ -61,6 +61,9 @@ impl OAuthError {
 pub struct RegisteredClient {
     pub client_id: String,
     pub client_name: String,
+    /// Exact registration input, absent for legacy snapshots and unnamed clients.
+    #[serde(default)]
+    pub reported_client_name: Option<String>,
     pub redirect_uris: Vec<String>,
 }
 
@@ -79,12 +82,14 @@ pub struct ConsentPage {
     pub transaction_id: String,
     pub cookie: String,
     pub client_name: String,
+    pub reported_client_name: Option<String>,
     pub request: AuthorizationRequest,
 }
 
 #[derive(Clone)]
 pub struct ConsentView {
     pub client_name: String,
+    pub reported_client_name: Option<String>,
     pub request: AuthorizationRequest,
 }
 
@@ -352,7 +357,18 @@ impl OAuthStore {
         redirect_uris: Vec<String>,
         now: Instant,
     ) -> Result<RegisteredClient, OAuthError> {
-        if !bounded(&client_name, 120)
+        self.register_with_name(Some(client_name), redirect_uris, now)
+    }
+
+    pub fn register_with_name(
+        &self,
+        reported_client_name: Option<String>,
+        redirect_uris: Vec<String>,
+        now: Instant,
+    ) -> Result<RegisteredClient, OAuthError> {
+        if reported_client_name
+            .as_ref()
+            .is_some_and(|name| !bounded(name, 120))
             || redirect_uris.is_empty()
             || redirect_uris.len() > 8
             || redirect_uris.iter().any(|u| !valid_redirect(u))
@@ -366,7 +382,10 @@ impl OAuthStore {
             }
             let value = RegisteredClient {
                 client_id: random("client_")?,
-                client_name,
+                client_name: reported_client_name
+                    .clone()
+                    .unwrap_or_else(|| "MCP client".into()),
+                reported_client_name,
                 redirect_uris,
             };
             entries.clients.insert(
@@ -413,6 +432,7 @@ impl OAuthStore {
             return Err(OAuthError::Unavailable);
         }
         let client_name = client.value.client_name.clone();
+        let reported_client_name = client.value.reported_client_name.clone();
         let transaction_id = random("consent_")?;
         let cookie = random("browser_")?;
         entries.pending.insert(
@@ -420,6 +440,7 @@ impl OAuthStore {
             Pending {
                 view: ConsentView {
                     client_name: client_name.clone(),
+                    reported_client_name: reported_client_name.clone(),
                     request: request.clone(),
                 },
                 cookie_hash: hash(&cookie),
@@ -430,6 +451,7 @@ impl OAuthStore {
             transaction_id,
             cookie,
             client_name,
+            reported_client_name,
             request,
         })
     }

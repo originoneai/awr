@@ -169,7 +169,7 @@ pub(super) async fn read(
     // Client names are the self-reported registration names stored with the credential
     // (AWR-PPD-062). They pass the same gate as actor names and resolve in one statement.
     let client_names = if disclose_names {
-        client_names(tx, tenant, &q.op, &page).await?
+        client_names(tx, tenant, project, &q.op, &page).await?
     } else {
         vec![None; page.len()]
     };
@@ -219,6 +219,7 @@ pub(super) async fn read(
 async fn client_names(
     tx: &Transaction<'_>,
     tenant: &str,
+    project: &str,
     op: &str,
     page: &[&tokio_postgres::Row],
 ) -> PgResult<Vec<Option<String>>> {
@@ -235,8 +236,9 @@ async fn client_names(
         let names = tx
             .query(
                 "SELECT id,actor_id,client_id,client_name FROM awr_team.credentials
-                 WHERE tenant_id=$1 AND id=ANY($2) AND client_name IS NOT NULL",
-                &[&tenant, &ids],
+                 WHERE tenant_id=$1 AND id=ANY($2) AND client_name IS NOT NULL
+                   AND (project_id IS NULL OR project_id=$3)",
+                &[&tenant, &ids, &project],
             )
             .await?
             .into_iter()
@@ -274,21 +276,21 @@ async fn client_names(
     let (actors, clients): (Vec<String>, Vec<String>) = pairs.into_iter().unzip();
     let names = tx
         .query(
-            "SELECT c.actor_id,c.client_id,array_agg(DISTINCT c.client_name)
+            "SELECT c.actor_id,c.client_id,
+                    CASE WHEN count(*)=count(c.client_name) AND count(DISTINCT c.client_name)=1
+                         THEN min(c.client_name) END
              FROM awr_team.credentials c
              JOIN unnest($2::text[],$3::text[]) AS p(actor_id,client_id)
                ON p.actor_id=c.actor_id AND p.client_id=c.client_id
-             WHERE c.tenant_id=$1 AND c.client_name IS NOT NULL
+             WHERE c.tenant_id=$1 AND (c.project_id IS NULL OR c.project_id=$4)
              GROUP BY c.actor_id,c.client_id",
-            &[&tenant, &actors, &clients],
+            &[&tenant, &actors, &clients, &project],
         )
         .await?
         .into_iter()
         .map(|row| {
-            let recorded: Vec<String> = row.get(2);
-            // Two credentials of one actor and client id that recorded different names
-            // cannot be told apart on a development row, so neither is named.
-            let name = (recorded.len() == 1).then(|| recorded[0].clone());
+            // An unnamed credential is also ambiguous: this event may have used it.
+            let name: Option<String> = row.get(2);
             ((row.get::<_, String>(0), row.get::<_, String>(1)), name)
         })
         .collect::<std::collections::BTreeMap<_, _>>();

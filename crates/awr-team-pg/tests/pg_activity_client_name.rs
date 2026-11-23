@@ -472,6 +472,98 @@ async fn a_development_row_is_named_only_when_the_credentials_behind_it_agree() 
         activity_item(&development, "development-c")["client"],
         named("Agreed Name")
     );
+
+    // An old, unnamed credential of the same pair could have made the event.
+    let c3 = token("reader-c3", 'a');
+    add_credential(&admin, "reader-c3", "cli-c", &c3).await;
+    let development = store
+        .query(TENANT, PROJECT, A, query("audit.development"))
+        .await
+        .unwrap();
+    assert_eq!(
+        activity_item(&development, "development-c")["client"],
+        unnamed()
+    );
+    let requests = store
+        .query(TENANT, PROJECT, A, query("audit.requests"))
+        .await
+        .unwrap();
+    assert_eq!(
+        activity_item(&requests, "request-c")["client"],
+        named("Agreed Name")
+    );
+}
+
+#[tokio::test]
+async fn names_and_audit_rows_stay_within_the_authorized_project_and_workstreams() {
+    let (_guard, admin, _, store) = setup().await;
+    full_directory_access(&admin).await;
+    store
+        .connections()
+        .record_client_name(TENANT, PROJECT, B, "Local Client")
+        .await
+        .unwrap();
+    admin.batch_execute(
+        "INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status)
+           VALUES('reader-tenant','other-project','other','team','epoch','active');
+         INSERT INTO awr_team.credentials(tenant_id,project_id,id,actor_id,client_id,secret_hash,client_name)
+           VALUES('reader-tenant','other-project','other-credential','agent','cli-b','other-hash','Other Project Client');
+         INSERT INTO awr_team.request_audit(tenant_id,project_id,id,actor_id,client_id,credential_id,action,result)
+           VALUES('reader-tenant','other-project','other-request','agent','cli-b','other-credential','work.prepare','succeeded')"
+    ).await.unwrap();
+    seed_request(&admin, "local-request", "cli-b", "reader-b").await;
+    seed_request(
+        &admin,
+        "borrowed-project-credential",
+        "cli-b",
+        "other-credential",
+    )
+    .await;
+    seed_development(&admin, "local-development", 80, Some("cli-b")).await;
+    for op in ["audit.requests", "audit.development"] {
+        assert!(matches!(
+            store.query(TENANT, "other-project", A, query(op)).await,
+            Err(PgError::Forbidden)
+        ));
+        assert!(matches!(
+            store.query("other-tenant", PROJECT, A, query(op)).await,
+            Err(PgError::Forbidden)
+        ));
+        let reply = store.query(TENANT, PROJECT, A, query(op)).await.unwrap();
+        assert!(
+            !reply["data"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["id"] == "other-request")
+        );
+        let id = if op == "audit.requests" {
+            "local-request"
+        } else {
+            "local-development"
+        };
+        assert_eq!(activity_item(&reply, id)["client"], named("Local Client"));
+        if op == "audit.requests" {
+            assert_eq!(
+                activity_item(&reply, "borrowed-project-credential")["client"],
+                unnamed()
+            );
+        }
+    }
+    admin.batch_execute("UPDATE awr_team.request_audit SET work_id='b-private' WHERE id='local-request';
+        UPDATE awr_team.events SET work_id='b-private' WHERE id='local-development';
+        DELETE FROM awr_team.workstream_grants WHERE client_id='cli-a' AND workstream_id IN
+          (SELECT workstream_id FROM awr_team.workstream_snapshot_ownership WHERE work_id='b-private')").await.unwrap();
+    for op in ["audit.requests", "audit.development"] {
+        let reply = store.query(TENANT, PROJECT, A, query(op)).await.unwrap();
+        assert!(
+            !reply["data"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["work_id"] == "b-private")
+        );
+    }
 }
 
 // A request row must agree with its credential on actor and client id as well as on

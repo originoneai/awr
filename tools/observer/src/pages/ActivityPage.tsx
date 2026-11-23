@@ -196,9 +196,11 @@ export function ActivityPage() {
     // tell the two apart. Without a recorded kind the record cannot say who acted, so
     // only the person's name shows.
     const recordedName = typeof event.actor?.display_name === 'string' ? event.actor.display_name.trim() : '';
-    const name = recordedName && readsAsName(recordedName) ? recordedName : t('activity.unregisteredName');
+    const placeholder = /\b(?:undefined|null|NaN)\b/i;
+    const name = recordedName && readsAsName(recordedName) && !placeholder.test(recordedName)
+      ? recordedName : t('activity.unregisteredName');
     const recordedClient = typeof event.client?.display_name === 'string' ? event.client.display_name.trim() : '';
-    if (!recordedClient || !readsAsName(recordedClient)) return name;
+    if (!recordedClient || !readsAsName(recordedClient) || placeholder.test(recordedClient)) return name;
     if (event.actor?.kind === 'agent') return t('activity.actorByClient', { client: recordedClient, name });
     if (event.actor?.kind === 'human') return t('activity.actorViaClient', { client: recordedClient, name });
     return name;

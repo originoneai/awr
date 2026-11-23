@@ -499,6 +499,23 @@ describe('activity prototype structure and product language', () => {
     expect(tableRows()[0].querySelector('td:nth-child(2)')?.textContent).toBe('Alex Example');
   });
 
+  it.each(['zh-CN', 'en-US'])('filters untrusted client labels before rendering in %s', async (language) => {
+    await i18n.changeLanguage(language);
+    const labels = [
+      'client_id', 'audit.requests', 'undefined', 'null', 'NaN',
+      'Synthetic\nClient', 'Synthetic\u0000Client', '\u202eSynthetic',
+      '<img src=x onerror=alert(1)>', '/private/client.json', 'x'.repeat(121),
+    ];
+    setupActivity({ development: activityPayload(labels.map((client, index) =>
+      event(`untrusted-${index}`, 'execution.report', WORK_A, KNOWN_ACTOR, index,
+        { name: 'Alex Example', client, kind: 'agent' }))) });
+    renderApp('/activity?project=demo');
+    await waitFor(() => expect(tableRows()).toHaveLength(labels.length));
+    expect(tableRows().map((row) => row.querySelector('td:nth-child(2)')?.textContent))
+      .toEqual(labels.map(() => 'Alex Example'));
+    expect(document.querySelector('img[src="x"]')).toBeNull();
+  });
+
   it('words an unread and a partial context differently and ends a self-scope read with that note alone', async () => {
     const cases: Array<[string, { taskCoverage: string; memberCoverage: string }, string]> = [
       ['unread tasks', { taskCoverage: 'unread', memberCoverage: 'complete' }, '数据读取情况：任务和成员资料尚未读取；姓名和任务名可能显示为未登记'],

@@ -124,6 +124,9 @@ pub fn auth_query(client_id: &str) -> String {
 }
 pub async fn begin(server: &Server, name: &str) -> Pending {
     let client = register(server, name).await;
+    begin_registered(server, &client).await
+}
+pub async fn begin_registered(server: &Server, client: &Value) -> Pending {
     let client_id = client["client_id"].as_str().unwrap().to_owned();
     let res = server
         .get(&format!("/oauth/authorize?{}", auth_query(&client_id)))

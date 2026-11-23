@@ -1038,6 +1038,20 @@ async fn an_approved_connection_records_its_registered_name_with_its_credential(
     assert_eq!(register(&server, &longest).await["client_name"], longest);
     assert_eq!(stored_name(&admin, "reader-c").await, None);
 
+    // A successful connection without client_name keeps the presentation fallback
+    // out of the credential and its audit rows, including after durable restore.
+    let unnamed = server
+        .post("/oauth/register")
+        .json(&json!({"redirect_uris":[CALLBACK]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unnamed.status(), 201);
+    let unnamed: Value = unnamed.json().await.unwrap();
+    let pending = begin_registered(&server, &unnamed).await;
+    completion_callback(consent(&server, &pending, "allow", A).send().await.unwrap()).await;
+    assert_eq!(stored_name(&admin, "reader-a").await, None);
+
     // Two clients register the same name and stay two clients, two connections and two
     // credentials. A third client connecting through reader-b later changes no name.
     let (first_client, first) = connection(&server, B, "Synthetic twin client").await;
@@ -1140,6 +1154,9 @@ async fn an_approved_connection_records_its_registered_name_with_its_credential(
     let store =
         awr_team_pg::WorkstreamReadStore::from_config(common::with_db(&common::test_config(), &db));
     let server = start_with_directory(store, true, Some(directory.clone())).await;
+    let pending = begin_registered(&server, &unnamed).await;
+    completion_callback(consent(&server, &pending, "allow", A).send().await.unwrap()).await;
+    assert_eq!(stored_name(&admin, "reader-a").await, None);
     one_recorded_request(&server, first["access_token"].as_str().unwrap()).await;
     let rows = recorded_requests(&server, A).await;
     assert!(

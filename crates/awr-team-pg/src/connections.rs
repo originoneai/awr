@@ -292,7 +292,7 @@ mod tests {
     // Only surrounding whitespace is trimmed; a name that is blank afterwards is no name.
     #[test]
     fn surrounding_whitespace_is_trimmed_and_a_blank_name_is_no_name() {
-        every_character_is_kept("  Claude Code  ", "Claude Code");
+        every_character_is_kept("  Synthetic Client  ", "Synthetic Client");
         every_character_is_kept("\n\t Synth \u{3000}", "Synth");
         for blank in ["", "   ", "\t\n\u{0}", "\u{3000}\u{a0}"] {
             assert_eq!(client_display_name(blank), None, "{blank:?}");

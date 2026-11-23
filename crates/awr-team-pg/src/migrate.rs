@@ -267,7 +267,7 @@ const MIGRATIONS: &[(&str, i32)] = &[
     // Number 67 belongs to a parallel change that has not landed; the list is
     // ordered by version and `migrate` applies only versions above the current one.
     (
-        include_str!("../migrations/20261123000068_credential_client_name.sql"),
+        include_str!("../migrations/20261122000068_credential_client_name.sql"),
         68,
     ),
 ];

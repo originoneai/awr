@@ -66,7 +66,7 @@ async fn schema68_adds_only_a_nullable_client_name_and_keeps_old_credentials_nul
         .unwrap()
         .get(0);
 
-    let ddl = include_str!("../migrations/20261123000068_credential_client_name.sql");
+    let ddl = include_str!("../migrations/20261122000068_credential_client_name.sql");
     assert!(
         admin
             .batch_execute(&ddl.replace(
