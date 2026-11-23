@@ -406,4 +406,304 @@ describe('project-acceptance-model', () => {
     expect(result.coverage.hasUnknownFacts).toBe(false);
     expect(result.freshness?.authoritative.status).toBe('measured');
   });
+
+  it('keeps an approved outcome awaiting_integration until a current confirmed integration is recorded', () => {
+    const works = [
+      makeWork('T-APP-NO-INT', '支付重试逻辑', '陈宇'),
+      makeWork('T-APP-HIST-INT', '对账批处理', '陈宇'),
+    ];
+    const snapshotsByKey = new Map<string, WorkSnapshotData | undefined>([
+      ['T-APP-NO-INT', makeSnapshot('T-APP-NO-INT', {
+        observation: {
+          responsibility: { owner_name: '陈宇', independent_reviewer: { person_id: 'M-004', display_name: '许宁' } },
+          collaboration: {
+            delivery_required: true,
+            candidate: { current: true, digest: 'a'.repeat(64), selection_version: '2', required_checks: ['单元测试'] },
+            review: { id: 'round-app-no-int', state: 'approved', current_candidate: true },
+            integration: null,
+            verification: [{ check: '单元测试', outcome: 'passed' }],
+          },
+        },
+      })],
+      ['T-APP-HIST-INT', makeSnapshot('T-APP-HIST-INT', {
+        observation: {
+          responsibility: { owner_name: '陈宇', independent_reviewer: { person_id: 'M-004', display_name: '许宁' } },
+          collaboration: {
+            delivery_required: true,
+            candidate: { current: true, digest: 'b'.repeat(64), selection_version: '3', required_checks: ['单元测试'] },
+            review: { id: 'round-app-hist-int', state: 'approved', current_candidate: true },
+            integration: { id: 'integ-old', state: 'confirmed', current_binding: false },
+            verification: [{ check: '单元测试', outcome: 'passed' }],
+          },
+        },
+      })],
+    ]);
+
+    const result = deriveProjectAcceptance({
+      projectKey: 'P-001',
+      overview: makeOverview(works),
+      visibleWorks: works,
+      snapshotsByKey,
+      snapshotStatusByKey: new Map<string, SnapshotReadState>([
+        ['T-APP-NO-INT', 'ready'],
+        ['T-APP-HIST-INT', 'ready'],
+      ]),
+      reviewRoundsByKey: new Map(),
+      reviewRoundsStatusByKey: new Map(),
+      model: makeModel(),
+      nowUnixMs: NOW,
+    });
+
+    expect(result.rows).toHaveLength(2);
+    expect(result.rows[0].latestReview.state).toBe('approved');
+    expect(result.rows[0].integration).toBe('awaiting_integration');
+    expect(result.rows[1].latestReview.state).toBe('approved');
+    expect(result.rows[1].integration).toBe('awaiting_integration');
+  });
+
+  it('selects the highest round_index as latest when review.rounds does not match snapshot review id', () => {
+    const works = [
+      makeWork('T-MULTI-ASC', '退款流水校验', '陈宇'),
+      makeWork('T-MULTI-DESC', '通知重试队列', '陈宇'),
+    ];
+    const snapshotsByKey = new Map<string, WorkSnapshotData | undefined>([
+      ['T-MULTI-ASC', makeSnapshot('T-MULTI-ASC', {
+        observation: {
+          responsibility: { owner_name: '陈宇', independent_reviewer: { person_id: 'M-004', display_name: '许宁' } },
+          collaboration: {
+            delivery_required: true,
+            candidate: { current: true, digest: 'c'.repeat(64), selection_version: '2', required_checks: ['单元测试'] },
+            review: { id: 'round-unlisted-current', state: 'approved', current_candidate: true },
+            integration: null,
+            verification: [{ check: '单元测试', outcome: 'passed' }],
+          },
+        },
+      })],
+      ['T-MULTI-DESC', makeSnapshot('T-MULTI-DESC', {
+        observation: {
+          responsibility: { owner_name: '陈宇', independent_reviewer: { person_id: 'M-004', display_name: '许宁' } },
+          collaboration: {
+            delivery_required: true,
+            candidate: { current: true, digest: 'd'.repeat(64), selection_version: '2', required_checks: ['单元测试'] },
+            review: null,
+            integration: null,
+            verification: [{ check: '单元测试', outcome: 'passed' }],
+          },
+        },
+      })],
+    ]);
+    const round1: ReviewRoundsData['items'][number] = {
+      round_id: 'round-1',
+      round_index: 1,
+      round_position: 1,
+      readable: true,
+      state: 'rejected',
+      contract_matches_current: false,
+      reviewer_role: 'independent_reviewer',
+      reviewer_actor_id: 'M-004-agent',
+      reviewer_person_id: 'M-004',
+      decided_at_unix_ms: NOW - 3 * DAY,
+      reason_first_line: '第一轮边界测试缺失',
+    };
+    const round2: ReviewRoundsData['items'][number] = {
+      round_id: 'round-2',
+      round_index: 2,
+      round_position: 2,
+      readable: true,
+      state: 'approved',
+      contract_matches_current: true,
+      reviewer_role: 'independent_reviewer',
+      reviewer_actor_id: 'M-004-agent',
+      reviewer_person_id: 'M-004',
+      decided_at_unix_ms: NOW - DAY,
+      reason_first_line: '第二轮补齐测试后通过',
+    };
+    const reviewRoundsByKey = new Map<string, ReviewRoundsData | undefined>([
+      ['T-MULTI-ASC', { work_id: 'T-MULTI-ASC', total: 2, next_cursor: null, as_of: { at_unix_ms: NOW }, items: [round1, round2] }],
+      ['T-MULTI-DESC', { work_id: 'T-MULTI-DESC', total: 2, next_cursor: null, as_of: { at_unix_ms: NOW }, items: [round2, round1] }],
+    ]);
+
+    const result = deriveProjectAcceptance({
+      projectKey: 'P-001',
+      overview: makeOverview(works),
+      visibleWorks: works,
+      snapshotsByKey,
+      snapshotStatusByKey: new Map<string, SnapshotReadState>([
+        ['T-MULTI-ASC', 'ready'],
+        ['T-MULTI-DESC', 'ready'],
+      ]),
+      reviewRoundsByKey,
+      reviewRoundsStatusByKey: new Map<string, RoundsReadState>([
+        ['T-MULTI-ASC', 'ready'],
+        ['T-MULTI-DESC', 'ready'],
+      ]),
+      model: makeModel(),
+      nowUnixMs: NOW,
+    });
+
+    const [ascRow, descRow] = result.rows;
+    expect(ascRow.latestReview.roundIndex).toBe(2);
+    expect(ascRow.latestReview.reasonFirstLine).toBe('第二轮补齐测试后通过');
+    expect(ascRow.latestReview.state).toBe('approved');
+
+    expect(descRow.latestReview.roundIndex).toBe(2);
+    expect(descRow.latestReview.reasonFirstLine).toBe('第二轮补齐测试后通过');
+    expect(descRow.latestReview.state).toBe('approved');
+    expect(descRow.integration).toBe('awaiting_integration');
+  });
+
+  it('treats an invalidated review as not_integrated rather than awaiting_review', () => {
+    const works = [makeWork('T-INV', '导出限流策略', '陈宇')];
+    const snapshotsByKey = new Map<string, WorkSnapshotData | undefined>([
+      ['T-INV', makeSnapshot('T-INV', {
+        observation: {
+          responsibility: { owner_name: '陈宇', independent_reviewer: { person_id: 'M-004', display_name: '许宁' } },
+          collaboration: {
+            delivery_required: true,
+            candidate: { current: true, digest: 'e'.repeat(64), selection_version: '2', required_checks: ['单元测试'] },
+            review: { id: 'round-inv', state: 'invalidated', current_candidate: true },
+            integration: null,
+            verification: [{ check: '单元测试', outcome: 'passed' }],
+          },
+        },
+      })],
+    ]);
+    const reviewRoundsByKey = new Map<string, ReviewRoundsData | undefined>([
+      ['T-INV', {
+        work_id: 'T-INV',
+        total: 1,
+        next_cursor: null,
+        as_of: { at_unix_ms: NOW },
+        items: [{
+          round_id: 'round-inv',
+          round_index: 2,
+          round_position: 2,
+          readable: true,
+          state: 'invalidated',
+          contract_matches_current: false,
+          reviewer_role: 'independent_reviewer',
+          reviewer_actor_id: 'M-004-agent',
+          reviewer_person_id: 'M-004',
+          decided_at_unix_ms: NOW - DAY,
+          reason_first_line: '新提交覆盖了本轮候选',
+        }],
+      }],
+    ]);
+
+    const result = deriveProjectAcceptance({
+      projectKey: 'P-001',
+      overview: makeOverview(works),
+      visibleWorks: works,
+      snapshotsByKey,
+      snapshotStatusByKey: new Map<string, SnapshotReadState>([['T-INV', 'ready']]),
+      reviewRoundsByKey,
+      reviewRoundsStatusByKey: new Map<string, RoundsReadState>([['T-INV', 'ready']]),
+      model: makeModel(),
+      nowUnixMs: NOW,
+    });
+
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].latestReview.state).toBe('invalidated');
+    expect(result.rows[0].integration).toBe('not_integrated');
+    expect(result.rows[0].highlighted).toBe(false);
+    expect(result.counts.total.count).toBe(1);
+    expect(result.counts.approved.count).toBe(0);
+    expect(result.counts.open.count).toBe(0);
+    expect(result.counts.rejected.count).toBe(0);
+  });
+
+  it('omits waitDays and review metadata when an open review round is restricted to the viewer', () => {
+    const works = [
+      makeWork('T-RES-OPEN', '权限审计接口', '陈宇'),
+      makeWork('T-FORB-OPEN', '密钥轮换脚本', '陈宇'),
+    ];
+    const snapshotsByKey = new Map<string, WorkSnapshotData | undefined>([
+      ['T-RES-OPEN', makeSnapshot('T-RES-OPEN', {
+        observation: {
+          responsibility: { owner_name: '陈宇', independent_reviewer: { person_id: 'M-004', display_name: '许宁' } },
+          collaboration: {
+            delivery_required: true,
+            candidate: { current: true, digest: 'f'.repeat(64), selection_version: '1', required_checks: ['单元测试'] },
+            review: { id: 'round-res-open', state: 'open', current_candidate: true },
+            integration: null,
+            verification: [{ check: '单元测试', outcome: 'passed' }],
+          },
+        },
+      })],
+      ['T-FORB-OPEN', makeSnapshot('T-FORB-OPEN', {
+        observation: {
+          responsibility: { owner_name: '陈宇', independent_reviewer: { person_id: 'M-004', display_name: '许宁' } },
+          collaboration: {
+            delivery_required: true,
+            candidate: { current: true, digest: '0'.repeat(64), selection_version: '1', required_checks: ['单元测试'] },
+            review: { id: 'round-forb-open', state: 'open', current_candidate: true },
+            integration: null,
+            verification: [{ check: '单元测试', outcome: 'passed' }],
+          },
+        },
+      })],
+    ]);
+    const reviewRoundsByKey = new Map<string, ReviewRoundsData | undefined>([
+      ['T-RES-OPEN', {
+        work_id: 'T-RES-OPEN',
+        total: 1,
+        next_cursor: null,
+        as_of: { at_unix_ms: NOW },
+        items: [{
+          round_id: 'round-res-open',
+          round_index: 1,
+          round_position: 1,
+          readable: false,
+          state: null,
+          contract_matches_current: null,
+          reviewer_role: null,
+          reviewer_actor_id: null,
+          reviewer_person_id: null,
+          decided_at_unix_ms: null,
+          reason_first_line: null,
+        }],
+      }],
+    ]);
+    const baseModel = makeModel();
+    const model: ProjectListModel = {
+      ...baseModel,
+      input: {
+        ...baseModel.input,
+        reviewRounds: {
+          coverage: 'complete',
+          items: [
+            { id: 'round-res-open', taskId: 'T-RES-OPEN', roundIndex: 1, state: 'open', current: true, independent: true, reviewerPersonId: 'M-004', openedAtUnixMs: NOW - 3 * DAY },
+            { id: 'round-forb-open', taskId: 'T-FORB-OPEN', roundIndex: 1, state: 'open', current: true, independent: true, reviewerPersonId: 'M-004', openedAtUnixMs: NOW - 4 * DAY },
+          ],
+        },
+      },
+    };
+
+    const result = deriveProjectAcceptance({
+      projectKey: 'P-001',
+      overview: makeOverview(works),
+      visibleWorks: works,
+      snapshotsByKey,
+      snapshotStatusByKey: new Map<string, SnapshotReadState>([
+        ['T-RES-OPEN', 'ready'],
+        ['T-FORB-OPEN', 'ready'],
+      ]),
+      reviewRoundsByKey,
+      reviewRoundsStatusByKey: new Map<string, RoundsReadState>([
+        ['T-RES-OPEN', 'ready'],
+        ['T-FORB-OPEN', 'forbidden'],
+      ]),
+      model,
+      nowUnixMs: NOW,
+    });
+
+    for (const row of result.rows) {
+      expect(row.latestReview.state).toBe('open');
+      expect(row.latestReview.restricted).toBe(true);
+      expect(row.latestReview.waitDays).toBeNull();
+      expect(row.latestReview.reviewerName).toBeNull();
+      expect(row.latestReview.reviewerRole).toBeNull();
+      expect(row.latestReview.reasonFirstLine).toBeNull();
+    }
+  });
 });

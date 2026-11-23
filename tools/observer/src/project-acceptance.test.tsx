@@ -1221,4 +1221,170 @@ describe('project acceptance prototype parity and states (AWR-PPO-044)', () => {
     expect(document.body.textContent).not.toMatch(/\bundefined\b|\bnull\b|\bNaN\b/);
     dataView.unmount();
   });
+
+  it('renders approved-without-integration, multi-round latest selection, invalidated review, and restricted open round accurately', async () => {
+    const now = 1795089600000;
+    const day = 86_400_000;
+    const works = [
+      { key: 'T-APP-WAIT', title: '支付重试逻辑', status: 'claimed', owner_person: '陈宇', agent: null, next_step: null, detail_loaded: false, workstream_id: 'WS1', contract_hash: CONTRACT },
+      { key: 'T-MULTI', title: '退款流水校验', status: 'claimed', owner_person: '陈宇', agent: null, next_step: null, detail_loaded: false, workstream_id: 'WS1', contract_hash: 'multi-contract' },
+      { key: 'T-INV', title: '导出限流策略', status: 'claimed', owner_person: '林悦', agent: null, next_step: null, detail_loaded: false, workstream_id: 'WS1', contract_hash: 'inv-contract' },
+      { key: 'T-RES-OPEN', title: '权限审计接口', status: 'claimed', owner_person: '林悦', agent: null, next_step: null, detail_loaded: false, workstream_id: 'WS1', contract_hash: 'res-contract' },
+    ];
+    const snapshots: Record<string, unknown> = {
+      'T-APP-WAIT': {
+        work_id: 'T-APP-WAIT',
+        contract_hash: CONTRACT,
+        observation: {
+          responsibility: { owner_name: '陈宇', independent_reviewer: { person_id: 'M-004', display_name: '许宁' } },
+          collaboration: {
+            delivery_required: true,
+            candidate: { current: true, selection_version: '2', required_checks: ['单元测试'] },
+            review: { id: 'r-app-wait', state: 'approved', current_candidate: true },
+            integration: null,
+            verification: [{ check: '单元测试', outcome: 'passed' }],
+          },
+          runtime: { state: 'claimed', selected_completion_id: null },
+        },
+      },
+      'T-MULTI': {
+        work_id: 'T-MULTI',
+        contract_hash: 'multi-contract',
+        observation: {
+          responsibility: { owner_name: '陈宇', independent_reviewer: { person_id: 'M-004', display_name: '许宁' } },
+          collaboration: {
+            delivery_required: true,
+            candidate: { current: true, selection_version: '2', required_checks: ['单元测试'] },
+            review: { id: 'r-multi-unlisted', state: 'approved', current_candidate: true },
+            integration: null,
+            verification: [{ check: '单元测试', outcome: 'passed' }],
+          },
+          runtime: { state: 'claimed', selected_completion_id: null },
+        },
+      },
+      'T-INV': {
+        work_id: 'T-INV',
+        contract_hash: 'inv-contract',
+        observation: {
+          responsibility: { owner_name: '林悦', independent_reviewer: { person_id: 'M-004', display_name: '许宁' } },
+          collaboration: {
+            delivery_required: true,
+            candidate: { current: true, selection_version: '2', required_checks: ['单元测试'] },
+            review: { id: 'r-inv', state: 'invalidated', current_candidate: true },
+            integration: null,
+            verification: [{ check: '单元测试', outcome: 'passed' }],
+          },
+          runtime: { state: 'claimed', selected_completion_id: null },
+        },
+      },
+      'T-RES-OPEN': {
+        work_id: 'T-RES-OPEN',
+        contract_hash: 'res-contract',
+        observation: {
+          responsibility: { owner_name: '林悦', independent_reviewer: { person_id: 'M-004', display_name: '许宁' } },
+          collaboration: {
+            delivery_required: true,
+            candidate: { current: true, selection_version: '1', required_checks: ['单元测试'] },
+            review: { id: 'r-res-open', state: 'open', current_candidate: true },
+            integration: null,
+            verification: [{ check: '单元测试', outcome: 'passed' }],
+          },
+          runtime: { state: 'claimed', selected_completion_id: null },
+        },
+      },
+    };
+    const rounds: Record<string, unknown[]> = {
+      'T-APP-WAIT': [
+        { round_id: 'r-app-wait', round_index: 1, round_position: 1, readable: true, state: 'approved', contract_matches_current: true, reviewer_role: 'independent_reviewer', reviewer_actor_id: 'M-004-agent', reviewer_person_id: 'M-004', decided_at_unix_ms: now - day, reason_first_line: '重试边界已验证' },
+      ],
+      'T-MULTI': [
+        { round_id: 'r-multi-1', round_index: 1, round_position: 1, readable: true, state: 'rejected', contract_matches_current: false, reviewer_role: 'independent_reviewer', reviewer_actor_id: 'M-004-agent', reviewer_person_id: 'M-004', decided_at_unix_ms: now - 3 * day, reason_first_line: '第一轮边界测试缺失' },
+        { round_id: 'r-multi-2', round_index: 2, round_position: 2, readable: true, state: 'approved', contract_matches_current: true, reviewer_role: 'independent_reviewer', reviewer_actor_id: 'M-004-agent', reviewer_person_id: 'M-004', decided_at_unix_ms: now - day, reason_first_line: '第二轮补齐测试后通过' },
+      ],
+      'T-INV': [
+        { round_id: 'r-inv', round_index: 2, round_position: 2, readable: true, state: 'invalidated', contract_matches_current: false, reviewer_role: 'independent_reviewer', reviewer_actor_id: 'M-004-agent', reviewer_person_id: 'M-004', decided_at_unix_ms: now - day, reason_first_line: '新提交覆盖了本轮候选' },
+      ],
+      'T-RES-OPEN': [
+        { round_id: 'r-res-open', round_index: 1, round_position: 1, readable: false, state: null, contract_matches_current: null, reviewer_role: null, reviewer_actor_id: null, reviewer_person_id: null, decided_at_unix_ms: null, reason_first_line: null },
+      ],
+    };
+    const complete = <T,>(items: T[]) => ({ coverage: 'complete', items });
+    const part = { status: 'complete', missing: [] };
+    const model = {
+      ok: true,
+      project: 'demo',
+      read_at_unix_ms: Date.now(),
+      input: {
+        tasks: complete([]),
+        dependencies: complete([]),
+        decisions: complete([]),
+        reviewRounds: complete([
+          { id: 'r-res-open', taskId: 'T-RES-OPEN', roundIndex: 1, state: 'open', current: true, independent: true, reviewerPersonId: 'M-004', openedAtUnixMs: now - 3 * day },
+        ]),
+        handoffs: complete([]),
+        approvals: complete([]),
+        members: complete([
+          { personId: 'M-003', displayName: '陈宇', groupId: 'G-1' },
+          { personId: 'M-002', displayName: '林悦', groupId: 'G-1' },
+          { personId: 'M-004', displayName: '许宁', groupId: 'G-2' },
+        ]),
+        activity: complete([]),
+        options: { nowUnixMs: now, stalledAfterDays: 1 },
+      },
+      coverage: {
+        tasks: part, dependencies: part, decisions: part, reviewRounds: part,
+        handoffs: part, approvals: part, members: part, activity: part,
+      },
+      freshness: {
+        report_received: { status: 'measured', at_unix_ms: now },
+        authoritative: { status: 'measured', at_unix_ms: now },
+        page_read: { status: 'measured', at_unix_ms: now },
+      },
+    };
+
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/team/projects')) return json(DEMO_PROJECTS);
+      if (url.includes('/api/team/overview-model')) return json(model);
+      if (url.includes('/api/team/overview')) {
+        return json({ ...DEMO_OVERVIEW, works, freshness: model.freshness, workstreams: [{ id: 'WS1', title: '后端' }] });
+      }
+      if (url.includes('/api/team/read')) {
+        const query = JSON.parse(String(init?.body)).query;
+        if (query.op === 'work.snapshot') return json({ ok: true, result: envelope(snapshots[query.work_id], query.work_id), freshness: model.freshness });
+        if (query.op === 'review.rounds') {
+          const items = rounds[query.work_id] ?? [];
+          return json({ ok: true, result: envelope({ work_id: query.work_id, items, total: items.length, next_cursor: null, as_of: { at_unix_ms: now } }, query.work_id), freshness: model.freshness });
+        }
+      }
+      return json({ ok: false, error: { code: 'NoRoute', message: url } });
+    }));
+
+    await renderAcceptance('/projects/demo?tab=acceptance');
+
+    // Wait for data from review.rounds and overview-model to be rendered before asserting absences.
+    const appWaitRow = await screen.findByTestId('acceptance-work-T-APP-WAIT');
+    await waitFor(() => expect(appWaitRow.textContent).toContain('重试边界已验证'));
+    expect(appWaitRow.textContent).toContain('通过');
+    expect(appWaitRow.textContent).toContain('待合入');
+    expect(appWaitRow.textContent).not.toContain('已合入');
+
+    const multiRow = screen.getByTestId('acceptance-work-T-MULTI');
+    await waitFor(() => expect(multiRow.textContent).toContain('第二轮补齐测试后通过'));
+    expect(multiRow.textContent).toContain('第 2 轮');
+    expect(multiRow.textContent).not.toContain('第 1 轮');
+    expect(multiRow.textContent).not.toContain('第一轮边界测试缺失');
+
+    const invRow = screen.getByTestId('acceptance-work-T-INV');
+    await waitFor(() => expect(invRow.textContent).toContain('新提交覆盖了本轮候选'));
+    expect(invRow.textContent).toContain('已失效');
+    expect(invRow.textContent).toContain('没有合入');
+    expect(invRow.textContent).not.toContain('复核通过后才能合入');
+
+    const resRow = screen.getByTestId('acceptance-work-T-RES-OPEN');
+    await waitFor(() => expect(resRow.textContent).toContain('这次复核的详情不可查看'));
+    expect(resRow.textContent).toContain('等结论');
+    expect(resRow.textContent).not.toContain('等了 3 天');
+    expect(resRow.textContent).not.toContain('许宁');
+  });
 });
