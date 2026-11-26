@@ -76,6 +76,8 @@ pub fn recorded_snapshot(root: &Path) -> Result<QuerySnapshot> {
         unchanged: sources.len(),
         retired: 0,
         pending,
+        issues: vec![],
+        advisories: vec![],
         sensitive_warnings: vec![],
         sources: sources
             .into_iter()
@@ -90,7 +92,6 @@ pub fn recorded_snapshot(root: &Path) -> Result<QuerySnapshot> {
                 })
             })
             .collect::<Result<_>>()?,
-        issues: vec![],
     };
     let source_state_fingerprint = source_state_fingerprint(&store, project.id)?;
     Ok(QuerySnapshot {

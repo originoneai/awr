@@ -468,6 +468,43 @@ fn unresolved_business_references_are_visible_but_do_not_prevent_intake() {
 }
 
 #[test]
+fn lint_advisories_stay_visible_without_blocking_init() {
+    // Review requirement: an advisory in `source_issues` used to flip
+    // `can_apply` to false and stop `init --accept`, `source configure` and
+    // `awr takeover`. Advisories now travel in `source_advisories`; the
+    // preview stays applicable and the advisory is still visible.
+    let p = Project::new();
+    p.write(
+        "work-ledger.yaml",
+        "goals:\n- id: G\n  title: Publish a guide\n  status: active\nwork_items:\n- id: W\n  title: Draft a guide\n  goal: G\n  status: ready\n  acceptance: [Results TBD]\n  next_action: Write the first draft\n",
+    );
+    let plan = p.ok(&["init", "--manifest", "mapping.toml"]);
+    let preview = &plan["preview"];
+    assert_eq!(preview["can_apply"], true, "advisories must not block init");
+    assert!(
+        preview["source_issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| i["error"]["code"] != "acceptance_lint.placeholder"),
+        "source_issues stays free of lint advisories: {:?}",
+        preview["source_issues"]
+    );
+    let advisories = preview["source_advisories"].as_array().unwrap();
+    assert!(
+        advisories
+            .iter()
+            .any(|i| i["error"]["code"] == "acceptance_lint.placeholder"
+                && i["locator"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("/acceptance/")),
+        "the advisory is still visible with its locator: {advisories:?}"
+    );
+    p.init();
+}
+
+#[test]
 fn replacement_identity_conflicts_are_preflighted_against_a_readonly_history_snapshot() {
     let p = Project::new();
     p.init();

@@ -68,12 +68,34 @@ fn manifest() -> Manifest {
     .unwrap()
 }
 fn lint_issues(report: &awr_source::IndexReport) -> Vec<Value> {
+    // Advisories live in their own array and must never appear in `issues`:
+    // every reader of `issues` treats non-empty as a blocking failure.
     report
-        .issues
+        .advisories
         .iter()
         .filter(|issue| issue.code.starts_with("acceptance_lint."))
         .map(|issue| serde_json::to_value(issue).unwrap())
         .collect()
+}
+
+#[test]
+fn advisories_never_enter_the_blocking_issues_array() {
+    let fixture = Fixture::new();
+    let mut store = fixture.store();
+    let report = index_project(&mut store, &fixture.0, &manifest(), false).unwrap();
+    assert!(report.ok);
+    assert!(
+        report
+            .issues
+            .iter()
+            .all(|issue| !issue.code.starts_with("acceptance_lint.")),
+        "lint advisories must stay out of report.issues: {:?}",
+        report.issues
+    );
+    assert!(
+        !report.advisories.is_empty(),
+        "the fixture carries lint findings"
+    );
 }
 
 #[test]

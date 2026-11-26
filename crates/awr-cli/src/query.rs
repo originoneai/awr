@@ -170,6 +170,7 @@ impl QueryProject {
     pub(crate) fn metadata(&self) -> Value {
         let mut value = json!({"ok":self.refresh.ok,"project_revision":self.project.project_revision,
             "freshness_basis":if self.cached {"last_recorded_source_state"} else {"source_refresh"},"source_refresh_performed":!self.cached,"read_only":self.cached,"source_issues":self.refresh.issues,
+            "source_advisories":self.refresh.advisories,
             "source_warnings":self.refresh.sources.iter().map(|s|s.warnings.len()).sum::<usize>()});
         if let Some(snapshot) = &self.snapshot {
             value["snapshot"] = snapshot.clone();
@@ -468,9 +469,10 @@ pub fn status_with_scope(
             );
         }
         println!(
-            "Next: {next}\nSource warnings: {}; issues: {}",
+            "Next: {next}\nSource warnings: {}; issues: {}; advisories: {}",
             value["source_warnings"],
-            query.refresh.issues.len()
+            query.refresh.issues.len(),
+            query.refresh.advisories.len()
         );
         println!("{}", organization.rendered());
     }

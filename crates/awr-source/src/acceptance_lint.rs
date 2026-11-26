@@ -52,8 +52,6 @@ const ASCII_PLACEHOLDERS: &[&str] = &[
     "adequately",
     "timely",
     "seamlessly",
-    "various",
-    "several",
     "etc",
 ];
 
@@ -237,6 +235,20 @@ mod tests {
                 "接口 P95 延迟从 400ms 优化到 200ms 以内，压测脚本随 PR 附带",
                 "全部单测通过，运行良好即可发布",
                 "Optimize the query plan; good coverage is better than none",
+            ]))
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn quantity_words_stay_silent() {
+        // Review requirement: quantity words are ordinary verifiable wording;
+        // "The export handles several concurrent clients" was flagged by the
+        // first list and that hit was a false positive.
+        assert!(
+            lint_work_item(&work(&[
+                "The export handles several concurrent clients",
+                "汇总报表覆盖 various 报表模板的导出",
             ]))
             .is_empty()
         );

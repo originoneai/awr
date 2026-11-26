@@ -43,6 +43,12 @@ pub struct IndexReport {
     pub pending: usize,
     pub sources: Vec<IndexedSource>,
     pub issues: Vec<IndexIssue>,
+    /// Mechanical lint advisories (`acceptance_lint.*`). Kept out of `issues`
+    /// because every reader of that array treats non-empty as a blocking
+    /// failure: advisories must never stop `init`, `source configure`,
+    /// `takeover` or the refresh summary.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub advisories: Vec<IndexIssue>,
     /// Sensitive findings admitted under a project's warn-mode policy; each
     /// carries locator, line/column and category — never content. Empty in the
     /// default strict mode, which rejects the source instead.
@@ -65,9 +71,9 @@ impl IndexReport {
             details: error.report().details,
         });
     }
-    /// Records a non-blocking advisory. Unlike `issue`, advisories never flip
-    /// the report to failed: they make mechanical defects explicit without
-    /// rejecting the write or blocking the flow.
+    /// Records a non-blocking advisory. Advisories never enter `issues` and
+    /// never flip the report to failed: they make mechanical defects explicit
+    /// without rejecting the write or blocking the flow.
     fn advisory(
         &mut self,
         mapping: &str,
@@ -76,7 +82,7 @@ impl IndexReport {
         message: String,
         details: Option<serde_json::Value>,
     ) {
-        self.issues.push(IndexIssue {
+        self.advisories.push(IndexIssue {
             mapping: awr_core::safe_diagnostic(mapping),
             locator: locator.map(awr_core::safe_diagnostic),
             code: awr_core::safe_diagnostic(code),
@@ -239,6 +245,7 @@ fn process_project(
         pending: 0,
         sources: vec![],
         issues: vec![],
+        advisories: vec![],
         sensitive_warnings: vec![],
     };
     let mut desired = BTreeSet::new();

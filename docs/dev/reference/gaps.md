@@ -69,13 +69,16 @@ listed.
 
 At source indexing time every acceptance entry passes a purely mechanical lint
 (`acceptance_lint.empty`, `acceptance_lint.placeholder`). A hit is reported as an advisory in
-`source_issues` of the index report and `awr intake inspect`, with a field-level locator such as
+`source_advisories` of the index report and `awr intake inspect`, with a field-level locator such as
 `ledger.yaml#/work_items/0/acceptance/2` and the matched words in `details`.
 
 An advisory lives entirely outside the gap system:
 
 - it records no event, opens no `work.gap` record and suspends no admission, claim or readiness;
 - the write proceeds unchanged and the index report's `ok` flag stays up;
+- it is reported in `source_advisories`, kept out of `source_issues` (every reader of that array
+  treats non-empty as a blocking failure), and `awr init`, `source configure` and `awr takeover`
+  proceed with the advisory visible;
 - a normal entry produces no output at all.
 
 The lint only makes obvious textual defects explicit (blank entries, explicit placeholders). Its
