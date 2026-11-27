@@ -20,6 +20,11 @@ Authorization locks remain held through the local connection-store operation.
 Connection references are non-secret selectors. They never authenticate a
 request, reveal a cookie or expose a token family key.
 
+An Agent connection's `client_name` is the name its client registered for itself.
+Approval stores that name with the member's credential for the activity ledger
+(schema 68); the list keeps reading each connection's own name, so two
+connections through one credential keep their own.
+
 ## Supported revocation units
 
 | Kind | Effect |
