@@ -5,7 +5,7 @@ const completeOrganization = require('../fixtures/demo-organization.json');
 
 const DEMO_VARIANTS = new Set(['full', 'empty', 'single', 'restricted', 'partial', 'canonical']);
 const DEMO_FUTURE_READ_OPS = new Set([
-  'updates.list', 'update.inspect', 'goals.list', 'goal.inspect', 'lessons.list', 'lesson.inspect',
+  'goals.list', 'goal.inspect', 'lessons.list', 'lesson.inspect',
 ]);
 const DAY = 86_400_000;
 const WEEK = 7 * DAY;
@@ -119,7 +119,7 @@ function canonicalOverviewInput(data) {
       commitments: [
         { id: `project-${task.project_id}`, title: task.project_id, kind: 'project' },
         ...task.goal_ids.map((goalId) => ({ id: goalId, title: goalId, kind: 'goal' })),
-        ...(task.week_committed ? [{ id: `${task.project_id}-week-47`, title: 'Week 47 commitment', kind: 'project' }] : []),
+        ...(task.week_committed ? [{ id: `${task.project_id}-week-47`, title: '订单查询与提交闭环', kind: 'project' }] : []),
       ],
       verifiedAtUnixMs: task.verified_at_unix_ms,
       acceptance: task.acceptance_final ? task.acceptance.map((criterion) => ({
@@ -1062,12 +1062,14 @@ function createDemoOrganization({ variant = 'full',
     };
     const docs = documentsForTask(work);
     const report = progress(work);
+    const versionMatch = /^第\s*(\d+)\s*版$/.exec(work.delivery?.version_label ?? '');
+    const selectionVersion = versionMatch ? versionMatch[1] : '1';
     const collaboration = {
       acceptance_inferred: false,
       delivery_required: Boolean(work.delivery),
       candidate: work.delivery && round ? {
         current: true, digest: sha256(`candidate:${round.round_id}`),
-        required_checks: work.delivery.checks.map((check) => check.check), selection_version: '1',
+        required_checks: work.delivery.checks.map((check) => check.check), selection_version: selectionVersion,
       } : null,
       claim_present: Boolean(work.agent_active),
       facts_truncated: false,
@@ -1902,21 +1904,67 @@ function createDemoOrganization({ variant = 'full',
     });
   }
 
+  function compareCodePoints(left, right) {
+    return left < right ? -1 : left > right ? 1 : 0;
+  }
+
   function updatesList(projectId, query) {
     const updates = data.updates.filter((update) => update.project_id === projectId)
-      .sort((left, right) => right.starts_on.localeCompare(left.starts_on)
-        || right.ends_on.localeCompare(left.ends_on) || right.period_key.localeCompare(left.period_key)
-        || right.update_id.localeCompare(left.update_id));
+      .sort((left, right) => compareCodePoints(right.starts_on, left.starts_on)
+        || compareCodePoints(right.ends_on, left.ends_on)
+        || compareCodePoints(right.period_key, left.period_key)
+        || compareCodePoints(right.update_id, left.update_id));
     const result = page(updates, query);
     return reply(projectId, query, {
       project_id: projectId,
       items: result.items.map((update) => updateRecord(update)),
-      total: result.total,
       next_cursor: result.next_cursor,
       truncated: result.truncated,
       execution_authorized: false,
       as_of: asOf(projectId),
     });
+  }
+
+  function updateFactSnapshot(update) {
+    const facts = update.fact_snapshot?.facts || [];
+    const idsFor = (label) => facts.find((fact) => fact.label === label)?.item_ids || [];
+    const sortedUnique = (ids) => [...new Set(ids)].sort(compareCodePoints);
+    const countedSet = (ids) => {
+      const work_ids = sortedUnique(ids);
+      return { count: work_ids.length, work_ids };
+    };
+    const countedList = (ids) => {
+      const work_ids = [...ids].sort(compareCodePoints);
+      return { count: work_ids.length, work_ids };
+    };
+    const decisionById = new Map(data.decisions.map((item) => [item.decision_id, item]));
+    const waitMetric = (ids) => {
+      const byKind = new Map();
+      for (const workId of ids) {
+        const rawKind = taskById.get(workId)?.wait?.kind;
+        const kind = rawKind === 'ext' ? 'external'
+          : ['decision', 'dependency', 'review', 'external'].includes(rawKind) ? rawKind : 'unknown';
+        const list = byKind.get(kind) || [];
+        list.push(workId);
+        byKind.set(kind, list);
+      }
+      const order = ['decision', 'dependency', 'review', 'external', 'unknown'];
+      const kinds = order.filter((kind) => byKind.has(kind)).map((kind) => {
+        const work_ids = byKind.get(kind).sort(compareCodePoints);
+        return { kind, count: work_ids.length, work_ids };
+      });
+      return { count: kinds.reduce((sum, entry) => sum + entry.count, 0), kinds };
+    };
+    const decisionWorkIds = idsFor('做出的决定').map((id) => decisionById.get(id)?.work_id ?? id);
+    return {
+      verified: countedSet(idsFor('通过核验')),
+      completed_without_independent_review: { count: 0, work_ids: [] },
+      waits_opened: waitMetric(idsFor('新出现的等待')),
+      waits_cleared: waitMetric(idsFor('解除的等待')),
+      review_returned: countedSet(idsFor('复核退回')),
+      delivered_unverified: countedSet(idsFor('标了完成但没核验')),
+      decisions_made: countedList(decisionWorkIds),
+    };
   }
 
   function updateRecord(update) {
@@ -2000,6 +2048,7 @@ function createDemoOrganization({ variant = 'full',
           'delivery.neutral.inspect', 'delivery.submission.describe', 'delivery.integration.inspect',
           'delivery.source.status', 'delivery.exports', 'artifact.content', 'artifact.segment',
           'audit.development', 'audit.requests', 'task.assignees', 'session.inspect', 'command.inspect',
+          'updates.list', 'update.inspect',
           ...DEMO_FUTURE_READ_OPS],
         controlled_content_reads: true,
         artifact_content: true,
@@ -2133,8 +2182,15 @@ function createDemoOrganization({ variant = 'full',
       case 'update.inspect': {
         const update = updateById.get(query.update_id);
         if (!update || update.project_id !== projectId) throw new DemoReadError('Forbidden', 'access denied', 403);
-        return reply(projectId, query, { project_id: projectId, update: updateRecord(update),
-          execution_authorized: false, as_of: asOf(projectId) });
+        const hasSnapshot = update.fact_snapshot?.fact_snapshot_ref != null;
+        return reply(projectId, query, {
+          project_id: projectId,
+          update: updateRecord(update),
+          fact_snapshot: hasSnapshot ? updateFactSnapshot(update) : null,
+          fact_snapshot_coverage: hasSnapshot ? { complete: true, hidden_work_count: 0 } : null,
+          execution_authorized: false,
+          as_of: asOf(projectId),
+        });
       }
       case 'goals.list': {
         const goals = data.goals.filter((goal) => goal.project_id === projectId);

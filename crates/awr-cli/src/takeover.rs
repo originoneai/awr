@@ -24,14 +24,19 @@ use clap::{Args, Subcommand};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeSet,
     fs,
-    io::{Read, Write},
+    io::{BufRead, BufReader, Read, Write},
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 const RECORD_VERSION: u64 = 1;
+const MAX_FACT_COMMITS: u64 = 100_000;
+const FACT_PATH_SAMPLE: usize = 20;
+const MAX_RULE_FILES: usize = 256;
+const RULE_FILE_READ_CAP: u64 = 256 * 1024;
 const STEPS: [&str; 6] = [
     "preflight",
     "preview",
@@ -81,6 +86,13 @@ pub struct TakeoverArgs {
     /// Source list the owner chose (a manifest); the takeover maps and reads exactly these sources.
     #[arg(long)]
     pub manifest: Option<PathBuf>,
+    /// Maximum commits recorded by the fact baseline; values above 100,000 are refused.
+    #[arg(
+        long,
+        default_value_t = MAX_FACT_COMMITS,
+        value_parser = clap::value_parser!(u64).range(1..=MAX_FACT_COMMITS)
+    )]
+    pub fact_commit_limit: u64,
     /// Continue organizing an already initialized project that has no active session.
     #[arg(long)]
     pub adopt: bool,
@@ -658,6 +670,17 @@ fn write_json(path: &Path, value: &Value) -> std::io::Result<()> {
     fs::rename(temporary, path)
 }
 
+fn write_fact_json(path: &Path, value: &Value) -> std::io::Result<()> {
+    let temporary = path.with_extension(format!("tmp{}", std::process::id()));
+    {
+        let mut file = fs::File::create(&temporary)?;
+        file.write_all(&serde_json::to_vec(value)?)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+    }
+    fs::rename(temporary, path)
+}
+
 fn read_json(path: &Path) -> Option<Value> {
     serde_json::from_slice(&fs::read(path).ok()?).ok()
 }
@@ -728,6 +751,895 @@ fn git_head(root: &Path) -> Option<String> {
         .success()
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
         .filter(|head| !head.is_empty())
+}
+
+// --- deterministic fact baseline -----------------------------------------------------------------------------
+
+const FACT_HIDDEN_ROOTS: &[&str] = &[
+    ".github",
+    ".gitlab",
+    ".circleci",
+    ".buildkite",
+    ".gitea",
+    ".forgejo",
+];
+const FACT_SKIP_DIRS: &[&str] = &[
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    "vendor",
+    "venv",
+    "__pycache__",
+];
+
+fn fact_git_command(root: &Path) -> Command {
+    let mut command = Command::new("git");
+    command
+        .arg("--no-optional-locks")
+        .arg("-C")
+        .arg(root)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .stdin(Stdio::null());
+    command
+}
+
+fn fact_git(root: &Path, args: &[&str]) -> Option<std::process::Output> {
+    fact_git_command(root)
+        .args(args)
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+}
+
+fn fact_git_bytes(root: &Path, args: &[&str], operation: &str) -> Result<Vec<u8>> {
+    fact_git(root, args)
+        .map(|output| output.stdout)
+        .ok_or_else(|| Error::InvalidInput(format!("Git fact collection failed: {operation}")))
+}
+
+fn fact_git_text(root: &Path, args: &[&str]) -> Option<String> {
+    fact_git(root, args).map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn fact_id(prefix: &str, identity: &str) -> String {
+    format!("F-{prefix}-{:x}", Sha256::digest(identity.as_bytes()))
+}
+
+fn fact_note(code: &str, message: &str) -> Value {
+    json!({"id":format!("F-N-{code}"),"code":code.to_ascii_lowercase(),"message":message})
+}
+
+/// Return public text for the baseline. A suspicious field is represented by null and a withheld marker.
+fn public_fact_text(text: &str) -> (Value, bool) {
+    if awr_core::sensitive_text_category(text).is_some() {
+        (Value::Null, true)
+    } else {
+        (Value::String(text.to_string()), false)
+    }
+}
+
+fn append_commit_text(batch: &mut String, fact: &Value) {
+    for text in [
+        fact["author"]["name"].as_str(),
+        fact["author"]["email"].as_str(),
+        fact["title"].as_str(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        batch.push_str(text);
+        batch.push('\n');
+    }
+    for path in fact["paths"]["sample"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|sample| sample["path"].as_str())
+    {
+        batch.push_str(path);
+        batch.push('\n');
+    }
+}
+
+/// Apply exactly the same per-field boundary after a batch finds suspicious text. Safe batches need one scan rather
+/// than one scan per field. A cross-field match falls back to per-field checks and therefore has the same result as
+/// the original field-by-field policy.
+fn sanitize_commit_fact(fact: &mut Value) {
+    let name = fact["author"]["name"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let email = fact["author"]["email"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let title = fact["title"].as_str().unwrap_or_default().to_string();
+    let (name, withheld_name) = public_fact_text(&name);
+    let (email, withheld_email) = public_fact_text(&email);
+    let (title, withheld_title) = public_fact_text(&title);
+    fact["author"]["name"] = name;
+    fact["author"]["email"] = email;
+    fact["title"] = title;
+    let mut withheld_paths = 0_u64;
+    for sample in fact["paths"]["sample"].as_array_mut().into_iter().flatten() {
+        let path = sample["path"].as_str().unwrap_or_default().to_string();
+        let (path, withheld) = public_fact_text(&path);
+        sample["path"] = path;
+        sample["withheld"] = json!(withheld);
+        withheld_paths += u64::from(withheld);
+    }
+    let mut withheld_fields = Vec::new();
+    for (withheld, name) in [
+        (withheld_name, "author.name"),
+        (withheld_email, "author.email"),
+        (withheld_title, "title"),
+    ] {
+        if withheld {
+            withheld_fields.push(name);
+        }
+    }
+    if withheld_paths > 0 {
+        withheld_fields.push("paths.sample");
+    }
+    fact["withheld_fields"] = json!(withheld_fields);
+    fact["withheld_path_samples"] = json!(withheld_paths);
+}
+
+fn sanitize_commit_facts(facts: &mut [Value]) {
+    const BATCH_SIZE: usize = 4096;
+    for chunk in facts.chunks_mut(BATCH_SIZE) {
+        let mut batch = String::new();
+        for fact in chunk.iter() {
+            append_commit_text(&mut batch, fact);
+        }
+        if awr_core::sensitive_text_category(&batch).is_some() {
+            for fact in chunk {
+                sanitize_commit_fact(fact);
+            }
+        }
+    }
+}
+
+fn commit_oid(bytes: &[u8]) -> bool {
+    matches!(bytes.len(), 40 | 64) && bytes.iter().all(u8::is_ascii_hexdigit)
+}
+
+fn read_nul(reader: &mut impl BufRead, bytes: &mut Vec<u8>) -> std::io::Result<bool> {
+    bytes.clear();
+    let read = reader.read_until(0, bytes)?;
+    if read == 0 {
+        return Ok(false);
+    }
+    if bytes.last() == Some(&0) {
+        bytes.pop();
+    }
+    Ok(true)
+}
+
+fn required_nul(reader: &mut impl BufRead, bytes: &mut Vec<u8>) -> Result<()> {
+    if read_nul(reader, bytes)? {
+        Ok(())
+    } else {
+        Err(Error::InvalidInput(
+            "Git commit metadata ended before a commit record was complete".into(),
+        ))
+    }
+}
+
+fn required_text(reader: &mut impl BufRead, bytes: &mut Vec<u8>) -> Result<String> {
+    required_nul(reader, bytes)?;
+    Ok(field_text(bytes))
+}
+
+fn field_text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+#[derive(Default)]
+struct CommitScan {
+    facts: Vec<Value>,
+    bulk_paths: BTreeSet<String>,
+    bulk_commit_ids: BTreeSet<String>,
+    bulk_added_occurrences: u64,
+}
+
+/// Parse one `git log --name-status -z` stream. Each object header has six NUL-separated fields, including the
+/// separator after the title. Status and path pairs follow it. The next object ID either follows a path or directly
+/// follows the separator for a commit with no first-parent path changes.
+fn parse_commit_log(reader: &mut impl BufRead, current_files: u64) -> Result<CommitScan> {
+    let mut scan = CommitScan::default();
+    let mut token = Vec::with_capacity(128);
+    let mut pending: Option<String> = None;
+    loop {
+        let oid = if let Some(oid) = pending.take() {
+            oid
+        } else {
+            if !read_nul(reader, &mut token)? {
+                break;
+            }
+            if token.is_empty() {
+                continue;
+            }
+            if !commit_oid(&token) {
+                return Err(Error::InvalidInput(
+                    "Git commit metadata has an invalid object identifier".into(),
+                ));
+            }
+            field_text(&token)
+        };
+        let author_name = required_text(reader, &mut token)?;
+        let author_email = required_text(reader, &mut token)?;
+        let authored_at = required_text(reader, &mut token)?;
+        let title = required_text(reader, &mut token)?;
+        required_nul(reader, &mut token)?;
+        if !token.iter().all(|byte| matches!(byte, b'\n' | b'\r')) {
+            return Err(Error::InvalidInput(
+                "Git commit metadata has an invalid record separator".into(),
+            ));
+        }
+
+        let mut changed = 0_u64;
+        let mut added = 0_u64;
+        let mut modified = 0_u64;
+        let mut deleted = 0_u64;
+        let mut other = 0_u64;
+        let mut sample = Vec::new();
+        let mut added_paths = Vec::new();
+        loop {
+            if !read_nul(reader, &mut token)? {
+                break;
+            }
+            if commit_oid(&token) {
+                pending = Some(field_text(&token));
+                break;
+            }
+            let status = field_text(&token);
+            let status = status.trim_start_matches(['\n', '\r']).to_string();
+            if status.is_empty() {
+                continue;
+            }
+            let path = required_text(reader, &mut token)?;
+            changed += 1;
+            match status.as_bytes().first() {
+                Some(b'A') => {
+                    added += 1;
+                    added_paths.push(path.clone());
+                }
+                Some(b'M') => modified += 1,
+                Some(b'D') => deleted += 1,
+                _ => other += 1,
+            }
+            if sample.len() < FACT_PATH_SAMPLE {
+                let mut entry = serde_json::Map::new();
+                entry.insert("path".into(), Value::String(path));
+                entry.insert("status".into(), Value::String(status));
+                entry.insert("withheld".into(), Value::Bool(false));
+                sample.push(Value::Object(entry));
+            }
+        }
+
+        let id = format!("F-C-{oid}");
+        let bulk_import =
+            current_files > 0 && added > 0 && added.saturating_mul(2) >= current_files;
+        if bulk_import {
+            scan.bulk_commit_ids.insert(id.clone());
+            scan.bulk_added_occurrences = scan.bulk_added_occurrences.saturating_add(added);
+            scan.bulk_paths.extend(added_paths);
+        }
+        let mut author = serde_json::Map::new();
+        author.insert("name".into(), Value::String(author_name));
+        author.insert("email".into(), Value::String(author_email));
+        let mut paths = json!({
+            "changed":changed,
+            "added":added,
+            "modified":modified,
+            "deleted":deleted,
+            "other":other,
+            "sample_truncated":changed > FACT_PATH_SAMPLE as u64,
+        });
+        paths["sample"] = Value::Array(sample);
+        let mut fact = serde_json::Map::new();
+        fact.insert("id".into(), Value::String(id));
+        fact.insert("oid".into(), Value::String(oid));
+        fact.insert("author".into(), Value::Object(author));
+        fact.insert("authored_at".into(), Value::String(authored_at));
+        fact.insert("title".into(), Value::String(title));
+        fact.insert("withheld_fields".into(), Value::Array(Vec::new()));
+        fact.insert("withheld_path_samples".into(), Value::from(0));
+        fact.insert("paths".into(), paths);
+        fact.insert("bulk_import".into(), Value::Bool(bulk_import));
+        scan.facts.push(Value::Object(fact));
+    }
+    sanitize_commit_facts(&mut scan.facts);
+    scan.facts.sort_by(|left, right| {
+        left["authored_at"]
+            .as_str()
+            .cmp(&right["authored_at"].as_str())
+            .then_with(|| left["oid"].as_str().cmp(&right["oid"].as_str()))
+    });
+    Ok(scan)
+}
+
+fn scan_commits(root: &Path, limit: u64, current_files: u64) -> Result<CommitScan> {
+    if limit == 0 {
+        return Ok(CommitScan::default());
+    }
+    let limit = limit.to_string();
+    let mut child = fact_git_command(root)
+        .args([
+            "log",
+            "--all",
+            "--topo-order",
+            "--no-renames",
+            "--diff-merges=first-parent",
+            "--encoding=UTF-8",
+            "--no-color",
+            "--name-status",
+            "-z",
+            "--format=%H%x00%an%x00%ae%x00%aI%x00%s%x00",
+            "--max-count",
+        ])
+        .arg(&limit)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(Error::Io)?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        Error::InvalidInput("Git commit metadata has no standard output stream".into())
+    })?;
+    let parsed = parse_commit_log(&mut BufReader::new(stdout), current_files);
+    match parsed {
+        Ok(scan) => {
+            let status = child.wait().map_err(Error::Io)?;
+            if status.success() {
+                Ok(scan)
+            } else {
+                Err(Error::InvalidInput(
+                    "Git fact collection failed while reading commits".into(),
+                ))
+            }
+        }
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            Err(error)
+        }
+    }
+}
+
+#[derive(Debug)]
+struct SubmoduleEntry {
+    path: String,
+    oid: String,
+}
+
+fn tracked_entries(root: &Path) -> Result<(BTreeSet<String>, Vec<SubmoduleEntry>)> {
+    let bytes = fact_git_bytes(
+        root,
+        &["ls-files", "-z", "--stage"],
+        "tracked path inventory",
+    )?;
+    let mut files = BTreeSet::new();
+    let mut submodules = Vec::new();
+    for entry in bytes
+        .split(|byte| *byte == 0)
+        .filter(|entry| !entry.is_empty())
+    {
+        let entry = field_text(entry);
+        let Some((metadata, path)) = entry.split_once('\t') else {
+            return Err(Error::InvalidInput(
+                "Git tracked path inventory has an invalid entry".into(),
+            ));
+        };
+        let mut fields = metadata.split_whitespace();
+        let mode = fields.next().unwrap_or_default();
+        let oid = fields.next().unwrap_or_default();
+        if mode == "160000" {
+            submodules.push(SubmoduleEntry {
+                path: path.to_string(),
+                oid: oid.to_string(),
+            });
+        } else {
+            files.insert(path.to_string());
+        }
+    }
+    submodules.sort_by(|left, right| left.path.cmp(&right.path));
+    submodules.dedup_by(|left, right| left.path == right.path && left.oid == right.oid);
+    Ok((files, submodules))
+}
+
+fn fact_path_allowed(path: &str) -> bool {
+    let mut components = path.split('/').peekable();
+    while let Some(component) = components.next() {
+        let directory = components.peek().is_some();
+        if directory
+            && component.starts_with('.')
+            && !FACT_HIDDEN_ROOTS.contains(&component.to_ascii_lowercase().as_str())
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn rule_kind(path: &str) -> Option<&'static str> {
+    let lower = path.replace('\\', "/").to_ascii_lowercase();
+    let name = lower.rsplit('/').next().unwrap_or(&lower);
+    let yaml = name.ends_with(".yml") || name.ends_with(".yaml");
+    if matches!(
+        name,
+        "contributing" | "contributing.md" | "contributing.txt"
+    ) {
+        return Some("contribution_guide");
+    }
+    if name == "codeowners" {
+        return Some("review_owners");
+    }
+    if matches!(name, "agents.md" | "claude.md") || lower == ".github/copilot-instructions.md" {
+        return Some("agent_instructions");
+    }
+    if ((lower.starts_with(".github/workflows/")
+        || lower.starts_with(".gitea/workflows/")
+        || lower.starts_with(".forgejo/workflows/"))
+        && yaml)
+        || matches!(
+            lower.as_str(),
+            ".gitlab-ci.yml"
+                | ".circleci/config.yml"
+                | ".buildkite/pipeline.yml"
+                | ".buildkite/pipeline.yaml"
+                | "azure-pipelines.yml"
+                | "jenkinsfile"
+        )
+    {
+        return Some("pipeline");
+    }
+    if (lower.starts_with(".github/issue_template/")
+        || lower.starts_with(".gitlab/issue_templates/")
+        || lower.starts_with(".gitea/issue_template/")
+        || lower.starts_with(".forgejo/issue_template/"))
+        && (yaml || name.ends_with(".md"))
+    {
+        return Some("issue_template");
+    }
+    None
+}
+
+fn filesystem_rule_paths(root: &Path) -> BTreeSet<String> {
+    fn walk(root: &Path, directory: &Path, paths: &mut BTreeSet<String>) {
+        if paths.len() >= MAX_RULE_FILES.saturating_mul(4) {
+            return;
+        }
+        let Ok(entries) = fs::read_dir(directory) else {
+            return;
+        };
+        let mut entries = entries
+            .filter_map(std::result::Result::ok)
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let path = entry.path();
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_symlink() {
+                continue;
+            }
+            if kind.is_dir() {
+                if FACT_SKIP_DIRS.contains(&name.as_str())
+                    || (name.starts_with('.')
+                        && !FACT_HIDDEN_ROOTS.contains(&name.to_ascii_lowercase().as_str()))
+                {
+                    continue;
+                }
+                walk(root, &path, paths);
+            } else if kind.is_file() {
+                let relative = path
+                    .strip_prefix(root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                if fact_path_allowed(&relative) && rule_kind(&relative).is_some() {
+                    paths.insert(relative);
+                }
+            }
+        }
+    }
+    let mut paths = BTreeSet::new();
+    walk(root, root, &mut paths);
+    paths
+}
+
+#[derive(Default)]
+struct RuleCoverage {
+    discovered: usize,
+    recorded: usize,
+    read: usize,
+    withheld: usize,
+    over_limit: usize,
+    unreadable: usize,
+}
+
+fn scan_rule_files(root: &Path, paths: &BTreeSet<String>) -> (Vec<Value>, RuleCoverage) {
+    let candidates = paths
+        .iter()
+        .filter(|path| fact_path_allowed(path) && rule_kind(path).is_some())
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut coverage = RuleCoverage {
+        discovered: candidates.len(),
+        ..RuleCoverage::default()
+    };
+    let mut facts = Vec::new();
+    for path in candidates.into_iter().take(MAX_RULE_FILES) {
+        let kind = rule_kind(&path).unwrap_or("rule");
+        let (public_path, withheld_path) = public_fact_text(&path);
+        let id = fact_id("R", &path);
+        let mut fact = json!({
+            "id":id,
+            "kind":kind,
+            "path":public_path,
+            "path_withheld":withheld_path,
+            "bytes":0,
+            "sha256":Value::Null,
+            "text":Value::Null,
+            "read_status":"unreadable",
+        });
+        coverage.recorded += 1;
+        if withheld_path {
+            fact["read_status"] = json!("withheld_sensitive");
+            coverage.withheld += 1;
+            facts.push(fact);
+            continue;
+        }
+        let file = root.join(&path);
+        match fs::symlink_metadata(&file) {
+            Ok(metadata) => {
+                fact["bytes"] = json!(metadata.len());
+                if metadata.file_type().is_symlink() || !metadata.is_file() {
+                    fact["read_status"] = json!("skipped_non_regular_file");
+                    coverage.unreadable += 1;
+                } else if metadata.len() > RULE_FILE_READ_CAP {
+                    fact["read_status"] = json!("over_read_limit");
+                    coverage.over_limit += 1;
+                } else {
+                    match awr_source::read_project_document(root, &file, RULE_FILE_READ_CAP) {
+                        Ok(bytes) => {
+                            fact["sha256"] = json!(format!("{:x}", Sha256::digest(&bytes)));
+                            coverage.read += 1;
+                            match String::from_utf8(bytes) {
+                                Ok(text) => {
+                                    fact["text"] = json!(text);
+                                    fact["read_status"] = json!("read");
+                                }
+                                Err(_) => {
+                                    fact["read_status"] = json!("read_non_utf8");
+                                }
+                            }
+                        }
+                        Err(error @ Error::SensitiveSource { .. }) => {
+                            let report = error.report();
+                            let category = report
+                                .details
+                                .as_ref()
+                                .and_then(|details| details["category"].as_str())
+                                .unwrap_or("suspected_sensitive_content");
+                            fact["read_status"] = json!("withheld_sensitive");
+                            fact["category"] = json!(category);
+                            coverage.withheld += 1;
+                        }
+                        Err(_) => coverage.unreadable += 1,
+                    }
+                }
+            }
+            Err(_) => coverage.unreadable += 1,
+        }
+        facts.push(fact);
+    }
+    (facts, coverage)
+}
+
+fn branch_facts(root: &Path, head: Option<&str>) -> Result<(Vec<Value>, usize)> {
+    let format = "%(refname)%00%(objectname)%00%(HEAD)";
+    let bytes = fact_git_bytes(
+        root,
+        &[
+            "for-each-ref",
+            "--sort=refname",
+            "--format",
+            format,
+            "refs/heads",
+            "refs/remotes",
+        ],
+        "branch inventory",
+    )?;
+    let refs = field_text(&bytes);
+    let needs_unmerged_walk = head.is_some_and(|head| {
+        refs.lines()
+            .filter(|line| !line.is_empty())
+            .any(|line| line.split('\0').nth(1) != Some(head))
+    });
+    let unmerged = if needs_unmerged_walk {
+        let head = head.expect("a differing ref requires HEAD");
+        let selector = format!("--no-merged={head}");
+        fact_git_bytes(
+            root,
+            &[
+                "for-each-ref",
+                "--format=%(refname)",
+                &selector,
+                "refs/heads",
+                "refs/remotes",
+            ],
+            "unmerged branch inventory",
+        )?
+        .split(|byte| *byte == b'\n')
+        .map(|line| field_text(line).trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect::<BTreeSet<_>>()
+    } else {
+        BTreeSet::new()
+    };
+    let mut facts = Vec::new();
+    for line in field_text(&bytes).lines().filter(|line| !line.is_empty()) {
+        let fields = line.split('\0').collect::<Vec<_>>();
+        if fields.len() != 3 {
+            return Err(Error::InvalidInput(
+                "Git branch inventory has an invalid entry".into(),
+            ));
+        }
+        let (name, withheld) = public_fact_text(fields[0]);
+        let kind = if fields[0].starts_with("refs/remotes/") {
+            "remote"
+        } else {
+            "local"
+        };
+        facts.push(json!({
+            "id":fact_id("B", fields[0]),
+            "name":name,
+            "name_withheld":withheld,
+            "kind":kind,
+            "oid":fields[1],
+            "current":fields[2] == "*",
+            "merged_into_head":if head.is_some(){Some(!unmerged.contains(fields[0]))}else{None::<bool>},
+        }));
+    }
+    Ok((facts, unmerged.len()))
+}
+
+fn tag_facts(root: &Path) -> Result<Vec<Value>> {
+    let bytes = fact_git_bytes(
+        root,
+        &[
+            "for-each-ref",
+            "--sort=refname",
+            "--format=%(refname)%00%(objectname)%00%(objecttype)%00%(*objectname)",
+            "refs/tags",
+        ],
+        "tag inventory",
+    )?;
+    let mut facts = Vec::new();
+    for line in field_text(&bytes).lines().filter(|line| !line.is_empty()) {
+        let fields = line.split('\0').collect::<Vec<_>>();
+        if fields.len() != 4 {
+            return Err(Error::InvalidInput(
+                "Git tag inventory has an invalid entry".into(),
+            ));
+        }
+        let (name, withheld) = public_fact_text(fields[0]);
+        facts.push(json!({
+            "id":fact_id("T", fields[0]),
+            "name":name,
+            "name_withheld":withheld,
+            "oid":fields[1],
+            "object_type":fields[2],
+            "target":if fields[3].is_empty(){fields[1]}else{fields[3]},
+        }));
+    }
+    Ok(facts)
+}
+
+fn collect_facts(root: &Path, commit_limit: u64) -> Result<Value> {
+    let is_git =
+        fact_git_text(root, &["rev-parse", "--is-inside-work-tree"]).as_deref() == Some("true");
+    let mut notes = Vec::new();
+    if !is_git {
+        notes.push(fact_note(
+            "NO_GIT_HISTORY",
+            "The directory has no Git repository; Git history coverage is zero and discovered rule files remain available.",
+        ));
+    }
+    let head = if is_git {
+        fact_git_text(root, &["rev-parse", "--verify", "HEAD"])
+    } else {
+        None
+    };
+    let current_ref = if is_git {
+        fact_git_text(root, &["symbolic-ref", "-q", "HEAD"])
+    } else {
+        None
+    };
+    let shallow = is_git
+        && fact_git_text(root, &["rev-parse", "--is-shallow-repository"]).as_deref()
+            == Some("true");
+    let commits_available = if is_git {
+        fact_git_text(root, &["rev-list", "--all", "--count"])
+            .and_then(|count| count.parse::<u64>().ok())
+            .ok_or_else(|| Error::InvalidInput("Git fact collection failed: commit count".into()))?
+    } else {
+        0
+    };
+    let commits_read = commits_available.min(commit_limit);
+    let (tracked, submodule_entries) = if is_git {
+        tracked_entries(root)?
+    } else {
+        (BTreeSet::new(), Vec::new())
+    };
+    let current_files = tracked.len() as u64;
+    let commit_scan = if is_git && commits_read > 0 {
+        scan_commits(root, commits_read, current_files)?
+    } else {
+        CommitScan::default()
+    };
+    let (branches, unmerged_branch_count) = if is_git {
+        branch_facts(root, head.as_deref())?
+    } else {
+        (Vec::new(), 0)
+    };
+    let tags = if is_git { tag_facts(root)? } else { Vec::new() };
+    let rule_paths = if is_git {
+        tracked.clone()
+    } else {
+        filesystem_rule_paths(root)
+    };
+    let (rule_files, rule_coverage) = scan_rule_files(root, &rule_paths);
+    let submodules = submodule_entries
+        .iter()
+        .map(|entry| {
+            let (path, withheld) = public_fact_text(&entry.path);
+            json!({
+                "id":fact_id("S", &entry.path),
+                "path":path,
+                "path_withheld":withheld,
+                "recorded_commit":entry.oid,
+                "status":if root.join(&entry.path).join(".git").exists(){"initialized"}else{"not_initialized"},
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if commits_available == 0 && is_git {
+        notes.push(fact_note(
+            "EMPTY_REPOSITORY",
+            "The Git repository has an unborn or empty history and zero reachable commits.",
+        ));
+    }
+    if head.is_some() && current_ref.is_none() {
+        notes.push(fact_note(
+            "DETACHED_HEAD",
+            "HEAD is detached at the recorded commit; branch merging is measured against that commit.",
+        ));
+    }
+    if shallow {
+        notes.push(fact_note(
+            "SHALLOW_HISTORY",
+            "Git reports a shallow checkout; available shallow history was read and earlier history remains outside this baseline.",
+        ));
+    }
+    if commits_available > commit_scan.facts.len() as u64 {
+        notes.push(fact_note(
+            "COMMIT_LIMIT",
+            "The commit limit was reached; commits_read and commits_available record exact coverage.",
+        ));
+    }
+    if !submodules.is_empty() {
+        notes.push(fact_note(
+            "SUBMODULE_HISTORY",
+            "Submodule gitlinks are recorded; submodule commit histories are outside this superproject baseline.",
+        ));
+    }
+    if rule_coverage.discovered > rule_coverage.recorded {
+        notes.push(fact_note(
+            "RULE_FILE_LIMIT",
+            "The rule file limit was reached; rule coverage records discovered and recorded totals.",
+        ));
+    }
+    notes.sort_by(|left, right| left["code"].as_str().cmp(&right["code"].as_str()));
+
+    let bulk_import_files = commit_scan
+        .bulk_paths
+        .iter()
+        .filter(|path| tracked.contains(*path))
+        .count() as u64;
+    let bulk_percent = (current_files > 0)
+        .then(|| ((bulk_import_files.saturating_mul(10_000) / current_files) as f64) / 100.0);
+    let (current_branch, branch_withheld) = match current_ref.as_deref() {
+        Some(reference) => public_fact_text(reference),
+        None => (Value::Null, false),
+    };
+    let repository_state = if !is_git {
+        "not_a_git_repository"
+    } else if commits_available == 0 {
+        "empty_repository"
+    } else {
+        "ready"
+    };
+    let head_state = if !is_git {
+        "no_repository"
+    } else if head.is_none() {
+        "unborn"
+    } else if current_ref.is_some() {
+        "branch"
+    } else {
+        "detached"
+    };
+    let actual_commits_read = commit_scan.facts.len() as u64;
+    let history_complete = is_git && !shallow && actual_commits_read == commits_available;
+    let unmerged_branch_basis = if !is_git {
+        "no_repository"
+    } else if head.is_some() {
+        "HEAD"
+    } else {
+        "unborn_HEAD"
+    };
+    let mut facts = json!({
+        "schema_version":1,
+        "document":"awr_takeover_fact_baseline",
+        "verification":"recorded_unverified",
+        "repository":{
+            "id":"F-REPOSITORY",
+            "state":repository_state,
+            "head":head,
+            "head_state":head_state,
+            "current_branch":current_branch,
+            "current_branch_withheld":branch_withheld,
+            "shallow":shallow,
+            "history_complete":history_complete,
+            "submodules":submodules,
+        },
+        "commits":Value::Null,
+        "branches":branches,
+        "tags":tags,
+        "rule_files":rule_files,
+        "coverage":{
+            "id":"F-COVERAGE",
+            "commits_read":actual_commits_read,
+            "commits_available":commits_available,
+            "commit_limit":commit_limit,
+            "commits_truncated":commits_available > actual_commits_read,
+            "history_complete":history_complete,
+            "current_tracked_files":current_files,
+            "bulk_import_file_count":bulk_import_files,
+            "bulk_import_file_share":{
+                "numerator":bulk_import_files,
+                "denominator":current_files,
+                "percent":bulk_percent,
+            },
+            "bulk_import_added_path_occurrences":commit_scan.bulk_added_occurrences,
+            "bulk_import_commit_ids":commit_scan.bulk_commit_ids.into_iter().collect::<Vec<_>>(),
+            "unmerged_branch_count":unmerged_branch_count,
+            "unmerged_branch_basis":unmerged_branch_basis,
+            "workstream_assignment_ratio":"not_computed",
+            "workstream_assignment_note":"Not computed before RCN-003.",
+            "rule_files":{
+                "discovered":rule_coverage.discovered,
+                "recorded":rule_coverage.recorded,
+                "read":rule_coverage.read,
+                "withheld_sensitive":rule_coverage.withheld,
+                "over_read_limit":rule_coverage.over_limit,
+                "unreadable":rule_coverage.unreadable,
+                "truncated":rule_coverage.discovered > rule_coverage.recorded,
+                "file_limit":MAX_RULE_FILES,
+                "per_file_byte_limit":RULE_FILE_READ_CAP,
+            },
+            "submodule_count":submodule_entries.len(),
+        },
+        "notes":notes,
+    });
+    facts["commits"] = Value::Array(commit_scan.facts);
+    Ok(facts)
 }
 
 // --- the steps -----------------------------------------------------------------------------------------------
@@ -911,9 +1823,23 @@ impl Run<'_> {
             )
             .into());
         }
+        let facts = collect_facts(&self.root, self.args.fact_commit_limit).map_err(|error| {
+            StepEnd::Stop(
+                Stop::new(
+                    "facts_unreadable",
+                    format!("The deterministic fact baseline could not be read: {error}"),
+                )
+                .with(json!({"code":error.code()})),
+            )
+        })?;
+        let facts_path = self.run_dir.join("facts.json");
+        write_fact_json(&facts_path, &facts)?;
         let mut result = json!({
             "draft_path": draft_path,
             "manifest": manifest,
+            "fact_commit_limit": self.args.fact_commit_limit,
+            "facts_path": facts_path,
+            "fact_coverage": facts["coverage"].clone(),
             "inventory_fingerprint": draft["inventory_fingerprint"],
             "inventory": draft["inventory"].as_array().map_or(0, Vec::len),
             "sources": summarize_sources(&draft["authority_mapping"]),
@@ -1160,6 +2086,27 @@ impl Run<'_> {
         let accepted = self.step("accept")["result"].clone();
         let preview = self.step("preview")["result"].clone();
         let review = self.step("review")["result"].clone();
+        let (facts_path, fact_coverage) =
+            match (preview["facts_path"].as_str(), preview.get("fact_coverage")) {
+                (Some(path), Some(coverage)) => (PathBuf::from(path), coverage.clone()),
+                _ => {
+                    let facts =
+                        collect_facts(&self.root, self.args.fact_commit_limit).map_err(
+                            |error| {
+                                StepEnd::Stop(
+                        Stop::new(
+                            "facts_unreadable",
+                            format!("The deterministic fact baseline could not be read: {error}"),
+                        )
+                        .with(json!({"code":error.code()})),
+                    )
+                            },
+                        )?;
+                    let path = self.run_dir.join("facts.json");
+                    write_fact_json(&path, &facts)?;
+                    (path, facts["coverage"].clone())
+                }
+            };
         let head_before = self.step("preflight")["result"]["git_head"].clone();
         let awaiting: Vec<Value> = organized["goals"]
             .as_array()
@@ -1200,6 +2147,7 @@ impl Run<'_> {
                 "recovered": accepted["recovered"].as_bool().unwrap_or(false),
             },
             "reviewed": reviewed,
+            "facts": {"path":facts_path,"coverage":fact_coverage},
             "organization": {
                 "state": organized["state"], "gap_total": organized["gap_total"], "goal_total": organized["goal_total"],
                 "executable_work_total": organized["executable_work_total"], "actions": organized["actions"], "gaps": organized["gaps"],
@@ -1505,11 +2453,15 @@ fn run_takeover(root: &Path, args: &TakeoverArgs, json_output: bool) -> Result<V
         record,
         args,
     };
-    // A saved preview belongs to the manifest it was made with; another one starts again from the preview, unless
-    // accept already began (then the project is initialized and the run goes on from there).
-    if let Some(wanted) = &args.manifest
-        && run.step("preview")["status"] == "done"
-        && run.step("preview")["result"]["manifest"] != json!(wanted.to_string_lossy())
+    // A saved preview belongs to its manifest and fact limit; a change starts again before accept.
+    let preview = &run.step("preview")["result"];
+    let manifest_changed = args.manifest.as_ref().is_some_and(|wanted| {
+        run.step("preview")["status"] == "done"
+            && preview["manifest"] != json!(wanted.to_string_lossy())
+    });
+    let fact_limit_changed = run.step("preview")["status"] == "done"
+        && preview["fact_commit_limit"] != json!(args.fact_commit_limit);
+    if (manifest_changed || fact_limit_changed)
         && run.step("accept")["attempted"] != true
         && let Some(steps) = run.record["steps"].as_object_mut()
     {
