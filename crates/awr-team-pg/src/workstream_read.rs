@@ -24,6 +24,7 @@ mod guidance;
 mod handoffs;
 pub(crate) use guidance::inspect_only;
 mod inbox;
+mod lessons;
 mod list;
 mod navigation;
 mod observation;
@@ -78,6 +79,7 @@ pub(crate) const QUERIES: &[&str] = &[
     "documents.list",
     "document.history",
     "decisions.list",
+    "lessons.list",
     "updates.list",
     "update.inspect",
     "audit.history",
@@ -147,6 +149,7 @@ impl WorkstreamQuery {
         "documents.list",
         "document.history",
         "decisions.list",
+        "lessons.list",
         "updates.list",
         "work.prepare",
         "work.snapshot",
@@ -281,6 +284,7 @@ impl WorkstreamQuery {
                 | "sources.inspect"
                 | "documents.list"
                 | "decisions.list"
+                | "lessons.list"
                 | "updates.list"
                 | "review.rounds"
                 | "handoff.list"
@@ -500,6 +504,7 @@ impl WorkstreamQuery {
         let exact_work = matches!(
             self.op.as_str(),
             "task.assignees"
+                | "lessons.list"
                 | "delivery.neutral.inspect"
                 | "delivery.routes"
                 | "delivery.submission.describe"
@@ -1505,6 +1510,7 @@ fn is_unscoped_read_op(op: &str) -> bool {
             | "sources.inspect"
             | "documents.list"
             | "document.history"
+            | "lessons.list"
             | "decisions.list"
             | "updates.list"
             | "update.inspect"
@@ -1607,6 +1613,9 @@ fn read_unscoped_op<'a>(
                 q,
             ))
             .await;
+        }
+        if q.op == "lessons.list" {
+            return Box::pin(lessons::read(tx, tenant, project, auth, q)).await;
         }
         if q.op == "decisions.list" {
             return decisions::read(tx, tenant, project, auth, q).await;
@@ -1849,6 +1858,10 @@ fn capabilities_response(auth: &ReaderAuthority) -> Value {
             "max_mcp_result_bytes":WorkstreamQuery::MAX_ARTIFACT_SEGMENT_WIRE_BYTES,
             "encoding":"base64","complete_read":"Follow next_query until end_of_artifact; concatenate contiguous ranges from 0 and verify the full length and sha256."});
     caps["identity"] = navigation::identity(auth);
+    caps["lessons"] = json!({"version":1,"query":"lessons.list","work_id_required":true,
+            "commands":["lesson.propose","lesson.confirm","lesson.revoke","lesson.mark_not_applicable","lesson.promote"],
+            "original_words_provenance":"recorded_by_authors_agent","candidate_visibility":"author_person_only",
+            "use_for_personnel_evaluation":false,"confirmation_inbox_type":"confirm_lesson"});
     caps["ordinary_decisions"] = json!({"version":1,"query":"decisions.list",
             "commands":["decision.request","decision.respond","decision.cancel"],
             "request_authority":"current_owned_live_claim","response_authority":"selected_current_member_and_owned_session",

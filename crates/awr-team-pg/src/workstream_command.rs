@@ -10,6 +10,7 @@ pub(crate) mod decisions;
 mod delivery;
 pub(crate) mod executions;
 pub(crate) mod handoffs;
+pub(crate) mod lessons;
 pub(crate) mod reviews;
 pub(crate) mod task_intake;
 mod updates;
@@ -30,6 +31,11 @@ use tokio_postgres::Transaction;
 
 pub(crate) const COMMANDS: &[&str] = &[
     "admission.decide",
+    "lesson.propose",
+    "lesson.confirm",
+    "lesson.revoke",
+    "lesson.mark_not_applicable",
+    "lesson.promote",
     "decision.request",
     "decision.respond",
     "decision.cancel",
@@ -128,6 +134,7 @@ struct End {
 enum Action {
     Admission(admission::Action),
     Decision(decisions::Action),
+    Lesson(Box<lessons::Action>),
     Start(Start),
     Checkpoint(Checkpoint),
     End(End),
@@ -211,6 +218,12 @@ impl WorkstreamCommand {
             return Ok(Action::Export(
                 crate::cross_workstream_exports::Action::parse(&self.op, self.args.clone())?,
             ));
+        }
+        if self.op.starts_with("lesson.") {
+            return Ok(Action::Lesson(Box::new(lessons::Action::parse(
+                &self.op,
+                self.args.clone(),
+            )?)));
         }
         match self.op.as_str() {
             "decision.request" | "decision.respond" | "decision.cancel" => Ok(Action::Decision(
@@ -719,50 +732,71 @@ impl WorkstreamCommandStore {
                 unreachable!("neutral dispatch precedes the generic transaction")
             }
             Action::Intake(a) => {
-                task_intake::apply(&tx, tenant, project, &auth, &command, ownership, a).await?
+                Box::pin(task_intake::apply(
+                    &tx, tenant, project, &auth, &command, ownership, a,
+                ))
+                .await?
             }
             Action::Admission(a) => {
-                admission::apply(&tx, tenant, project, &auth, &command, a).await?
+                Box::pin(admission::apply(&tx, tenant, project, &auth, &command, a)).await?
+            }
+            Action::Lesson(a) => {
+                Box::pin(lessons::apply(
+                    &tx, tenant, project, &auth, &command, ownership, *a,
+                ))
+                .await?
             }
             Action::Decision(a) => {
-                decisions::apply(&tx, tenant, project, &auth, &command, ownership, a).await?
+                Box::pin(decisions::apply(
+                    &tx, tenant, project, &auth, &command, ownership, a,
+                ))
+                .await?
             }
             Action::Execution(a) => {
                 if command.op == "execution.prepare"
                     && contract.dependency_acceptance.values().any(|mode| {
                         matches!(mode, awr_team::DependencyAcceptanceMode::CrossWorkstream(_))
                     })
-                    && !task_intake::dependencies_ready(
+                    && !Box::pin(task_intake::dependencies_ready(
                         &tx,
                         tenant,
                         project,
                         &auth,
                         &command.work_id,
                         &command.workstream_id.to_string(),
-                    )
+                    ))
                     .await?
                 {
                     return Err(PgError::MissingDependency);
                 }
-                executions::apply(
+                Box::pin(executions::apply(
                     &tx, tenant, project, &auth, &command, ownership, &contract, a,
-                )
+                ))
                 .await?
             }
             Action::Claim(a) => {
-                claims::apply(&tx, tenant, project, &auth, &command, ownership, a).await?
+                Box::pin(claims::apply(
+                    &tx, tenant, project, &auth, &command, ownership, a,
+                ))
+                .await?
             }
             Action::Handoff(a) => {
-                handoffs::apply(&tx, tenant, project, bearer, &auth, &command, ownership, a).await?
+                Box::pin(handoffs::apply(
+                    &tx, tenant, project, bearer, &auth, &command, ownership, a,
+                ))
+                .await?
             }
             Action::Review(a) => {
-                reviews::apply(
+                Box::pin(reviews::apply(
                     &tx, tenant, project, &auth, &command, ownership, &contract, a,
-                )
+                ))
                 .await?
             }
             a => Applied {
-                data: apply(&tx, tenant, project, bearer, &auth, &command, ownership, a).await?,
+                data: Box::pin(apply(
+                    &tx, tenant, project, bearer, &auth, &command, ownership, a,
+                ))
+                .await?,
                 preceding_events: Vec::new(),
             },
         };
@@ -950,6 +984,7 @@ async fn apply(
         | Action::Review(_)
         | Action::Intake(_)
         | Action::Admission(_)
+        | Action::Lesson(_)
         | Action::Decision(_)
         | Action::Delivery(_)
         | Action::Export(_)

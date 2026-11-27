@@ -541,10 +541,17 @@ fn membership_allows_manage(role: &str) -> bool {
 pub fn command_business_action(op: &str) -> Option<awr_team::Action> {
     use awr_team::Action::*;
     Some(match op {
-        "task.assign" | "delivery.route.reuse" => WorkAssign,
+        "task.assign" | "delivery.route.reuse" | "lesson.promote" => WorkAssign,
         "task.accept_assignment" | "task.claim_available" => ClaimManageOwn,
-        "session.start" | "session.checkpoint" | "session.end" | "decision.respond"
-        | "decision.cancel" => SessionMaintainOwn,
+        "session.start"
+        | "session.checkpoint"
+        | "session.end"
+        | "decision.respond"
+        | "decision.cancel"
+        | "lesson.propose"
+        | "lesson.confirm"
+        | "lesson.revoke"
+        | "lesson.mark_not_applicable" => SessionMaintainOwn,
         "decision.request" => ClaimManageOwn,
         "claim.acquire" | "claim.renew" | "claim.release" | "handoff.propose"
         | "handoff.accept" | "handoff.reject" | "handoff.cancel" | "handoff.timeout"
@@ -635,6 +642,7 @@ pub fn query_business_action(op: &str) -> Option<awr_team::Action> {
         "documents.list",
         "document.history",
         "decisions.list",
+        "lessons.list",
         "updates.list",
         "update.inspect",
         "audit.history",
@@ -767,10 +775,13 @@ pub(crate) fn command_authority(op: &str) -> Option<DomainAuthority> {
     Some(match op {
         "session.checkpoint" | "session.end" | "claim.release" | "execution.cancel"
         | "execution.report" | "handoff.reject" | "handoff.cancel" | "handoff.timeout"
-        | "handoff.inspect" | "review.return" | "work.rework" | "decision.cancel" => {
-            DomainAuthority::WritePreserve
-        }
+        | "lesson.revoke" | "handoff.inspect" | "review.return" | "work.rework"
+        | "decision.cancel" => DomainAuthority::WritePreserve,
         "session.start"
+        | "lesson.propose"
+        | "lesson.confirm"
+        | "lesson.mark_not_applicable"
+        | "lesson.promote"
         | "decision.request"
         | "decision.respond"
         | "admission.decide"
@@ -839,6 +850,16 @@ pub(crate) fn authorize_command(
     op: &str,
     phase: CommandAuthPhase,
 ) -> PgResult<()> {
+    if op.starts_with("lesson.")
+        && (auth.actor_kind != "agent"
+            || (op == "lesson.promote"
+                && !auth
+                    .business_roles
+                    .as_ref()
+                    .is_some_and(|roles| roles.contains(&awr_team::BusinessRole::Supervisor))))
+    {
+        return Err(PgError::Forbidden);
+    }
     let required = command_authority(op).ok_or_else(|| {
         PgError::Unsupported(format!("unsupported workstream command capability: {op}"))
     })?;
