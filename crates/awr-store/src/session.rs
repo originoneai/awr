@@ -242,7 +242,11 @@ impl Store {
             .query_map(params![project.to_string(),explicit.map(|id|id.to_string()),work.map(|id|id.to_string()),agent,branch.map(|id|id.to_string())],session_row).map_err(db_error)?.collect::<rusqlite::Result<Vec<_>>>().map_err(db_error)?;
         match sessions.len() {
             0 => Err(Error::NotFound(
-                "active session matching the supplied identity".into(),
+                if explicit.is_none() && work.is_none() && agent.is_none() {
+                    "active session".into()
+                } else {
+                    "active session matching the supplied identity".into()
+                },
             )),
             1 => Ok(sessions.into_iter().next().unwrap()),
             _ => Err(Error::InvalidInput(format!(
