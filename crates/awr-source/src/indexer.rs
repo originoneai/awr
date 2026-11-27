@@ -85,6 +85,7 @@ pub fn source_adapter(name: &str) -> Result<Box<dyn SourceAdapter>> {
         "markdown-heading-v1" => Ok(Box::new(MarkdownHeadingAdapter)),
         "markdown-rules-v1" => Ok(Box::new(MarkdownRulesAdapter)),
         "markdown-directory-v1" => Ok(Box::new(MarkdownDirectoryAdapter)),
+        "github-pr-snapshot-v1" => Ok(Box::new(crate::GithubPrSnapshotAdapter)),
         _ => Err(Error::Unsupported(format!("source adapter {name}"))),
     }
 }
@@ -106,6 +107,7 @@ pub fn source_configuration(spec: &SourceSpec, minimal_context: bool) -> serde_j
         "yaml-ledger-v1" => 5, // Project explicit task specification references.
         "markdown-directory-v1" => 4, // Project explicit specification items.
         "yaml-workstream-ledger-v1" => 3, // The scoped decoder also projects spec_refs.
+        "github-pr-snapshot-v1" => 1, // Initial pull request snapshot projection.
         _ => 2,
     }});
     if minimal_context {

@@ -10,6 +10,8 @@ mod gates;
 pub use gates::{
     CheckGates, GATES_FILE, GatePolicy, HookGates, VerifyGates, WriteGate, hook_work_path_matches,
 };
+mod github_pr;
+pub use github_pr::GithubPrSnapshotAdapter;
 mod indexer;
 mod ledger_mapping;
 mod limits;
@@ -57,8 +59,8 @@ pub use indexer::{
 };
 pub use ledger_mapping::LedgerMapping;
 pub use limits::{
-    MARKDOWN_READ_CAP, SERVER_LEDGER_READ_CAP, YAML_READ_CAP, ledger_size_limit_exceeded,
-    source_read_cap,
+    JSON_READ_CAP, MARKDOWN_READ_CAP, SERVER_LEDGER_READ_CAP, YAML_READ_CAP,
+    ledger_size_limit_exceeded, source_read_cap,
 };
 pub use locator::{Locator, SourceSnapshot, fingerprint, read_capped, read_source_capped};
 pub use policy::{
