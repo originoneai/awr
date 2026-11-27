@@ -635,6 +635,7 @@ pub fn query_business_action(op: &str) -> Option<awr_team::Action> {
         "planning.candidates",
         "sources.inspect",
         "documents.list",
+        "document.history",
         "decisions.list",
         "updates.list",
         "update.inspect",

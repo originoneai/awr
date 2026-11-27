@@ -33,11 +33,8 @@ const INBOX_READ_OPS = new Set(['work.prepare', 'work.observe', 'work.recovery',
  */
 // Full ops audit is deferred (W13). Route setup belongs to the Agent workflow,
 // not this observation surface. The drift guard pins this explicit boundary.
-// Service queries the adapter does not route yet. `updates.list` and `update.inspect` (project period
-// updates, #681) get their bridge routes with AWR-PPD-012; until then the drift guard needs them named here.
-const READ_DEFERRED_OPS = new Set(['audit.history', 'audit.export', 'audit.count', 'delivery.routes',
-  'updates.list', 'update.inspect']);
-const READ_PROJECT_WIDE = new Set(['capabilities', 'workstreams.list', 'work.inbox']);
+const READ_DEFERRED_OPS = new Set(['audit.history', 'audit.export', 'audit.count', 'delivery.routes']);
+const READ_PROJECT_WIDE = new Set(['capabilities', 'workstreams.list', 'work.inbox', 'updates.list', 'update.inspect']);
 const READ_WORK_LIST = new Set(['work.list', 'work.graph', 'work.search', 'planning.outcome', 'planning.candidates']);
 const READ_AUDIT = new Set(['audit.requests', 'audit.development']);
 const READ_EXACT_WORK = new Set(['task.assignees', 'delivery.neutral.inspect',
@@ -48,10 +45,10 @@ const READ_WORK_SELECTION = new Set(['work.prepare', 'work.admission', 'work.sna
   'handoff.inspect', 'evidence.inspect', 'review.inspect', 'review.rounds', 'completion.inspect',
   'delivery.inspect', 'artifact.content', 'artifact.segment', 'delivery.exports']);
 const READ_PAGED = new Set(['workstreams.list', 'work.list', 'work.graph', 'work.search', 'events.list',
-  'work.next', 'work.inbox', 'task.assignees', 'delivery.exports', 'planning.candidates', 'sources.inspect', 'documents.list', 'decisions.list', 'review.rounds', 'review.queue', 'team.reviewers', 'handoff.list', 'dependencies.list']);
+  'work.next', 'work.inbox', 'task.assignees', 'delivery.exports', 'planning.candidates', 'sources.inspect', 'documents.list', 'decisions.list', 'updates.list', 'review.rounds', 'review.queue', 'team.reviewers', 'handoff.list', 'dependencies.list']);
 const READ_CONTEXT_BUDGET = new Set(['work.prepare', 'work.snapshot', 'work.observe', 'work.inbox',
   'source.content', 'artifact.content', 'artifact.segment', 'review.inspect',
-  'delivery.neutral.inspect', 'delivery.submission.describe', 'planning.candidates', 'sources.inspect', 'documents.list', 'decisions.list', 'review.rounds', 'review.queue', 'team.reviewers', 'handoff.list', 'dependencies.list']);
+  'delivery.neutral.inspect', 'delivery.submission.describe', 'planning.candidates', 'sources.inspect', 'documents.list', 'document.history', 'decisions.list', 'updates.list', 'review.rounds', 'review.queue', 'team.reviewers', 'handoff.list', 'dependencies.list']);
 const READ_REQUIRED_SELECTOR = {
   'command.inspect': 'request_id',
   'planning.outcome': 'request_id',
@@ -63,7 +60,9 @@ const READ_REQUIRED_SELECTOR = {
   'evidence.inspect': 'evidence_id',
   'review.inspect': 'review_round_id',
   'source.content': 'source_path',
+  'document.history': 'source_path',
   'session.inspect': 'session_id',
+  'update.inspect': 'update_id',
 };
 const READ_OPS = new Set([
   ...READ_PROJECT_WIDE, ...READ_WORK_LIST, ...READ_AUDIT, ...READ_EXACT_WORK,
@@ -71,11 +70,10 @@ const READ_OPS = new Set([
   ...Object.keys(READ_REQUIRED_SELECTOR),
 ]);
 const DEMO_REQUIRED_SELECTOR = {
-  'update.inspect': 'update_id',
   'goal.inspect': 'goal_id',
   'lesson.inspect': 'lesson_id',
 };
-const DEMO_LIST_OPS = new Set(['updates.list', 'goals.list', 'lessons.list']);
+const DEMO_LIST_OPS = new Set(['goals.list', 'lessons.list']);
 const READ_ID_KEYS = new Set(['work_id', 'session_id', 'request_id', 'claim_id', 'execution_id',
   'handoff_id', 'evidence_id', 'review_round_id', 'artifact_id', 'export_id', 'workstream_id',
   'change_id', 'member_actor_id', 'category', 'recipient_person_id', 'decision_id',
@@ -96,6 +94,10 @@ const READ_ECHOES = {
   'work.observe': [{ path: ['work_id'], selector: 'work_id' }],
   'sources.inspect': [{ path: ['work_id'], selector: 'work_id' }],
   'documents.list': [{ path: ['work_id'], selector: 'work_id' }],
+  'document.history': [
+    { path: ['path'], selector: 'source_path' },
+    { path: ['work_id'], selector: 'work_id' },
+  ],
   'review.rounds': [{ path: ['work_id'], selector: 'work_id' }],
   'handoff.list': [{ path: ['work_id'], selector: 'work_id' }],
   'dependencies.list': [{ path: ['work_id'], selector: 'work_id' }],
@@ -167,6 +169,8 @@ function validateReadQuery(query, additionalOps = null) {
     allowIds('workstream_id');
   } else if (op === 'sources.inspect' || op === 'documents.list' || op === 'dependencies.list' || op === 'team.reviewers') {
     allowIds('work_id', 'workstream_id');
+  } else if (op === 'document.history') {
+    allowIds('work_id');
   } else if (op === 'decisions.list') {
     allowIds('work_id', 'workstream_id', 'decision_id');
     allowed.add('decision_state');
@@ -218,7 +222,7 @@ function validateReadQuery(query, additionalOps = null) {
   }
   if (op === 'work.search' && query.search === undefined) return invalidRead('Selector search is required');
   if ('cursor' in query) {
-    if (typeof query.cursor !== 'string' || query.cursor.length === 0 || query.cursor.length > 4096) {
+    if (!isBoundedCursor(query.cursor)) {
       return invalidRead('Selector cursor is invalid');
     }
   }
@@ -280,7 +284,10 @@ function validReadResponse(reply, op) {
       || data.next_cursor.length > 4096)) return false;
   if (op === 'sources.inspect') return validRequiredSources(reply);
   if (op === 'documents.list') return validDocuments(reply);
+  if (op === 'document.history') return validDocumentHistory(reply);
   if (op === 'decisions.list') return validDecisions(reply);
+  if (op === 'updates.list') return validUpdatesList(reply);
+  if (op === 'update.inspect') return validUpdateInspect(reply);
   if (op === 'review.rounds') return validReviewRounds(reply);
   if (op === 'review.queue' || op === 'team.reviewers') return validReviewQueue(reply, op);
   if (op === 'handoff.list') return validHandoffs(reply);
@@ -400,6 +407,56 @@ function validDocuments(reply) {
       && item.name === null && item.summary === null && item.sha256 === null && item.byte_length === null
       && (item.status !== 'restricted' || item.path === null && item.reason === 'permission_restricted'
         && !('content_work_id' in item));
+  });
+}
+
+function validDocumentHistory(reply) {
+  const data = reply.data;
+  const asOf = asObject(data.as_of);
+  const dataFields = new Set([
+    'path', 'work_id', 'items', 'total', 'limit', 'truncated', 'order',
+    'source_kind', 'attribution_basis', 'read_only', 'execution_authorized', 'as_of',
+  ]);
+  const itemFields = new Set([
+    'source_snapshot_id', 'recorded_at_unix_ms', 'digest_prefix', 'submitted_by',
+  ]);
+  const boundedName = (value) => typeof value === 'string' && value.length > 0
+    && Array.from(value).length <= 128;
+  if (!Object.keys(data).every((key) => dataFields.has(key))
+    || !isControlledSourcePath(data.path)
+    || !(data.work_id === null || isBoundedId(data.work_id))
+    || !Array.isArray(data.items) || data.items.length < 1 || data.items.length > 20
+    || data.limit !== 20
+    || !Number.isSafeInteger(data.total) || data.total < data.items.length
+    || typeof data.truncated !== 'boolean'
+    || data.truncated !== (data.total > data.limit)
+    || (data.truncated ? data.items.length !== data.limit : data.items.length !== data.total)
+    || data.order !== 'newest_first'
+    || data.source_kind !== 'registered_source_snapshots'
+    || data.attribution_basis !== 'snapshot_submitter'
+    || data.read_only !== true || data.execution_authorized !== false
+    || !asOf || Object.keys(asOf).length !== 3
+    || !Number.isSafeInteger(asOf.at_unix_ms) || asOf.at_unix_ms < 0
+    || asOf.source_snapshot_id !== reply.source_snapshot_id
+    || asOf.project_revision !== reply.project_revision) return false;
+  const seenSnapshots = new Set();
+  return data.items.every((item) => {
+    if (!asObject(item)
+      || Object.keys(item).length !== itemFields.size
+      || Object.keys(item).some((key) => !itemFields.has(key))
+      || !isBoundedId(item.source_snapshot_id)
+      || seenSnapshots.has(item.source_snapshot_id)
+      || !Number.isSafeInteger(item.recorded_at_unix_ms) || item.recorded_at_unix_ms < 0
+      || typeof item.digest_prefix !== 'string' || !/^[0-9a-f]{12}$/.test(item.digest_prefix)) {
+      return false;
+    }
+    seenSnapshots.add(item.source_snapshot_id);
+    if (item.submitted_by === null) return true;
+    const submitter = asObject(item.submitted_by);
+    return Boolean(submitter
+      && Object.keys(submitter).length === 2
+      && isBoundedId(submitter.person_id)
+      && boundedName(submitter.display_name));
   });
 }
 
@@ -654,7 +711,208 @@ function validRequiredSources(reply) {
 }
 
 function isBoundedCursor(value) {
-  return typeof value === 'string' && value.length > 0 && value.length <= 4096;
+  return typeof value === 'string' && value.length > 0 && value.length <= 4096
+    && !/[\x00-\x1f\x7f]/.test(value);
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasExactKeys(value, keys) {
+  return isPlainObject(value) && Object.keys(value).length === keys.length
+    && keys.every((key) => Object.hasOwn(value, key));
+}
+
+function validCalendarDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const day = Number(value.slice(8, 10));
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [0, 31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month] || 0;
+  return year >= 1 && month >= 1 && month <= 12 && day >= 1 && day <= days;
+}
+
+function validPeriodKey(kind, key) {
+  if (typeof key !== 'string' || key.length === 0 || key.length > 64 || /[\p{Cc}]/u.test(key)) return false;
+  if (kind === 'week') return /^\d{4}-W(0[1-9]|[1-4]\d|5[0-3])$/.test(key);
+  if (kind === 'month') return /^\d{4}-(0[1-9]|1[0-2])$/.test(key);
+  return false;
+}
+
+const PERIOD_UPDATE_ENVELOPE_KEYS = [
+  'protocol_version', 'scope_id', 'selection_basis', 'coordinator_epoch',
+  'project_status', 'source_snapshot_id', 'project_revision', 'data',
+];
+const PERIOD_UPDATE_AS_OF_KEYS = ['at_unix_ms', 'source_snapshot_id', 'project_revision'];
+const PERIOD_UPDATE_RECORD_KEYS = [
+  'update_id', 'period_kind', 'period_key', 'starts_on', 'ends_on', 'status', 'summary',
+  'author', 'recorded_at_unix_ms', 'version', 'supersedes_update_id', 'fact_snapshot_ref', 'current',
+];
+const PERIOD_UPDATE_AUTHOR_KEYS = ['person_id', 'display_name'];
+const PERIOD_UPDATE_LIST_DATA_KEYS = [
+  'project_id', 'items', 'next_cursor', 'truncated', 'as_of', 'execution_authorized',
+];
+const PERIOD_UPDATE_INSPECT_DATA_KEYS = [
+  'project_id', 'update', 'fact_snapshot', 'fact_snapshot_coverage', 'as_of', 'execution_authorized',
+];
+const PERIOD_UPDATE_FACT_SNAPSHOT_KEYS = [
+  'verified', 'completed_without_independent_review', 'waits_opened', 'waits_cleared',
+  'review_returned', 'delivered_unverified', 'decisions_made',
+];
+const PERIOD_UPDATE_WAIT_KINDS = new Set(['decision', 'dependency', 'review', 'external', 'unknown']);
+
+function validPeriodUpdateEnvelope(reply) {
+  return hasExactKeys(reply, PERIOD_UPDATE_ENVELOPE_KEYS)
+    && reply.protocol_version === 1
+    && reply.scope_id === 'main'
+    && reply.selection_basis === 'project'
+    && isBoundedId(reply.coordinator_epoch)
+    && isBoundedId(reply.project_status)
+    && isBoundedId(reply.source_snapshot_id)
+    && typeof reply.project_revision === 'string' && /^(0|[1-9]\d*)$/.test(reply.project_revision)
+    && Number.isSafeInteger(Number(reply.project_revision))
+    && isPlainObject(reply.data);
+}
+
+function validPeriodUpdateAsOf(asOf, reply) {
+  return hasExactKeys(asOf, PERIOD_UPDATE_AS_OF_KEYS)
+    && Number.isSafeInteger(asOf.at_unix_ms) && asOf.at_unix_ms >= 0
+    && asOf.source_snapshot_id === reply.source_snapshot_id
+    && asOf.project_revision === reply.project_revision;
+}
+
+function validPeriodUpdateRecord(item, { requireCurrent = false } = {}) {
+  if (!hasExactKeys(item, PERIOD_UPDATE_RECORD_KEYS)
+    || !isBoundedId(item.update_id)
+    || !['week', 'month'].includes(item.period_kind)
+    || !validPeriodKey(item.period_kind, item.period_key)
+    || !validCalendarDate(item.starts_on)
+    || !validCalendarDate(item.ends_on)
+    || item.ends_on < item.starts_on
+    || !['ok', 'risk', 'off'].includes(item.status)
+    || typeof item.summary !== 'string' || item.summary.trim().length === 0
+    || Array.from(item.summary).length > 200 || /[\p{Cc}]/u.test(item.summary)
+    || !hasExactKeys(item.author, PERIOD_UPDATE_AUTHOR_KEYS)
+    || !isBoundedId(item.author.person_id)
+    || typeof item.author.display_name !== 'string' || item.author.display_name.trim().length === 0
+    || Array.from(item.author.display_name).length > 128 || /[\p{Cc}]/u.test(item.author.display_name)
+    || !Number.isSafeInteger(item.recorded_at_unix_ms) || item.recorded_at_unix_ms < 0
+    || typeof item.version !== 'string' || !/^[1-9]\d*$/.test(item.version)
+    || !Number.isSafeInteger(Number(item.version))
+    || !(item.fact_snapshot_ref === null || isBoundedId(item.fact_snapshot_ref))
+    || (requireCurrent ? item.current !== true : typeof item.current !== 'boolean')) {
+    return false;
+  }
+  return item.version === '1'
+    ? item.supersedes_update_id === null
+    : isBoundedId(item.supersedes_update_id) && item.supersedes_update_id !== item.update_id;
+}
+
+function validCountedWorkIds(value, unique) {
+  if (!hasExactKeys(value, ['count', 'work_ids'])
+    || !Array.isArray(value.work_ids)
+    || !Number.isSafeInteger(value.count)
+    || value.count !== value.work_ids.length) {
+    return false;
+  }
+  for (let i = 0; i < value.work_ids.length; i += 1) {
+    const id = value.work_ids[i];
+    if (!isBoundedId(id)) return false;
+    if (i > 0 && (unique ? value.work_ids[i - 1] >= id : value.work_ids[i - 1] > id)) return false;
+  }
+  return true;
+}
+
+function validWaitMetric(value) {
+  if (!hasExactKeys(value, ['count', 'kinds'])
+    || !Array.isArray(value.kinds)
+    || !Number.isSafeInteger(value.count) || value.count < 0) {
+    return false;
+  }
+  const seenKinds = new Set();
+  let total = 0;
+  for (const entry of value.kinds) {
+    if (!hasExactKeys(entry, ['kind', 'count', 'work_ids'])
+      || !PERIOD_UPDATE_WAIT_KINDS.has(entry.kind) || seenKinds.has(entry.kind)
+      || !Array.isArray(entry.work_ids) || entry.work_ids.length === 0
+      || !Number.isSafeInteger(entry.count) || entry.count !== entry.work_ids.length) {
+      return false;
+    }
+    for (let i = 0; i < entry.work_ids.length; i += 1) {
+      const id = entry.work_ids[i];
+      if (!isBoundedId(id)) return false;
+      if (i > 0 && entry.work_ids[i - 1] > id) return false;
+    }
+    seenKinds.add(entry.kind);
+    total += entry.count;
+  }
+  return total === value.count;
+}
+
+function validPeriodUpdateFactSnapshot(snapshot) {
+  return hasExactKeys(snapshot, PERIOD_UPDATE_FACT_SNAPSHOT_KEYS)
+    && validCountedWorkIds(snapshot.verified, true)
+    && validCountedWorkIds(snapshot.completed_without_independent_review, true)
+    && validWaitMetric(snapshot.waits_opened)
+    && validWaitMetric(snapshot.waits_cleared)
+    && validCountedWorkIds(snapshot.review_returned, true)
+    && validCountedWorkIds(snapshot.delivered_unverified, true)
+    && validCountedWorkIds(snapshot.decisions_made, false);
+}
+
+function validPeriodUpdateFactSnapshotCoverage(coverage) {
+  return hasExactKeys(coverage, ['complete', 'hidden_work_count'])
+    && typeof coverage.complete === 'boolean'
+    && Number.isSafeInteger(coverage.hidden_work_count) && coverage.hidden_work_count >= 0
+    && coverage.complete === (coverage.hidden_work_count === 0);
+}
+
+function comparePeriodUpdateKeyDesc(left, right) {
+  for (const field of ['starts_on', 'ends_on', 'period_key', 'update_id']) {
+    if (left[field] !== right[field]) return left[field] > right[field] ? -1 : 1;
+  }
+  return 0;
+}
+
+function validUpdatesList(reply) {
+  if (!validPeriodUpdateEnvelope(reply)) return false;
+  const data = reply.data;
+  if (!hasExactKeys(data, PERIOD_UPDATE_LIST_DATA_KEYS)
+    || !isBoundedId(data.project_id)
+    || !Array.isArray(data.items) || data.items.length > 100
+    || !(data.next_cursor === null || isBoundedCursor(data.next_cursor))
+    || typeof data.truncated !== 'boolean' || data.truncated !== (data.next_cursor !== null)
+    || data.execution_authorized !== false
+    || !validPeriodUpdateAsOf(data.as_of, reply)) {
+    return false;
+  }
+  const seenIds = new Set();
+  for (let i = 0; i < data.items.length; i += 1) {
+    const item = data.items[i];
+    if (!validPeriodUpdateRecord(item, { requireCurrent: true }) || seenIds.has(item.update_id)) return false;
+    if (i > 0 && comparePeriodUpdateKeyDesc(data.items[i - 1], item) >= 0) return false;
+    seenIds.add(item.update_id);
+  }
+  return true;
+}
+
+function validUpdateInspect(reply) {
+  if (!validPeriodUpdateEnvelope(reply)) return false;
+  const data = reply.data;
+  if (!hasExactKeys(data, PERIOD_UPDATE_INSPECT_DATA_KEYS)
+    || !isBoundedId(data.project_id)
+    || data.execution_authorized !== false
+    || !validPeriodUpdateAsOf(data.as_of, reply)
+    || !validPeriodUpdateRecord(data.update, { requireCurrent: false })) {
+    return false;
+  }
+  if (data.update.fact_snapshot_ref === null) {
+    return data.fact_snapshot === null && data.fact_snapshot_coverage === null;
+  }
+  return validPeriodUpdateFactSnapshot(data.fact_snapshot)
+    && validPeriodUpdateFactSnapshotCoverage(data.fact_snapshot_coverage);
 }
 
 function validPageCoverage(data, query, positionField) {
@@ -676,7 +934,7 @@ function validPageCoverage(data, query, positionField) {
  * response contract. No read may grant execution. strictWorkstream
  * additionally pins the response workstream (coordination detail selects one).
  */
-function readAttributionError(query, result, { strictWorkstream } = {}) {
+function readAttributionError(query, result, { strictWorkstream, project } = {}) {
   // The catalog page has no scope/snapshot/object attribution envelope.
   // Its project and identity are bound by the forwarded request path and
   // cookie session; the service filters visible streams and binds cursors to
@@ -740,6 +998,14 @@ function readAttributionError(query, result, { strictWorkstream } = {}) {
     || query.work_id && data.items.some((item) => item.content_work_id && item.content_work_id !== query.work_id))) {
     return { code: 'BadGateway', message: 'Documents are not attributable to the requested scope' };
   }
+  if (query.op === 'document.history' && (
+    data.path !== query.source_path
+    || data.work_id !== (query.work_id ?? null)
+    || result.selection_basis !== (query.work_id ? 'work' : 'project')
+    || (query.work_id && (!isBoundedId(result.workstream_id)
+      || typeof result.authority_version !== 'string' || !/^[1-9]\d*$/.test(result.authority_version))))) {
+    return { code: 'BadGateway', message: 'Document history is not attributable to the requested scope' };
+  }
   if (query.op === 'decisions.list' && (
     data.items.length > (query.limit ?? 20)
     || data.next_cursor !== null && data.items.length !== (query.limit ?? 20)
@@ -789,6 +1055,15 @@ function readAttributionError(query, result, { strictWorkstream } = {}) {
       || typeof result.authority_version !== 'string' || !/^[1-9]\d*$/.test(result.authority_version))
     || query.work_id && data.items.some((item) => item.work_id !== query.work_id))) {
     return { code: 'BadGateway', message: 'Dependency observations are not attributable to the requested scope' };
+  }
+  if (query.op === 'updates.list' && (
+    (project != null && data.project_id !== project)
+    || data.items.length > (query.limit ?? 20)
+    || data.next_cursor !== null && (data.items.length !== (query.limit ?? 20) || data.next_cursor === query.cursor))) {
+    return { code: 'BadGateway', message: 'Period updates are not attributable to the requested project or page' };
+  }
+  if (query.op === 'update.inspect' && project != null && data.project_id !== project) {
+    return { code: 'BadGateway', message: 'Period update is not attributable to the requested project' };
   }
   if (data.execution_authorized === true) {
     return { code: 'BadGateway', message: 'A Team read response never authorizes execution' };
@@ -840,7 +1115,7 @@ function readAttributionError(query, result, { strictWorkstream } = {}) {
  * another clock's value; a plane whose measurement failed says failed with
  * the error code (see failedFreshness) instead of vanishing with the error.
  */
-function readFreshness(result, readAtMs) {
+function readFreshness(result, readAtMs, { asOfClock = null } = {}) {
   const data = result && result.data && typeof result.data === 'object' && !Array.isArray(result.data)
     ? result.data : null;
   const reporting = (data && (data.reporting || (data.observation && data.observation.reporting))) || null;
@@ -868,11 +1143,15 @@ function readFreshness(result, readAtMs) {
     ? result.source_snapshot_id : null;
   const epoch = result && typeof result.coordinator_epoch === 'string' && result.coordinator_epoch
     ? result.coordinator_epoch : null;
-  const queried = Number.isFinite(data && data.snapshot && data.snapshot.queried_at_unix_ms)
-    ? data.snapshot.queried_at_unix_ms
-    : Number.isFinite(data && data.observed_at_unix_ms) ? data.observed_at_unix_ms
-      : Number.isFinite(data && data.observation && data.observation.observed_at_unix_ms)
-        ? data.observation.observed_at_unix_ms : null;
+  const queried = asOfClock === 'read_at'
+    ? readAtMs
+    : asOfClock === 'as_of' && Number.isFinite(data && data.as_of && data.as_of.at_unix_ms)
+      ? data.as_of.at_unix_ms
+      : Number.isFinite(data && data.snapshot && data.snapshot.queried_at_unix_ms)
+        ? data.snapshot.queried_at_unix_ms
+        : Number.isFinite(data && data.observed_at_unix_ms) ? data.observed_at_unix_ms
+          : Number.isFinite(data && data.observation && data.observation.observed_at_unix_ms)
+            ? data.observation.observed_at_unix_ms : null;
   const authoritative = revision && source && epoch
     ? {
       ...resolveCurrency({
@@ -2550,6 +2829,23 @@ function createTeamBridge(opts) {
       return routes['POST /api/team/read'](url, { project: url.searchParams.get('project'), query }, req, res);
     },
 
+    'GET /api/team/document-history': async (url, _body, req, res) => {
+      const allowed = new Set(['project', 'source_path', 'work_id', 'max_context_bytes']);
+      if ([...url.searchParams.keys()].some((key) => !allowed.has(key) || url.searchParams.getAll(key).length !== 1)) {
+        return { ok: false, error: { code: 'InvalidInput', message: 'One bounded document history read required' },
+          freshness: unmeasuredFreshness(Date.now()) };
+      }
+      const query = { protocol_version: 1, op: 'document.history' };
+      for (const key of ['source_path', 'work_id']) {
+        if (url.searchParams.has(key)) query[key] = url.searchParams.get(key);
+      }
+      if (url.searchParams.has('max_context_bytes')) {
+        const value = url.searchParams.get('max_context_bytes');
+        query.max_context_bytes = /^[1-9]\d*$/.test(value) ? Number(value) : null;
+      }
+      return routes['POST /api/team/read'](url, { project: url.searchParams.get('project'), query }, req, res);
+    },
+
     'GET /api/team/review-queue': async (url, _body, req, res) => {
       const allowed = new Set(['project', 'work_id', 'workstream_id', 'recipient_person_id', 'cursor', 'limit', 'max_context_bytes']);
       if ([...url.searchParams.keys()].some((key) => !allowed.has(key) || url.searchParams.getAll(key).length !== 1)) {
@@ -2635,32 +2931,87 @@ function createTeamBridge(opts) {
       return routes['POST /api/team/read'](url, { project: url.searchParams.get('project'), query }, req, res);
     },
 
+    'GET /api/team/updates': async (url, _body, req, res) => {
+      const allowed = new Set(['project', 'cursor', 'limit', 'max_context_bytes']);
+      if ([...url.searchParams.keys()].some((key) => !allowed.has(key) || url.searchParams.getAll(key).length !== 1)) {
+        return { ok: false, error: { code: 'InvalidInput', message: 'One bounded period updates read required' },
+          freshness: unmeasuredFreshness(now()) };
+      }
+      const project = url.searchParams.get('project');
+      if (!isBoundedId(project)) {
+        return { ok: false, error: { code: 'InvalidInput', message: 'One bounded period updates read required' },
+          freshness: unmeasuredFreshness(now()) };
+      }
+      const query = { protocol_version: 1, op: 'updates.list' };
+      if (url.searchParams.has('cursor')) {
+        const cursor = url.searchParams.get('cursor');
+        if (!isBoundedCursor(cursor)) {
+          return { ok: false, error: { code: 'InvalidInput', message: 'Selector cursor is invalid' },
+            freshness: unmeasuredFreshness(now()) };
+        }
+        query.cursor = cursor;
+      }
+      for (const key of ['limit', 'max_context_bytes']) {
+        if (url.searchParams.has(key)) {
+          const value = url.searchParams.get(key);
+          query[key] = /^[1-9]\d*$/.test(value) ? Number(value) : null;
+        }
+      }
+      return routes['POST /api/team/read'](url, { project, query }, req, res);
+    },
+
+    'GET /api/team/update': async (url, _body, req, res) => {
+      const allowed = new Set(['project', 'id']);
+      if ([...url.searchParams.keys()].some((key) => !allowed.has(key) || url.searchParams.getAll(key).length !== 1)) {
+        return { ok: false, error: { code: 'InvalidInput', message: 'Project and update identity required' },
+          freshness: unmeasuredFreshness(now()) };
+      }
+      const project = url.searchParams.get('project');
+      const id = url.searchParams.get('id');
+      if (!isBoundedId(project) || !isBoundedId(id)) {
+        return { ok: false, error: { code: 'InvalidInput', message: 'Project and update identity required' },
+          freshness: unmeasuredFreshness(now()) };
+      }
+      return routes['POST /api/team/read'](url, {
+        project,
+        query: { protocol_version: 1, op: 'update.inspect', update_id: id },
+      }, req, res);
+    },
+
     'POST /api/team/read': async (_url, body, req, res) => {
       if (!TEAM.live && !TEAM.demoOrganization) return { ok: false, error: { code: 'Unsupported', message: 'Live Team coordination required' } };
       const input = asObject(body);
-      if (!input || typeof input.project !== 'string' || !input.project || input.project.length > 128
+      if (!input || !isBoundedId(input.project)
         || Object.keys(input).some(k => !['project', 'query'].includes(k)))
         return { ok: false, error: { code: 'InvalidInput', message: 'Project and one bounded read query required' },
-          freshness: unmeasuredFreshness(Date.now()) };
+          freshness: unmeasuredFreshness(now()) };
       const checked = validateReadQuery(input.query, TEAM.demoOrganization ? DEMO_FUTURE_READ_OPS : null);
-      if (checked.error) return { ok: false, error: checked.error, freshness: unmeasuredFreshness(Date.now()) };
+      if (checked.error) return { ok: false, error: checked.error, freshness: unmeasuredFreshness(now()) };
       // The upstream reauthorizes this read against the caller's own cookie
       // session; the adapter adds no identity and grants no authority itself.
       const maxBytes = READ_RESPONSE_LIMIT[input.query.op] || READ_RESPONSE_LIMIT.default;
       const reply = await inboxRead(input.project, input.query, req, res, maxBytes);
       if (reply.ok && !validReadResponse(reply.result, input.query.op))
         return { ok: false, error: { code: 'BadGateway', message: 'Invalid Team read response' },
-          freshness: failedFreshness('BadGateway', Date.now()) };
+          freshness: failedFreshness('BadGateway', now()) };
       // One shared attribution semantics with the coordination detail route
       // (AWR-OBS-002): the response must belong to the requested
       // work/workstream/scope and must never grant execution. capabilities is
       // a flat discovery response and carries no attributable object.
       if (reply.ok && input.query.op !== 'capabilities') {
-        const attribution = readAttributionError(input.query, reply.result, { strictWorkstream: false });
-        if (attribution) return { ok: false, error: attribution, freshness: failedFreshness(attribution.code, Date.now()) };
+        const attribution = readAttributionError(input.query, reply.result, {
+          strictWorkstream: false,
+          project: input.project,
+        });
+        if (attribution) return { ok: false, error: attribution, freshness: failedFreshness(attribution.code, now()) };
       }
-      if (reply.ok) return { ...reply, query: input.query, freshness: readFreshness(reply.result, Date.now()) };
-      return { ...reply, freshness: failedFreshness(reply.error.code, Date.now()) };
+      if (reply.ok) {
+        const isPeriodUpdate = input.query.op === 'updates.list' || input.query.op === 'update.inspect';
+        const asOfClock = isPeriodUpdate ? (TEAM.demoOrganization ? 'read_at' : 'as_of') : null;
+        return { ...reply, query: input.query, freshness: readFreshness(reply.result, now(), { asOfClock }) };
+      }
+      if (READ_AUTH_FAILURES.has(reply.error?.code)) clearOverviewCache(req);
+      return { ...reply, freshness: failedFreshness(reply.error.code, now()) };
     },
 
     'GET /api/team/work': async (url, _body, req, res) => {

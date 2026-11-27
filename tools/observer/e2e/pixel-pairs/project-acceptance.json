@@ -1,0 +1,44 @@
+{
+  "page": "project-acceptance",
+  "proto": "#p=project&id=orders&tab=delivery",
+  "app": "/projects/P-001?tab=acceptance",
+  "ready": "[data-testid=\"acceptance-table\"]",
+  "protoReady": ".block table.t",
+  "notes": {
+    "geometryExclusions": [
+      "Probe coordinates are anchored at the project page title (.hero h1 / [data-testid=\"project-title\"]), excluding shell-only header/sidebar offsets.",
+      "Zero style skips: every typography, color, border, padding, margin, radius, and shadow property is compared verbatim against the live prototype.",
+      "Element widths/heights (__w, __h) and downstream positions (__x, __y) that depend on font metric wrapping across OS fonts or text widths are skipped only where noted."
+    ]
+  },
+  "pairs": [
+    ["project title", ".hero h1", "[data-testid=\"project-title\"]", ["TEXT", "margin-top", "margin-bottom"]],
+    ["back button", ".back", "[data-testid=\"project-back\"]", ["BOX", "TEXT", "margin-top"], {"skip": ["__y"]}],
+    ["hero meta", ".hero .meta", "[data-testid=\"project-meta\"]", ["BOX", "TEXT", "margin-top"], {"skip": ["__w"]}],
+    ["tabs bar", ".tabs2", ".project-tabs .ant-tabs-nav", ["BOX", "border-bottom-color", "margin-bottom"], {"skip": ["__w"]}],
+    ["active tab", ".tabs2 button[aria-selected=\"true\"]", ".project-tabs .ant-tabs-tab-active .ant-tabs-tab-btn", ["TEXT"], {"skip": ["__h", "__y"]}],
+    ["lead sentence", ".lead", "[data-testid=\"acceptance-lead\"]", ["TEXT", "margin-top", "margin-bottom"], {"skip": ["__w"]}],
+    ["lead secondary span", ".lead > span", "[data-testid=\"acceptance-lead\"] .acceptance-lead-rest", ["TEXT"], {"skip": ["__x", "__w"]}],
+    ["section card", ".block", ".acceptance-section", ["BOX", "PAINT"], {"skip": ["__w", "__h"]}],
+    ["section head", ".block-head", ".acceptance-section .ant-card-head", ["BOX", "border-bottom-color"], {"skip": ["__w"]}],
+    ["section title", ".block-head h2", ".acceptance-section .obs-section-title", ["TEXT"], {"skip": ["__w"]}],
+    ["section count", ".block-head .n", "[data-testid=\"acceptance-section-count\"]", ["TEXT"], {"skip": ["__x", "__w"]}],
+    ["table header task", ".block table.t thead th:nth-child(1)", ".acceptance-table thead th:nth-child(1)", ["BOX", "TEXT", "border-bottom-color"], {"skip": ["__w"]}],
+    ["table header version", ".block table.t thead th:nth-child(2)", ".acceptance-table thead th:nth-child(2)", ["BOX", "TEXT", "border-bottom-color"], {"skip": ["__x", "__w"]}],
+    ["table header checks", ".block table.t thead th:nth-child(3)", ".acceptance-table thead th:nth-child(3)", ["BOX", "TEXT", "border-bottom-color"], {"skip": ["__x", "__w"]}],
+    ["table header review", ".block table.t thead th:nth-child(4)", ".acceptance-table thead th:nth-child(4)", ["BOX", "TEXT", "border-bottom-color"], {"skip": ["__x", "__w"]}],
+    ["table header integration", ".block table.t thead th:nth-child(5)", ".acceptance-table thead th:nth-child(5)", ["BOX", "TEXT", "border-bottom-color"], {"skip": ["__x", "__w"]}],
+    ["row 1 task cell", ".block table.t tbody tr:nth-child(1) td:nth-child(1)", ".acceptance-table tbody tr:nth-child(1) td:nth-child(1)", ["BOX", "TEXT", "background-color"], {"skip": ["__w", "__h"]}],
+    ["row 1 task title", ".block table.t tbody tr:nth-child(1) td:nth-child(1) > div:first-child", ".acceptance-table tbody tr:nth-child(1) .acceptance-task-title", ["TEXT"], {"skip": ["__w"]}],
+    ["row 1 submitter", ".block table.t tbody tr:nth-child(1) td:nth-child(1) .sm", ".acceptance-table tbody tr:nth-child(1) td:nth-child(1) .acceptance-sm", ["TEXT"], {"skip": ["__w"]}],
+    ["row 1 version cell", ".block table.t tbody tr:nth-child(1) td:nth-child(2)", ".acceptance-table tbody tr:nth-child(1) td:nth-child(2)", ["BOX", "TEXT"], {"skip": ["__x", "__w", "__h"]}],
+    ["row 1 check chip", ".block table.t tbody tr:nth-child(1) .chip:first-child", ".acceptance-table tbody tr:nth-child(1) .acceptance-chip:first-child", ["BOX", "TEXT", "background-color"], {"skip": ["__x", "__w"]}],
+    ["row 1 review tag ok", ".block table.t tbody tr:nth-child(1) .tag", ".acceptance-table tbody tr:nth-child(1) .obs-tag", ["BOX", "TEXT", "background-color"], {"skip": ["__x", "__w"]}],
+    ["row 1 review meta", ".block table.t tbody tr:nth-child(1) td:nth-child(4) .sm", ".acceptance-table tbody tr:nth-child(1) .acceptance-review-meta", ["TEXT", "margin-top"], {"skip": ["__x", "__w", "__h"]}],
+    ["row 1 integration cell", ".block table.t tbody tr:nth-child(1) td:nth-child(5) .sm", ".acceptance-table tbody tr:nth-child(1) td:nth-child(5) .acceptance-sm", ["TEXT"], {"skip": ["__x", "__w"]}],
+    ["row 2 review tag open", ".block table.t tbody tr:nth-child(2) .tag", ".acceptance-table tbody tr:nth-child(2) .obs-tag", ["BOX", "TEXT", "background-color"], {"skip": ["__x", "__y", "__w"]}],
+    ["row 3 rejected highlight", ".block table.t tbody tr:nth-child(3) td:nth-child(1)", ".acceptance-table tbody tr:nth-child(3) td:nth-child(1)", ["BOX", "background-color", "border-top-color"], {"skip": ["__y", "__w", "__h"]}],
+    ["row 3 review tag rejected", ".block table.t tbody tr:nth-child(3) .tag", ".acceptance-table tbody tr:nth-child(3) .obs-tag", ["BOX", "TEXT", "background-color"], {"skip": ["__x", "__y", "__w"]}],
+    ["independent review pnote", ".block .pnote", "[data-testid=\"acceptance-independent-note\"]", ["BOX", "TEXT", "border-top-color"], {"skip": ["__y", "__w", "__h"]}]
+  ]
+}

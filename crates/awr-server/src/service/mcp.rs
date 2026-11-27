@@ -1277,6 +1277,12 @@ fn catalog() -> Vec<Tool> {
             "else":{"not":{"anyOf":[{"required":["decision_id"]},{"required":["decision_state"]}]}}},
         {"if":{"properties":{"op":{"const":"documents.list"}},"required":["op"]},
             "then":{"not":{"required":["session_id"]}}},
+        {"if":{"properties":{"op":{"const":"document.history"}},"required":["op"]},
+            "then":{"required":["source_path"],"not":{"anyOf":[
+                {"required":["session_id"]},{"required":["workstream_id"]},
+                {"required":["limit"]},{"required":["cursor"]},
+                {"required":["search"]},{"required":["expected_sha256"]}
+            ]}}},
         {"if":{"properties":{"op":{"const":"dependencies.list"}},"required":["op"]},
             "then":{"not":{"required":["session_id"]}}},
         {"if":{"properties":{"op":{"const":"handoff.list"}},"required":["op"]},

@@ -61,6 +61,32 @@ beforeEach(async () => {
 });
 
 describe('shared workbench frame and My Work', () => {
+  it('uses the shared chain control with focus-only navigation, Tab and activation', async () => {
+    const user = userEvent.setup();
+    renderFrame();
+    const group = screen.getByRole('group', { name: '链路' });
+    expect(group.classList.contains('obs-segmented-control')).toBe(true);
+    const buttons = within(group).getAllByRole('button');
+    expect(buttons.length).toBeGreaterThan(1);
+    buttons[0].focus();
+    await user.keyboard('{End}');
+    expect(document.activeElement).toBe(buttons.at(-1));
+    expect(buttons[0].getAttribute('aria-pressed')).toBe('true');
+    await user.keyboard('{Home}{ArrowLeft}{ArrowRight}');
+    expect(document.activeElement).toBe(buttons[0]);
+    await user.tab();
+    expect(document.activeElement).toBe(buttons[1]);
+    await user.tab({ shift: true });
+    expect(document.activeElement).toBe(buttons[0]);
+    await user.keyboard('{End}');
+    await user.tab();
+    expect(group.contains(document.activeElement)).toBe(false);
+    buttons[1].focus();
+    await user.keyboard(' ');
+    expect(buttons[1].getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('location').getAttribute('data-search')).toContain('chain=1');
+  });
+
   it('keeps the prototype block order, verdict, four numbers, chain, rail and tabs', () => {
     const { container } = renderFrame();
     const page = container.querySelector('[data-testid="workbench-frame"]')!;

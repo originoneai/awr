@@ -25,6 +25,7 @@ import {
   Notice,
   PageHeader,
   RowList,
+  SegmentedControl,
   StatusLamp,
   TaskStatusTag,
   TodoRail,
@@ -567,11 +568,13 @@ export function WorkbenchFrame({ model, projectKey, projectName, projectTitles, 
                 <h2>{t('workbench.home.chainTitle')}</h2>
                 {model.chains.length > 0 ? <span className="obs-tag">{t('workbench.home.chainCount', { count: model.chains.length })}</span> : null}
                 {model.chains.length > 0 ? (
-                  <div className="obs-workbench-chain-switch" role="group" aria-label={t('workbench.home.chainGroup')}>
-                    {model.chainTabs.map((tab, index) => (
-                      <button key={tab.id} type="button" aria-pressed={index === activeChainIndex} onClick={() => updateParams({ chain: String(index) })}>{tab.label}</button>
-                    ))}
-                  </div>
+                  <SegmentedControl
+                    className="obs-workbench-chain-switch"
+                    label={t('workbench.home.chainGroup')}
+                    value={String(activeChainIndex)}
+                    options={model.chainTabs.map((tab, index) => ({ value: String(index), label: tab.label }))}
+                    onChange={(chain) => updateParams({ chain })}
+                  />
                 ) : null}
               </div>
             )}

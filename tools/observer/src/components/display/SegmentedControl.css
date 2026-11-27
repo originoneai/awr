@@ -1,0 +1,44 @@
+.obs-segmented-control {
+  display: inline-flex;
+  gap: var(--craft-perspective-gap);
+  padding: var(--craft-perspective-padding);
+  border-radius: var(--craft-radius-control);
+  background: var(--craft-color-raised);
+}
+
+.obs-segmented-option {
+  appearance: none;
+  flex: 0 0 auto;
+  height: var(--craft-perspective-height);
+  margin: 0;
+  padding: 0 var(--craft-perspective-option-padding-inline);
+  border: 0;
+  border-radius: var(--craft-perspective-radius);
+  background: transparent;
+  color: var(--craft-color-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--craft-text-small);
+  line-height: var(--craft-leading-body);
+  white-space: nowrap;
+  transition:
+    background-color var(--craft-motion-feedback) var(--craft-motion-easing),
+    color var(--craft-motion-feedback) var(--craft-motion-easing);
+}
+
+.obs-segmented-option[aria-pressed="true"] {
+  background: var(--craft-color-surface);
+  color: var(--craft-color-ink);
+  box-shadow: var(--craft-perspective-selected-shadow);
+  font-weight: var(--ant-font-weight-strong);
+}
+
+.obs-segmented-option:hover {
+  color: var(--craft-color-ink);
+}
+
+.obs-segmented-control .obs-segmented-option:focus-visible {
+  outline: var(--ant-control-outline-width) solid var(--craft-color-accent);
+  outline-offset: var(--ant-line-width-bold);
+  border-radius: var(--craft-perspective-radius);
+}
