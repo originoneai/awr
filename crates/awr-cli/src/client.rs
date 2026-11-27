@@ -193,7 +193,10 @@ fn new_binding(
         if bound.status == "active" {
             return Ok(binding);
         }
-        return Err(Error::InvalidTransition("this client binding ended; use a new client conversation and bind --from-session to continue it".into()));
+        return Err(Error::InvalidTransition(format!(
+            "this client binding is no longer active ({}); start a new client conversation to continue. This conversation remains pinned to its original session",
+            bound.status
+        )));
     }
     db.finish()?;
     let agent = format!("{client}:{external}");
@@ -482,6 +485,66 @@ fn process_hook(
     Ok((HookDecision::Continue { context }, value["awr"].clone()))
 }
 
+fn inactive_binding_message(status: &str) -> String {
+    let reason = if status == "ended" {
+        "the bound session has ended".to_string()
+    } else {
+        format!("the bound session is {status}")
+    };
+    format!(
+        "Continuity was not recorded because {reason}. This conversation remains pinned to that session; start a new client conversation to continue."
+    )
+}
+
+/// An inactive binding stays pinned. Lifecycle hooks report that and exit successfully;
+/// they do not create a successor or move the conversation onto another session.
+fn inactive_binding_notice(
+    db: &QueryProject,
+    client: &str,
+    external: &str,
+    work: &str,
+    event: &str,
+    exchange: Option<&str>,
+) -> Result<Option<Value>> {
+    let project = db.project.id;
+    let Some(binding) = db.store.client_binding(project, client, external)? else {
+        return Ok(None);
+    };
+    let session = db.store.session(project, binding.session_id)?;
+    let Some(work_id) = session.work_item_id else {
+        return Ok(None);
+    };
+    let bound_work = db
+        .store
+        .work_item_by_id(project, work_id)?
+        .item
+        .meta
+        .external_key;
+    if bound_work != work || session.status == "active" {
+        return Ok(None);
+    }
+    let mut message = inactive_binding_message(&session.status);
+    eprintln!("AWR: {message}");
+    if let Some(exchange) = exchange {
+        message = format!("{message}\n{exchange}");
+    }
+    Ok(Some(json!({
+        "continue": true,
+        "hookSpecificOutput": {
+            "hookEventName": event,
+            "additionalContext": message,
+        },
+        "awr": {
+            "bound": true,
+            "checkpoint_saved": false,
+            "continuity_recorded": false,
+            "session_id": session.id,
+            "session_status": session.status,
+            "message": message,
+        }
+    })))
+}
+
 fn lifecycle_hook(root: &Path, client: &str, work: &str, hook: &HookEvent) -> Result<Value> {
     let external = hook.native_session.as_str();
     let event = hook.event.name();
@@ -500,6 +563,11 @@ fn lifecycle_hook(root: &Path, client: &str, work: &str, hook: &HookEvent) -> Re
     };
     let mut db = QueryProject::open(root)?;
     let project = db.project.id;
+    if let Some(notice) =
+        inactive_binding_notice(&db, client, external, work, event, exchange.as_deref())?
+    {
+        return Ok(notice);
+    }
     let model = hook.model.as_deref().unwrap_or("not-reported");
     let mut binding = new_binding(root, &mut db, client, external, work, None, None, model)?;
     let compaction = hook
