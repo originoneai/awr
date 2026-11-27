@@ -13,6 +13,7 @@ pub const SOURCE_ADAPTERS: &[&str] = &[
     "markdown-heading-v1",
     "markdown-rules-v1",
     "markdown-directory-v1",
+    "github-pr-snapshot-v1",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -287,6 +288,11 @@ impl Manifest {
             {
                 return Err(Error::InvalidInput(
                     "workstream ledger must be a primary ledger source".into(),
+                ));
+            }
+            if source.adapter == "github-pr-snapshot-v1" && !source.options.is_empty() {
+                return Err(Error::InvalidInput(
+                    "github-pr-snapshot-v1 accepts no adapter options; the field and status mapping is built in".into(),
                 ));
             }
             if source

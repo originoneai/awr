@@ -1,8 +1,8 @@
 //! Development intake for one source mapping; source CLI orchestration is tracked separately.
 use awr_core::{EntityKind, Error, Freshness, Result};
 use awr_source::{
-    Locator, Manifest, MarkdownHeadingAdapter, MarkdownRulesAdapter, ParseContext, SourceAdapter,
-    YamlLedgerAdapter, observe_source,
+    GithubPrSnapshotAdapter, Locator, Manifest, MarkdownHeadingAdapter, MarkdownRulesAdapter,
+    ParseContext, SourceAdapter, YamlLedgerAdapter, observe_source,
 };
 use awr_store::{SourceRegistration, Store};
 use serde_json::json;
@@ -28,6 +28,7 @@ fn main() -> Result<()> {
         "yaml-ledger-v1" => Box::new(YamlLedgerAdapter),
         "markdown-heading-v1" => Box::new(MarkdownHeadingAdapter),
         "markdown-rules-v1" => Box::new(MarkdownRulesAdapter),
+        "github-pr-snapshot-v1" => Box::new(GithubPrSnapshotAdapter),
         _ => return Err(Error::Unsupported(spec.adapter.clone())),
     };
     let locator = Locator::from_spec(&root, &manifest, spec)?;
@@ -50,6 +51,8 @@ fn main() -> Result<()> {
             locator: &snapshot.locator,
             format: if spec.adapter == "yaml-ledger-v1" {
                 "yaml"
+            } else if spec.adapter == "github-pr-snapshot-v1" {
+                "json"
             } else {
                 "markdown"
             },

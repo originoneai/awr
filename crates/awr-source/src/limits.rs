@@ -2,6 +2,7 @@ use awr_core::{Error, Result};
 
 pub const MARKDOWN_READ_CAP: u64 = 2 * 1024 * 1024;
 pub const YAML_READ_CAP: u64 = 4 * 1024 * 1024;
+pub const JSON_READ_CAP: u64 = 4 * 1024 * 1024;
 /// Server-generated planning and delivery writeback may hold a whole project ledger.
 pub const SERVER_LEDGER_READ_CAP: u64 = 32 * 1024 * 1024;
 const LEDGER_LIMIT_DETAIL: &str = "awr_source_ledger_bytes";
@@ -14,6 +15,7 @@ pub fn source_read_cap(adapter: &str) -> Result<u64> {
         | "markdown-heading-v1"
         | "markdown-rules-v1"
         | "markdown-directory-v1" => Ok(MARKDOWN_READ_CAP),
+        "github-pr-snapshot-v1" => Ok(JSON_READ_CAP),
         _ => Err(Error::Unsupported(format!("source adapter {adapter}"))),
     }
 }
