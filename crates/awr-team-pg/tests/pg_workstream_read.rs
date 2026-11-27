@@ -8,6 +8,8 @@ use awr_core::Id;
 use awr_team_pg::*;
 use fixture::*;
 
+#[path = "cases/review_queue_reads.rs"]
+mod review_queue_reads;
 #[path = "cases/review_round_reads.rs"]
 mod review_round_reads;
 

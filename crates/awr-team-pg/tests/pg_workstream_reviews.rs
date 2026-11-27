@@ -1977,3 +1977,77 @@ mod agent_review_tests {
         ));
     }
 }
+
+#[tokio::test]
+async fn review_requests_record_member_or_duty_before_any_decision_and_reject_invalid_targets() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    seed_review_actors(&admin).await;
+    let evidence = run(
+        &store,
+        A,
+        "routing-evidence",
+        "evidence.submit",
+        json!({
+        "session_id":"session-a","expected_session_version":"1","payload":{},"dirty_tree":false}),
+    )
+    .await;
+    for (index, target) in [
+        None,
+        Some(json!({"kind":"member","person_id":"reviewer"})),
+        Some(json!({"kind":"role","role":"reviewer"})),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut args = json!({"session_id":"session-a","expected_session_version":"1","evidence_id":evidence["evidence_id"]});
+        if let Some(target) = &target {
+            args["requested_reviewer"] = target.clone();
+        }
+        let opened = run(
+            &store,
+            A,
+            &format!("routing-{index}"),
+            if index == 1 {
+                "delivery.submit_and_request_review"
+            } else {
+                "review.open"
+            },
+            args,
+        )
+        .await;
+        let expected = target.unwrap_or(json!({"kind":"role","role":"reviewer"}));
+        assert_eq!(opened["requested_reviewer"], expected);
+        let mut q = query("review.inspect");
+        q.work_id = Some("a".into());
+        q.review_round_id = opened["round_id"].as_str().map(Into::into);
+        let result = store.query(TENANT, PROJECT, A, q).await.unwrap();
+        assert_eq!(result["data"]["review"]["requested_reviewer"], expected);
+        assert_eq!(result["data"]["review"]["decisions"], json!([]));
+    }
+    for (index, target) in [
+        json!({"kind":"member","person_id":"absent"}),
+        json!({"kind":"member","person_id":"person-author"}),
+        json!({"kind":"role","role":"administrator"}),
+        json!({"kind":"member","person_id":"reviewer","extra":true}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let before: i64 = admin
+            .query_one("SELECT count(*) FROM awr_team.review_rounds", &[])
+            .await
+            .unwrap()
+            .get(0);
+        let _=run_err(&store,A,&format!("bad-routing-{index}"),"review.open",json!({
+            "session_id":"session-a","expected_session_version":"1","evidence_id":evidence["evidence_id"],"requested_reviewer":target})).await;
+        assert_eq!(
+            admin
+                .query_one("SELECT count(*) FROM awr_team.review_rounds", &[])
+                .await
+                .unwrap()
+                .get::<_, i64>(0),
+            before
+        );
+    }
+}

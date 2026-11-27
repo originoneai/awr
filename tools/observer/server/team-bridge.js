@@ -45,10 +45,10 @@ const READ_WORK_SELECTION = new Set(['work.prepare', 'work.admission', 'work.sna
   'handoff.inspect', 'evidence.inspect', 'review.inspect', 'review.rounds', 'completion.inspect',
   'delivery.inspect', 'artifact.content', 'artifact.segment', 'delivery.exports']);
 const READ_PAGED = new Set(['workstreams.list', 'work.list', 'work.graph', 'work.search', 'events.list',
-  'work.next', 'work.inbox', 'task.assignees', 'delivery.exports', 'planning.candidates', 'sources.inspect', 'documents.list', 'decisions.list', 'updates.list', 'review.rounds', 'handoff.list', 'dependencies.list']);
+  'work.next', 'work.inbox', 'task.assignees', 'delivery.exports', 'planning.candidates', 'sources.inspect', 'documents.list', 'decisions.list', 'updates.list', 'review.rounds', 'review.queue', 'team.reviewers', 'handoff.list', 'dependencies.list']);
 const READ_CONTEXT_BUDGET = new Set(['work.prepare', 'work.snapshot', 'work.observe', 'work.inbox',
   'source.content', 'artifact.content', 'artifact.segment', 'review.inspect',
-  'delivery.neutral.inspect', 'delivery.submission.describe', 'planning.candidates', 'sources.inspect', 'documents.list', 'document.history', 'decisions.list', 'updates.list', 'review.rounds', 'handoff.list', 'dependencies.list']);
+  'delivery.neutral.inspect', 'delivery.submission.describe', 'planning.candidates', 'sources.inspect', 'documents.list', 'document.history', 'decisions.list', 'updates.list', 'review.rounds', 'review.queue', 'team.reviewers', 'handoff.list', 'dependencies.list']);
 const READ_REQUIRED_SELECTOR = {
   'command.inspect': 'request_id',
   'planning.outcome': 'request_id',
@@ -167,13 +167,15 @@ function validateReadQuery(query, additionalOps = null) {
     // Navigation reads are selector-free.
   } else if (READ_WORK_LIST.has(op)) {
     allowIds('workstream_id');
-  } else if (op === 'sources.inspect' || op === 'documents.list' || op === 'dependencies.list') {
+  } else if (op === 'sources.inspect' || op === 'documents.list' || op === 'dependencies.list' || op === 'team.reviewers') {
     allowIds('work_id', 'workstream_id');
   } else if (op === 'document.history') {
     allowIds('work_id');
   } else if (op === 'decisions.list') {
     allowIds('work_id', 'workstream_id', 'decision_id');
     allowed.add('decision_state');
+  } else if (op === 'review.queue') {
+    allowIds('work_id', 'workstream_id', 'recipient_person_id');
   } else if (op === 'handoff.list') {
     allowIds('work_id', 'workstream_id', 'recipient_person_id');
     allowed.add('handoff_state');
@@ -287,6 +289,7 @@ function validReadResponse(reply, op) {
   if (op === 'updates.list') return validUpdatesList(reply);
   if (op === 'update.inspect') return validUpdateInspect(reply);
   if (op === 'review.rounds') return validReviewRounds(reply);
+  if (op === 'review.queue' || op === 'team.reviewers') return validReviewQueue(reply, op);
   if (op === 'handoff.list') return validHandoffs(reply);
   if (op === 'dependencies.list') return validDependencies(reply);
   if (op === 'delivery.inspect' && data.delivery?.dependencies !== undefined) {
@@ -294,6 +297,39 @@ function validReadResponse(reply, op) {
       validDependency(item, data.delivery.work_id) && !('work_title' in item) && !('dependency_position' in item));
   }
   return true;
+}
+
+function validRequestedReviewer(value) {
+  return value != null && typeof value === 'object' && !Array.isArray(value) && (value.kind === 'member'
+    ? Object.keys(value).length === 2 && isBoundedId(value.person_id)
+    : value.kind === 'role' && value.role === 'reviewer' && Object.keys(value).length === 2);
+}
+
+function validReviewQueue(reply, op) {
+  const data = reply.data;
+  const record = (value) => value != null && typeof value === 'object' && !Array.isArray(value);
+  const count = (value) => Number.isSafeInteger(value) && value >= 0;
+  if (!Array.isArray(data.items) || !count(data.total) || data.total < data.items.length
+    || data.truncated !== (data.next_cursor !== null) || data.execution_authorized !== false
+    || data.count_scope !== 'authorized_matches' || !count(data.as_of?.at_unix_ms)
+    || data.as_of.source_snapshot_id !== reply.source_snapshot_id
+    || data.as_of.project_revision !== reply.project_revision) return false;
+  if (op === 'team.reviewers' && Object.keys(data).some((key) => ![
+    'items', 'total', 'next_cursor', 'truncated', 'count_scope', 'execution_authorized', 'as_of',
+    'work_id', 'workstream_id', 'recipient_person_id'].includes(key))) return false;
+  if (op === 'team.reviewers') return data.items.every((item) => record(item)
+    && Object.keys(item).sort().join(',') === 'name,queue_count,review_duty'
+    && typeof item.name === 'string' && item.name.length > 0 && item.review_duty === 'reviewer'
+    && count(item.queue_count));
+  return Array.isArray(data.groups) && data.groups.every((group) => record(group)
+      && validRequestedReviewer(group.requested_reviewer) && count(group.queue_count)
+      && count(group.oldest_wait_ms))
+    && data.items.every((item) => record(item) && isBoundedId(item.round_id)
+      && isBoundedId(item.work_id) && typeof item.work_title === 'string'
+      && Number.isSafeInteger(item.round_index) && item.round_index > 0
+      && typeof item.contract_matches_current === 'boolean'
+      && validRequestedReviewer(item.requested_reviewer)
+      && count(item.opened_at_unix_ms) && count(item.wait_ms));
 }
 
 function validDecisions(reply) {
@@ -985,6 +1021,19 @@ function readAttributionError(query, result, { strictWorkstream, project } = {})
       || data.decision_state !== 'all' && item.state !== data.decision_state
       || index > 0 && data.items[index - 1].decision_id <= item.decision_id))) {
     return { code: 'BadGateway', message: 'Questions are not attributable to the requested scope' };
+  }
+  if (['review.queue', 'team.reviewers'].includes(query.op) && (
+    data.items.length > (query.limit ?? 20)
+    || data.next_cursor !== null && data.items.length !== (query.limit ?? 20)
+    || data.work_id !== (query.work_id ?? null)
+    || (query.workstream_id ? data.workstream_id !== query.workstream_id
+      : query.work_id ? !isBoundedId(data.workstream_id) : data.workstream_id !== null)
+    || data.recipient_person_id !== (query.recipient_person_id ?? null)
+    || query.op === 'review.queue' && data.items.some((item) =>
+      query.work_id && item.work_id !== query.work_id
+      || query.recipient_person_id && item.requested_reviewer.kind === 'member'
+        && item.requested_reviewer.person_id !== query.recipient_person_id))) {
+    return { code: 'BadGateway', message: 'Review queue is not attributable to the requested scope' };
   }
   if (query.op === 'review.rounds' && (!validPageCoverage(data, query, 'round_position')
     || !isBoundedId(result.workstream_id) || typeof result.authority_version !== 'string'
@@ -1917,19 +1966,22 @@ function createTeamBridge(opts) {
       listedTasks.push(...page.items.map((item) => ({ item, workstreamId: stream.id })));
     }
 
-    const [decisions, dependencies, handoffs, activity, members] = await Promise.all([
+    const [decisions, dependencies, handoffs, activity, members, pendingReviews, reviewers] = await Promise.all([
       readList({ op: 'decisions.list', decision_state: 'all', max_context_bytes: 262144 }),
       readList({ op: 'dependencies.list', max_context_bytes: 262144 }),
       readList({ op: 'handoff.list', handoff_state: 'all', max_context_bytes: 262144 }),
       readList({ op: 'audit.development' }),
       readDirectory(),
+      demoOrganization ? null : readList({ op: 'review.queue', max_context_bytes: 262144 }),
+      demoOrganization ? null : readList({ op: 'team.reviewers', max_context_bytes: 262144 }),
     ]);
     const activityRead = {
       ...activity,
       restricted: activity.scope === 'self',
       incomplete: activity.scope !== 'project' && activity.scope !== 'self',
     };
-    const globalReads = [decisions, dependencies, handoffs, activityRead, members];
+    const globalReads = [decisions, dependencies, handoffs, activityRead, members,
+      ...(pendingReviews ? [pendingReviews, reviewers] : [])];
     const globalAuth = globalReads.find((read) => read.error && READ_AUTH_FAILURES.has(read.error.code));
     if (globalAuth) return { authError: globalAuth.error };
 
@@ -1957,14 +2009,35 @@ function createTeamBridge(opts) {
       listedTasks.map(({ item, workstreamId }) => overviewTaskFromList(item, project, workstreamId)),
       [streams, ...workReads]);
     const reviewGaps = taskPart.slice.coverage === 'complete' ? [] : [{ op: 'review.rounds', reason: 'incomplete' }];
+    const pendingById = new Map((pendingReviews?.items ?? []).map((item) => [item.round_id, item]));
+    const rosterNames = new Set((reviewers?.items ?? []).map((item) => item.name));
+    const eligibleMembers = members.items.map(overviewMemberFromDirectory).filter((member) =>
+      rosterNames.has(member.displayName) && reviewers.items.filter((r) => r.name === member.displayName).length === 1
+      && members.items.filter((r) => r.display_name === member.displayName).length === 1);
+    const soleReviewer = reviewers?.items.length === 1 && !reviewers.truncated && !reviewers.error
+      && eligibleMembers.length === 1 ? eligibleMembers[0].personId : null;
+    const reviewFacts = reviewReads.flatMap((read) => read.items.map((item) => {
+      const round = overviewReviewFromList(item, read.work_id);
+      if (demoOrganization) return round;
+      const pending = pendingById.get(item.round_id);
+      if (round.state === 'open' && pending) {
+        round.openedAtUnixMs = pending.opened_at_unix_ms;
+        const target = pending.requested_reviewer;
+        // A duty resolves only when both reads identify exactly one eligible member.
+        round.reviewerPersonId = target.kind === 'member' ? target.person_id : soleReviewer;
+      } else if (round.state === 'open') {
+        delete round.reviewerPersonId;
+      }
+      return round;
+    }));
+
     const parts = {
       tasks: taskPart,
       dependencies: overviewReadSlice(dependencies.items.map(overviewDependencyFromList), [dependencies]),
       decisions: overviewReadSlice(decisions.items.map(overviewDecisionFromList), [decisions]),
-      reviewRounds: overviewReadSlice(reviewReads.flatMap((read) => read.items.map((round) =>
-        overviewReviewFromList(round, read.work_id))), reviewReads, reviewGaps),
+      reviewRounds: overviewReadSlice(reviewFacts, [...reviewReads, ...(pendingReviews ? [pendingReviews] : [])], reviewGaps),
       handoffs: overviewReadSlice(handoffs.items.map(overviewHandoffFromList), [handoffs]),
-      members: overviewReadSlice(members.items.map(overviewMemberFromDirectory), [members]),
+      members: overviewReadSlice(members.items.map(overviewMemberFromDirectory), [members, ...(reviewers ? [reviewers] : [])]),
       activity: overviewReadSlice(activityRead.items.map(overviewActivityFromAudit), [activityRead]),
       approvals: demoOrganization?.variant === 'full'
         ? overviewReadSlice(demoOrganization.data.approvals.map((approval) => ({ ...approval })), [])
@@ -2769,6 +2842,34 @@ function createTeamBridge(opts) {
       if (url.searchParams.has('max_context_bytes')) {
         const value = url.searchParams.get('max_context_bytes');
         query.max_context_bytes = /^[1-9]\d*$/.test(value) ? Number(value) : null;
+      }
+      return routes['POST /api/team/read'](url, { project: url.searchParams.get('project'), query }, req, res);
+    },
+
+    'GET /api/team/review-queue': async (url, _body, req, res) => {
+      const allowed = new Set(['project', 'work_id', 'workstream_id', 'recipient_person_id', 'cursor', 'limit', 'max_context_bytes']);
+      if ([...url.searchParams.keys()].some((key) => !allowed.has(key) || url.searchParams.getAll(key).length !== 1)) {
+        return { ok: false, error: { code: 'InvalidInput', message: 'One bounded review queue read required' } };
+      }
+      const query = { protocol_version: 1, op: 'review.queue' };
+      for (const key of ['work_id', 'workstream_id', 'recipient_person_id', 'cursor']) {
+        if (url.searchParams.has(key)) query[key] = url.searchParams.get(key);
+      }
+      for (const key of ['limit', 'max_context_bytes']) {
+        if (url.searchParams.has(key)) query[key] = /^[1-9]\d*$/.test(url.searchParams.get(key)) ? Number(url.searchParams.get(key)) : null;
+      }
+      return routes['POST /api/team/read'](url, { project: url.searchParams.get('project'), query }, req, res);
+    },
+
+    'GET /api/team/reviewers': async (url, _body, req, res) => {
+      const allowed = new Set(['project', 'cursor', 'limit', 'max_context_bytes']);
+      if ([...url.searchParams.keys()].some((key) => !allowed.has(key) || url.searchParams.getAll(key).length !== 1)) {
+        return { ok: false, error: { code: 'InvalidInput', message: 'One bounded reviewer read required' } };
+      }
+      const query = { protocol_version: 1, op: 'team.reviewers' };
+      if (url.searchParams.has('cursor')) query.cursor = url.searchParams.get('cursor');
+      for (const key of ['limit', 'max_context_bytes']) {
+        if (url.searchParams.has(key)) query[key] = /^[1-9]\d*$/.test(url.searchParams.get(key)) ? Number(url.searchParams.get(key)) : null;
       }
       return routes['POST /api/team/read'](url, { project: url.searchParams.get('project'), query }, req, res);
     },

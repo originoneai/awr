@@ -1996,11 +1996,15 @@ async fn review_completion_fields_are_flat_discoverable_and_event_id_is_not_an_a
     assert_ne!(flat["evidence_id"], flat["event_id"]);
 
     for (op, extra, optional) in [
-        ("review.open", vec!["evidence_id"], vec![]),
+        (
+            "review.open",
+            vec!["evidence_id"],
+            vec!["requested_reviewer"],
+        ),
         (
             "delivery.submit_and_request_review",
             vec!["evidence_id"],
-            vec![],
+            vec!["requested_reviewer"],
         ),
         (
             "review.accept",

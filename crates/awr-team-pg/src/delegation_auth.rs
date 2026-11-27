@@ -636,6 +636,8 @@ pub(crate) async fn resolve_agent_read_delegation(
                     | "updates.list"
                     | "update.inspect"
                     | "handoff.list"
+                    | "review.queue"
+                    | "team.reviewers"
                     | "dependencies.list"
                     | "events.list"
             ));
@@ -684,6 +686,8 @@ pub(crate) async fn resolve_agent_read_delegation(
             "work.next"
                 | "work.inbox"
                 | "handoff.list"
+                | "review.queue"
+                | "team.reviewers"
                 | "dependencies.list"
                 | "decisions.list"
                 | "documents.list"

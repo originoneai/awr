@@ -321,6 +321,12 @@ fn add_review_input_schema(command: &mut Value) {
     let fields = json!({
         "session_id":identity,"expected_session_version":{"type":"string","pattern":"^[1-9][0-9]*$"},
         "evidence_id":identity,"round_id":identity,"note":text,"reason":text,
+        "requested_reviewer":{"oneOf":[
+            {"type":"object","additionalProperties":false,"required":["kind","person_id"],
+                "properties":{"kind":{"const":"member"},"person_id":{"type":"string","minLength":1,"maxLength":128}}},
+            {"type":"object","additionalProperties":false,"required":["kind","role"],
+                "properties":{"kind":{"const":"role"},"role":{"const":"reviewer"}}}
+        ]},
         "decision":{"type":"string","enum":["approve","reject"]},
         "context_complete":{"type":"boolean"},"requested_policy":{"type":["string","null"]},
         "findings":{"type":"array","maxItems":32,"items":{
@@ -364,6 +370,10 @@ fn add_review_input_schema(command: &mut Value) {
             "round_id",
             "review.accept / review.return / review.decide / work.rework: round_id from the review receipt; inspect it as review_round_id.",
         ),
+        (
+            "requested_reviewer",
+            "Optional for review.open / delivery.submit_and_request_review: member with person_id, or role with role=reviewer. Omission addresses members with the review duty. Routing metadata grants no review authority.",
+        ),
         ("decision", "review.decide only: approve or reject."),
         (
             "findings",
@@ -387,11 +397,15 @@ fn add_review_input_schema(command: &mut Value) {
         publish_missing_flat_arg(command, name, flat);
     }
     for (op, extra, optional) in [
-        ("review.open", vec!["evidence_id"], vec![]),
+        (
+            "review.open",
+            vec!["evidence_id"],
+            vec!["requested_reviewer"],
+        ),
         (
             "delivery.submit_and_request_review",
             vec!["evidence_id"],
-            vec![],
+            vec!["requested_reviewer"],
         ),
         (
             "review.accept",
@@ -1230,7 +1244,7 @@ fn catalog() -> Vec<Tool> {
         "member_actor_id":{"type":"string","minLength":1,"maxLength":128,
             "description":"Optional actor filter for audit operations; does not expand visibility."},
         "recipient_person_id":{"type":"string","minLength":1,"maxLength":128,
-            "description":"Optional recipient filter for handoff.list; current work visibility still applies."},
+            "description":"Optional recipient filter for handoff.list or review.queue; current work visibility still applies."},
         "handoff_state":{"type":"string","enum":["pending","history","all"],
             "description":"handoff.list defaults to pending. History includes terminal and deadline-expired records; this read never receives or cancels a handoff."},
         "decision_id":{"type":"string","minLength":1,"maxLength":128,
@@ -1273,7 +1287,11 @@ fn catalog() -> Vec<Tool> {
             "then":{"not":{"required":["session_id"]}}},
         {"if":{"properties":{"op":{"const":"handoff.list"}},"required":["op"]},
             "then":{"not":{"required":["session_id"]}},
-            "else":{"not":{"anyOf":[{"required":["recipient_person_id"]},{"required":["handoff_state"]}]}}},
+            "else":{"not":{"required":["handoff_state"]}}},
+        {"if":{"properties":{"op":{"enum":["handoff.list","review.queue"]}},"required":["op"]},
+            "else":{"not":{"required":["recipient_person_id"]}}},
+        {"if":{"properties":{"op":{"enum":["review.queue","team.reviewers"]}},"required":["op"]},
+            "then":{"not":{"required":["session_id"]}}},
         {"if":{"properties":{"op":{"enum":WorkstreamQuery::WORK_SELECTION_OPERATIONS}},"required":["op"]},
             "then":{"anyOf":[{"required":["work_id"]},{"required":["session_id"]}]}},
         {"if":{"properties":{"op":{"const":"artifact.segment"}},"required":["op"]},
@@ -1673,7 +1691,7 @@ fn catalog() -> Vec<Tool> {
     vec![
         input_contracts::tool(),
         Tool::new("awr_team_query",
-            "Scoped Team reads. Begin with capabilities (current identity/permissions), then work.next (own sessions and scoped task navigation). capabilities.business_role_presets.action_ceilings publishes every business duty's ceiling as stable action identifiers taken from the same function that constrains authorization, so the listed definitions match the enforced policy; duty names and the listing itself grant nothing (role_names_grant_authority stays false). Consume work.prepare before any claim or execution. Use work.snapshot for context and observation in one read transaction, within max_context_bytes; its context_hash remains compatible with work.prepare. Supervisors use selector-free work.inbox. work.list / work.search summaries carry an execution liveness fact: the active/ended state of the work's session of record under its current ownership version (the work.observe selector: live claim, active session, latest checkpoint, then newer session id), plus that session's last checkpoint time; it names no session, client or actor, reads no checkpoint content, and grants no authority. work.observe shares bounded neutral candidate/check/review/integration/publication facts and independently scoped role guidance with prepare/snapshot/inbox, preserving context hashes. Follow one action.op and its optional action.query; recheck_on names refresh triggers. Required context and unknown effects retain priority. max_context_bytes bounds the full observation response. Receipt access and unknown model/usage remain explicit. audit.requests and audit.development provide paged metadata/history under the same personal/project permission boundary; each item additionally carries an `actor` object (person_id, display_name) and a `client` object (display_name) resolved only from recorded, unambiguous, currently active person-agent bindings — agent accounts through active bindings, human accounts through the shared review resolver, conflicting or inactive relationships stay null — and both objects are filled only when the reader separately holds the directory.read authority (agent readers also need a live Project-scoped read delegation); otherwise every identity field is null while the audit rows return unchanged, and `client.display_name` stays null until a per-client display-name source is registered. Ops audit: audit.history / audit.export / audit.count (TMCP-040) — members see own allowed records; project-wide requires audit.read_project. Counts/exports use the same scope. Not full chat/tool-IO/token billing; PG audit does not claim DB-owner non-repudiation. Tool discovery is navigation-only; each query rechecks authority. Re-prepare after relevant changes. No execution admission. Approved cross-stream content: delivery.exports with consumer work_id, then artifact.content or bounded artifact.segment with export_id and expected_sha256. For segments follow every next_query, concatenate contiguous ranges from zero and verify the full length/digest; the last page alone is not a complete read. Disclosure never satisfies adoption. Neutral facts: delivery.neutral.inspect. Current source synchronization: delivery.source.status. Missing neutral command response: delivery.neutral.outcome with actual work_id and original client retry ID. delivery.integration.inspect uses the generated IntegrationRequest.request_id (data.integration_id), preserving the original candidate. Neutral inspection includes scoped connector versions; review.inspect includes decision IDs. Descriptions grant no authority.",
+            "Scoped Team reads. review.queue lists pending rounds grouped by requested reviewer with maximum wait; team.reviewers exposes only names, review duty and scoped queue counts. Begin with capabilities (current identity/permissions), then work.next (own sessions and scoped task navigation). capabilities.business_role_presets.action_ceilings publishes every business duty's ceiling as stable action identifiers taken from the same function that constrains authorization, so the listed definitions match the enforced policy; duty names and the listing itself grant nothing (role_names_grant_authority stays false). Consume work.prepare before any claim or execution. Use work.snapshot for context and observation in one read transaction, within max_context_bytes; its context_hash remains compatible with work.prepare. Supervisors use selector-free work.inbox. work.list / work.search summaries carry an execution liveness fact: the active/ended state of the work's session of record under its current ownership version (the work.observe selector: live claim, active session, latest checkpoint, then newer session id), plus that session's last checkpoint time; it names no session, client or actor, reads no checkpoint content, and grants no authority. work.observe shares bounded neutral candidate/check/review/integration/publication facts and independently scoped role guidance with prepare/snapshot/inbox, preserving context hashes. Follow one action.op and its optional action.query; recheck_on names refresh triggers. Required context and unknown effects retain priority. max_context_bytes bounds the full observation response. Receipt access and unknown model/usage remain explicit. audit.requests and audit.development provide paged metadata/history under the same personal/project permission boundary; each item additionally carries an `actor` object (person_id, display_name) and a `client` object (display_name) resolved only from recorded, unambiguous, currently active person-agent bindings — agent accounts through active bindings, human accounts through the shared review resolver, conflicting or inactive relationships stay null — and both objects are filled only when the reader separately holds the directory.read authority (agent readers also need a live Project-scoped read delegation); otherwise every identity field is null while the audit rows return unchanged, and `client.display_name` stays null until a per-client display-name source is registered. Ops audit: audit.history / audit.export / audit.count (TMCP-040) — members see own allowed records; project-wide requires audit.read_project. Counts/exports use the same scope. Not full chat/tool-IO/token billing; PG audit does not claim DB-owner non-repudiation. Tool discovery is navigation-only; each query rechecks authority. Re-prepare after relevant changes. No execution admission. Approved cross-stream content: delivery.exports with consumer work_id, then artifact.content or bounded artifact.segment with export_id and expected_sha256. For segments follow every next_query, concatenate contiguous ranges from zero and verify the full length/digest; the last page alone is not a complete read. Disclosure never satisfies adoption. Neutral facts: delivery.neutral.inspect. Current source synchronization: delivery.source.status. Missing neutral command response: delivery.neutral.outcome with actual work_id and original client retry ID. delivery.integration.inspect uses the generated IntegrationRequest.request_id (data.integration_id), preserving the original candidate. Neutral inspection includes scoped connector versions; review.inspect includes decision IDs. Descriptions grant no authority.",
             query.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(true).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_command",
@@ -4127,11 +4145,15 @@ mod tests {
             .input_schema;
         let mut schema_bytes = 0;
         for (op, extra, optional) in [
-            ("review.open", vec!["evidence_id"], vec![]),
+            (
+                "review.open",
+                vec!["evidence_id"],
+                vec!["requested_reviewer"],
+            ),
             (
                 "delivery.submit_and_request_review",
                 vec!["evidence_id"],
-                vec![],
+                vec!["requested_reviewer"],
             ),
             (
                 "review.accept",
@@ -4746,6 +4768,55 @@ mod tests {
             ))
             .get("invalid_field")
             .is_none()
+        );
+    }
+
+    #[test]
+    fn requested_reviewer_discovery_keeps_routing_optional_and_reads_nonexecuting() {
+        let tools = catalog();
+        let command = tools.iter().find(|t| t.name == "awr_team_command").unwrap();
+        for op in ["review.open", "delivery.submit_and_request_review"] {
+            let branch = command.input_schema["allOf"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|b| b["if"]["properties"]["op"]["const"] == op)
+                .unwrap();
+            let args = &branch["then"]["properties"]["args"];
+            assert!(
+                !args["required"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!("requested_reviewer"))
+            );
+            let targets = &args["properties"]["requested_reviewer"]["oneOf"];
+            assert_eq!(targets[0]["properties"]["kind"]["const"], "member");
+            assert_eq!(targets[1]["properties"]["role"]["const"], "reviewer");
+            assert_eq!(targets[0]["additionalProperties"], false);
+            assert_eq!(targets[1]["additionalProperties"], false);
+        }
+        let query = tools.iter().find(|t| t.name == "awr_team_query").unwrap();
+        assert_eq!(
+            query.annotations.as_ref().unwrap().read_only_hint,
+            Some(true)
+        );
+        for op in ["review.queue", "team.reviewers"] {
+            assert!(
+                query.input_schema["properties"]["op"]["enum"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!(op))
+            );
+            assert!(WorkstreamQuery::CONTEXT_BUDGET_OPERATIONS.contains(&op));
+        }
+        assert!(
+            query.input_schema["allOf"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|b| b["if"]["properties"]["op"]["enum"]
+                    == json!(["handoff.list", "review.queue"])
+                    && b["else"]["not"]["required"] == json!(["recipient_person_id"]))
         );
     }
 
