@@ -175,32 +175,7 @@
 }
 
 .obs-workbench-chain-switch {
-  display: inline-flex;
-  gap: var(--craft-perspective-gap);
   margin-left: auto;
-  padding: var(--craft-perspective-padding);
-  border-radius: var(--craft-radius-control);
-  background: var(--craft-color-raised);
-}
-
-.obs-workbench-chain-switch button {
-  height: var(--craft-perspective-height);
-  padding: 0 var(--craft-perspective-option-padding-inline);
-  border: 0;
-  border-radius: var(--craft-perspective-radius);
-  background: transparent;
-  color: var(--craft-color-secondary);
-  font: inherit;
-  font-size: var(--craft-text-small);
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.obs-workbench-chain-switch button[aria-pressed="true"] {
-  background: var(--craft-color-surface);
-  color: var(--craft-color-ink);
-  box-shadow: var(--craft-perspective-selected-shadow);
-  font-weight: var(--ant-font-weight-strong);
 }
 
 /* Prototype .cn { min-width: 0 } only survives on four-node demo rows; a real row with more
@@ -531,8 +506,7 @@
 .obs-workbench-evidence-button:focus-visible,
 .obs-workbench-back:focus-visible,
 .obs-workbench-chain-cta:focus-visible,
-.obs-agent-handback button:focus-visible,
-.obs-workbench-chain-switch button:focus-visible {
+.obs-agent-handback button:focus-visible {
   outline: var(--ant-control-outline-width) solid var(--craft-color-accent);
   outline-offset: var(--ant-line-width-bold);
 }

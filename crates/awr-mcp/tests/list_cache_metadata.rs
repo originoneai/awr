@@ -9,11 +9,19 @@
 use serde_json::{Value, json};
 use std::{
     fs,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     process::{Command, Stdio},
-    sync::mpsc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        mpsc,
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+
+/// Parallel tests in this process start together. A process id plus one clock
+/// reading is not unique when that clock is coarse, and the faster test would
+/// remove the shared directory before the other server opens it.
+static EXCHANGE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 fn inline_request(id: u64, method: &str) -> Value {
     json!({
@@ -31,23 +39,27 @@ fn inline_request(id: u64, method: &str) -> Value {
 /// Send each line to a fresh `awr-mcp` and return the responses that carry an id,
 /// in the order the requests were sent. A notification (no id) expects no reply.
 fn exchange(requests: &[Value]) -> Vec<Value> {
+    let seq = EXCHANGE_SEQ.fetch_add(1, Ordering::Relaxed);
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root =
-        std::env::temp_dir().join(format!("awr-mcp-list-cache-{}-{nanos}", std::process::id()));
+    let root = std::env::temp_dir().join(format!(
+        "awr-mcp-list-cache-{}-{nanos}-{seq}",
+        std::process::id()
+    ));
     fs::create_dir_all(&root).unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_awr-mcp"))
         .arg("--project")
         .arg(&root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     let mut stdin = child.stdin.take().unwrap();
     let stdout = child.stdout.take().unwrap();
+    let mut stderr = child.stderr.take().unwrap();
     let (lines, received) = mpsc::channel();
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
@@ -55,6 +67,11 @@ fn exchange(requests: &[Value]) -> Vec<Value> {
                 break;
             }
         }
+    });
+    let stderr_task = std::thread::spawn(move || {
+        let mut recorded = String::new();
+        let _ = stderr.read_to_string(&mut recorded);
+        recorded
     });
 
     let mut responses = Vec::new();
@@ -64,14 +81,25 @@ fn exchange(requests: &[Value]) -> Vec<Value> {
         if request.get("id").is_none() {
             continue;
         }
-        let line = received
-            .recv_timeout(Duration::from_secs(20))
-            .expect("awr-mcp must answer every request");
+        let line = match received.recv_timeout(Duration::from_secs(20)) {
+            Ok(line) => line,
+            Err(error) => {
+                drop(stdin);
+                let _ = child.kill();
+                let status = child.wait();
+                let recorded = stderr_task.join().unwrap_or_default();
+                let _ = fs::remove_dir_all(&root);
+                panic!(
+                    "awr-mcp must answer every request: {error}; status={status:?}; stderr={recorded}"
+                );
+            }
+        };
         responses.push(serde_json::from_str::<Value>(&line).unwrap());
     }
     drop(stdin);
     let _ = child.kill();
     let _ = child.wait();
+    let _ = stderr_task.join();
     let _ = fs::remove_dir_all(&root);
     responses
 }

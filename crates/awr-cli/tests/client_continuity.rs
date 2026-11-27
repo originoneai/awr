@@ -829,3 +829,298 @@ fn omitted_client_flag_is_rejected_loudly() {
         assert_eq!(error["code"], "InvalidInput", "{args:?}");
     }
 }
+
+#[test]
+fn ended_binding_hooks_exit_successfully_and_do_not_offer_a_rebind() {
+    let p = Project::new();
+    let conversation = "conversation-ended";
+    let started = p.hook(conversation, "SessionStart", None);
+    let session = started["awr"]["binding"]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    p.ok(&[
+        "client",
+        "progress",
+        "--client",
+        "codex",
+        "--external-session",
+        conversation,
+        "--next-action",
+        "Finish the reviewed search handler",
+        "--open-loop",
+        "Independent review is pending",
+    ]);
+    p.ok(&[
+        "session",
+        "end",
+        "--session",
+        &session,
+        "--outcome",
+        "ended",
+        "--expected-revision",
+        &p.ok(&["status"])["project_revision"].to_string(),
+    ]);
+    assert_eq!(
+        p.ok(&["session", "show", &session])["session"]["status"],
+        "ended"
+    );
+    let revision = p.ok(&["status"])["project_revision"].clone();
+    let notice = "Continuity was not recorded because the bound session has ended";
+
+    for (event, turn) in [
+        ("Stop", Some("turn-after-end")),
+        ("Stop", Some("turn-after-end-again")),
+        ("PreCompact", None),
+        ("SessionEnd", None),
+        ("Interrupt", None),
+        ("SessionStart", None),
+        ("PostCompact", None),
+    ] {
+        let output = p.run(
+            &[
+                "client",
+                "hook",
+                "--client",
+                "codex",
+                "--work",
+                "INTAKE-001",
+            ],
+            Some(&json!({
+                "session_id": conversation,
+                "hook_event_name": event,
+                "cwd": p.0,
+                "turn_id": turn,
+                "model": "client-test"
+            })),
+        );
+        assert!(
+            output.status.success(),
+            "{event}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let rendered = value.to_string();
+        assert!(rendered.contains(notice), "{event}: {value}");
+        assert!(!rendered.contains("from-session"), "{event}: {value}");
+        assert_eq!(value["continue"], true, "{event}");
+        assert_eq!(value["awr"]["checkpoint_saved"], false, "{event}");
+        assert_eq!(value["awr"]["continuity_recorded"], false, "{event}");
+        assert_eq!(value["awr"]["session_status"], "ended", "{event}");
+        assert_eq!(value["awr"]["session_id"], session, "{event}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(notice),
+            "{event}"
+        );
+    }
+
+    assert_eq!(p.ok(&["status"])["project_revision"], revision);
+    let mut installed = Command::new(env!("CARGO_BIN_EXE_awr"))
+        .args([
+            "--project",
+            p.0.to_str().unwrap(),
+            "client",
+            "hook",
+            "--client",
+            "codex",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    installed
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(
+            &serde_json::to_vec(&json!({
+                "session_id": conversation,
+                "hook_event_name": "Stop",
+                "cwd": p.0,
+                "turn_id": "installed-stop"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    let installed = installed.wait_with_output().unwrap();
+    assert!(
+        installed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&installed.stderr)
+    );
+    let installed_stdout = String::from_utf8_lossy(&installed.stdout);
+    assert!(installed_stdout.contains(notice), "{installed_stdout}");
+    assert!(
+        !installed_stdout.contains("from-session"),
+        "{installed_stdout}"
+    );
+    assert!(
+        installed_stdout.contains("hookSpecificOutput"),
+        "{installed_stdout}"
+    );
+
+    let claude_started = p.run(
+        &[
+            "client",
+            "hook",
+            "--client",
+            "claude",
+            "--work",
+            "INTAKE-001",
+        ],
+        Some(&json!({
+            "session_id": "claude-ended",
+            "hook_event_name": "SessionStart",
+            "cwd": p.0
+        })),
+    );
+    assert!(
+        claude_started.status.success(),
+        "{}",
+        String::from_utf8_lossy(&claude_started.stderr)
+    );
+    let claude_started: Value = serde_json::from_slice(&claude_started.stdout).unwrap();
+    let claude_session = claude_started["awr"]["binding"]["session_id"]
+        .as_str()
+        .unwrap();
+    p.ok(&[
+        "session",
+        "end",
+        "--session",
+        claude_session,
+        "--outcome",
+        "ended",
+        "--expected-revision",
+        &p.ok(&["status"])["project_revision"].to_string(),
+    ]);
+    let mut claude = Command::new(env!("CARGO_BIN_EXE_awr"))
+        .args([
+            "--project",
+            p.0.to_str().unwrap(),
+            "client",
+            "hook",
+            "--client",
+            "claude",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Claude's Stop envelope has no additionalContext field; the process must still exit 0.
+    claude
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(
+            &serde_json::to_vec(&json!({
+                "session_id": "claude-ended",
+                "hook_event_name": "Stop",
+                "cwd": p.0,
+                "turn_id": "claude-stop"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    let claude = claude.wait_with_output().unwrap();
+    assert!(
+        claude.status.success(),
+        "{}",
+        String::from_utf8_lossy(&claude.stderr)
+    );
+    assert!(String::from_utf8_lossy(&claude.stderr).contains(notice));
+    let revision = p.ok(&["status"])["project_revision"].clone();
+
+    let mismatch = p.run(
+        &[
+            "client",
+            "hook",
+            "--client",
+            "codex",
+            "--work",
+            "OTHER-WORK",
+        ],
+        Some(&json!({
+            "session_id": conversation,
+            "hook_event_name": "Stop",
+            "cwd": p.0,
+            "turn_id": "wrong-work"
+        })),
+    );
+    assert!(!mismatch.status.success());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&mismatch.stderr).unwrap()["code"],
+        "SourceConflict"
+    );
+
+    for args in [
+        vec![
+            "client".to_string(),
+            "bind".into(),
+            "--client".into(),
+            "codex".into(),
+            "--external-session".into(),
+            conversation.into(),
+            "--work".into(),
+            "INTAKE-001".into(),
+        ],
+        vec![
+            "client".into(),
+            "bind".into(),
+            "--client".into(),
+            "codex".into(),
+            "--external-session".into(),
+            conversation.into(),
+            "--work".into(),
+            "INTAKE-001".into(),
+            "--from-session".into(),
+            session.clone(),
+        ],
+    ] {
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let failed = p.run(&refs, None);
+        assert!(!failed.status.success(), "{args:?}");
+        let error: Value = serde_json::from_slice(&failed.stderr).unwrap();
+        let message = error.to_string();
+        assert_eq!(error["code"], "InvalidTransition", "{message}");
+        assert!(message.contains("new client conversation"), "{message}");
+        assert!(message.contains("pinned"), "{message}");
+        assert!(!message.contains("from-session"), "{message}");
+    }
+    assert_eq!(p.ok(&["status"])["project_revision"], revision);
+
+    let successor = p.ok(&[
+        "client",
+        "bind",
+        "--client",
+        "codex",
+        "--external-session",
+        "conversation-new",
+        "--work",
+        "INTAKE-001",
+        "--from-session",
+        &session,
+    ]);
+    let successor_id = successor["binding"]["session_id"].as_str().unwrap();
+    assert_ne!(successor_id, session);
+    assert_eq!(
+        p.ok(&["session", "show", successor_id])["session"]["status"],
+        "active"
+    );
+    assert_eq!(
+        p.ok(&[
+            "client",
+            "show",
+            "--client",
+            "codex",
+            "--external-session",
+            conversation,
+        ])["binding"]["session_id"],
+        session
+    );
+    assert_eq!(
+        p.ok(&["session", "show", &session])["session"]["status"],
+        "ended"
+    );
+}

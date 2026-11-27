@@ -3,12 +3,13 @@
 use crate::workstream_auth::{ReaderAuthority, authenticate, authorize_query};
 use crate::{PgError, PgPool, PgResult};
 use awr_core::{
-    Id, WorkstreamAction, WorkstreamSelection, WorkstreamSessionBinding, WorkstreamWorkBinding,
-    resolve_workstream,
+    Id, ResolvedWorkstream, WorkstreamAction, WorkstreamSelection, WorkstreamSessionBinding,
+    WorkstreamWorkBinding, resolve_workstream,
 };
 use awr_team::WorkContract;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::{future::Future, pin::Pin};
 use tokio_postgres::{IsolationLevel, Transaction};
 
 mod activity;
@@ -75,6 +76,7 @@ pub(crate) const QUERIES: &[&str] = &[
     "planning.candidates",
     "sources.inspect",
     "documents.list",
+    "document.history",
     "decisions.list",
     "updates.list",
     "update.inspect",
@@ -143,6 +145,7 @@ impl WorkstreamQuery {
         "planning.candidates",
         "sources.inspect",
         "documents.list",
+        "document.history",
         "decisions.list",
         "updates.list",
         "work.prepare",
@@ -431,7 +434,7 @@ impl WorkstreamQuery {
             (
                 "source_path",
                 self.source_path.is_some(),
-                self.op == "source.content",
+                matches!(self.op.as_str(), "source.content" | "document.history"),
                 false,
             ),
         ] {
@@ -520,13 +523,15 @@ impl WorkstreamQuery {
                             self.op.as_str(),
                             "sources.inspect"
                                 | "documents.list"
+                                | "document.history"
                                 | "handoff.list"
                                 | "dependencies.list"
                         )),
             ),
             (
                 "workstream_id",
-                self.workstream_id.is_some() && (project_wide || activity_audit),
+                self.workstream_id.is_some()
+                    && (project_wide || activity_audit || self.op == "document.history"),
             ),
             ("change_id", self.change_id.is_some() && activity_audit),
             ("category", self.category.is_some() && activity_audit),
@@ -793,6 +798,33 @@ mod input_guidance_tests {
         let missing_search: WorkstreamQuery =
             serde_json::from_value(json!({"protocol_version":1,"op":"work.search"})).unwrap();
         assert!(missing_search.validate().is_err());
+    }
+
+    #[test]
+    fn document_history_requires_safe_source_path_and_rejects_unrelated_selectors() {
+        for input in [
+            json!({"protocol_version":1,"op":"document.history","source_path":"docs/guide.md"}),
+            json!({"protocol_version":1,"op":"document.history","source_path":"docs/guide.md","work_id":"work"}),
+            json!({"protocol_version":1,"op":"document.history","source_path":"docs/guide.md","max_context_bytes":262144}),
+        ] {
+            let query: WorkstreamQuery = serde_json::from_value(input.clone()).unwrap();
+            assert!(query.validate().is_ok(), "{input}");
+        }
+        for input in [
+            json!({"protocol_version":1,"op":"document.history"}),
+            json!({"protocol_version":1,"op":"document.history","source_path":"../secret.md"}),
+            json!({"protocol_version":1,"op":"document.history","source_path":"/etc/passwd"}),
+            json!({"protocol_version":1,"op":"document.history","source_path":"docs/guide.md","session_id":"session"}),
+            json!({"protocol_version":1,"op":"document.history","source_path":"docs/guide.md","workstream_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}),
+            json!({"protocol_version":1,"op":"document.history","source_path":"docs/guide.md","limit":10}),
+            json!({"protocol_version":1,"op":"document.history","source_path":"docs/guide.md","cursor":"opaque"}),
+            json!({"protocol_version":1,"op":"document.history","source_path":"docs/guide.md","search":"guide"}),
+            json!({"protocol_version":1,"op":"document.history","source_path":"docs/guide.md","expected_sha256":"a".repeat(64)}),
+            json!({"protocol_version":1,"op":"document.history","source_path":"docs/guide.md","max_context_bytes":262145}),
+        ] {
+            let query: WorkstreamQuery = serde_json::from_value(input.clone()).unwrap();
+            assert!(query.validate().is_err(), "{input}");
+        }
     }
 
     #[test]
@@ -1098,6 +1130,7 @@ mod input_guidance_tests {
                     input["expected_sha256"] = json!("a".repeat(64));
                 }
                 "work.search" => input["search"] = json!("example"),
+                "document.history" => input["source_path"] = json!("docs/spec.md"),
                 _ => {}
             }
             let query: WorkstreamQuery = serde_json::from_value(input).unwrap();
@@ -1116,6 +1149,45 @@ mod input_guidance_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn shared_read_dispatch_futures_stay_bounded_off_nested_command_stacks() {
+        fn read_future_size<'a, F: Future>(
+            _: impl FnOnce(
+                &'a Transaction<'a>,
+                &'a str,
+                &'a str,
+                &'a ReaderAuthority,
+                Option<&'a ReaderAuthority>,
+                &'a WorkstreamQuery,
+            ) -> F,
+        ) -> usize {
+            std::mem::size_of::<F>()
+        }
+        fn authenticated_read_future_size<'a, F: Future>(
+            _: impl FnOnce(&'a Transaction<'a>, &'a str, &'a str, &'a str, &'a WorkstreamQuery) -> F,
+        ) -> usize {
+            std::mem::size_of::<F>()
+        }
+        let read_bytes = read_future_size(|tx, tenant, project, auth, directory_auth, q| {
+            read(tx, tenant, project, auth, directory_auth, q)
+        });
+        let authenticated_read_bytes =
+            authenticated_read_future_size(|tx, tenant, project, bearer, q| {
+                authenticated_read(tx, tenant, project, bearer, q)
+            });
+        // Before boxing op sub-dispatchers off `read`, `read` was 8,976 bytes
+        // (with a ~445 KiB unoptimized stack frame) and nested handoff MCP
+        // commands overflowed the 2 MiB test thread stack on Linux CI.
+        assert!(
+            read_bytes <= 2048,
+            "workstream_read::read future grew to {read_bytes} bytes; keep op handlers boxed off nested command stacks"
+        );
+        assert!(
+            authenticated_read_bytes <= 6144,
+            "workstream_read::authenticated_read future grew to {authenticated_read_bytes} bytes"
+        );
     }
 }
 
@@ -1302,8 +1374,11 @@ pub(crate) async fn authenticated_read(
     // unrestricted reader. `resolve_agent_read_delegation` below narrows `auth`
     // to the query's own delegation (one workstream for a stream-scoped grant);
     // the disclosure gate must not inherit that narrowing, nor escape it.
-    let directory_auth =
-        matches!(request.op.as_str(), "audit.requests" | "audit.development").then(|| auth.clone());
+    let directory_auth = matches!(
+        request.op.as_str(),
+        "audit.requests" | "audit.development" | "document.history"
+    )
+    .then(|| auth.clone());
     crate::delegation_auth::resolve_agent_read_delegation(tx, &mut auth, project, request, now_ms)
         .await?;
     // Keep shared read state off nested handoff and checkpoint command stacks.
@@ -1419,6 +1494,30 @@ pub(crate) async fn session_binding(
     })
 }
 
+type BoxReadFuture<'a> = Pin<Box<dyn Future<Output = PgResult<Value>> + Send + 'a>>;
+
+fn is_unscoped_read_op(op: &str) -> bool {
+    matches!(
+        op,
+        "work.next"
+            | "work.inbox"
+            | "planning.candidates"
+            | "sources.inspect"
+            | "documents.list"
+            | "document.history"
+            | "decisions.list"
+            | "updates.list"
+            | "update.inspect"
+            | "dependencies.list"
+            | "handoff.list"
+            | "audit.requests"
+            | "audit.development"
+            | "capabilities"
+            | "workstreams.list"
+            | "source.content"
+    )
+}
+
 pub(crate) async fn read(
     tx: &Transaction<'_>,
     tenant: &str,
@@ -1427,306 +1526,22 @@ pub(crate) async fn read(
     directory_auth: Option<&ReaderAuthority>,
     q: &WorkstreamQuery,
 ) -> PgResult<Value> {
-    let visible: Vec<_> = auth
-        .catalog
-        .workstreams
-        .iter()
-        .filter(|s| {
-            auth.access
-                .authorize(&auth.catalog, s.id, WorkstreamAction::Read)
-                .is_ok()
-        })
-        .collect();
-    if visible.is_empty() {
+    let has_visible = auth.catalog.workstreams.iter().any(|s| {
+        auth.access
+            .authorize(&auth.catalog, s.id, WorkstreamAction::Read)
+            .is_ok()
+    });
+    if !has_visible {
         return Err(PgError::Forbidden);
     }
     q.validate()?;
     // TMCP-011: every query shares the work.read decision; invisible streams stay filtered above.
     authorize_query(auth, None, q.work_id.as_deref(), &q.op)?;
-    if q.op == "work.next" {
-        return navigation::next(tx, tenant, project, auth, q).await;
-    }
-    if q.op == "work.inbox" {
-        return inbox::read(tx, tenant, project, auth, q).await;
-    }
-    if q.op == "planning.candidates" {
-        return planning::read(tx, tenant, project, auth, q).await;
-    }
-    if q.op == "sources.inspect" {
-        return sources::read(tx, tenant, project, auth, q).await;
-    }
-    if q.op == "documents.list" {
-        return documents::read(tx, tenant, project, auth, q).await;
-    }
-    if q.op == "decisions.list" {
-        return decisions::read(tx, tenant, project, auth, q).await;
-    }
-    if matches!(q.op.as_str(), "updates.list" | "update.inspect") {
-        return updates::read(tx, tenant, project, auth, q).await;
-    }
-    if q.op == "dependencies.list" {
-        return dependencies::read(tx, tenant, project, auth, q).await;
-    }
-    if q.op == "handoff.list" {
-        return handoffs::read(tx, tenant, project, auth, q).await;
-    }
-    if matches!(q.op.as_str(), "audit.requests" | "audit.development") {
-        return activity::read(tx, tenant, project, auth, directory_auth, q).await;
-    }
-    if q.op == "capabilities" {
-        let mut caps = json!({
-            "protocol":"awr-team-workstream","protocol_version":1,"queries":QUERIES,
-            "commands":crate::workstream_command::COMMANDS,
-            "authentication":"bearer_per_request",
-            "command_preconditions":"project_revision_v1","command_status_query":"command.inspect",
-            "claim_semantics":"coordination_only","lease_ttl_seconds":{"min":1,"max":3600},
-            "execution_intents":true,"execution_dispatch":false,"execution_start":true,"execution_reports":true,
-            "execution_modes":["caller_managed","reference_write_v1"],"execution_report_authority":"caller_asserted",
-            "reference_runner":{"transport":"operator_local_cli_or_library","effects":"bounded_file_writes",
-                "requires":"system_actor_with_explicit_attestation_grant","fencing_class":"uncontrolled","max_plan_bytes":1048576},
-            "execution_reconciliation":true,"trusted_execution_results":true,
-            "previous_epoch_reconciliation":true,"unattributed_history_adoption":false,"operator_history_migration":"schema_owner_cli_sessions_inactive_claims_events_v1",
-            "execution_trust_authority":"explicit_operator_grant_and_actor_kind",
-            "dependency_exports":false,"execution_admission":true,
-            "execution_admission_scope":"same_client_current_lease_lexical_project_resources",
-            "artifact_content":true,
-            "session_feedback":{
-                "version":1,"start_optional_fields":["client_info"],
-                "checkpoint_optional_fields":["client_info","progress","usage"],
-                "read":"work.observe","visibility":"work_read_business_summary",
-                "snapshot_read":"work.snapshot","snapshot_consistency":"repeatable_read",
-                "declared_phases":crate::feedback::PROGRESS_PHASES,
-                "provenance":"caller_declared","nonterminal":true,
-                "usage_scope":"host_session","usage_aggregation":"none",
-                "billing_collected":false,"stale_after_ms":crate::feedback::STALE_AFTER_MS
-            },
-            "source_content":true,
-            "controlled_content_reads":true,
-            "planning": crate::SourceStore::planning_capabilities(),
-            "planning_writeback": crate::SourceStore::planning_writeback_capabilities(),
-            "planning_mcp": {
-                "tools": [
-                    "awr_team_planning_suggest",
-                    "awr_team_planning_draft",
-                    "awr_team_planning_preview",
-                    "awr_team_planning_approve",
-                    "awr_team_planning_reject",
-                    "awr_team_planning_publish",
-                    "awr_team_planning_outcome"
-                ],
-                "sql_tools": false,
-                "arbitrary_file_edit": false,
-                "direct_done": false,
-                "idempotent_request_id": true,
-                "outcome_query": "planning.outcome"
-            },
-            "ops_audit": {
-                "protocol": "awr-ops-audit-v1",
-                "queries": ["audit.history", "audit.export", "audit.count"],
-                "project_wide_action": "audit.read_project",
-                "deny_capacity_per_project": crate::DENY_CAPACITY_PER_PROJECT,
-                "chat_text_collected": false,
-                "tool_io_collected": false,
-                "token_billing_collected": false,
-                "non_repudiation": "not_claimed_against_db_owner"
-            }
-        });
-        caps["semantic_layers"] = crate::semantic_layers::report();
-        caps["work_inbox"] = json!({"version":1,"query":"work.inbox","basis":"current_persistent_facts",
-            "deduplication":"semantic_item_key","handled_items":"disappear_on_refresh",
-            "pagination":"last_evaluated_visible_work","max_basis_items":3,
-            "default_max_bytes":65536,"advisory_only":true,"provider_webhook_required":false});
-        caps["work_guidance"] = json!({"version":1,"queries":["work.prepare","work.snapshot","work.observe","work.inbox"],
-            "basis":"shared_current_collaboration_facts","max_basis_items":3,"action_permissions":"one_current_covering_grant",
-            "optional_advice_in_context_hash":false,"observe_default_max_bytes":65536,"provider_webhook_required":false});
-        caps["neutral_delivery"] = json!({
-            "protocol":"awr-delivery-sync-v1",
-            "facts_query":"delivery.neutral.inspect",
-            "submission_query":"delivery.submission.describe",
-            "outcome_query":"delivery.neutral.outcome",
-            "source_status_query":"delivery.source.status",
-            "command_source_snapshot":"args.source_snapshot_id",
-            "outcome_identity":"current_actor_client_and_actual_work",
-            "management":"eligible_human_or_system_with_explicit_scope",
-            "background_scheduling":false,"repository_effects":false,
-            "domain_finalization":false,"read_consistency":"repeatable_read"
-        });
-        caps["neutral_delivery"]["review_submission"] = json!({
-            "queries":["delivery.neutral.inspect","review.inspect"],
-            "requires":"configured_delivery_or_selected_candidate",
-            "opening_and_approval":"current_candidate_and_readable_bound_manifest",
-            "evidence_command":"delivery.evidence.submit",
-            "evidence_binding":"args.delivery_payload.delivery_candidate_digest",
-            "artifact_read":"submission.artifacts[].query",
-            "peer_paths_allowed":false,"inspectability_is_acceptance":false
-        });
-        caps["handoff"] = json!({
-            "protocol":"awr-team-handoff-consumption-v1","clock":"database",
-            "package_source":"current_recorded_checkpoint_and_scoped_facts",
-            "inspection_command":"handoff.inspect","accept_selector":"inspection_request_id",
-            "query_is_consumption_receipt":false,"caller_assurances_are_authority":false,
-            "consumption_proof":"delivered_to_authenticated_client_not_model_cognition",
-            "acceptance_rechecks":["actual_settlement","member_client_session","package_version",
-                "current_context","artifact_and_dependency_versions","authority","fence"],
-            "handoff_starts_execution":false,
-        });
-        caps["neutral_delivery"]["integration"] = json!({
-            "commands":["delivery.integration.prepare","delivery.integration.reject_prepared"],
-            "query":"delivery.integration.inspect","action":"delivery.finalize",
-            "query_request_id":"IntegrationRequest.request_id; also returned as data.integration_id",
-            "retry_outcome":"delivery.neutral.outcome with the original client command request_id",
-            "worker_dispatch_exposed":false,"preparation_executes_repository":false,
-            "decision_id":"review.decide receipt or review.inspect decisions",
-            "connector_versions":"delivery.neutral.inspect connectors"
-        });
-        caps["approved_artifact_exports"] = json!({
-            "commands":["delivery.export.publish","delivery.export.revoke"],"query":"delivery.exports",
-            "content_query":"artifact.content","segment_query":"artifact.segment","content_selector":"export_id",
-            "publication_action":"delivery.finalize","requires":"current_selected_receipt_and_exact_original_review",
-            "read_scope":"exact_consumer_work","upstream_source_access":false,"adoption_available":true,
-            "current_contract_only":false,"historical_fixed_delivery_available":true,
-            "adoption_command":"delivery.adopt","adoption_action":"execution.request_and_report_own",
-            "adoption_args":["session_id","expected_session_version","expected_responsibility_version","export_id","expected_export_version","expected_disclosure_sha256","expected_adoption_version"],
-            "publish_args":["session_id","expected_session_version","consumer_work_id","expected_consumer_contract_hash","expected_consumer_ownership_version","receipt_id","expected_artifact_sha256"],
-            "revoke_args":["session_id","expected_session_version","export_id","expected_export_version"]
-        });
-        // Fixed history requires the explicit source-pinned export codec.
-        caps["planning"]["cross_workstream_policy"]["declaration_only"] = json!(false);
-        caps["planning"]["cross_workstream_policy"]["adoption_available"] = json!(true);
-        caps["planning"]["cross_workstream_policy"]["adoption_version_policies"] =
-            json!(["current_contract", "fixed_delivery"]);
-        caps["planning"]["cross_workstream_policy"]["historical_fixed_delivery_available"] =
-            json!(true);
-        caps["agent_review"] = json!({
-            "command":"review.decide", "policy":crate::review::AGENT_REVIEW_POLICY,
-            "requires":["agent_actor","agent_review_membership_grant","live_review_delegation","distinct_author_actor_and_client"],
-            "approval_basis":"agent_review", "human_approval":false,
-            "team_independent_acceptance":false, "completion_supported":true,
-            "execution_basis":"caller_asserted_reconciled", "dependency_adoption":"explicit_v2_same_stream_per_predecessor",
-            "dependency_acceptance_mode":"agent_reviewed_caller_asserted_reconciled",
-            "unmapped_agent_dependencies":"blocked",
-            "cross_workstream_adoption":"human_independent_only", "existing_same_stream_policies":"unchanged",
-            "legacy_human_review_aliases":["review.accept","review.return"]
-        });
-        caps["simulated_member_review"] = json!({
-            "policy":crate::review::simulated_member::POLICY,"command":"review.decide",
-            "requires":["explicit_simulated_members","unique_active_agent_binding",
-                "active_member_actor_and_membership","agent_review_membership_grant",
-                "live_review_delegation","distinct_original_member_actor_and_client"],
-            "origin_capture":["execution.prepare","evidence.submit","review.open"],
-            "admission_rechecks_origin":true,"historical_origin_backfill":false,
-            "approval_basis":crate::review::simulated_member::APPROVAL_BASIS,
-            "human_approval":false,"team_independent_acceptance":false,
-            "completion_supported":true,"repository_integration_supported":true,
-            "finalization_action":"delivery.finalize","finalizer_requires":"current_explicit_delivery_authority",
-            "integration_operation":"fast_forward","preparation_executes_repository":false,
-            "completion_requires":["artifact_bytes","successful_execution","workspace_settlement","exact_immutable_review_basis","confirmed_integration_when_a_candidate_is_selected"],
-            "details":"review.inspect","default_receipt":"member_summary_and_basis_digest",
-            "shared_controller_allowed":true,
-            "dependency_acceptance_mode":"simulated_member_independent",
-            "dependency_adoption":"explicit_v5_same_stream_per_predecessor",
-            "unmapped_dependencies":"blocked",
-            "cross_workstream_adoption_supported":true,
-            "v5_dependency_scope":"same_workstream",
-            "cross_workstream_adoption_policy":"explicit_v6_version_policy"
-        });
-        caps["artifact_segments"] = json!({"query":"artifact.segment", "expected_sha256_required":true,
-            "default_raw_bytes":2048,"max_raw_bytes":WorkstreamQuery::MAX_ARTIFACT_SEGMENT_BYTES,
-            "max_mcp_result_bytes":WorkstreamQuery::MAX_ARTIFACT_SEGMENT_WIRE_BYTES,
-            "encoding":"base64","complete_read":"Follow next_query until end_of_artifact; concatenate contiguous ranges from 0 and verify the full length and sha256."});
-        caps["identity"] = navigation::identity_with_person(tx, tenant, project, auth).await?;
-        caps["ordinary_decisions"] = json!({"version":1,"query":"decisions.list",
-            "commands":["decision.request","decision.respond","decision.cancel"],
-            "request_authority":"current_owned_live_claim","response_authority":"selected_current_member_and_owned_session",
-            "context_field":"ordinary_decisions","one_open_question_per_work":true,
-            "execution_permission_granted":false,"formal_acceptance_granted":false});
-        caps["project_period_updates"] = json!({"version":1,"queries":["updates.list","update.inspect"],
-            "record_tool":"awr_team_update_record","command":"update.record",
-            "record_authority":"supervisor_duty_and_project_scoped_edit_planning_delegation",
-            "read_authority":"current_project_or_workstream_read_delegation_no_task_promotion",
-            "sentence_provenance":"caller_supplied","fact_snapshots":"immutable_task_counts_with_authorized_projection",
-            "history":"immutable_versions_with_separate_current_pointer"});
-        caps["business_role_presets"] = json!({
-            "roles":awr_team::BusinessRole::all(), "explicit_combined_duties":true,
-            "semantics":"membership_grants_intersect_declared_ceiling_then_one_live_delegation",
-            "omitted_on_update":"preserve_existing_declaration", "role_names_grant_authority":false
-        });
-        // AWR-PPD-061: publish each duty's ceiling from the same
-        // BusinessRole::action_ceiling the authorization path intersects, so
-        // the listed definitions stay identical to the enforced policy; a
-        // second copy would drift. Stable identifiers only — pages own the
-        // human wording (docs/dev/reference/business-duty-actions.md).
-        let ceilings: serde_json::Map<String, Value> = awr_team::BusinessRole::all()
-            .into_iter()
-            .map(|role| {
-                let name = serde_json::to_value(role)
-                    .expect("business role serializes to its snake_case name");
-                (
-                    name.as_str()
-                        .expect("business role serializes to a string")
-                        .to_owned(),
-                    json!(role.action_ceiling()),
-                )
-            })
-            .collect();
-        caps["business_role_presets"]["action_ceilings"] = Value::Object(ceilings);
-        caps["project_entry"] = json!("work.next");
-        // WS-014: explicit scope=main / old-client / local-file boundaries.
-        if let Some(obj) = caps.as_object_mut() {
-            obj.extend(
-                crate::workstream_auth::workstream_boundary_capabilities()
-                    .as_object()
-                    .cloned()
-                    .unwrap_or_default(),
-            );
-        }
-        return Ok(caps);
-    }
-    if q.op == "workstreams.list" {
-        let binding = hash(
-            &json!({"auth":auth.binding,"snapshot":auth.snapshot,"op":q.op,
-            "grants":visible.iter().map(|s|(s.id,s.authority_version,auth.grant_versions[&s.id])).collect::<Vec<_>>()}),
-        )?;
-        let c = cursor(q, &binding)?;
-        let limit = usize::from(q.limit.unwrap_or(50));
-        let mut sorted = visible.clone();
-        sorted.sort_by_key(|s| s.id);
-        let rows: Vec<_> = sorted
-            .into_iter()
-            .filter(|s| s.id.to_string() > c.key)
-            .take(limit + 1)
-            .collect();
-        let more = rows.len() > limit;
-        let items: Vec<_> = rows.into_iter().take(limit).collect();
-        let next = if more {
-            next_cursor(&binding, &items.last().expect("page").id.to_string(), 0, -1)
-        } else {
-            Value::Null
-        };
-        return Ok(json!({"items":items,"total":visible.len(),"next_cursor":next}));
-    }
-    if q.op == "source.content" {
-        let path = q.source_path.as_deref().ok_or(PgError::Forbidden)?;
-        let data = read_controlled_source_content(
-            tx,
-            tenant,
-            project,
-            auth,
-            path,
-            q.expected_sha256.as_deref(),
-            q.max_context_bytes,
-        )
-        .await?;
-        return Ok(json!({
-            "protocol_version":1,
-            "scope_id":"main",
-            "selection_basis":"project",
-            "coordinator_epoch":auth.epoch,
-            "project_status":auth.project_status,
-            "source_snapshot_id":auth.snapshot,
-            "project_revision":auth.revision.to_string(),
-            "data":data
-        }));
+    // Keep unrelated read branches (including document.history and capabilities)
+    // off the shared dispatch stack so nested handoff/checkpoint work.prepare
+    // reads stay well within the default thread stack budget.
+    if is_unscoped_read_op(&q.op) {
+        return read_unscoped_op(tx, tenant, project, auth, directory_auth, q).await;
     }
     let mut selection = WorkstreamSelection {
         explicit: q.workstream_id,
@@ -1751,399 +1566,494 @@ pub(crate) async fn read(
         &q.op,
     )?;
     let stream = resolved.workstream_id.to_string();
-    if q.op == "task.assignees" {
-        let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
-        let (_, ownership) = work_binding(tx, tenant, project, auth, work).await?;
-        let data = assignees::read(
-            tx,
-            tenant,
-            project,
-            auth,
-            q,
-            resolved.workstream_id,
-            resolved.authority_version,
-            ownership,
-        )
-        .await?;
-        return Ok(json!({"protocol_version":1,"workstream_id":stream,
-            "authority_version":resolved.authority_version.to_string(),"scope_id":"main",
-            "selection_basis":resolved.basis,"coordinator_epoch":auth.epoch,
-            "project_status":auth.project_status,"source_snapshot_id":auth.snapshot,
-            "project_revision":auth.revision.to_string(),"data":data}));
+    if matches!(q.op.as_str(), "work.prepare" | "work.snapshot") {
+        return read_prepare_or_snapshot(tx, tenant, project, auth, resolved, stream, q).await;
     }
-    if q.op == "artifact.segment" {
-        let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
-        let data = artifact_segments::read(
-            tx,
-            tenant,
-            project,
-            auth,
-            q,
-            work,
-            resolved.authority_version,
-        )
-        .await?;
-        return Ok(json!({"protocol_version":1,"workstream_id":stream,
-            "authority_version":resolved.authority_version.to_string(),"scope_id":"main",
-            "selection_basis":resolved.basis,"coordinator_epoch":auth.epoch,
-            "project_status":auth.project_status,"source_snapshot_id":auth.snapshot,
-            "project_revision":auth.revision.to_string(),"data":data}));
-    }
-    if q.op == "delivery.exports" {
-        // Export discovery owns a consumer-bound cursor. Do not parse it as a
-        // legacy work/event cursor before its own authority checks.
-        let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
-        let data =
-            crate::cross_workstream_exports::list(tx, tenant, project, auth, work, q).await?;
-        return Ok(
-            json!({"protocol_version":1,"workstream_id":stream,"authority_version":resolved.authority_version.to_string(),"scope_id":"main","selection_basis":resolved.basis,
-            "coordinator_epoch":auth.epoch,"project_status":auth.project_status,"source_snapshot_id":auth.snapshot,"project_revision":auth.revision.to_string(),"data":data}),
-        );
-    }
-    let binding = hash(
-        &json!({"auth":auth.binding,"snapshot":auth.snapshot,"epoch":auth.epoch,"stream":stream,
-        "authority":resolved.authority_version,"grant":auth.grant_versions[&resolved.workstream_id],"op":q.op,
-        "work":resolved.work_item_id,"session":q.session_id,"search":q.search}),
-    )?;
-    if q.op == "review.rounds" {
-        let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
-        let data = reviews::read(tx, tenant, project, auth, work, q, &binding).await?;
-        let result = json!({"protocol_version":1,"workstream_id":stream,
-            "authority_version":resolved.authority_version.to_string(),"scope_id":"main",
-            "selection_basis":resolved.basis,"coordinator_epoch":auth.epoch,
-            "project_status":auth.project_status,"source_snapshot_id":auth.snapshot,
-            "project_revision":auth.revision.to_string(),"data":data});
-        if serde_json::to_vec(&result)
-            .map_err(|_| PgError::SourceDivergence)?
-            .len()
-            > q.max_context_bytes.unwrap_or(262144)
-        {
-            return Err(PgError::ResponseTooLarge);
+    read_scoped_op(tx, tenant, project, auth, resolved, stream, q).await
+}
+
+#[inline(never)]
+fn read_unscoped_op<'a>(
+    tx: &'a Transaction<'a>,
+    tenant: &'a str,
+    project: &'a str,
+    auth: &'a ReaderAuthority,
+    directory_auth: Option<&'a ReaderAuthority>,
+    q: &'a WorkstreamQuery,
+) -> BoxReadFuture<'a> {
+    Box::pin(async move {
+        if q.op == "work.next" {
+            return navigation::next(tx, tenant, project, auth, q).await;
         }
-        return Ok(result);
-    }
-    let c = cursor(q, &binding)?;
-    let limit = i64::from(q.limit.unwrap_or(50));
-    let data = match q.op.as_str() {
-        "delivery.routes" => {
-            let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
-            let mut items = crate::DeliverySyncStore::route_templates_in_tx(
+        if q.op == "work.inbox" {
+            return inbox::read(tx, tenant, project, auth, q).await;
+        }
+        if q.op == "planning.candidates" {
+            return planning::read(tx, tenant, project, auth, q).await;
+        }
+        if q.op == "sources.inspect" {
+            return sources::read(tx, tenant, project, auth, q).await;
+        }
+        if q.op == "documents.list" {
+            return documents::read(tx, tenant, project, auth, q).await;
+        }
+        if q.op == "document.history" {
+            return Box::pin(documents::history(
                 tx,
                 tenant,
                 project,
                 auth,
-                work,
-                &c.key,
-                limit + 1,
-            )
-            .await?;
-            let more = items.len() > limit as usize;
-            items.truncate(limit as usize);
+                directory_auth,
+                q,
+            ))
+            .await;
+        }
+        if q.op == "decisions.list" {
+            return decisions::read(tx, tenant, project, auth, q).await;
+        }
+        if matches!(q.op.as_str(), "updates.list" | "update.inspect") {
+            return updates::read(tx, tenant, project, auth, q).await;
+        }
+        if q.op == "dependencies.list" {
+            return dependencies::read(tx, tenant, project, auth, q).await;
+        }
+        if q.op == "handoff.list" {
+            return handoffs::read(tx, tenant, project, auth, q).await;
+        }
+        if matches!(q.op.as_str(), "audit.requests" | "audit.development") {
+            return activity::read(tx, tenant, project, auth, directory_auth, q).await;
+        }
+        if q.op == "capabilities" {
+            let identity = navigation::identity_with_person(tx, tenant, project, auth).await?;
+            return Ok(capabilities_response(identity));
+        }
+        if q.op == "workstreams.list" {
+            let visible: Vec<_> = auth
+                .catalog
+                .workstreams
+                .iter()
+                .filter(|s| {
+                    auth.access
+                        .authorize(&auth.catalog, s.id, WorkstreamAction::Read)
+                        .is_ok()
+                })
+                .collect();
+            let binding = hash(
+                &json!({"auth":auth.binding,"snapshot":auth.snapshot,"op":q.op,
+                "grants":visible.iter().map(|s|(s.id,s.authority_version,auth.grant_versions[&s.id])).collect::<Vec<_>>()}),
+            )?;
+            let c = cursor(q, &binding)?;
+            let limit = usize::from(q.limit.unwrap_or(50));
+            let mut sorted = visible.clone();
+            sorted.sort_by_key(|s| s.id);
+            let rows: Vec<_> = sorted
+                .into_iter()
+                .filter(|s| s.id.to_string() > c.key)
+                .take(limit + 1)
+                .collect();
+            let more = rows.len() > limit;
+            let items: Vec<_> = rows.into_iter().take(limit).collect();
             let next = if more {
-                next_cursor(
-                    &binding,
-                    items.last().expect("nonempty route page")["template_id"]
-                        .as_str()
-                        .ok_or(PgError::SourceDivergence)?,
-                    0,
-                    -1,
-                )
+                next_cursor(&binding, &items.last().expect("page").id.to_string(), 0, -1)
             } else {
                 Value::Null
             };
-            let state = crate::DeliverySyncStore::task_route_state_in_tx(
+            return Ok(json!({"items":items,"total":visible.len(),"next_cursor":next}));
+        }
+        if q.op == "source.content" {
+            let path = q.source_path.as_deref().ok_or(PgError::Forbidden)?;
+            let data = read_controlled_source_content(
                 tx,
                 tenant,
                 project,
-                work,
-                &stream,
-                &auth.epoch,
+                auth,
+                path,
+                q.expected_sha256.as_deref(),
+                q.max_context_bytes,
             )
             .await?;
-            let guidance = state.guidance(!items.is_empty(), q.cursor.is_some());
-            let value = json!({"items":items,"next_cursor":next,"registration_only":true,
-                "execution_authorized":false,"grants_created":false,
-                "task_route_state":state.label(),"guidance":guidance});
-            if serde_json::to_vec(&value)
+            return Ok(json!({
+                "protocol_version":1,
+                "scope_id":"main",
+                "selection_basis":"project",
+                "coordinator_epoch":auth.epoch,
+                "project_status":auth.project_status,
+                "source_snapshot_id":auth.snapshot,
+                "project_revision":auth.revision.to_string(),
+                "data":data
+            }));
+        }
+        Err(PgError::Unsupported("workstream query operation".into()))
+    })
+}
+
+#[inline(never)]
+fn capabilities_response(identity: Value) -> Value {
+    let mut caps = json!({
+        "protocol":"awr-team-workstream","protocol_version":1,"queries":QUERIES,
+        "commands":crate::workstream_command::COMMANDS,
+        "authentication":"bearer_per_request",
+        "command_preconditions":"project_revision_v1","command_status_query":"command.inspect",
+        "claim_semantics":"coordination_only","lease_ttl_seconds":{"min":1,"max":3600},
+        "execution_intents":true,"execution_dispatch":false,"execution_start":true,"execution_reports":true,
+        "execution_modes":["caller_managed","reference_write_v1"],"execution_report_authority":"caller_asserted",
+        "reference_runner":{"transport":"operator_local_cli_or_library","effects":"bounded_file_writes",
+            "requires":"system_actor_with_explicit_attestation_grant","fencing_class":"uncontrolled","max_plan_bytes":1048576},
+        "execution_reconciliation":true,"trusted_execution_results":true,
+        "previous_epoch_reconciliation":true,"unattributed_history_adoption":false,"operator_history_migration":"schema_owner_cli_sessions_inactive_claims_events_v1",
+        "execution_trust_authority":"explicit_operator_grant_and_actor_kind",
+        "dependency_exports":false,"execution_admission":true,
+        "execution_admission_scope":"same_client_current_lease_lexical_project_resources",
+        "artifact_content":true,
+        "session_feedback":{
+            "version":1,"start_optional_fields":["client_info"],
+            "checkpoint_optional_fields":["client_info","progress","usage"],
+            "read":"work.observe","visibility":"work_read_business_summary",
+            "snapshot_read":"work.snapshot","snapshot_consistency":"repeatable_read",
+            "declared_phases":crate::feedback::PROGRESS_PHASES,
+            "provenance":"caller_declared","nonterminal":true,
+            "usage_scope":"host_session","usage_aggregation":"none",
+            "billing_collected":false,"stale_after_ms":crate::feedback::STALE_AFTER_MS
+        },
+        "source_content":true,
+        "controlled_content_reads":true,
+        "planning": crate::SourceStore::planning_capabilities(),
+        "planning_writeback": crate::SourceStore::planning_writeback_capabilities(),
+        "planning_mcp": {
+            "tools": [
+                "awr_team_planning_suggest",
+                "awr_team_planning_draft",
+                "awr_team_planning_preview",
+                "awr_team_planning_approve",
+                "awr_team_planning_reject",
+                "awr_team_planning_publish",
+                "awr_team_planning_outcome"
+            ],
+            "sql_tools": false,
+            "arbitrary_file_edit": false,
+            "direct_done": false,
+            "idempotent_request_id": true,
+            "outcome_query": "planning.outcome"
+        },
+        "ops_audit": {
+            "protocol": "awr-ops-audit-v1",
+            "queries": ["audit.history", "audit.export", "audit.count"],
+            "project_wide_action": "audit.read_project",
+            "deny_capacity_per_project": crate::DENY_CAPACITY_PER_PROJECT,
+            "chat_text_collected": false,
+            "tool_io_collected": false,
+            "token_billing_collected": false,
+            "non_repudiation": "not_claimed_against_db_owner"
+        }
+    });
+    caps["semantic_layers"] = crate::semantic_layers::report();
+    caps["work_inbox"] = json!({"version":1,"query":"work.inbox","basis":"current_persistent_facts",
+            "deduplication":"semantic_item_key","handled_items":"disappear_on_refresh",
+            "pagination":"last_evaluated_visible_work","max_basis_items":3,
+            "default_max_bytes":65536,"advisory_only":true,"provider_webhook_required":false});
+    caps["work_guidance"] = json!({"version":1,"queries":["work.prepare","work.snapshot","work.observe","work.inbox"],
+            "basis":"shared_current_collaboration_facts","max_basis_items":3,"action_permissions":"one_current_covering_grant",
+            "optional_advice_in_context_hash":false,"observe_default_max_bytes":65536,"provider_webhook_required":false});
+    caps["neutral_delivery"] = json!({
+        "protocol":"awr-delivery-sync-v1",
+        "facts_query":"delivery.neutral.inspect",
+        "submission_query":"delivery.submission.describe",
+        "outcome_query":"delivery.neutral.outcome",
+        "source_status_query":"delivery.source.status",
+        "command_source_snapshot":"args.source_snapshot_id",
+        "outcome_identity":"current_actor_client_and_actual_work",
+        "management":"eligible_human_or_system_with_explicit_scope",
+        "background_scheduling":false,"repository_effects":false,
+        "domain_finalization":false,"read_consistency":"repeatable_read"
+    });
+    caps["neutral_delivery"]["review_submission"] = json!({
+        "queries":["delivery.neutral.inspect","review.inspect"],
+        "requires":"configured_delivery_or_selected_candidate",
+        "opening_and_approval":"current_candidate_and_readable_bound_manifest",
+        "evidence_command":"delivery.evidence.submit",
+        "evidence_binding":"args.delivery_payload.delivery_candidate_digest",
+        "artifact_read":"submission.artifacts[].query",
+        "peer_paths_allowed":false,"inspectability_is_acceptance":false
+    });
+    caps["handoff"] = json!({
+        "protocol":"awr-team-handoff-consumption-v1","clock":"database",
+        "package_source":"current_recorded_checkpoint_and_scoped_facts",
+        "inspection_command":"handoff.inspect","accept_selector":"inspection_request_id",
+        "query_is_consumption_receipt":false,"caller_assurances_are_authority":false,
+        "consumption_proof":"delivered_to_authenticated_client_not_model_cognition",
+        "acceptance_rechecks":["actual_settlement","member_client_session","package_version",
+            "current_context","artifact_and_dependency_versions","authority","fence"],
+        "handoff_starts_execution":false,
+    });
+    caps["neutral_delivery"]["integration"] = json!({
+        "commands":["delivery.integration.prepare","delivery.integration.reject_prepared"],
+        "query":"delivery.integration.inspect","action":"delivery.finalize",
+        "query_request_id":"IntegrationRequest.request_id; also returned as data.integration_id",
+        "retry_outcome":"delivery.neutral.outcome with the original client command request_id",
+        "worker_dispatch_exposed":false,"preparation_executes_repository":false,
+        "decision_id":"review.decide receipt or review.inspect decisions",
+        "connector_versions":"delivery.neutral.inspect connectors"
+    });
+    caps["approved_artifact_exports"] = json!({
+        "commands":["delivery.export.publish","delivery.export.revoke"],"query":"delivery.exports",
+        "content_query":"artifact.content","segment_query":"artifact.segment","content_selector":"export_id",
+        "publication_action":"delivery.finalize","requires":"current_selected_receipt_and_exact_original_review",
+        "read_scope":"exact_consumer_work","upstream_source_access":false,"adoption_available":true,
+        "current_contract_only":false,"historical_fixed_delivery_available":true,
+        "adoption_command":"delivery.adopt","adoption_action":"execution.request_and_report_own",
+        "adoption_args":["session_id","expected_session_version","expected_responsibility_version","export_id","expected_export_version","expected_disclosure_sha256","expected_adoption_version"],
+        "publish_args":["session_id","expected_session_version","consumer_work_id","expected_consumer_contract_hash","expected_consumer_ownership_version","receipt_id","expected_artifact_sha256"],
+        "revoke_args":["session_id","expected_session_version","export_id","expected_export_version"]
+    });
+    // Fixed history requires the explicit source-pinned export codec.
+    caps["planning"]["cross_workstream_policy"]["declaration_only"] = json!(false);
+    caps["planning"]["cross_workstream_policy"]["adoption_available"] = json!(true);
+    caps["planning"]["cross_workstream_policy"]["adoption_version_policies"] =
+        json!(["current_contract", "fixed_delivery"]);
+    caps["planning"]["cross_workstream_policy"]["historical_fixed_delivery_available"] =
+        json!(true);
+    caps["agent_review"] = json!({
+        "command":"review.decide", "policy":crate::review::AGENT_REVIEW_POLICY,
+        "requires":["agent_actor","agent_review_membership_grant","live_review_delegation","distinct_author_actor_and_client"],
+        "approval_basis":"agent_review", "human_approval":false,
+        "team_independent_acceptance":false, "completion_supported":true,
+        "execution_basis":"caller_asserted_reconciled", "dependency_adoption":"explicit_v2_same_stream_per_predecessor",
+        "dependency_acceptance_mode":"agent_reviewed_caller_asserted_reconciled",
+        "unmapped_agent_dependencies":"blocked",
+        "cross_workstream_adoption":"human_independent_only", "existing_same_stream_policies":"unchanged",
+        "legacy_human_review_aliases":["review.accept","review.return"]
+    });
+    caps["simulated_member_review"] = json!({
+        "policy":crate::review::simulated_member::POLICY,"command":"review.decide",
+        "requires":["explicit_simulated_members","unique_active_agent_binding",
+            "active_member_actor_and_membership","agent_review_membership_grant",
+            "live_review_delegation","distinct_original_member_actor_and_client"],
+        "origin_capture":["execution.prepare","evidence.submit","review.open"],
+        "admission_rechecks_origin":true,"historical_origin_backfill":false,
+        "approval_basis":crate::review::simulated_member::APPROVAL_BASIS,
+        "human_approval":false,"team_independent_acceptance":false,
+        "completion_supported":true,"repository_integration_supported":true,
+        "finalization_action":"delivery.finalize","finalizer_requires":"current_explicit_delivery_authority",
+        "integration_operation":"fast_forward","preparation_executes_repository":false,
+        "completion_requires":["artifact_bytes","successful_execution","workspace_settlement","exact_immutable_review_basis","confirmed_integration_when_a_candidate_is_selected"],
+        "details":"review.inspect","default_receipt":"member_summary_and_basis_digest",
+        "shared_controller_allowed":true,
+        "dependency_acceptance_mode":"simulated_member_independent",
+        "dependency_adoption":"explicit_v5_same_stream_per_predecessor",
+        "unmapped_dependencies":"blocked",
+        "cross_workstream_adoption_supported":true,
+        "v5_dependency_scope":"same_workstream",
+        "cross_workstream_adoption_policy":"explicit_v6_version_policy"
+    });
+    caps["artifact_segments"] = json!({"query":"artifact.segment", "expected_sha256_required":true,
+            "default_raw_bytes":2048,"max_raw_bytes":WorkstreamQuery::MAX_ARTIFACT_SEGMENT_BYTES,
+            "max_mcp_result_bytes":WorkstreamQuery::MAX_ARTIFACT_SEGMENT_WIRE_BYTES,
+            "encoding":"base64","complete_read":"Follow next_query until end_of_artifact; concatenate contiguous ranges from 0 and verify the full length and sha256."});
+    caps["identity"] = identity;
+    caps["ordinary_decisions"] = json!({"version":1,"query":"decisions.list",
+            "commands":["decision.request","decision.respond","decision.cancel"],
+            "request_authority":"current_owned_live_claim","response_authority":"selected_current_member_and_owned_session",
+            "context_field":"ordinary_decisions","one_open_question_per_work":true,
+            "execution_permission_granted":false,"formal_acceptance_granted":false});
+    caps["project_period_updates"] = json!({"version":1,"queries":["updates.list","update.inspect"],
+            "record_tool":"awr_team_update_record","command":"update.record",
+            "record_authority":"supervisor_duty_and_project_scoped_edit_planning_delegation",
+            "read_authority":"current_project_or_workstream_read_delegation_no_task_promotion",
+            "sentence_provenance":"caller_supplied","fact_snapshots":"immutable_task_counts_with_authorized_projection",
+            "history":"immutable_versions_with_separate_current_pointer"});
+    caps["business_role_presets"] = json!({
+        "roles":awr_team::BusinessRole::all(), "explicit_combined_duties":true,
+        "semantics":"membership_grants_intersect_declared_ceiling_then_one_live_delegation",
+        "omitted_on_update":"preserve_existing_declaration", "role_names_grant_authority":false
+    });
+    // AWR-PPD-061: publish each duty's ceiling from the same
+    // BusinessRole::action_ceiling the authorization path intersects, so
+    // the listed definitions stay identical to the enforced policy; a
+    // second copy would drift. Stable identifiers only — pages own the
+    // human wording (docs/dev/reference/business-duty-actions.md).
+    let ceilings: serde_json::Map<String, Value> = awr_team::BusinessRole::all()
+        .into_iter()
+        .map(|role| {
+            let name = serde_json::to_value(role)
+                .expect("business role serializes to its snake_case name");
+            (
+                name.as_str()
+                    .expect("business role serializes to a string")
+                    .to_owned(),
+                json!(role.action_ceiling()),
+            )
+        })
+        .collect();
+    caps["business_role_presets"]["action_ceilings"] = Value::Object(ceilings);
+    caps["project_entry"] = json!("work.next");
+    // WS-014: explicit scope=main / old-client / local-file boundaries.
+    if let Some(obj) = caps.as_object_mut() {
+        obj.extend(
+            crate::workstream_auth::workstream_boundary_capabilities()
+                .as_object()
+                .cloned()
+                .unwrap_or_default(),
+        );
+    }
+    caps
+}
+
+#[inline(never)]
+fn read_scoped_op<'a>(
+    tx: &'a Transaction<'a>,
+    tenant: &'a str,
+    project: &'a str,
+    auth: &'a ReaderAuthority,
+    resolved: ResolvedWorkstream,
+    stream: String,
+    q: &'a WorkstreamQuery,
+) -> BoxReadFuture<'a> {
+    Box::pin(async move {
+        if q.op == "task.assignees" {
+            let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
+            let (_, ownership) = work_binding(tx, tenant, project, auth, work).await?;
+            let data = assignees::read(
+                tx,
+                tenant,
+                project,
+                auth,
+                q,
+                resolved.workstream_id,
+                resolved.authority_version,
+                ownership,
+            )
+            .await?;
+            return Ok(json!({"protocol_version":1,"workstream_id":stream,
+            "authority_version":resolved.authority_version.to_string(),"scope_id":"main",
+            "selection_basis":resolved.basis,"coordinator_epoch":auth.epoch,
+            "project_status":auth.project_status,"source_snapshot_id":auth.snapshot,
+            "project_revision":auth.revision.to_string(),"data":data}));
+        }
+        if q.op == "artifact.segment" {
+            let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
+            let data = artifact_segments::read(
+                tx,
+                tenant,
+                project,
+                auth,
+                q,
+                work,
+                resolved.authority_version,
+            )
+            .await?;
+            return Ok(json!({"protocol_version":1,"workstream_id":stream,
+            "authority_version":resolved.authority_version.to_string(),"scope_id":"main",
+            "selection_basis":resolved.basis,"coordinator_epoch":auth.epoch,
+            "project_status":auth.project_status,"source_snapshot_id":auth.snapshot,
+            "project_revision":auth.revision.to_string(),"data":data}));
+        }
+        if q.op == "delivery.exports" {
+            // Export discovery owns a consumer-bound cursor. Do not parse it as a
+            // legacy work/event cursor before its own authority checks.
+            let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
+            let data =
+                crate::cross_workstream_exports::list(tx, tenant, project, auth, work, q).await?;
+            return Ok(
+                json!({"protocol_version":1,"workstream_id":stream,"authority_version":resolved.authority_version.to_string(),"scope_id":"main","selection_basis":resolved.basis,
+            "coordinator_epoch":auth.epoch,"project_status":auth.project_status,"source_snapshot_id":auth.snapshot,"project_revision":auth.revision.to_string(),"data":data}),
+            );
+        }
+        let binding = hash(
+            &json!({"auth":auth.binding,"snapshot":auth.snapshot,"epoch":auth.epoch,"stream":stream,
+        "authority":resolved.authority_version,"grant":auth.grant_versions[&resolved.workstream_id],"op":q.op,
+        "work":resolved.work_item_id,"session":q.session_id,"search":q.search}),
+        )?;
+        if q.op == "review.rounds" {
+            let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
+            let data = reviews::read(tx, tenant, project, auth, work, q, &binding).await?;
+            let result = json!({"protocol_version":1,"workstream_id":stream,
+            "authority_version":resolved.authority_version.to_string(),"scope_id":"main",
+            "selection_basis":resolved.basis,"coordinator_epoch":auth.epoch,
+            "project_status":auth.project_status,"source_snapshot_id":auth.snapshot,
+            "project_revision":auth.revision.to_string(),"data":data});
+            if serde_json::to_vec(&result)
                 .map_err(|_| PgError::SourceDivergence)?
                 .len()
                 > q.max_context_bytes.unwrap_or(262144)
             {
                 return Err(PgError::ResponseTooLarge);
             }
-            value
+            return Ok(result);
         }
-        "delivery.neutral.inspect"
-        | "delivery.submission.describe"
-        | "delivery.neutral.outcome"
-        | "delivery.source.status"
-        | "delivery.integration.inspect" => {
-            let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
-            let value = delivery::read(tx, tenant, project, auth, q, work).await?;
-            if q.max_context_bytes.is_some_and(|budget| {
-                serde_json::to_vec(&value).map_or(true, |bytes| bytes.len() > budget)
-            }) {
-                return Err(PgError::ResponseTooLarge);
-            }
-            value
-        }
-        "work.admission" => {
-            let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
-            work_binding(tx, tenant, project, auth, work).await?;
-            crate::governance::read(tx, tenant, project, &auth.snapshot, work).await?
-        }
-        "work.observe" => {
-            let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
-            let (_, ownership) = work_binding(tx, tenant, project, auth, work).await?;
-            observation::read(
-                tx,
-                tenant,
-                project,
-                auth,
-                work,
-                &stream,
-                ownership,
-                q.session_id.as_deref(),
-            )
-            .await?
-        }
-        "execution.inspect" => {
-            let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
-            let (_, ownership) = work_binding(tx, tenant, project, auth, work).await?;
-            crate::workstream_command::executions::inspect(
-                tx,
-                tenant,
-                project,
-                auth,
-                work,
-                &stream,
-                ownership,
-                q.execution_id.as_deref().ok_or(PgError::Forbidden)?,
-                q.session_id.as_deref(),
-            )
-            .await?
-        }
-        "claim.inspect" => {
-            let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
-            let (_, ownership) = work_binding(tx, tenant, project, auth, work).await?;
-            crate::workstream_command::claims::inspect(
-                tx,
-                tenant,
-                project,
-                auth,
-                work,
-                &stream,
-                ownership,
-                q.claim_id.as_deref().ok_or(PgError::Forbidden)?,
-                q.session_id.as_deref(),
-            )
-            .await?
-        }
-        "handoff.inspect" => {
-            let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
-            let _ = work_binding(tx, tenant, project, auth, work).await?;
-            let handoff_id = q.handoff_id.as_deref().ok_or(PgError::Forbidden)?;
-            crate::workstream_command::handoffs::inspect_query(
-                tx, tenant, project, work, handoff_id,
-            )
-            .await?
-        }
-        "evidence.inspect" => {
-            let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
-            let evidence_id = q.evidence_id.as_deref().ok_or(PgError::Forbidden)?;
-            let value = crate::workstream_command::reviews::inspect_evidence(
-                tx,
-                tenant,
-                project,
-                auth,
-                work,
-                evidence_id,
-            )
-            .await?;
-            value
-        }
-        "review.inspect" => {
-            let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
-            let _ = work_binding(tx, tenant, project, auth, work).await?;
-            let round_id = q.review_round_id.as_deref().ok_or(PgError::Forbidden)?;
-            let value = crate::workstream_command::reviews::inspect_review(
-                tx, tenant, project, auth, work, round_id,
-            )
-            .await?;
-            if value["review"]["work_id"] != work {
-                return Err(PgError::Forbidden);
-            }
-            if serde_json::to_vec(&value)
-                .map_err(|_| PgError::SourceDivergence)?
-                .len()
-                > q.max_context_bytes.unwrap_or(65_536)
-            {
-                return Err(PgError::ResponseTooLarge);
-            }
-            value
-        }
-        "completion.inspect" => {
-            let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
-            let _ = work_binding(tx, tenant, project, auth, work).await?;
-            crate::workstream_command::reviews::inspect_completion(tx, tenant, project, work)
-                .await?
-        }
-        "delivery.inspect" => {
-            let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
-            let _ = work_binding(tx, tenant, project, auth, work).await?;
-            crate::delegation_auth::authorize_navigation_action(
-                auth,
-                awr_team::Action::WorkRead,
-                stream.parse().map_err(|_| PgError::SourceDivergence)?,
-                work,
-            )?;
-            let mut value =
-                crate::workstream_command::reviews::inspect_delivery(tx, tenant, project, work)
-                    .await?;
-            let row = tx.query_one("SELECT contract_json,contract_hash FROM awr_team.work_contracts
-                WHERE tenant_id=$1 AND project_id=$2 AND snapshot_id=$3 AND scope_id='main' AND work_id=$4",
-                &[&tenant,&project,&auth.snapshot,&work]).await?;
-            let contract: WorkContract =
-                serde_json::from_value(row.get(0)).map_err(|_| PgError::SourceDivergence)?;
-            if contract.work_id.as_str() != work
-                || contract.hash().map_err(|_| PgError::SourceDivergence)?
-                    != row.get::<_, String>(1)
-            {
-                return Err(PgError::SourceDivergence);
-            }
-            value["delivery"]["dependencies"] = json!(
-                dependencies::for_work(tx, tenant, project, auth, work, &stream, &contract).await?
-            );
-            value
-        }
-        "command.inspect" => {
-            let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
-            let (_, ownership) = work_binding(tx, tenant, project, auth, work).await?;
-            crate::workstream_command::inspect(
-                tx,
-                tenant,
-                project,
-                auth,
-                q.request_id.as_deref().ok_or(PgError::Forbidden)?,
-                work,
-                &stream,
-                ownership,
-            )
-            .await?
-        }
-        "work.graph" => {
-            graph::read(tx, tenant, project, auth, &stream, q, &binding, &c, limit).await?
-        }
-        "work.list" | "work.search" => {
-            list::read(tx, tenant, project, auth, &stream, q, &binding, &c, limit).await?
-        }
-        "work.prepare" | "work.snapshot" => {
-            let work = resolved
-                .work_item_id
-                .as_ref()
-                .ok_or_else(|| PgError::Protocol("work required".into()))?;
-            let row=tx.query_one("SELECT contract_json,contract_hash,definition_state,title FROM awr_team.work_contracts
-                WHERE tenant_id=$1 AND project_id=$2 AND snapshot_id=$3 AND scope_id='main' AND work_id=$4",
-                &[&tenant,&project,&auth.snapshot,&work]).await?;
-            let mut contract: WorkContract =
-                serde_json::from_value(row.get(0)).map_err(|_| PgError::SourceDivergence)?;
-            let contract_hash: String = row.get(1);
-            if contract.work_id.as_str() != work
-                || contract.hash().map_err(|_| PgError::SourceDivergence)? != contract_hash
-            {
-                return Err(PgError::SourceDivergence);
-            }
-            let adoptions = crate::cross_workstream_adoption::view(
-                tx,
-                tenant,
-                project,
-                &auth.snapshot,
-                work,
-                &contract,
-            )
-            .await?;
-            let allowed=tx.query("SELECT work_id FROM awr_team.workstream_snapshot_ownership
-                WHERE tenant_id=$1 AND project_id=$2 AND snapshot_id=$3 AND workstream_id=$4 AND work_id=ANY($5)",
-                &[&tenant,&project,&auth.snapshot,&stream,&contract.required_dependencies]).await?;
-            let mut ids: std::collections::BTreeSet<String> =
-                allowed.iter().map(|r| r.get(0)).collect();
-            // Explicit upstream references belong to the consumer's own contract.
-            // Showing an edge or adoption selector grants no upstream source access.
-            ids.extend(
-                adoptions
-                    .iter()
-                    .filter_map(|a| a["provider_work_id"].as_str().map(str::to_owned)),
-            );
-            let missing = adoptions.iter().any(|a| a["valid"] != true)
-                || contract
-                    .required_dependencies
-                    .iter()
-                    .any(|d| !ids.contains(d));
-            contract.required_dependencies.retain(|d| ids.contains(d));
-            contract
-                .dependency_acceptance
-                .retain(|d, _| ids.contains(d));
-            let mut reasons = Vec::new();
-            let definition_state: String = row.get(2);
-            if definition_state != "enabled" {
-                reasons.push("work_definition_inactive");
-            }
-            if missing {
-                reasons.push("dependency_export_unavailable");
-            }
-            if contract.goals.is_empty() {
-                reasons.push("missing_goals");
-            }
-            if contract.hard_rules.is_empty() {
-                reasons.push("missing_hard_rules");
-            }
-            let runtime = tx.query_opt("SELECT state,work_version,last_fence,recovery_blocked,selected_completion_id
-                FROM awr_team.work_runtime WHERE tenant_id=$1 AND project_id=$2 AND scope_id='main' AND work_id=$3",
-                &[&tenant,&project,&work]).await?.map(|r| json!({"state":r.get::<_,String>(0),
-                    "work_version":r.get::<_,i64>(1).to_string(),"last_fence":r.get::<_,i64>(2).to_string(),
-                    "recovery_blocked":r.get::<_,bool>(3),"selected_completion_id":r.get::<_,Option<String>>(4)}));
-            let (_, ownership) = work_binding(tx, tenant, project, auth, work).await?;
-            let (required_specs, readable_refs, spec_reasons) =
-                controlled_prepare_context(tx, tenant, project, auth, resolved.workstream_id)
-                    .await?;
-            reasons.extend(spec_reasons);
-            let mut data = json!({
-                "work_id":work,
-                "contract_hash":contract_hash,
-                "definition_state":definition_state,
-                "title":row.get::<_,String>(3),
-                "visible_contract":contract,
-                "published_contract":contract,
-                "required_specs":required_specs,
-                "authorized_readable_refs":readable_refs,
-                "runtime":runtime,
-                "responsibility":crate::workstream_command::task_intake::read_state(tx,tenant,project,auth,work,&stream,q.session_id.as_deref()).await?,
-                "ownership_version":ownership.to_string(),
-                "dependency_export_unavailable":missing,
-                "adopted_dependencies":adoptions,
-                "context_complete":reasons.is_empty(),
-                "completeness_reasons":reasons,
-                "execution_admission":"not_evaluated",
-                "next_step": if reasons.is_empty() {
-                    Value::Null
+        let c = cursor(q, &binding)?;
+        let limit = i64::from(q.limit.unwrap_or(50));
+        let data = match q.op.as_str() {
+            "delivery.routes" => {
+                let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
+                let mut items = crate::DeliverySyncStore::route_templates_in_tx(
+                    tx,
+                    tenant,
+                    project,
+                    auth,
+                    work,
+                    &c.key,
+                    limit + 1,
+                )
+                .await?;
+                let more = items.len() > limit as usize;
+                items.truncate(limit as usize);
+                let next = if more {
+                    next_cursor(
+                        &binding,
+                        items.last().expect("nonempty route page")["template_id"]
+                            .as_str()
+                            .ok_or(PgError::SourceDivergence)?,
+                        0,
+                        -1,
+                    )
                 } else {
-                    json!("re-prepare after restoring missing authorized specs/deps, or raise max_context_bytes / use source.content")
+                    Value::Null
+                };
+                let state = crate::DeliverySyncStore::task_route_state_in_tx(
+                    tx,
+                    tenant,
+                    project,
+                    work,
+                    &stream,
+                    &auth.epoch,
+                )
+                .await?;
+                let guidance = state.guidance(!items.is_empty(), q.cursor.is_some());
+                let value = json!({"items":items,"next_cursor":next,"registration_only":true,
+                "execution_authorized":false,"grants_created":false,
+                "task_route_state":state.label(),"guidance":guidance});
+                if serde_json::to_vec(&value)
+                    .map_err(|_| PgError::SourceDivergence)?
+                    .len()
+                    > q.max_context_bytes.unwrap_or(262144)
+                {
+                    return Err(PgError::ResponseTooLarge);
                 }
-            });
-            data["ordinary_decisions"] =
-                decisions::context(tx, tenant, project, auth, work).await?;
-            // Source snapshots and project audit revisions may advance because
-            // of unrelated work. Bind actual selected facts, not those cursors.
-            let context_hash = hash(&json!({"domain":"awr-team-workstream-context-v1",
-                "reader":auth.binding,"epoch":auth.epoch,"project_status":auth.project_status,
-                "workstream":auth.catalog.get(resolved.workstream_id)?,
-                "grant_version":auth.grant_versions[&resolved.workstream_id],"data":data}))?;
-            data["context_hash"] = json!(context_hash);
-            data["context_hash_protocol"] = json!("awr-team-workstream-context-v1");
-            // Advice is not consumed context or execution admission. Preserve the
-            // original context hash and fit optional advice inside the read budget.
-            let (mut observed, prepare_inputs) = if q.op == "work.prepare" {
-                observation::read_for_prepare(
+                value
+            }
+            "delivery.neutral.inspect"
+            | "delivery.submission.describe"
+            | "delivery.neutral.outcome"
+            | "delivery.source.status"
+            | "delivery.integration.inspect" => {
+                let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
+                let value = delivery::read(tx, tenant, project, auth, q, work).await?;
+                if q.max_context_bytes.is_some_and(|budget| {
+                    serde_json::to_vec(&value).map_or(true, |bytes| bytes.len() > budget)
+                }) {
+                    return Err(PgError::ResponseTooLarge);
+                }
+                value
+            }
+            "work.admission" => {
+                let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
+                work_binding(tx, tenant, project, auth, work).await?;
+                crate::governance::read(tx, tenant, project, &auth.snapshot, work).await?
+            }
+            "work.observe" => {
+                let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
+                let (_, ownership) = work_binding(tx, tenant, project, auth, work).await?;
+                observation::read(
                     tx,
                     tenant,
                     project,
@@ -2154,115 +2064,166 @@ pub(crate) async fn read(
                     q.session_id.as_deref(),
                 )
                 .await?
-            } else {
-                (
-                    observation::read(
-                        tx,
-                        tenant,
-                        project,
-                        auth,
-                        work,
-                        &stream,
-                        ownership,
-                        q.session_id.as_deref(),
-                    )
-                    .await?,
-                    None,
+            }
+            "execution.inspect" => {
+                let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
+                let (_, ownership) = work_binding(tx, tenant, project, auth, work).await?;
+                crate::workstream_command::executions::inspect(
+                    tx,
+                    tenant,
+                    project,
+                    auth,
+                    work,
+                    &stream,
+                    ownership,
+                    q.execution_id.as_deref().ok_or(PgError::Forbidden)?,
+                    q.session_id.as_deref(),
                 )
-            };
-            let mut hint = observed["guidance"].clone();
-            if !reasons.is_empty() {
-                hint = guidance::select(&observed, false, false);
+                .await?
             }
-            hint = crate::workstream_command::task_intake::guidance(&observed, hint);
-            hint = guidance::authorized(auth, resolved.workstream_id, work, hint);
-            let fallback_hint = hint.clone();
-            if q.op == "work.prepare" {
-                if let Some(inputs) = prepare_inputs {
-                    hint = guidance::with_command_base(hint, inputs, &context_hash);
+            "claim.inspect" => {
+                let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
+                let (_, ownership) = work_binding(tx, tenant, project, auth, work).await?;
+                crate::workstream_command::claims::inspect(
+                    tx,
+                    tenant,
+                    project,
+                    auth,
+                    work,
+                    &stream,
+                    ownership,
+                    q.claim_id.as_deref().ok_or(PgError::Forbidden)?,
+                    q.session_id.as_deref(),
+                )
+                .await?
+            }
+            "handoff.inspect" => {
+                let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
+                let _ = work_binding(tx, tenant, project, auth, work).await?;
+                let handoff_id = q.handoff_id.as_deref().ok_or(PgError::Forbidden)?;
+                crate::workstream_command::handoffs::inspect_query(
+                    tx, tenant, project, work, handoff_id,
+                )
+                .await?
+            }
+            "evidence.inspect" => {
+                let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
+                let evidence_id = q.evidence_id.as_deref().ok_or(PgError::Forbidden)?;
+                let value = crate::workstream_command::reviews::inspect_evidence(
+                    tx,
+                    tenant,
+                    project,
+                    auth,
+                    work,
+                    evidence_id,
+                )
+                .await?;
+                value
+            }
+            "review.inspect" => {
+                let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
+                let _ = work_binding(tx, tenant, project, auth, work).await?;
+                let round_id = q.review_round_id.as_deref().ok_or(PgError::Forbidden)?;
+                let value = crate::workstream_command::reviews::inspect_review(
+                    tx, tenant, project, auth, work, round_id,
+                )
+                .await?;
+                if value["review"]["work_id"] != work {
+                    return Err(PgError::Forbidden);
                 }
-            }
-            let budget = q.max_context_bytes.unwrap_or(65536);
-            let mut selected_hint = None;
-            for candidate in [hint, fallback_hint.clone()] {
-                let mut with_hint = data.clone();
-                with_hint["guidance"] = candidate.clone();
-                if serde_json::to_vec(&with_hint)
+                if serde_json::to_vec(&value)
                     .map_err(|_| PgError::SourceDivergence)?
                     .len()
-                    <= budget
+                    > q.max_context_bytes.unwrap_or(65_536)
                 {
-                    data = with_hint;
-                    selected_hint = Some(candidate);
-                    break;
+                    return Err(PgError::ResponseTooLarge);
                 }
+                value
             }
-            let hint = selected_hint.unwrap_or(fallback_hint);
-
-            if q.op == "work.snapshot" {
-                // Context and observations come from this same authenticated
-                // RepeatableRead transaction. Metadata and feedback never enter
-                // the consumed-context hash or grant execution authority.
-                // Full context completeness takes priority over a standalone
-                // observation's advice. Both sections must give the same action.
-                observed["guidance"] = hint;
-                data["snapshot"] = json!({
-                    "version":1,
-                    "consistency":"repeatable_read",
-                    "project_revision":auth.revision.to_string(),
-                    "source_snapshot_id":auth.snapshot,
-                    "coordinator_epoch":auth.epoch,
-                    "queried_at_unix_ms":observed["observed_at_unix_ms"]
-                });
-                data["observation"] = observed;
-                if serde_json::to_vec(&data)
-                    .map_err(|_| PgError::SourceDivergence)?
-                    .len()
-                    > q.max_context_bytes.unwrap_or(65536)
+            "completion.inspect" => {
+                let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
+                let _ = work_binding(tx, tenant, project, auth, work).await?;
+                crate::workstream_command::reviews::inspect_completion(tx, tenant, project, work)
+                    .await?
+            }
+            "delivery.inspect" => {
+                let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
+                let _ = work_binding(tx, tenant, project, auth, work).await?;
+                crate::delegation_auth::authorize_navigation_action(
+                    auth,
+                    awr_team::Action::WorkRead,
+                    stream.parse().map_err(|_| PgError::SourceDivergence)?,
+                    work,
+                )?;
+                let mut value =
+                    crate::workstream_command::reviews::inspect_delivery(tx, tenant, project, work)
+                        .await?;
+                let row = tx.query_one("SELECT contract_json,contract_hash FROM awr_team.work_contracts
+                WHERE tenant_id=$1 AND project_id=$2 AND snapshot_id=$3 AND scope_id='main' AND work_id=$4",
+                &[&tenant,&project,&auth.snapshot,&work]).await?;
+                let contract: WorkContract =
+                    serde_json::from_value(row.get(0)).map_err(|_| PgError::SourceDivergence)?;
+                if contract.work_id.as_str() != work
+                    || contract.hash().map_err(|_| PgError::SourceDivergence)?
+                        != row.get::<_, String>(1)
                 {
-                    // Keep the complete observation (and its guidance). Only
-                    // omit the optional duplicate hint outside that section.
-                    data.as_object_mut().unwrap().remove("guidance");
+                    return Err(PgError::SourceDivergence);
                 }
+                value["delivery"]["dependencies"] = json!(
+                    dependencies::for_work(tx, tenant, project, auth, work, &stream, &contract)
+                        .await?
+                );
+                value
             }
-
-            if serde_json::to_vec(&data)
-                .map_err(|_| PgError::SourceDivergence)?
-                .len()
-                > q.max_context_bytes.unwrap_or(65536)
-            {
-                return Err(PgError::ContextIncomplete);
+            "command.inspect" => {
+                let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
+                let (_, ownership) = work_binding(tx, tenant, project, auth, work).await?;
+                crate::workstream_command::inspect(
+                    tx,
+                    tenant,
+                    project,
+                    auth,
+                    q.request_id.as_deref().ok_or(PgError::Forbidden)?,
+                    work,
+                    &stream,
+                    ownership,
+                )
+                .await?
             }
-            data
-        }
-        "events.list" => {
-            let after: i64 = c.revision.parse().map_err(|_| PgError::CursorExpired)?;
-            let work = resolved.work_item_id.as_deref();
-            let rows=tx.query("SELECT e.id,e.project_revision,e.event_index,e.event_type,e.work_id FROM awr_team.events e
+            "work.graph" => {
+                graph::read(tx, tenant, project, auth, &stream, q, &binding, &c, limit).await?
+            }
+            "work.list" | "work.search" => {
+                list::read(tx, tenant, project, auth, &stream, q, &binding, &c, limit).await?
+            }
+            "events.list" => {
+                let after: i64 = c.revision.parse().map_err(|_| PgError::CursorExpired)?;
+                let work = resolved.work_item_id.as_deref();
+                let rows=tx.query("SELECT e.id,e.project_revision,e.event_index,e.event_type,e.work_id FROM awr_team.events e
                 WHERE e.tenant_id=$1 AND e.project_id=$2 AND e.workstream_id=$3
                 AND ($4::text IS NULL OR e.work_id=$4) AND (e.project_revision,e.event_index)>($5,$6)
                 AND (e.work_id IS NULL OR EXISTS(SELECT 1 FROM awr_team.workstream_snapshot_ownership o
                     WHERE o.tenant_id=e.tenant_id AND o.project_id=e.project_id AND o.snapshot_id=$8
                     AND o.work_id=e.work_id AND o.workstream_id=e.workstream_id))
                 ORDER BY e.project_revision,e.event_index LIMIT $7", &[&tenant,&project,&stream,&work,&after,&c.index,&(limit+1),&auth.snapshot]).await?;
-            let more = rows.len() > limit as usize;
-            let items:Vec<_>=rows.iter().take(limit as usize).map(|r|json!({"id":r.get::<_,String>(0),"project_revision":r.get::<_,i64>(1).to_string(),
+                let more = rows.len() > limit as usize;
+                let items:Vec<_>=rows.iter().take(limit as usize).map(|r|json!({"id":r.get::<_,String>(0),"project_revision":r.get::<_,i64>(1).to_string(),
                 "event_index":r.get::<_,i32>(2),"event_type":r.get::<_,String>(3),"work_id":r.get::<_,Option<String>>(4)})).collect();
-            let next = if more {
-                let r = &rows[limit as usize - 1];
-                next_cursor(&binding, "", r.get(1), r.get(2))
-            } else {
-                Value::Null
-            };
-            json!({"items":items,"next_cursor":next,"payloads_included":false})
-        }
-        "session.inspect" | "work.recovery" => {
-            let work = resolved.work_item_id.as_ref().ok_or(PgError::Forbidden)?;
-            let session = q.session_id.as_deref();
-            let current_contract: String = tx.query_one("SELECT contract_hash FROM awr_team.work_contracts
+                let next = if more {
+                    let r = &rows[limit as usize - 1];
+                    next_cursor(&binding, "", r.get(1), r.get(2))
+                } else {
+                    Value::Null
+                };
+                json!({"items":items,"next_cursor":next,"payloads_included":false})
+            }
+            "session.inspect" | "work.recovery" => {
+                let work = resolved.work_item_id.as_ref().ok_or(PgError::Forbidden)?;
+                let session = q.session_id.as_deref();
+                let current_contract: String = tx.query_one("SELECT contract_hash FROM awr_team.work_contracts
                 WHERE tenant_id=$1 AND project_id=$2 AND snapshot_id=$3 AND scope_id='main' AND work_id=$4",
                 &[&tenant,&project,&auth.snapshot,&work]).await?.get(0);
-            let rows=tx.query("SELECT s.id,s.state,s.session_version,c.id,c.context_hash,c.contract_hash,c.next_action,c.open_loops_json
+                let rows=tx.query("SELECT s.id,s.state,s.session_version,c.id,c.context_hash,c.contract_hash,c.next_action,c.open_loops_json
                 FROM awr_team.sessions s JOIN awr_team.workstream_snapshot_ownership o
                   ON o.tenant_id=s.tenant_id AND o.project_id=s.project_id AND o.work_id=s.work_id AND o.snapshot_id=$3
                   AND o.workstream_id=s.workstream_id AND o.ownership_version=s.ownership_version AND o.scope_id=s.scope_id
@@ -2271,77 +2232,293 @@ pub(crate) async fn read(
                 WHERE s.tenant_id=$1 AND s.project_id=$2 AND s.workstream_id=$4 AND s.work_id=$5
                   AND ($6::text IS NULL OR s.id=$6) ORDER BY c.created_at DESC NULLS LAST,s.id DESC LIMIT 2",
                 &[&tenant,&project,&auth.snapshot,&stream,&work,&session]).await?;
-            let items:Vec<_>=rows.iter().map(|r|json!({"session_id":r.get::<_,String>(0),"state":r.get::<_,String>(1),"session_version":r.get::<_,i64>(2).to_string(),
+                let items:Vec<_>=rows.iter().map(|r|json!({"session_id":r.get::<_,String>(0),"state":r.get::<_,String>(1),"session_version":r.get::<_,i64>(2).to_string(),
                 "checkpoint_id":r.get::<_,Option<String>>(3),"context_hash":r.get::<_,Option<String>>(4),"contract_hash":r.get::<_,Option<String>>(5),
                 "contract_matches_current":r.get::<_,Option<String>>(5).map(|hash| hash==current_contract),
                 "next_action":r.get::<_,Option<String>>(6),"open_loops":r.get::<_,Option<Value>>(7)})).collect();
-            let (_, ownership) = work_binding(tx, tenant, project, auth, work).await?;
-            let current =
-                observation::read(tx, tenant, project, auth, work, &stream, ownership, session)
-                    .await?;
-            // Checkpoints remain historical. Share the same current, scoped
-            // advice as work.observe without returning duplicate report bodies.
-            let mut result = json!({"items":items,"current_contract_hash":current_contract,"automatic_resume":false,
+                let (_, ownership) = work_binding(tx, tenant, project, auth, work).await?;
+                let current =
+                    observation::read(tx, tenant, project, auth, work, &stream, ownership, session)
+                        .await?;
+                // Checkpoints remain historical. Share the same current, scoped
+                // advice as work.observe without returning duplicate report bodies.
+                let mut result = json!({"items":items,"current_contract_hash":current_contract,"automatic_resume":false,
                 "checkpoint_actions_are_historical":true,"guidance":current["guidance"]});
-            if q.op == "work.recovery" {
-                result["reconciliation_coverage"] =
-                    if current["reconciliation_coverage"].is_object() {
-                        current["reconciliation_coverage"].clone()
-                    } else {
-                        let stream_id = stream.parse().map_err(|_| PgError::Forbidden)?;
-                        crate::workstream_auth::reconciliation_coverage(
-                            tx, tenant, project, auth, stream_id,
-                        )
-                        .await?
-                    };
+                if q.op == "work.recovery" {
+                    result["reconciliation_coverage"] =
+                        if current["reconciliation_coverage"].is_object() {
+                            current["reconciliation_coverage"].clone()
+                        } else {
+                            let stream_id = stream.parse().map_err(|_| PgError::Forbidden)?;
+                            crate::workstream_auth::reconciliation_coverage(
+                                tx, tenant, project, auth, stream_id,
+                            )
+                            .await?
+                        };
+                }
+                result
             }
-            result
-        }
-        "source.content" => {
-            let path = q.source_path.as_deref().ok_or(PgError::Forbidden)?;
-            read_controlled_source_content(
-                tx,
-                tenant,
-                project,
-                auth,
-                path,
-                q.expected_sha256.as_deref(),
-                q.max_context_bytes,
-            )
-            .await?
-        }
-        "artifact.content" => {
-            let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
-            let _ = work_binding(tx, tenant, project, auth, work).await?;
-            if q.export_id.is_some() {
-                crate::cross_workstream_exports::content(tx, tenant, project, auth, work, q).await?
-            } else {
-                let artifact_id = q.artifact_id.as_deref().ok_or(PgError::Forbidden)?;
-                read_controlled_artifact_content(
+            "source.content" => {
+                let path = q.source_path.as_deref().ok_or(PgError::Forbidden)?;
+                read_controlled_source_content(
                     tx,
                     tenant,
                     project,
-                    work,
-                    artifact_id,
+                    auth,
+                    path,
                     q.expected_sha256.as_deref(),
                     q.max_context_bytes,
                 )
                 .await?
             }
-        }
-        _ => return Err(PgError::Unsupported("workstream query operation".into())),
-    };
-    let result = json!({"protocol_version":1,"workstream_id":stream,"authority_version":resolved.authority_version.to_string(),"scope_id":"main","selection_basis":resolved.basis,
+            "artifact.content" => {
+                let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
+                let _ = work_binding(tx, tenant, project, auth, work).await?;
+                if q.export_id.is_some() {
+                    crate::cross_workstream_exports::content(tx, tenant, project, auth, work, q)
+                        .await?
+                } else {
+                    let artifact_id = q.artifact_id.as_deref().ok_or(PgError::Forbidden)?;
+                    read_controlled_artifact_content(
+                        tx,
+                        tenant,
+                        project,
+                        work,
+                        artifact_id,
+                        q.expected_sha256.as_deref(),
+                        q.max_context_bytes,
+                    )
+                    .await?
+                }
+            }
+            _ => return Err(PgError::Unsupported("workstream query operation".into())),
+        };
+        let result = json!({"protocol_version":1,"workstream_id":stream,"authority_version":resolved.authority_version.to_string(),"scope_id":"main","selection_basis":resolved.basis,
         "coordinator_epoch":auth.epoch,"project_status":auth.project_status,"source_snapshot_id":auth.snapshot,"project_revision":auth.revision.to_string(),"data":data});
-    if q.op == "work.observe"
-        && serde_json::to_vec(&result)
+        if q.op == "work.observe"
+            && serde_json::to_vec(&result)
+                .map_err(|_| PgError::SourceDivergence)?
+                .len()
+                > q.max_context_bytes.unwrap_or(65_536)
+        {
+            return Err(PgError::ResponseTooLarge);
+        }
+        Ok(result)
+    })
+}
+
+#[inline(never)]
+fn read_prepare_or_snapshot<'a>(
+    tx: &'a Transaction<'a>,
+    tenant: &'a str,
+    project: &'a str,
+    auth: &'a ReaderAuthority,
+    resolved: ResolvedWorkstream,
+    stream: String,
+    q: &'a WorkstreamQuery,
+) -> BoxReadFuture<'a> {
+    Box::pin(async move {
+        let work = resolved
+            .work_item_id
+            .as_ref()
+            .ok_or_else(|| PgError::Protocol("work required".into()))?;
+        let row = tx.query_one("SELECT contract_json,contract_hash,definition_state,title FROM awr_team.work_contracts
+            WHERE tenant_id=$1 AND project_id=$2 AND snapshot_id=$3 AND scope_id='main' AND work_id=$4",
+            &[&tenant,&project,&auth.snapshot,&work]).await?;
+        let mut contract: WorkContract =
+            serde_json::from_value(row.get(0)).map_err(|_| PgError::SourceDivergence)?;
+        let contract_hash: String = row.get(1);
+        if contract.work_id.as_str() != work
+            || contract.hash().map_err(|_| PgError::SourceDivergence)? != contract_hash
+        {
+            return Err(PgError::SourceDivergence);
+        }
+        let adoptions = crate::cross_workstream_adoption::view(
+            tx,
+            tenant,
+            project,
+            &auth.snapshot,
+            work,
+            &contract,
+        )
+        .await?;
+        let allowed = tx.query("SELECT work_id FROM awr_team.workstream_snapshot_ownership
+            WHERE tenant_id=$1 AND project_id=$2 AND snapshot_id=$3 AND workstream_id=$4 AND work_id=ANY($5)",
+            &[&tenant,&project,&auth.snapshot,&stream,&contract.required_dependencies]).await?;
+        let mut ids: std::collections::BTreeSet<String> =
+            allowed.iter().map(|r| r.get(0)).collect();
+        // Explicit upstream references belong to the consumer's own contract.
+        // Showing an edge or adoption selector grants no upstream source access.
+        ids.extend(
+            adoptions
+                .iter()
+                .filter_map(|a| a["provider_work_id"].as_str().map(str::to_owned)),
+        );
+        let missing = adoptions.iter().any(|a| a["valid"] != true)
+            || contract
+                .required_dependencies
+                .iter()
+                .any(|d| !ids.contains(d));
+        contract.required_dependencies.retain(|d| ids.contains(d));
+        contract
+            .dependency_acceptance
+            .retain(|d, _| ids.contains(d));
+        let mut reasons = Vec::new();
+        let definition_state: String = row.get(2);
+        if definition_state != "enabled" {
+            reasons.push("work_definition_inactive");
+        }
+        if missing {
+            reasons.push("dependency_export_unavailable");
+        }
+        if contract.goals.is_empty() {
+            reasons.push("missing_goals");
+        }
+        if contract.hard_rules.is_empty() {
+            reasons.push("missing_hard_rules");
+        }
+        let runtime = tx.query_opt("SELECT state,work_version,last_fence,recovery_blocked,selected_completion_id
+            FROM awr_team.work_runtime WHERE tenant_id=$1 AND project_id=$2 AND scope_id='main' AND work_id=$3",
+            &[&tenant,&project,&work]).await?.map(|r| json!({"state":r.get::<_,String>(0),
+                "work_version":r.get::<_,i64>(1).to_string(),"last_fence":r.get::<_,i64>(2).to_string(),
+                "recovery_blocked":r.get::<_,bool>(3),"selected_completion_id":r.get::<_,Option<String>>(4)}));
+        let (_, ownership) = work_binding(tx, tenant, project, auth, work).await?;
+        let (required_specs, readable_refs, spec_reasons) =
+            controlled_prepare_context(tx, tenant, project, auth, resolved.workstream_id).await?;
+        reasons.extend(spec_reasons);
+        let mut data = json!({
+            "work_id":work,
+            "contract_hash":contract_hash,
+            "definition_state":definition_state,
+            "title":row.get::<_,String>(3),
+            "visible_contract":contract,
+            "published_contract":contract,
+            "required_specs":required_specs,
+            "authorized_readable_refs":readable_refs,
+            "runtime":runtime,
+            "responsibility":crate::workstream_command::task_intake::read_state(tx,tenant,project,auth,work,&stream,q.session_id.as_deref()).await?,
+            "ownership_version":ownership.to_string(),
+            "dependency_export_unavailable":missing,
+            "adopted_dependencies":adoptions,
+            "context_complete":reasons.is_empty(),
+            "completeness_reasons":reasons,
+            "execution_admission":"not_evaluated",
+            "next_step": if reasons.is_empty() {
+                Value::Null
+            } else {
+                json!("re-prepare after restoring missing authorized specs/deps, or raise max_context_bytes / use source.content")
+            }
+        });
+        data["ordinary_decisions"] = decisions::context(tx, tenant, project, auth, work).await?;
+        // Source snapshots and project audit revisions may advance because
+        // of unrelated work. Bind actual selected facts, not those cursors.
+        let context_hash = hash(&json!({"domain":"awr-team-workstream-context-v1",
+            "reader":auth.binding,"epoch":auth.epoch,"project_status":auth.project_status,
+            "workstream":auth.catalog.get(resolved.workstream_id)?,
+            "grant_version":auth.grant_versions[&resolved.workstream_id],"data":data}))?;
+        data["context_hash"] = json!(context_hash);
+        data["context_hash_protocol"] = json!("awr-team-workstream-context-v1");
+        // Advice is not consumed context or execution admission. Preserve the
+        // original context hash and fit optional advice inside the read budget.
+        let (mut observed, prepare_inputs) = if q.op == "work.prepare" {
+            observation::read_for_prepare(
+                tx,
+                tenant,
+                project,
+                auth,
+                work,
+                &stream,
+                ownership,
+                q.session_id.as_deref(),
+            )
+            .await?
+        } else {
+            (
+                observation::read(
+                    tx,
+                    tenant,
+                    project,
+                    auth,
+                    work,
+                    &stream,
+                    ownership,
+                    q.session_id.as_deref(),
+                )
+                .await?,
+                None,
+            )
+        };
+        let mut hint = observed["guidance"].clone();
+        if !reasons.is_empty() {
+            hint = guidance::select(&observed, false, false);
+        }
+        hint = crate::workstream_command::task_intake::guidance(&observed, hint);
+        hint = guidance::authorized(auth, resolved.workstream_id, work, hint);
+        let fallback_hint = hint.clone();
+        if q.op == "work.prepare" {
+            if let Some(inputs) = prepare_inputs {
+                hint = guidance::with_command_base(hint, inputs, &context_hash);
+            }
+        }
+        let budget = q.max_context_bytes.unwrap_or(65536);
+        let mut selected_hint = None;
+        for candidate in [hint, fallback_hint.clone()] {
+            let mut with_hint = data.clone();
+            with_hint["guidance"] = candidate.clone();
+            if serde_json::to_vec(&with_hint)
+                .map_err(|_| PgError::SourceDivergence)?
+                .len()
+                <= budget
+            {
+                data = with_hint;
+                selected_hint = Some(candidate);
+                break;
+            }
+        }
+        let hint = selected_hint.unwrap_or(fallback_hint);
+
+        if q.op == "work.snapshot" {
+            // Context and observations come from this same authenticated
+            // RepeatableRead transaction. Metadata and feedback never enter
+            // the consumed-context hash or grant execution authority.
+            // Full context completeness takes priority over a standalone
+            // observation's advice. Both sections must give the same action.
+            observed["guidance"] = hint;
+            data["snapshot"] = json!({
+                "version":1,
+                "consistency":"repeatable_read",
+                "project_revision":auth.revision.to_string(),
+                "source_snapshot_id":auth.snapshot,
+                "coordinator_epoch":auth.epoch,
+                "queried_at_unix_ms":observed["observed_at_unix_ms"]
+            });
+            data["observation"] = observed;
+            if serde_json::to_vec(&data)
+                .map_err(|_| PgError::SourceDivergence)?
+                .len()
+                > q.max_context_bytes.unwrap_or(65536)
+            {
+                // Keep the complete observation (and its guidance). Only
+                // omit the optional duplicate hint outside that section.
+                data.as_object_mut().unwrap().remove("guidance");
+            }
+        }
+
+        if serde_json::to_vec(&data)
             .map_err(|_| PgError::SourceDivergence)?
             .len()
-            > q.max_context_bytes.unwrap_or(65_536)
-    {
-        return Err(PgError::ResponseTooLarge);
-    }
-    Ok(result)
+            > q.max_context_bytes.unwrap_or(65536)
+        {
+            return Err(PgError::ContextIncomplete);
+        }
+        Ok(json!({
+            "protocol_version":1,"workstream_id":stream,
+            "authority_version":resolved.authority_version.to_string(),"scope_id":"main",
+            "selection_basis":resolved.basis,"coordinator_epoch":auth.epoch,
+            "project_status":auth.project_status,"source_snapshot_id":auth.snapshot,
+            "project_revision":auth.revision.to_string(),"data":data
+        }))
+    })
 }
 
 fn safe_relative_source_path(path: &str) -> PgResult<()> {
@@ -2540,6 +2717,41 @@ pub(crate) fn source_file_workstreams(
         return Err(PgError::Forbidden);
     }
     Ok(required)
+}
+
+/// Resolve the workstreams required to inspect a path's registered history and
+/// whether that path is registered in the active workstream catalog. An
+/// unregistered path requires full project read access before reporting
+/// absence, preventing partial-stream callers from probing hidden streams.
+pub(crate) fn document_history_workstreams(
+    auth: &ReaderAuthority,
+    path: &str,
+) -> PgResult<(std::collections::BTreeSet<awr_core::Id>, bool)> {
+    use awr_core::Id;
+    use std::collections::BTreeSet;
+
+    let mut required: BTreeSet<Id> = BTreeSet::new();
+    let registered = if path == "workstreams.json" || path.ends_with("/workstreams.json") {
+        required.extend(auth.catalog.workstreams.iter().map(|stream| stream.id));
+        !required.is_empty()
+    } else {
+        for stream in &auth.catalog.workstreams {
+            if stream.acceptance_contracts.iter().any(|p| p == path) {
+                required.insert(stream.id);
+            }
+        }
+        if required.is_empty() {
+            required.extend(auth.catalog.workstreams.iter().map(|stream| stream.id));
+            false
+        } else {
+            true
+        }
+    };
+
+    if required.is_empty() {
+        return Err(PgError::Forbidden);
+    }
+    Ok((required, registered))
 }
 
 fn authorize_source_file_streams(auth: &ReaderAuthority, path: &str) -> PgResult<()> {

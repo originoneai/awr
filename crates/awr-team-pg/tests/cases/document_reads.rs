@@ -1,4 +1,5 @@
 use super::*;
+use awr_team::SourceActivationPlan;
 use sha2::{Digest, Sha256};
 
 #[tokio::test]
@@ -306,4 +307,423 @@ async fn document_catalog_distinguishes_missing_integrity_and_content_size_limit
         assert_eq!(full["data"]["text"], text);
         assert_eq!(full["data"]["byte_length"], size);
     }
+}
+
+async fn publish_snapshot(
+    source: &SourceStore,
+    admin: &tokio_postgres::Client,
+    actor_id: &str,
+    files: Vec<SourceFile>,
+    activate: bool,
+) -> CandidateRecord {
+    let mut bundle_bytes: Vec<u8> = admin
+        .query_one(
+            "SELECT elem->>'text'
+             FROM awr_team.projects p
+             JOIN awr_team.source_snapshots s
+               ON s.tenant_id=p.tenant_id AND s.project_id=p.id AND s.id=p.active_snapshot_id
+             CROSS JOIN LATERAL jsonb_array_elements(s.source_ref_json->'files') elem
+             WHERE p.tenant_id=$1 AND p.id=$2 AND elem->>'path'='workstreams.json'",
+            &[&TENANT, &PROJECT],
+        )
+        .await
+        .unwrap()
+        .get::<_, String>(0)
+        .into_bytes();
+    let mut all_files = files;
+    if !all_files.iter().any(|f| f.path == "workstreams.json") {
+        all_files.push(SourceFile {
+            path: "workstreams.json".into(),
+            bytes: std::mem::take(&mut bundle_bytes),
+        });
+    }
+    let candidate = source
+        .ingest(IngestRequest {
+            tenant_id: TENANT.into(),
+            project_id: PROJECT.into(),
+            actor_id: actor_id.into(),
+            parser_version: "workstreams/1".into(),
+            files: all_files,
+        })
+        .await
+        .unwrap();
+    if activate {
+        let reviewer = if actor_id == "reviewer" {
+            "agent"
+        } else {
+            "reviewer"
+        };
+        source
+            .approve(
+                TENANT,
+                PROJECT,
+                &candidate.proposal_id,
+                reviewer,
+                &candidate.manifest_digest,
+            )
+            .await
+            .unwrap();
+        source
+            .activate_workstreams(
+                TENANT,
+                PROJECT,
+                actor_id,
+                &candidate.proposal_id,
+                &SourceActivationPlan {
+                    candidate_digest: candidate.manifest_digest.clone(),
+                    parser_version: candidate.parser_version.clone(),
+                    expected_authority_epoch: candidate.base_epoch.clone(),
+                    approved_candidate_digest: candidate.manifest_digest.clone(),
+                },
+            )
+            .await
+            .unwrap();
+    }
+    candidate
+}
+
+#[tokio::test]
+async fn document_history_tracks_ordered_changes_deduplicates_unchanged_and_caps_at_twenty() {
+    let (_guard, admin, db, store) = setup_with_specs(vec![
+        SourceFile {
+            path: "docs/alpha.md".into(),
+            bytes: b"# Guide v1\n\nInitial version.\n".to_vec(),
+        },
+        SourceFile {
+            path: "docs/private-beta.md".into(),
+            bytes: b"PRIVATE beta v1".to_vec(),
+        },
+    ])
+    .await;
+    // Register an active person for 'agent' and leave 'reviewer' without an
+    // active persons row so both determinable and absent submitter paths run.
+    admin
+        .batch_execute(
+            "INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status)
+             VALUES('reader-tenant','reader-project','agent','Lin Yue','active');
+             UPDATE awr_team.project_memberships SET role='admin'
+             WHERE tenant_id='reader-tenant' AND project_id='reader-project' AND actor_id='reviewer';",
+        )
+        .await
+        .unwrap();
+    let initial_snapshot: String = admin
+        .query_one(
+            "SELECT active_snapshot_id FROM awr_team.projects WHERE tenant_id=$1 AND id=$2",
+            &[&TENANT, &PROJECT],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let source = SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+
+    // Unchanged snapshot for docs/alpha.md (only private-beta changed): must NOT duplicate.
+    let unchanged = publish_snapshot(
+        &source,
+        &admin,
+        "reviewer",
+        vec![
+            SourceFile {
+                path: "docs/alpha.md".into(),
+                bytes: b"# Guide v1\n\nInitial version.\n".to_vec(),
+            },
+            SourceFile {
+                path: "docs/private-beta.md".into(),
+                bytes: b"PRIVATE beta v2".to_vec(),
+            },
+        ],
+        true,
+    )
+    .await;
+
+    // Pending (unactivated) candidate: must NEVER appear in history.
+    let _pending = publish_snapshot(
+        &source,
+        &admin,
+        "agent",
+        vec![
+            SourceFile {
+                path: "docs/alpha.md".into(),
+                bytes: b"# Guide PENDING UNACTIVATED\n".to_vec(),
+            },
+            SourceFile {
+                path: "docs/private-beta.md".into(),
+                bytes: b"PRIVATE beta v2".to_vec(),
+            },
+        ],
+        false,
+    )
+    .await;
+
+    // Second real change by 'reviewer' (no active persons row -> submitted_by: null).
+    let v2 = publish_snapshot(
+        &source,
+        &admin,
+        "reviewer",
+        vec![
+            SourceFile {
+                path: "docs/alpha.md".into(),
+                bytes: b"# Guide v2\n\nRevised policy.\n".to_vec(),
+            },
+            SourceFile {
+                path: "docs/private-beta.md".into(),
+                bytes: b"PRIVATE beta v2".to_vec(),
+            },
+        ],
+        true,
+    )
+    .await;
+
+    // Third real change: revert back to v1 bytes by 'agent' (active person -> Lin Yue).
+    let v3_revert = publish_snapshot(
+        &source,
+        &admin,
+        "agent",
+        vec![
+            SourceFile {
+                path: "docs/alpha.md".into(),
+                bytes: b"# Guide v1\n\nInitial version.\n".to_vec(),
+            },
+            SourceFile {
+                path: "docs/private-beta.md".into(),
+                bytes: b"PRIVATE beta v2".to_vec(),
+            },
+        ],
+        true,
+    )
+    .await;
+
+    // Another unchanged snapshot after revert: must NOT overwrite v3_revert's snapshot id.
+    let _unchanged_tail = publish_snapshot(
+        &source,
+        &admin,
+        "reviewer",
+        vec![
+            SourceFile {
+                path: "docs/alpha.md".into(),
+                bytes: b"# Guide v1\n\nInitial version.\n".to_vec(),
+            },
+            SourceFile {
+                path: "docs/private-beta.md".into(),
+                bytes: b"PRIVATE beta v3".to_vec(),
+            },
+        ],
+        true,
+    )
+    .await;
+
+    // Partial-stream reader A (stream 1 only) does not pass directory.read:
+    // history reads cleanly, and submitter names stay redacted as null.
+    let mut q = query("document.history");
+    q.source_path = Some("docs/alpha.md".into());
+    let partial_reply = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    let partial_items = partial_reply["data"]["items"].as_array().unwrap();
+    assert_eq!(partial_items.len(), 3);
+    assert!(
+        partial_items
+            .iter()
+            .all(|item| item["submitted_by"].is_null()),
+        "readers without directory.read must receive null submitted_by"
+    );
+
+    // Grant stream 2 to reader A so directory.read passes; determinable active
+    // persons now resolve while actors without an active persons row stay null.
+    admin
+        .execute(
+            "INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,
+             workstream_id,authority_version,can_read) VALUES($1,$2,'agent','cli-a',$3,1,true)",
+            &[&TENANT, &PROJECT, &Id::from(2).to_string()],
+        )
+        .await
+        .unwrap();
+
+    let reply = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    let data = &reply["data"];
+    assert_eq!(data["path"], "docs/alpha.md");
+    assert_eq!(data["work_id"], Value::Null);
+    assert_eq!(data["total"], 3);
+    assert_eq!(data["limit"], 20);
+    assert_eq!(data["truncated"], false);
+    assert_eq!(data["order"], "newest_first");
+    assert_eq!(data["source_kind"], "registered_source_snapshots");
+    assert_eq!(data["attribution_basis"], "snapshot_submitter");
+    assert_eq!(data["read_only"], true);
+    assert_eq!(data["execution_authorized"], false);
+    assert_eq!(
+        data["as_of"]["source_snapshot_id"],
+        reply["source_snapshot_id"]
+    );
+    assert_eq!(data["as_of"]["project_revision"], reply["project_revision"]);
+    assert!(!reply.to_string().contains("PRIVATE"));
+    assert!(!reply.to_string().contains("Initial version"));
+    assert!(!reply.to_string().contains("PENDING UNACTIVATED"));
+
+    let items = data["items"].as_array().unwrap();
+    assert_eq!(items.len(), 3);
+    let d1 = format!("{:x}", Sha256::digest(b"# Guide v1\n\nInitial version.\n"))[..12].to_string();
+    let d2 = format!("{:x}", Sha256::digest(b"# Guide v2\n\nRevised policy.\n"))[..12].to_string();
+    // Newest first: v3_revert -> v2 -> initial_snapshot (unchanged skipped).
+    assert_eq!(items[0]["source_snapshot_id"], v3_revert.snapshot_id);
+    assert_eq!(items[0]["digest_prefix"], d1);
+    assert_eq!(
+        items[0]["submitted_by"],
+        json!({"person_id": "agent", "display_name": "Lin Yue"})
+    );
+    assert_eq!(items[1]["source_snapshot_id"], v2.snapshot_id);
+    assert_eq!(items[1]["digest_prefix"], d2);
+    assert_eq!(items[1]["submitted_by"], Value::Null);
+    assert_eq!(items[2]["source_snapshot_id"], initial_snapshot);
+    assert_eq!(items[2]["digest_prefix"], d1);
+    assert_eq!(
+        items[2]["submitted_by"],
+        json!({"person_id": "agent", "display_name": "Lin Yue"})
+    );
+    assert!(
+        items
+            .iter()
+            .all(|item| item["source_snapshot_id"] != unchanged.snapshot_id),
+        "unchanged snapshots must never be duplicated"
+    );
+    assert!(
+        items[0]["recorded_at_unix_ms"].as_i64().unwrap()
+            >= items[1]["recorded_at_unix_ms"].as_i64().unwrap()
+    );
+    assert!(
+        items[1]["recorded_at_unix_ms"].as_i64().unwrap()
+            >= items[2]["recorded_at_unix_ms"].as_i64().unwrap()
+    );
+
+    // Push 20 more distinct changes (total = 23) and verify truncation to the latest 20.
+    let mut created_ids = Vec::new();
+    for version in 4..=23 {
+        let body = format!("# Guide v{version}\n\nRevision {version}.\n");
+        let c = publish_snapshot(
+            &source,
+            &admin,
+            "agent",
+            vec![
+                SourceFile {
+                    path: "docs/alpha.md".into(),
+                    bytes: body.into_bytes(),
+                },
+                SourceFile {
+                    path: "docs/private-beta.md".into(),
+                    bytes: b"PRIVATE beta v3".to_vec(),
+                },
+            ],
+            true,
+        )
+        .await;
+        created_ids.push(c.snapshot_id);
+    }
+    let capped = store.query(TENANT, PROJECT, A, q).await.unwrap();
+    assert_eq!(capped["data"]["total"], 23);
+    assert_eq!(capped["data"]["limit"], 20);
+    assert_eq!(capped["data"]["truncated"], true);
+    let capped_items = capped["data"]["items"].as_array().unwrap();
+    assert_eq!(capped_items.len(), 20);
+    assert_eq!(
+        capped_items[0]["source_snapshot_id"],
+        *created_ids.last().unwrap()
+    );
+    assert_eq!(capped_items[19]["source_snapshot_id"], created_ids[0]);
+}
+
+#[tokio::test]
+async fn document_history_distinguishes_missing_paths_from_unauthorized_and_cross_project_reads() {
+    let (_guard, admin, _, store) = setup_with_specs(vec![
+        SourceFile {
+            path: "docs/alpha.md".into(),
+            bytes: b"# Alpha guide\n".to_vec(),
+        },
+        SourceFile {
+            path: "docs/private-beta.md".into(),
+            bytes: b"# Beta secret\n".to_vec(),
+        },
+    ])
+    .await;
+    // Register a path in stream 1 that has never been stored in any snapshot.
+    add_required_source(&admin, 1, "docs/missing-alpha.md").await;
+
+    // 1. Authorized registered path absent from snapshots -> InvalidInput (source_unavailable), NOT empty list.
+    let mut missing = query("document.history");
+    missing.source_path = Some("docs/missing-alpha.md".into());
+    let err = store.query(TENANT, PROJECT, A, missing).await.unwrap_err();
+    let diag = err
+        .query_input_diagnostic()
+        .expect("typed InvalidInput diagnostic");
+    assert_eq!(diag["code"], "InvalidInput");
+    assert_eq!(diag["invalid_field"], "/source_path");
+    assert_eq!(diag["constraint"], "registered_source_required");
+
+    // 2. Peer-stream document -> Forbidden.
+    let mut peer = query("document.history");
+    peer.source_path = Some("docs/private-beta.md".into());
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, peer).await,
+        Err(PgError::Forbidden)
+    ));
+
+    // 3. Partial-stream reader asking for completely unregistered path -> Forbidden (no existence oracle).
+    let mut unknown = query("document.history");
+    unknown.source_path = Some("docs/never-existed.md".into());
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, unknown.clone()).await,
+        Err(PgError::Forbidden)
+    ));
+
+    // 4. Shared document (in stream 1 + stream 2) -> Forbidden for stream-1-only reader A.
+    add_required_source(&admin, 2, "docs/alpha.md").await;
+    let mut shared = query("document.history");
+    shared.source_path = Some("docs/alpha.md".into());
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, shared.clone()).await,
+        Err(PgError::Forbidden)
+    ));
+
+    // 5. Grant stream 2 to reader A -> now A has full-project read access:
+    //    - shared doc succeeds
+    //    - unregistered path returns InvalidInput (source_unavailable), NOT empty list and NOT Forbidden.
+    admin
+        .execute(
+            "INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,
+             workstream_id,authority_version,can_read) VALUES($1,$2,'agent','cli-a',$3,1,true)",
+            &[&TENANT, &PROJECT, &Id::from(2).to_string()],
+        )
+        .await
+        .unwrap();
+    let shared_ok = store
+        .query(TENANT, PROJECT, A, shared.clone())
+        .await
+        .unwrap();
+    assert_eq!(shared_ok["data"]["items"].as_array().unwrap().len(), 1);
+    let err = store.query(TENANT, PROJECT, A, unknown).await.unwrap_err();
+    let diag = err
+        .query_input_diagnostic()
+        .expect("typed InvalidInput diagnostic");
+    assert_eq!(diag["code"], "InvalidInput");
+    assert_eq!(diag["constraint"], "registered_source_required");
+
+    // 6. Unscoped credential and cross-tenant request -> Forbidden.
+    assert!(matches!(
+        store.query(TENANT, PROJECT, NONE, shared.clone()).await,
+        Err(PgError::Forbidden)
+    ));
+    assert!(matches!(
+        store
+            .query("other-tenant", PROJECT, A, shared.clone())
+            .await,
+        Err(PgError::Forbidden)
+    ));
+
+    // 7. Revoked credential -> Forbidden.
+    admin
+        .batch_execute(
+            "UPDATE awr_team.credentials SET revoked_at=clock_timestamp() WHERE id='reader-a'",
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, shared).await,
+        Err(PgError::Forbidden)
+    ));
 }
