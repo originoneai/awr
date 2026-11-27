@@ -152,3 +152,55 @@ This note is a handoff contract, not a forecasting implementation.
 
 See also `eta-checkpoints.md` for the WS-043 forecasting surface that
 consumes this handoff.
+
+## Team PostgreSQL collection audit and `usage.summary`
+
+The personal SQLite ledger (`usage_receipts`, `usage_corrections`,
+`usage_allocation_records`, `usage_counter_snapshots`, and
+`usage_execution_intervals`) stays local to personal projects. Team
+PostgreSQL stores two distinct historical sources in schema 66 without extra
+tables:
+
+1. **Host-session token snapshots** on `awr_team.checkpoints.usage_json`
+   (migration 34), submitted optionally through `session.checkpoint` with
+   `scope: "host_session"` and `provenance: "caller_declared"`. Counters are
+   monotonic per `(session_id, source, counter_id)` and carry `coverage`
+   (`complete`, `partial`, or `unknown`) plus optional `input_tokens`,
+   `output_tokens`, and `cached_input_tokens`.
+2. **Session lifecycle timestamps** on `awr_team.events` (`session.start`,
+   session-opening intake events, and `session.end`), yielding closed wall-clock
+   intervals for ended sessions and live elapsed intervals for active sessions.
+
+Team PostgreSQL omits per-call provider receipts and currency billing. Every
+cost field in Team responses reports `status: "not_collected"` with `null`
+amounts and currency.
+
+### Read contract (`usage.summary`)
+
+`awr_team_query` and `/v1/web/projects/{project}/query` expose read-only
+`usage.summary` with optional `workstream_id`, `work_id`, `member_actor_id`,
+and `max_context_bytes` selectors. Observer exposes the same read through
+`GET /api/team/usage?project=<key>` and `POST /api/team/read`.
+
+- **Rollups**: `data.project`, `data.by_task`, and `data.by_member` each report
+  `session_count`, `active_session_count`, `duration` (`summed_ms` and merged
+  `wall_clock_ms`), `tokens`, and `cost`.
+- **Missing observations**: Absent duration intervals, absent token dimensions,
+  and uncollected billing costs report `status: "not_collected"` with `null`
+  fields instead of zero.
+- **Collection coverage**: `data.coverage` reports `status`, `cost_status`,
+  `usage_status`, `duration_status`, `hidden_work_count`, registered group
+  coverage (`groups.collected` and `groups.missing` from
+  `project_directories`), and member coverage (`members.collected`,
+  `members.missing`, and `hidden_member_count`).
+- **Privacy and ordering**: `data.by_member` is ordered strictly by ascending
+  `member_id` (`member_ordering: "identifier_asc"`,
+  `personal_comparison_ranking: false`) and omits rank or percentile fields.
+  Holders of `audit.read_project` receive `member_scope: "project"`; other
+  members receive `member_scope: "self"` containing only their own entry and
+  receive `Forbidden` when requesting another `member_actor_id`.
+- **Observer department home**: `portfolio.overview` carries the same
+  group-level `usage` coverage per complete project without member rows. The
+  Department Projects view displays cost figures only when coverage is complete
+  and `cost_status` is `collected`; otherwise it renders only the coverage
+  explanation listing collected and missing groups.

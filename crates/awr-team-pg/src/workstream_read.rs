@@ -34,6 +34,7 @@ mod retained;
 mod reviews;
 mod sources;
 mod updates;
+mod usage;
 
 pub(crate) const QUERIES: &[&str] = &[
     "capabilities",
@@ -80,6 +81,7 @@ pub(crate) const QUERIES: &[&str] = &[
     "decisions.list",
     "updates.list",
     "update.inspect",
+    "usage.summary",
     "audit.history",
     "audit.export",
     "audit.count",
@@ -148,6 +150,7 @@ impl WorkstreamQuery {
         "document.history",
         "decisions.list",
         "updates.list",
+        "usage.summary",
         "work.prepare",
         "work.snapshot",
         "work.observe",
@@ -314,7 +317,10 @@ impl WorkstreamQuery {
                 self.max_context_bytes.is_some() && !budgeted,
             ),
             ("change_id", self.change_id.is_some() && !audit),
-            ("member_actor_id", self.member_actor_id.is_some() && !audit),
+            (
+                "member_actor_id",
+                self.member_actor_id.is_some() && !audit && self.op != "usage.summary",
+            ),
             ("category", self.category.is_some() && !audit),
             ("include_denies", self.include_denies.is_some() && !audit),
             (
@@ -526,6 +532,7 @@ impl WorkstreamQuery {
                                 | "document.history"
                                 | "handoff.list"
                                 | "dependencies.list"
+                                | "usage.summary"
                         )),
             ),
             (
@@ -1376,7 +1383,7 @@ pub(crate) async fn authenticated_read(
     // the disclosure gate must not inherit that narrowing, nor escape it.
     let directory_auth = matches!(
         request.op.as_str(),
-        "audit.requests" | "audit.development" | "document.history"
+        "audit.requests" | "audit.development" | "document.history" | "usage.summary"
     )
     .then(|| auth.clone());
     crate::delegation_auth::resolve_agent_read_delegation(tx, &mut auth, project, request, now_ms)
@@ -1508,6 +1515,7 @@ fn is_unscoped_read_op(op: &str) -> bool {
             | "decisions.list"
             | "updates.list"
             | "update.inspect"
+            | "usage.summary"
             | "dependencies.list"
             | "handoff.list"
             | "audit.requests"
@@ -1613,6 +1621,9 @@ fn read_unscoped_op<'a>(
         }
         if matches!(q.op.as_str(), "updates.list" | "update.inspect") {
             return updates::read(tx, tenant, project, auth, q).await;
+        }
+        if q.op == "usage.summary" {
+            return Box::pin(usage::read(tx, tenant, project, auth, directory_auth, q)).await;
         }
         if q.op == "dependencies.list" {
             return dependencies::read(tx, tenant, project, auth, q).await;
@@ -1860,6 +1871,13 @@ fn capabilities_response(auth: &ReaderAuthority) -> Value {
             "read_authority":"current_project_or_workstream_read_delegation_no_task_promotion",
             "sentence_provenance":"caller_supplied","fact_snapshots":"immutable_task_counts_with_authorized_projection",
             "history":"immutable_versions_with_separate_current_pointer"});
+    caps["usage_summary"] = json!({"version":1,"query":"usage.summary",
+            "personal_ledger_collected":false,"billing_collected":false,"cost_status":"not_collected",
+            "usage_scope":"host_session","usage_provenance":"caller_declared",
+            "duration_basis":"recorded_session_events","missing_value":"not_collected",
+            "personal_comparison_ranking":false,"member_ordering":"identifier_asc",
+            "member_visibility":"self_or_audit_read_project",
+            "is_historical_observation":true,"is_not_estimated_remaining_time":true});
     caps["business_role_presets"] = json!({
         "roles":awr_team::BusinessRole::all(), "explicit_combined_duties":true,
         "semantics":"membership_grants_intersect_declared_ceiling_then_one_live_delegation",

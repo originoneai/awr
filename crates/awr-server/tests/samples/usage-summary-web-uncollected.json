@@ -1,0 +1,377 @@
+{
+  "coordinator_epoch": "epoch-a",
+  "data": {
+    "as_of": {
+      "at_unix_ms": 1795422539194,
+      "project_revision": "3",
+      "source_snapshot_id": "01M83RBKBH9JMD6RZ8B6RH2R85"
+    },
+    "by_member": [
+      {
+        "active_session_count": 0,
+        "actor_ids": [
+          "audit-lead"
+        ],
+        "cost": {
+          "amount_micros": null,
+          "currency": null,
+          "status": "not_collected"
+        },
+        "display_name": "Audit Lead",
+        "duration": {
+          "sessions_with_duration": 0,
+          "sessions_without_duration": 0,
+          "status": "not_collected",
+          "summed_ms": null,
+          "wall_clock_ms": null
+        },
+        "group_ids": [],
+        "member_id": "audit-lead",
+        "member_kind": "person",
+        "person_id": "audit-lead",
+        "session_count": 0,
+        "tokens": {
+          "cached_input_tokens": null,
+          "input_tokens": null,
+          "output_tokens": null,
+          "sessions_with_usage": 0,
+          "sessions_without_usage": 0,
+          "status": "not_collected"
+        }
+      },
+      {
+        "active_session_count": 2,
+        "actor_ids": [
+          "agent"
+        ],
+        "cost": {
+          "amount_micros": null,
+          "currency": null,
+          "status": "not_collected"
+        },
+        "display_name": "App Builder",
+        "duration": {
+          "sessions_with_duration": 0,
+          "sessions_without_duration": 2,
+          "status": "not_collected",
+          "summed_ms": null,
+          "wall_clock_ms": null
+        },
+        "group_ids": [
+          "grp-app"
+        ],
+        "member_id": "member-app",
+        "member_kind": "person",
+        "person_id": "member-app",
+        "session_count": 2,
+        "tokens": {
+          "cached_input_tokens": null,
+          "input_tokens": null,
+          "output_tokens": null,
+          "sessions_with_usage": 0,
+          "sessions_without_usage": 2,
+          "status": "not_collected"
+        }
+      },
+      {
+        "active_session_count": 0,
+        "actor_ids": [],
+        "cost": {
+          "amount_micros": null,
+          "currency": null,
+          "status": "not_collected"
+        },
+        "display_name": "Delivery Builder",
+        "duration": {
+          "sessions_with_duration": 0,
+          "sessions_without_duration": 0,
+          "status": "not_collected",
+          "summed_ms": null,
+          "wall_clock_ms": null
+        },
+        "group_ids": [
+          "grp-delivery"
+        ],
+        "member_id": "member-delivery",
+        "member_kind": "person",
+        "person_id": "member-delivery",
+        "session_count": 0,
+        "tokens": {
+          "cached_input_tokens": null,
+          "input_tokens": null,
+          "output_tokens": null,
+          "sessions_with_usage": 0,
+          "sessions_without_usage": 0,
+          "status": "not_collected"
+        }
+      },
+      {
+        "active_session_count": 0,
+        "actor_ids": [
+          "peer-dev"
+        ],
+        "cost": {
+          "amount_micros": null,
+          "currency": null,
+          "status": "not_collected"
+        },
+        "display_name": "Peer Builder",
+        "duration": {
+          "sessions_with_duration": 0,
+          "sessions_without_duration": 0,
+          "status": "not_collected",
+          "summed_ms": null,
+          "wall_clock_ms": null
+        },
+        "group_ids": [
+          "grp-platform"
+        ],
+        "member_id": "peer-dev",
+        "member_kind": "person",
+        "person_id": "peer-dev",
+        "session_count": 0,
+        "tokens": {
+          "cached_input_tokens": null,
+          "input_tokens": null,
+          "output_tokens": null,
+          "sessions_with_usage": 0,
+          "sessions_without_usage": 0,
+          "status": "not_collected"
+        }
+      },
+      {
+        "active_session_count": 0,
+        "actor_ids": [
+          "reviewer"
+        ],
+        "cost": {
+          "amount_micros": null,
+          "currency": null,
+          "status": "not_collected"
+        },
+        "display_name": null,
+        "duration": {
+          "sessions_with_duration": 0,
+          "sessions_without_duration": 0,
+          "status": "not_collected",
+          "summed_ms": null,
+          "wall_clock_ms": null
+        },
+        "group_ids": [],
+        "member_id": "reviewer",
+        "member_kind": "actor",
+        "person_id": null,
+        "session_count": 0,
+        "tokens": {
+          "cached_input_tokens": null,
+          "input_tokens": null,
+          "output_tokens": null,
+          "sessions_with_usage": 0,
+          "sessions_without_usage": 0,
+          "status": "not_collected"
+        }
+      }
+    ],
+    "by_task": [
+      {
+        "active_session_count": 1,
+        "cost": {
+          "amount_micros": null,
+          "currency": null,
+          "status": "not_collected"
+        },
+        "duration": {
+          "sessions_with_duration": 0,
+          "sessions_without_duration": 1,
+          "status": "not_collected",
+          "summed_ms": null,
+          "wall_clock_ms": null
+        },
+        "session_count": 1,
+        "tokens": {
+          "cached_input_tokens": null,
+          "input_tokens": null,
+          "output_tokens": null,
+          "sessions_with_usage": 0,
+          "sessions_without_usage": 1,
+          "status": "not_collected"
+        },
+        "work_id": "a",
+        "workstream_id": "00000000000000000000000001"
+      },
+      {
+        "active_session_count": 1,
+        "cost": {
+          "amount_micros": null,
+          "currency": null,
+          "status": "not_collected"
+        },
+        "duration": {
+          "sessions_with_duration": 0,
+          "sessions_without_duration": 1,
+          "status": "not_collected",
+          "summed_ms": null,
+          "wall_clock_ms": null
+        },
+        "session_count": 1,
+        "tokens": {
+          "cached_input_tokens": null,
+          "input_tokens": null,
+          "output_tokens": null,
+          "sessions_with_usage": 0,
+          "sessions_without_usage": 1,
+          "status": "not_collected"
+        },
+        "work_id": "b-private",
+        "workstream_id": "00000000000000000000000002"
+      },
+      {
+        "active_session_count": 0,
+        "cost": {
+          "amount_micros": null,
+          "currency": null,
+          "status": "not_collected"
+        },
+        "duration": {
+          "sessions_with_duration": 0,
+          "sessions_without_duration": 0,
+          "status": "not_collected",
+          "summed_ms": null,
+          "wall_clock_ms": null
+        },
+        "session_count": 0,
+        "tokens": {
+          "cached_input_tokens": null,
+          "input_tokens": null,
+          "output_tokens": null,
+          "sessions_with_usage": 0,
+          "sessions_without_usage": 0,
+          "status": "not_collected"
+        },
+        "work_id": "c",
+        "workstream_id": "00000000000000000000000001"
+      }
+    ],
+    "collection": {
+      "billing_collected": false,
+      "cost_status": "not_collected",
+      "duration_basis": "recorded_session_events",
+      "is_historical_observation": true,
+      "is_not_estimated_remaining_time": true,
+      "personal_ledger_collected": false,
+      "usage_provenance": "caller_declared",
+      "usage_scope": "host_session"
+    },
+    "coverage": {
+      "cost_status": "not_collected",
+      "duration_status": "not_collected",
+      "groups": {
+        "collected": [],
+        "missing": [
+          {
+            "id": "grp-app",
+            "name": "App Group"
+          },
+          {
+            "id": "grp-delivery",
+            "name": "Delivery Group"
+          },
+          {
+            "id": "grp-platform",
+            "name": "Platform Group"
+          }
+        ],
+        "registered": true
+      },
+      "hidden_work_count": 0,
+      "members": {
+        "collected": [],
+        "hidden_member_count": 0,
+        "missing": [
+          {
+            "display_name": "Audit Lead",
+            "group_ids": [],
+            "member_id": "audit-lead",
+            "member_kind": "person",
+            "person_id": "audit-lead"
+          },
+          {
+            "display_name": "App Builder",
+            "group_ids": [
+              "grp-app"
+            ],
+            "member_id": "member-app",
+            "member_kind": "person",
+            "person_id": "member-app"
+          },
+          {
+            "display_name": "Delivery Builder",
+            "group_ids": [
+              "grp-delivery"
+            ],
+            "member_id": "member-delivery",
+            "member_kind": "person",
+            "person_id": "member-delivery"
+          },
+          {
+            "display_name": "Peer Builder",
+            "group_ids": [
+              "grp-platform"
+            ],
+            "member_id": "peer-dev",
+            "member_kind": "person",
+            "person_id": "peer-dev"
+          },
+          {
+            "display_name": null,
+            "group_ids": [],
+            "member_id": "reviewer",
+            "member_kind": "actor",
+            "person_id": null
+          }
+        ],
+        "scope": "project"
+      },
+      "status": "not_collected",
+      "usage_status": "not_collected"
+    },
+    "execution_authorized": false,
+    "member_ordering": "identifier_asc",
+    "member_scope": "project",
+    "personal_comparison_ranking": false,
+    "project": {
+      "active_session_count": 2,
+      "cost": {
+        "amount_micros": null,
+        "currency": null,
+        "status": "not_collected"
+      },
+      "duration": {
+        "sessions_with_duration": 0,
+        "sessions_without_duration": 2,
+        "status": "not_collected",
+        "summed_ms": null,
+        "wall_clock_ms": null
+      },
+      "session_count": 2,
+      "tokens": {
+        "cached_input_tokens": null,
+        "input_tokens": null,
+        "output_tokens": null,
+        "sessions_with_usage": 0,
+        "sessions_without_usage": 2,
+        "status": "not_collected"
+      }
+    },
+    "project_id": "reader-project",
+    "scope": "project",
+    "work_id": null,
+    "workstream_id": null
+  },
+  "project_revision": "3",
+  "project_status": "active",
+  "protocol_version": 1,
+  "scope_id": "main",
+  "selection_basis": "project",
+  "source_snapshot_id": "01M83RBKBH9JMD6RZ8B6RH2R85"
+}

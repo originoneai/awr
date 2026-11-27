@@ -550,4 +550,57 @@ describe('Department Projects workbench (AWR-PPO-021)', () => {
     await user.click(within(handback).getByRole('button', { name: /复制这句话/ }));
     expect(fetchSpy.mock.calls.length).toBe(callsAfterLoad);
   });
+
+  it.each(['zh-CN', 'en-US'] as const)('hides cost figures and shows coverage explanation when live portfolio carries partial usage.summary coverage in %s', async (language) => {
+    await i18n.changeLanguage(language);
+    const auditSample = JSON.parse(readFileSync(resolve('test/fixtures/usage-summary-web-audit.json'), 'utf8'));
+    const uncollectedSample = JSON.parse(readFileSync(resolve('test/fixtures/usage-summary-web-uncollected.json'), 'utf8'));
+    const livePortfolio = canonicalPortfolio();
+    livePortfolio.department_facts = null;
+    const [first, second, third] = livePortfolio.result.data.projects;
+    if ('works' in first) {
+      first.usage = {
+        status: auditSample.data.coverage.status,
+        cost_status: auditSample.data.coverage.cost_status,
+        usage_status: auditSample.data.coverage.usage_status,
+        duration_status: auditSample.data.coverage.duration_status,
+        groups: auditSample.data.coverage.groups,
+      };
+    }
+    if ('works' in second) {
+      second.usage = {
+        status: uncollectedSample.data.coverage.status,
+        cost_status: uncollectedSample.data.coverage.cost_status,
+        usage_status: uncollectedSample.data.coverage.usage_status,
+        duration_status: uncollectedSample.data.coverage.duration_status,
+        groups: { registered: true, collected: [], missing: [{ id: 'grp-platform', name: 'Platform Group' }] },
+      };
+    }
+    if ('works' in third) {
+      third.usage = {
+        status: uncollectedSample.data.coverage.status,
+        cost_status: uncollectedSample.data.coverage.cost_status,
+        usage_status: uncollectedSample.data.coverage.usage_status,
+        duration_status: uncollectedSample.data.coverage.duration_status,
+        groups: { registered: true, collected: [], missing: [{ id: 'grp-delivery', name: 'Delivery Group' }] },
+      };
+    }
+    stubFetch({ '/api/team/portfolio': livePortfolio });
+    const { queryClient } = renderDeptPage();
+    const frame = await screen.findByTestId('workbench-frame');
+    await waitFor(() => expect(queryClient.getQueryState(queryKeys.portfolio)?.status).toBe('success'));
+
+    // Cost column must stay hidden when coverage is incomplete / cost_status is not_collected.
+    expect(screen.queryByRole('columnheader', { name: language === 'zh-CN' ? '投入' : 'Usage' })).toBeNull();
+    const note = screen.getByTestId('dept-usage-note').textContent ?? '';
+    expect(note).toContain('App Group');
+    if (language === 'zh-CN') {
+      expect(note).toContain('两个小组');
+      expect(note).toContain('不显示费用');
+    } else {
+      expect(note).toContain('2 other groups');
+      expect(note).toContain('no cost figures');
+    }
+    expect(frame.textContent ?? '').not.toMatch(/\b(?:undefined|null|NaN|not_collected|cost_status)\b/);
+  });
 });

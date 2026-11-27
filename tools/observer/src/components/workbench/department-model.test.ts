@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { PortfolioProjectItem, TeamPortfolioResponse } from '../../lib/types';
+import type { PortfolioProjectItem, TeamPortfolioResponse, UsageSummaryData } from '../../lib/types';
 import {
   buildDepartmentWorkbenchModel,
   portfolioClockOffsetUnixMs,
@@ -384,5 +386,73 @@ describe('department workbench model derivation', () => {
     const shifted = portfolioResponse([completeProject('p-1')], { read_at_unix_ms: NOW + 3 * DAY });
     expect(portfolioClockOffsetUnixMs(shifted)).toBe(-3 * DAY);
     expect(portfolioReadMomentUnixMs(shifted)).toBe(NOW);
+  });
+
+  it('decides cost visibility from verbatim usage.summary replies and keeps every missing group in coverage', () => {
+    const auditSample = JSON.parse(
+      readFileSync(resolve('test/fixtures/usage-summary-web-audit.json'), 'utf8'),
+    ).data as UsageSummaryData;
+    const uncollectedSample = JSON.parse(
+      readFileSync(resolve('test/fixtures/usage-summary-web-uncollected.json'), 'utf8'),
+    ).data as UsageSummaryData;
+
+    // Partial coverage from real audit sample: App Group collected, Delivery + Platform missing.
+    // Even if legacy display_text were supplied, incomplete coverage / not_collected cost suppresses cost column.
+    const partialModel = buildDepartmentWorkbenchModel(
+      portfolioResponse([completeProject('p-1')], {
+        department_facts: {
+          usage: {
+            collected_groups: ['App Group'],
+            missing_groups: [],
+            by_project: { 'p-1': { display_text: '$120' } },
+          },
+        },
+      }),
+      'zh-CN',
+      { referenceUnixMs: NOW, timeZone: 'UTC', usageSummaries: { 'p-1': auditSample } },
+    );
+    expect(partialModel.usageCoverage.showCost).toBe(false);
+    expect(partialModel.usageCoverage.status).toBe('partial');
+    expect(partialModel.usageCoverage.costStatus).toBe('not_collected');
+    expect(partialModel.usageCoverage.collectedGroups).toEqual(['App Group']);
+    expect(partialModel.usageCoverage.missingGroups).toEqual(['Delivery Group', 'Platform Group']);
+    expect(partialModel.hasAnyProjectUsage).toBe(false);
+    expect(partialModel.usageNote).toBe('投入只采集到App Group的用量，另外两个小组的缺失，所以这里不显示费用。');
+
+    // Uncollected real sample: all 3 groups missing, status not_collected, no cost figures.
+    const uncollectedModel = buildDepartmentWorkbenchModel(
+      portfolioResponse([completeProject('p-1')]),
+      'en-US',
+      { referenceUnixMs: NOW, timeZone: 'UTC', usageSummaries: { 'p-1': uncollectedSample } },
+    );
+    expect(uncollectedModel.usageCoverage.showCost).toBe(false);
+    expect(uncollectedModel.usageCoverage.status).toBe('not_collected');
+    expect(uncollectedModel.usageCoverage.missingGroups).toEqual(['App Group', 'Delivery Group', 'Platform Group']);
+    expect(uncollectedModel.hasAnyProjectUsage).toBe(false);
+    expect(uncollectedModel.usageNote).toContain('App Group');
+    expect(uncollectedModel.usageNote).toContain('Delivery Group');
+    expect(uncollectedModel.usageNote).toContain('Platform Group');
+
+    // Complete host usage across all groups, yet cost_status is still not_collected -> still hides cost.
+    const allUsageNoCost = buildDepartmentWorkbenchModel(
+      portfolioResponse([
+        completeProject('p-1', {
+          usage: {
+            status: 'complete',
+            cost_status: 'not_collected',
+            usage_status: 'complete',
+            duration_status: 'complete',
+            groups: { registered: true, collected: [{ id: 'grp-app', name: 'App Group' }], missing: [] },
+          },
+        }),
+      ]),
+      'zh-CN',
+      { referenceUnixMs: NOW, timeZone: 'UTC' },
+    );
+    expect(allUsageNoCost.usageCoverage.showCost).toBe(false);
+    expect(allUsageNoCost.usageCoverage.status).toBe('complete');
+    expect(allUsageNoCost.usageCoverage.costStatus).toBe('not_collected');
+    expect(allUsageNoCost.hasAnyProjectUsage).toBe(false);
+    expect(allUsageNoCost.usageNote).toContain('尚未采集费用账单');
   });
 });
