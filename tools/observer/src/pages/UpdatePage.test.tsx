@@ -585,6 +585,9 @@ describe('UpdatePage — acceptance criterion 4 & 6 (all 7 states in zh-CN and e
     expect(screen.getByTestId('update-facts-unknown')).toBeTruthy();
     expect(screen.queryByTestId('update-fact-row-verified')).toBeNull();
     expect(screen.getByTestId('freshness-badge')).toBeTruthy();
+    const coverageSummary = screen.getByTestId('update-coverage-summary').textContent ?? '';
+    expect(coverageSummary).toContain(lang === 'zh-CN' ? '部分统计数据未提供或结果未知' : 'Some fact counts were not provided or have unknown outcomes');
+    expect(coverageSummary).not.toContain(lang === 'zh-CN' ? '已读取本期更新与全部更新记录' : 'Current update and all update records read');
     expect(findHumanLanguageViolations(screen.getByTestId('page-update'))).toEqual([]);
   });
 

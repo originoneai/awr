@@ -1349,6 +1349,7 @@ const enUS: Messages = {
     coverageHiddenWorks: '{{count}} additional tasks are outside your viewing scope',
     coverageTruncated: 'Earlier updates have not been loaded yet',
     coverageOrderingIncomparable: 'Authoritative read ordering could not be confirmed',
+    coverageUnknown: 'Some fact counts were not provided or have unknown outcomes',
   },
   common: {
     loading: 'Loading…',

@@ -1345,6 +1345,7 @@ const zhCN = {
     coverageHiddenWorks: '另有 {{count}} 件任务不在你的查看范围内',
     coverageTruncated: '还有更早的更新尚未加载',
     coverageOrderingIncomparable: '部分读取的版本顺序未能确认',
+    coverageUnknown: '部分统计数据未提供或结果未知',
   },
   common: {
     loading: '加载中…',

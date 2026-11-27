@@ -718,6 +718,7 @@ export function UpdatePage() {
   if (hiddenWorkCount > 0) coverageNotes.push(t('updatePage.coverageHiddenWorks', { count: hiddenWorkCount }));
   if (listTruncated) coverageNotes.push(t('updatePage.coverageTruncated'));
   if (orderingIncomparable) coverageNotes.push(t('updatePage.coverageOrderingIncomparable'));
+  if (unknownOutcome && !orderingIncomparable) coverageNotes.push(t('updatePage.coverageUnknown'));
 
   return (
     <div className="update-page" data-testid="page-update">
