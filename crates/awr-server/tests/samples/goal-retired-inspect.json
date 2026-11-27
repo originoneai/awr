@@ -1,0 +1,54 @@
+{
+  "coordinator_epoch": "epoch-a",
+  "data": {
+    "as_of": {
+      "at_unix_ms": 1795415577340,
+      "project_revision": "4",
+      "source_snapshot_id": "01M83HQ4JRP4K4VJA9RH4YEXQZ"
+    },
+    "execution_authorized": false,
+    "goal": {
+      "department_reason": "goal_department_not_registered",
+      "departments": [],
+      "goal_id": "retired",
+      "hidden_task_count": 0,
+      "key": "retired",
+      "kind": "goal",
+      "status": "cancelled",
+      "success_criteria": [],
+      "tasks": [
+        {
+          "key": "a",
+          "status": "planned",
+          "title": "Visible task",
+          "work_id": "a"
+        }
+      ],
+      "title": "Retired goal",
+      "uncovered": false
+    },
+    "next_cursor": null,
+    "orphan_work": [
+      {
+        "goal_id": "retired",
+        "kind": "orphan_work",
+        "reason": "cancelled_goal",
+        "task": {
+          "key": "a",
+          "status": "planned",
+          "title": "Visible task",
+          "work_id": "a"
+        }
+      }
+    ],
+    "read_only": true,
+    "total": 1,
+    "truncated": false
+  },
+  "project_revision": "4",
+  "project_status": "active",
+  "protocol_version": 1,
+  "scope_id": "main",
+  "selection_basis": "project",
+  "source_snapshot_id": "01M83HQ4JRP4K4VJA9RH4YEXQZ"
+}

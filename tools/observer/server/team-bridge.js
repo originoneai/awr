@@ -45,10 +45,10 @@ const READ_WORK_SELECTION = new Set(['work.prepare', 'work.admission', 'work.sna
   'handoff.inspect', 'evidence.inspect', 'review.inspect', 'review.rounds', 'completion.inspect',
   'delivery.inspect', 'artifact.content', 'artifact.segment', 'delivery.exports']);
 const READ_PAGED = new Set(['workstreams.list', 'work.list', 'work.graph', 'work.search', 'events.list',
-  'work.next', 'work.inbox', 'task.assignees', 'delivery.exports', 'planning.candidates', 'sources.inspect', 'documents.list', 'decisions.list', 'updates.list', 'review.rounds', 'handoff.list', 'dependencies.list']);
+  'work.next', 'work.inbox', 'task.assignees', 'delivery.exports', 'planning.candidates', 'sources.inspect', 'documents.list', 'decisions.list', 'updates.list', 'review.rounds', 'handoff.list', 'dependencies.list', 'goals.list', 'goal.inspect']);
 const READ_CONTEXT_BUDGET = new Set(['work.prepare', 'work.snapshot', 'work.observe', 'work.inbox',
   'source.content', 'artifact.content', 'artifact.segment', 'review.inspect',
-  'delivery.neutral.inspect', 'delivery.submission.describe', 'planning.candidates', 'sources.inspect', 'documents.list', 'document.history', 'decisions.list', 'updates.list', 'review.rounds', 'handoff.list', 'dependencies.list']);
+  'delivery.neutral.inspect', 'delivery.submission.describe', 'planning.candidates', 'sources.inspect', 'documents.list', 'document.history', 'decisions.list', 'updates.list', 'review.rounds', 'handoff.list', 'dependencies.list', 'goals.list', 'goal.inspect']);
 const READ_REQUIRED_SELECTOR = {
   'command.inspect': 'request_id',
   'planning.outcome': 'request_id',
@@ -62,6 +62,7 @@ const READ_REQUIRED_SELECTOR = {
   'source.content': 'source_path',
   'document.history': 'source_path',
   'session.inspect': 'session_id',
+  'goal.inspect': 'goal_id',
   'update.inspect': 'update_id',
 };
 const READ_OPS = new Set([
@@ -167,6 +168,8 @@ function validateReadQuery(query, additionalOps = null) {
     // Navigation reads are selector-free.
   } else if (READ_WORK_LIST.has(op)) {
     allowIds('workstream_id');
+  } else if (op === 'goals.list' || op === 'goal.inspect') {
+    allowIds('workstream_id');
   } else if (op === 'sources.inspect' || op === 'documents.list' || op === 'dependencies.list') {
     allowIds('work_id', 'workstream_id');
   } else if (op === 'document.history') {
@@ -201,6 +204,10 @@ function validateReadQuery(query, additionalOps = null) {
   for (const key of allowed) {
     if (!(key in query)) continue;
     if (READ_ID_KEYS.has(key) && !isBoundedId(query[key])) return invalidRead(`Selector ${key} is invalid`);
+  }
+  if (op === 'goal.inspect' && typeof query.goal_id === 'string'
+    && (Buffer.byteLength(query.goal_id, 'utf8') > 128 || /\p{Cc}/u.test(query.goal_id))) {
+    return invalidRead('Selector goal_id is invalid');
   }
   if (required && !(required in query)) return invalidRead(`Selector ${required} is required for ${op}`);
   if (READ_WORK_SELECTION.has(op) && !query.work_id && !query.session_id) {
@@ -269,7 +276,61 @@ function validWorkstreamList(reply) {
       && reply.next_cursor.length > 0 && reply.next_cursor.length <= 4096);
 }
 
-function validReadResponse(reply, op) {
+function validGoals(reply, op) {
+  const d = reply.data;
+  const keys = (v, allowed) => v && typeof v === 'object' && !Array.isArray(v)
+    && Object.keys(v).every((key) => allowed.includes(key));
+  const count = (v) => Number.isSafeInteger(v) && v >= 0;
+  const text = (v) => typeof v === 'string';
+  const cursor = (v) => v === null || typeof v === 'string' && v.length > 0 && v.length <= 4096;
+  const ordered = (values, key) => values.every((value, i) => {
+    if (i === 0) return true;
+    const previous = key(values[i - 1]), current = key(value);
+    for (let j = 0; j < previous.length; j++) {
+      const order = Buffer.compare(Buffer.from(previous[j]), Buffer.from(current[j]));
+      if (order !== 0) return order < 0;
+    }
+    return false;
+  });
+  const task = (v) => keys(v, ['work_id', 'key', 'title', 'status'])
+    && isBoundedId(v.work_id) && isBoundedId(v.key) && text(v.title) && text(v.status);
+  const orphan = (v) => keys(v, ['kind', 'goal_id', 'task', 'reason'])
+    && v.kind === 'orphan_work' && isBoundedId(v.goal_id) && task(v.task)
+    && ['unknown_goal', 'cancelled_goal', 'archived_goal'].includes(v.reason);
+  const goal = (v, preview) => keys(v, ['kind', 'goal_id', 'key', 'title', 'status',
+    'success_criteria', 'departments', 'department_reason', 'tasks', 'hidden_task_count',
+    'uncovered', ...(preview ? ['task_total', 'tasks_next_cursor'] : [])])
+    && v.kind === 'goal' && isBoundedId(v.goal_id) && v.key === v.goal_id
+    && text(v.title) && text(v.status) && Array.isArray(v.success_criteria)
+    && v.success_criteria.every(text) && Array.isArray(v.departments) && v.departments.length === 0
+    && v.department_reason === 'goal_department_not_registered'
+    && Array.isArray(v.tasks) && v.tasks.every(task)
+    && ordered(v.tasks, (t) => [t.work_id])
+    && count(v.hidden_task_count) && typeof v.uncovered === 'boolean'
+    && (!preview || v.tasks.length <= 20 && count(v.task_total) && v.task_total >= v.tasks.length
+      && cursor(v.tasks_next_cursor) && (v.tasks_next_cursor !== null) === (v.task_total > v.tasks.length));
+  if (!keys(reply, ['protocol_version', 'scope_id', 'selection_basis', 'source_snapshot_id',
+    'project_revision', 'coordinator_epoch', 'project_status', 'workstream_id', 'authority_version', 'data'])
+    || !text(reply.project_status)
+    || !keys(d, ['items', 'goal', 'total', 'next_cursor', 'truncated', 'orphan_work',
+    'read_only', 'execution_authorized', 'as_of']) || d.read_only !== true
+    || d.execution_authorized !== false || !count(d.total) || !cursor(d.next_cursor)
+    || d.truncated !== (d.next_cursor !== null)
+    || !keys(d.as_of, ['at_unix_ms', 'source_snapshot_id', 'project_revision'])
+    || !Number.isSafeInteger(d.as_of.at_unix_ms) || d.as_of.at_unix_ms < 0
+    || d.as_of.source_snapshot_id !== reply.source_snapshot_id
+    || d.as_of.project_revision !== reply.project_revision) return false;
+  if (op === 'goals.list') return !('goal' in d) && !('orphan_work' in d)
+    && Array.isArray(d.items) && d.items.length <= d.total
+    && d.items.every((v) => v?.kind === 'goal' ? goal(v, true) : orphan(v))
+    && ordered(d.items, (v) => v.kind === 'goal' ? ['0', v.goal_id, ''] : ['1', v.task.work_id, v.goal_id]);
+  return !('items' in d) && goal(d.goal, false) && d.goal.tasks.length <= d.total
+    && Array.isArray(d.orphan_work) && ordered(d.orphan_work, (v) => [v?.task?.work_id ?? '', v?.goal_id ?? ''])
+    && d.orphan_work.every((v) => orphan(v)
+      && v.goal_id === d.goal.goal_id && d.goal.tasks.some((t) => ['work_id', 'key', 'title', 'status'].every((key) => t[key] === v.task[key])));
+}
+
+function validReadResponse(reply, op, demoFuture = false) {
   // workstreams.list is a flat catalog page without a protocol/data envelope.
   if (op === 'workstreams.list') return validWorkstreamList(reply);
   if (!reply || reply.protocol_version !== 1) return false;
@@ -283,6 +344,7 @@ function validReadResponse(reply, op) {
   if (op === 'sources.inspect') return validRequiredSources(reply);
   if (op === 'documents.list') return validDocuments(reply);
   if (op === 'document.history') return validDocumentHistory(reply);
+  if (!demoFuture && (op === 'goals.list' || op === 'goal.inspect')) return validGoals(reply, op);
   if (op === 'decisions.list') return validDecisions(reply);
   if (op === 'updates.list') return validUpdatesList(reply);
   if (op === 'update.inspect') return validUpdateInspect(reply);
@@ -898,7 +960,7 @@ function validPageCoverage(data, query, positionField) {
  * response contract. No read may grant execution. strictWorkstream
  * additionally pins the response workstream (coordination detail selects one).
  */
-function readAttributionError(query, result, { strictWorkstream, project } = {}) {
+function readAttributionError(query, result, { strictWorkstream, project, demoFuture = false } = {}) {
   // The catalog page has no scope/snapshot/object attribution envelope.
   // Its project and identity are bound by the forwarded request path and
   // cookie session; the service filters visible streams and binds cursors to
@@ -942,6 +1004,19 @@ function readAttributionError(query, result, { strictWorkstream, project } = {})
   const data = result.data;
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     return { code: 'BadGateway', message: 'Invalid Team read response' };
+  }
+  if (!demoFuture && ['goals.list', 'goal.inspect'].includes(query.op) && (
+    Buffer.byteLength(JSON.stringify(result), 'utf8') > (query.max_context_bytes ?? 262144)
+    || result.selection_basis !== (query.workstream_id ? 'explicit' : 'project')
+    || query.workstream_id && (result.workstream_id !== query.workstream_id
+      || typeof result.authority_version !== 'string' || !/^[1-9]\d*$/.test(result.authority_version))
+    || !query.workstream_id && ('workstream_id' in result || 'authority_version' in result)
+    || (query.op === 'goals.list' ? data.items.length : data.goal.tasks.length) > (query.limit ?? 20)
+    || data.next_cursor !== null && ((query.op === 'goals.list' ? data.items.length : data.goal.tasks.length) !== (query.limit ?? 20)
+      || data.total <= (query.op === 'goals.list' ? data.items.length : data.goal.tasks.length))
+    || !query.cursor && data.next_cursor === null && data.total !== (query.op === 'goals.list' ? data.items.length : data.goal.tasks.length)
+    || query.op === 'goal.inspect' && data.goal.goal_id !== query.goal_id)) {
+    return { code: 'BadGateway', message: 'Goals are not attributable to the requested scope' };
   }
   if (query.op === 'sources.inspect' && (
     !validPageCoverage(data, query, 'source_position')
@@ -2162,6 +2237,26 @@ function createTeamBridge(opts) {
     return entry.promise;
   }
 
+  async function goalReadRoute(op, url, req, res) {
+    const allowed = new Set(['project', 'workstream_id', 'cursor', 'limit', 'max_context_bytes',
+      ...(op === 'goal.inspect' ? ['goal_id'] : [])]);
+    if ([...url.searchParams.keys()].some((key) => !allowed.has(key) || url.searchParams.getAll(key).length !== 1)) {
+      return { ok: false, error: { code: 'InvalidInput', message: 'One bounded goal read required' },
+        freshness: unmeasuredFreshness(Date.now()) };
+    }
+    const query = { protocol_version: 1, op };
+    for (const key of ['workstream_id', 'goal_id', 'cursor']) {
+      if (url.searchParams.has(key)) query[key] = url.searchParams.get(key);
+    }
+    for (const key of ['limit', 'max_context_bytes']) {
+      if (url.searchParams.has(key)) {
+        const value = url.searchParams.get(key);
+        query[key] = /^[1-9]\d*$/.test(value) ? Number(value) : null;
+      }
+    }
+    return routes['POST /api/team/read'](url, { project: url.searchParams.get('project'), query }, req, res);
+  }
+
   const routes = {
     'GET /api/team/portfolio': async (url, _body, req, res) => {
       if (!TEAM.live && !TEAM.demoOrganization) {
@@ -2718,6 +2813,13 @@ function createTeamBridge(opts) {
       return { ...reply, freshness: failedFreshness(reply.error.code, Date.now()) };
     },
 
+    'GET /api/team/goals': async (url, _body, req, res) => {
+      return goalReadRoute('goals.list', url, req, res);
+    },
+    'GET /api/team/goal': async (url, _body, req, res) => {
+      return goalReadRoute('goal.inspect', url, req, res);
+    },
+
     'GET /api/team/plans': async (url, _body, req, res) => {
       const allowed = new Set(['project', 'workstream_id', 'cursor', 'limit', 'max_context_bytes']);
       if ([...url.searchParams.keys()].some((key) => !allowed.has(key) || url.searchParams.getAll(key).length !== 1)) {
@@ -2890,7 +2992,7 @@ function createTeamBridge(opts) {
       // session; the adapter adds no identity and grants no authority itself.
       const maxBytes = READ_RESPONSE_LIMIT[input.query.op] || READ_RESPONSE_LIMIT.default;
       const reply = await inboxRead(input.project, input.query, req, res, maxBytes);
-      if (reply.ok && !validReadResponse(reply.result, input.query.op))
+      if (reply.ok && !validReadResponse(reply.result, input.query.op, !!TEAM.demoOrganization && DEMO_FUTURE_READ_OPS.has(input.query.op)))
         return { ok: false, error: { code: 'BadGateway', message: 'Invalid Team read response' },
           freshness: failedFreshness('BadGateway', now()) };
       // One shared attribution semantics with the coordination detail route
@@ -2901,6 +3003,7 @@ function createTeamBridge(opts) {
         const attribution = readAttributionError(input.query, reply.result, {
           strictWorkstream: false,
           project: input.project,
+          demoFuture: !!TEAM.demoOrganization && DEMO_FUTURE_READ_OPS.has(input.query.op),
         });
         if (attribution) return { ok: false, error: attribution, freshness: failedFreshness(attribution.code, now()) };
       }

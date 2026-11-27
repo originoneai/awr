@@ -19,6 +19,7 @@ mod decisions;
 mod delivery;
 mod dependencies;
 mod documents;
+mod goals;
 mod graph;
 mod guidance;
 mod handoffs;
@@ -78,6 +79,8 @@ pub(crate) const QUERIES: &[&str] = &[
     "documents.list",
     "document.history",
     "decisions.list",
+    "goals.list",
+    "goal.inspect",
     "updates.list",
     "update.inspect",
     "audit.history",
@@ -113,6 +116,8 @@ pub struct WorkstreamQuery {
     pub decision_state: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub update_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal_id: Option<String>,
     pub evidence_id: Option<String>,
     pub review_round_id: Option<String>,
     /// Controlled source path relative to the active snapshot (TMCP-023).
@@ -147,6 +152,8 @@ impl WorkstreamQuery {
         "documents.list",
         "document.history",
         "decisions.list",
+        "goals.list",
+        "goal.inspect",
         "updates.list",
         "work.prepare",
         "work.snapshot",
@@ -217,6 +224,7 @@ impl WorkstreamQuery {
             ("execution_id", &self.execution_id),
             ("handoff_id", &self.handoff_id),
             ("update_id", &self.update_id),
+            ("goal_id", &self.goal_id),
             ("recipient_person_id", &self.recipient_person_id),
             ("evidence_id", &self.evidence_id),
             ("review_round_id", &self.review_round_id),
@@ -281,6 +289,8 @@ impl WorkstreamQuery {
                 | "sources.inspect"
                 | "documents.list"
                 | "decisions.list"
+                | "goals.list"
+                | "goal.inspect"
                 | "updates.list"
                 | "review.rounds"
                 | "handoff.list"
@@ -414,6 +424,12 @@ impl WorkstreamQuery {
                 false,
             ),
             (
+                "goal_id",
+                self.goal_id.is_some(),
+                self.op == "goal.inspect",
+                false,
+            ),
+            (
                 "update_id",
                 self.update_id.is_some(),
                 self.op == "update.inspect",
@@ -492,6 +508,18 @@ impl WorkstreamQuery {
             self.op.as_str(),
             "capabilities" | "workstreams.list" | "work.inbox" | "updates.list" | "update.inspect"
         );
+        if matches!(self.op.as_str(), "goals.list" | "goal.inspect")
+            && (self.work_id.is_some() || self.session_id.is_some())
+        {
+            return Err(PgError::query_field(
+                if self.session_id.is_some() {
+                    "session_id"
+                } else {
+                    "work_id"
+                },
+                "unsupported",
+            ));
+        }
         let work_list = matches!(
             self.op.as_str(),
             "work.list" | "work.graph" | "work.search" | "planning.outcome" | "planning.candidates"
@@ -1121,6 +1149,7 @@ mod input_guidance_tests {
                 "claim.inspect" => input["claim_id"] = json!("claim"),
                 "execution.inspect" => input["execution_id"] = json!("execution"),
                 "handoff.inspect" => input["handoff_id"] = json!("handoff"),
+                "goal.inspect" => input["goal_id"] = json!("goal"),
                 "update.inspect" => input["update_id"] = json!("update"),
                 "evidence.inspect" => input["evidence_id"] = json!("evidence"),
                 "review.inspect" => input["review_round_id"] = json!("round"),
@@ -1508,6 +1537,8 @@ fn is_unscoped_read_op(op: &str) -> bool {
             | "decisions.list"
             | "updates.list"
             | "update.inspect"
+            | "goals.list"
+            | "goal.inspect"
             | "dependencies.list"
             | "handoff.list"
             | "audit.requests"
@@ -1613,6 +1644,9 @@ fn read_unscoped_op<'a>(
         }
         if matches!(q.op.as_str(), "updates.list" | "update.inspect") {
             return updates::read(tx, tenant, project, auth, q).await;
+        }
+        if matches!(q.op.as_str(), "goals.list" | "goal.inspect") {
+            return Box::pin(goals::read(tx, tenant, project, auth, q)).await;
         }
         if q.op == "dependencies.list" {
             return dependencies::read(tx, tenant, project, auth, q).await;

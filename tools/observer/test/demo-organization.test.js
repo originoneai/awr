@@ -577,7 +577,7 @@ test('the organization demo never issues business receipts and future ops stay o
   assert.equal(action.ok, false);
   assert.equal(action.error.code, 'Unsupported');
   const live = bridgeForTest({ teamUrl: 'http://127.0.0.1:1', demo: false });
-  const future = await live.read('P-001', { op: 'goals.list' });
+  const future = await live.read('P-001', { op: 'lessons.list' });
   assert.equal(future.ok, false);
   assert.equal(future.error.code, 'Unsupported');
   assert.throws(() => createDemoOrganization({ variant: 'unknown' }), /Unknown demo variant/);

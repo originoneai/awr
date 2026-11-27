@@ -1,0 +1,167 @@
+{
+  "coordinator_epoch": "epoch-a",
+  "data": {
+    "as_of": {
+      "at_unix_ms": 1795415577320,
+      "project_revision": "4",
+      "source_snapshot_id": "01M83HQ4JRP4K4VJA9RH4YEXQZ"
+    },
+    "execution_authorized": false,
+    "items": [
+      {
+        "department_reason": "goal_department_not_registered",
+        "departments": [],
+        "goal_id": "alpha",
+        "hidden_task_count": 0,
+        "key": "alpha",
+        "kind": "goal",
+        "status": "active",
+        "success_criteria": [],
+        "task_total": 0,
+        "tasks": [],
+        "tasks_next_cursor": null,
+        "title": "No supporting tasks",
+        "uncovered": true
+      },
+      {
+        "department_reason": "goal_department_not_registered",
+        "departments": [],
+        "goal_id": "archived",
+        "hidden_task_count": 0,
+        "key": "archived",
+        "kind": "goal",
+        "status": "archived",
+        "success_criteria": [],
+        "task_total": 1,
+        "tasks": [
+          {
+            "key": "a",
+            "status": "planned",
+            "title": "Visible task",
+            "work_id": "a"
+          }
+        ],
+        "tasks_next_cursor": null,
+        "title": "Archived goal",
+        "uncovered": false
+      },
+      {
+        "department_reason": "goal_department_not_registered",
+        "departments": [],
+        "goal_id": "retired",
+        "hidden_task_count": 0,
+        "key": "retired",
+        "kind": "goal",
+        "status": "cancelled",
+        "success_criteria": [],
+        "task_total": 1,
+        "tasks": [
+          {
+            "key": "a",
+            "status": "planned",
+            "title": "Visible task",
+            "work_id": "a"
+          }
+        ],
+        "tasks_next_cursor": null,
+        "title": "Retired goal",
+        "uncovered": false
+      },
+      {
+        "department_reason": "goal_department_not_registered",
+        "departments": [],
+        "goal_id": "ship",
+        "hidden_task_count": 1,
+        "key": "ship",
+        "kind": "goal",
+        "status": "confirmed",
+        "success_criteria": [
+          "Reviewed delivery"
+        ],
+        "task_total": 2,
+        "tasks": [
+          {
+            "key": "a",
+            "status": "planned",
+            "title": "Visible task",
+            "work_id": "a"
+          },
+          {
+            "key": "c",
+            "status": "planned",
+            "title": "Supporting task",
+            "work_id": "c"
+          }
+        ],
+        "tasks_next_cursor": null,
+        "title": "Ship reviewed outcome",
+        "uncovered": false
+      },
+      {
+        "department_reason": "goal_department_not_registered",
+        "departments": [],
+        "goal_id": "unknown",
+        "hidden_task_count": 0,
+        "key": "unknown",
+        "kind": "goal",
+        "status": "proposed",
+        "success_criteria": [],
+        "task_total": 1,
+        "tasks": [
+          {
+            "key": "a",
+            "status": "planned",
+            "title": "Visible task",
+            "work_id": "a"
+          }
+        ],
+        "tasks_next_cursor": null,
+        "title": "Undecided status",
+        "uncovered": false
+      },
+      {
+        "goal_id": "archived",
+        "kind": "orphan_work",
+        "reason": "archived_goal",
+        "task": {
+          "key": "a",
+          "status": "planned",
+          "title": "Visible task",
+          "work_id": "a"
+        }
+      },
+      {
+        "goal_id": "missing",
+        "kind": "orphan_work",
+        "reason": "unknown_goal",
+        "task": {
+          "key": "a",
+          "status": "planned",
+          "title": "Visible task",
+          "work_id": "a"
+        }
+      },
+      {
+        "goal_id": "retired",
+        "kind": "orphan_work",
+        "reason": "cancelled_goal",
+        "task": {
+          "key": "a",
+          "status": "planned",
+          "title": "Visible task",
+          "work_id": "a"
+        }
+      }
+    ],
+    "next_cursor": null,
+    "read_only": true,
+    "total": 8,
+    "truncated": false
+  },
+  "project_revision": "4",
+  "project_status": "active",
+  "protocol_version": 1,
+  "scope_id": "main",
+  "selection_basis": "project",
+  "source_snapshot_id": "01M83HQ4JRP4K4VJA9RH4YEXQZ"
+}
