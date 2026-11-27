@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Button } from 'antd';
-import { useMemo, type KeyboardEvent, type ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 
@@ -10,6 +10,7 @@ import { DetailPanel } from '../components/display/DetailPanel';
 import { KeyValueTable } from '../components/display/KeyValueTable';
 import { Notice } from '../components/display/Notice';
 import { PageHeader } from '../components/display/PageHeader';
+import { SegmentedControl } from '../components/display/SegmentedControl';
 import { Section } from '../components/display/Section';
 import { ObservationForbidden } from '../components/states';
 import {
@@ -65,51 +66,6 @@ function projectName(project: TeamProject, language: string, fallback: string) {
   if (!title) return fallback;
   const label = workLabel(title, { language, recordedTitle: true, fallback });
   return label.kind === 'named' ? label.text : fallback;
-}
-
-function ActivitySegment({
-  label,
-  value,
-  options,
-  onChange,
-  testId,
-}: {
-  label: string;
-  value: string;
-  options: readonly { value: string; label: string }[];
-  onChange: (value: string) => void;
-  testId: string;
-}) {
-  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
-    let nextIndex: number | null = null;
-    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') nextIndex = (index + 1) % options.length;
-    if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') nextIndex = (index - 1 + options.length) % options.length;
-    if (event.key === 'Home') nextIndex = 0;
-    if (event.key === 'End') nextIndex = options.length - 1;
-    if (nextIndex === null) return;
-    event.preventDefault();
-    const buttons = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('button');
-    buttons?.[nextIndex]?.focus();
-  };
-  return (
-    <div className="activity-segment" data-testid={testId} role="group" aria-label={label}>
-      {options.map((option, index) => {
-        const active = option.value === value;
-        return (
-          <button
-            key={option.value}
-            type="button"
-            className="activity-segment-option shell-perspective-option"
-            aria-pressed={active}
-            onClick={() => onChange(option.value)}
-            onKeyDown={(event) => onKeyDown(event, index)}
-          >
-            {option.label}
-          </button>
-        );
-      })}
-    </div>
-  );
 }
 
 function StateMessage({ children, testId }: { children: ReactNode; testId: string }) {
@@ -338,8 +294,24 @@ export function ActivityPage() {
     <div className="activity-page" data-testid="page-activity">
       <PageHeader title={t('activity.title')} subtitle={t('activity.subtitle')} />
       <div className="activity-filters">
-        <ActivitySegment label={t('activity.project')} value={project} options={projectOptions} onChange={changeProject} testId="activity-project-filter" />
-        <ActivitySegment label={t('activity.category')} value={category} options={categoryOptions} onChange={changeCategory} testId="activity-category-filter" />
+        <SegmentedControl
+          className="activity-segment"
+          optionClassName="activity-segment-option"
+          label={t('activity.project')}
+          value={project}
+          options={projectOptions}
+          onChange={changeProject}
+          testId="activity-project-filter"
+        />
+        <SegmentedControl
+          className="activity-segment"
+          optionClassName="activity-segment-option"
+          label={t('activity.category')}
+          value={category}
+          options={categoryOptions}
+          onChange={changeCategory}
+          testId="activity-category-filter"
+        />
       </div>
       {/* The prototype's block-head reads [h2][8px][count][auto]; the count sits beside the
           title, not inside it, so the measured title stays the h2's own box. */}

@@ -224,6 +224,32 @@ afterEach(async () => {
 });
 
 describe('activity prototype structure and product language', () => {
+  it.each(['项目', '类别'])('keeps shared %s filter focus navigation and native activation', async (label) => {
+    const user = userEvent.setup();
+    setupActivity();
+    renderApp('/activity?project=demo');
+    await waitFor(() => expect(tableRows()).toHaveLength(8));
+    const group = screen.getByRole('group', { name: label });
+    expect(group.classList.contains('obs-segmented-control')).toBe(true);
+    const buttons = within(group).getAllByRole('button');
+    buttons[0].focus();
+    await user.keyboard('{End}');
+    expect(document.activeElement).toBe(buttons.at(-1));
+    expect(buttons[0].getAttribute('aria-pressed')).toBe('true');
+    await user.keyboard('{Home}{ArrowLeft}{ArrowRight}');
+    expect(document.activeElement).toBe(buttons[0]);
+    await user.tab();
+    expect(document.activeElement).toBe(buttons[1]);
+    await user.tab({ shift: true });
+    expect(document.activeElement).toBe(buttons[0]);
+    await user.keyboard('{End}');
+    await user.tab();
+    expect(group.contains(document.activeElement)).toBe(false);
+    buttons[1].focus();
+    await user.keyboard('{Enter}');
+    expect(buttons[1].getAttribute('aria-pressed')).toBe('true');
+  });
+
   it('renders the exact header, two segmented controls, four columns and all seven categories', async () => {
     setupActivity();
     renderApp('/activity?project=demo');
