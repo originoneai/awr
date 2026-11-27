@@ -130,6 +130,7 @@ asking anyway is refused as `Unsupported`. The lists name operations of this pro
 | `planning.candidates` | Readable planning candidates and server-computed differences from the current plan; optional `workstream_id`, `limit`, `cursor`, `max_context_bytes` |
 | `sources.inspect` | Required document integrity in the active snapshot; optional `work_id`, `workstream_id`, `limit`, `cursor`, `max_context_bytes`; no document bodies |
 | `documents.list` | Project document discovery across authorized workstreams and exact delegated tasks; optional `work_id`, `workstream_id`, literal case-insensitive `search`, `limit`, `cursor`, `max_context_bytes`; verified display metadata, availability and transaction `as_of` |
+| `document.history` | Registered source change history for one controlled `source_path`, returning up to 20 most recent changes across activated snapshots (time, 12-character digest prefix, source snapshot ID, and determinable snapshot submitter); optional `work_id`, `max_context_bytes` |
 | `decisions.list` | Authorized ordinary questions and recorded answers, with optional `work_id`, `workstream_id`, exact `decision_id`, `decision_state`, `limit`, `cursor`, `max_context_bytes`. Defaults to open questions and includes transaction `as_of`. |
 | `updates.list` | Current project period updates, newest period first; optional `limit`, `cursor`, `max_context_bytes`; no work/session selector. |
 | `update.inspect` | Required `update_id`; one current or retained update with its author, record time, status, exact sentence, fact-snapshot reference and visibility-projected task facts with coverage. |
@@ -363,6 +364,35 @@ Shared catalog access is derived from the activated workstream catalog before
 source bytes or availability are inspected. Removing a private workstream from
 stored text, malformed text or missing text cannot reduce that access boundary.
 Authorized readers still receive the appropriate integrity or missing-data state.
+
+`document.history` reads the append-only `source_snapshots` rows activated for
+the project and reports up to the 20 most recent digest changes for one
+controlled relative `source_path`, ordered newest first. Unactivated candidates
+(pending, approved, rejected or superseded) remain excluded. Consecutive
+activated snapshots that preserve the same SHA-256 digest are collapsed to the
+snapshot that introduced that digest, while a later revert to an earlier digest
+records a new change entry. Each item carries `source_snapshot_id`,
+`recorded_at_unix_ms` (from the `source.activated` event time, falling back to
+snapshot creation time), the 12-character lowercase hex `digest_prefix`, and
+`submitted_by`.
+
+History retention covers activated registered source snapshots persisted in
+PostgreSQL; pre-import git commit history and per-file git authorship stay
+outside snapshot storage. `submitted_by` reflects the snapshot submitter when
+resolved to an active project person and disclosed under the `directory.read`
+gate; system actors, unbound agents, departed members, missing records and
+readers without directory disclosure receive `submitted_by: null`.
+
+`document.history` enforces the same referencing-workstream read boundary as
+`source.content`, including optional `work_id` selection for task-delegated
+agents. Unauthorized streams, shared documents with missing stream coverage,
+revoked credentials and cross-project requests return `Forbidden`. Authorized
+registered paths absent from activated snapshots, and unregistered paths read
+by a full-project reader, return `InvalidInput` (`source_path` /
+`registered_source_required`). Partial-stream readers receive `Forbidden` for
+unregistered paths to keep hidden streams private. The Observer bridge exposes
+the operation through both `POST /api/team/read` and `GET /api/team/document-history`
+under the observation contract.
 
 `collection.complete` covers the entire required set before pagination.
 Its `reasons` includes all incomplete conditions; its `recovery` contains

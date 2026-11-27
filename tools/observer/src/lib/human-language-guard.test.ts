@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { FORBIDDEN_VISIBLE_PATTERNS } from '../i18n/human-language';
-import { defaultVisibleText, findForbiddenVisibleText, findHumanLanguageViolations, findIdentifierText, IDENTIFIER_PATTERN_IDS, visibleTextParts } from './human-language-guard';
+import { ALLOWED_PRODUCT_WORDS, FORBIDDEN_VISIBLE_PATTERNS } from '../i18n/human-language';
+import PROTOTYPE_STATIC_COPY from '../test-fixtures/prototype-static-copy.json';
+import {
+  defaultVisibleText,
+  findForbiddenVisibleText,
+  findHumanLanguageViolations,
+  findIdentifierText,
+  IDENTIFIER_PATTERN_IDS,
+  visibleTextParts,
+} from './human-language-guard';
 
 function page(html: string): HTMLElement {
   const root = document.createElement('div');
@@ -149,4 +157,157 @@ describe('colon-form protocol content', () => {
       expect(findHumanLanguageViolations(root).map((item) => item.id)).toContain('diagnostic_content');
     },
   );
+});
+
+describe('allowed product words and internal counterexamples', () => {
+  it('documents a rationale and verified internal counterexample for every allowed word', () => {
+    expect(ALLOWED_PRODUCT_WORDS.map((entry) => entry.word)).toEqual(['绑定', 'completion']);
+    for (const entry of ALLOWED_PRODUCT_WORDS) {
+      expect(entry.rationale.trim().length, `${entry.word} rationale`).toBeGreaterThan(10);
+      expect(entry.example.toLowerCase(), `${entry.word} example`).toContain(entry.word.toLowerCase());
+      expect(findForbiddenVisibleText(entry.word), entry.word).toEqual([]);
+      expect(findForbiddenVisibleText(entry.example), entry.example).toEqual([]);
+
+      const allowedDom = document.createElement('div');
+      const allowedParagraph = document.createElement('p');
+      allowedParagraph.textContent = entry.example;
+      allowedParagraph.setAttribute('title', entry.example);
+      allowedParagraph.setAttribute('aria-label', entry.word);
+      allowedDom.append(allowedParagraph);
+      expect(findHumanLanguageViolations(allowedDom), entry.word).toEqual([]);
+
+      expect(findForbiddenVisibleText(entry.forbiddenCounterexample).length, entry.forbiddenCounterexample).toBeGreaterThan(0);
+      const counterDom = document.createElement('div');
+      const counterParagraph = document.createElement('p');
+      counterParagraph.textContent = entry.forbiddenCounterexample;
+      counterDom.append(counterParagraph);
+      expect(findHumanLanguageViolations(counterDom).length, entry.forbiddenCounterexample).toBeGreaterThan(0);
+    }
+  });
+
+  it.each([
+    '绑定',
+    '绑定到代码版本',
+    'completion',
+    'Completion',
+    'The Agent reported completion, but did not submit it for review, so it is not complete',
+    'No completion record yet',
+  ])('accepts ordinary product copy "%s"', (text) => {
+    expect(findForbiddenVisibleText(text)).toEqual([]);
+    const root = document.createElement('div');
+    const paragraph = document.createElement('p');
+    paragraph.textContent = text;
+    root.append(paragraph);
+    expect(findHumanLanguageViolations(root)).toEqual([]);
+  });
+
+  it.each([
+    // Counterexamples for 绑定
+    ['current_binding', 'snake_case'],
+    ['binding_id', 'snake_case'],
+    ['binding.verify', 'operation_name'],
+    // Counterexamples for completion
+    ['selected_completion_id', 'snake_case'],
+    ['completion_policy', 'snake_case'],
+    ['completion_not_recorded', 'snake_case'],
+    ['completion.inspect', 'operation_name'],
+    // Internal identifiers
+    ['01M6B189DXC1A21ZD5YQ6V7EG5', 'ulid'],
+    ['3f2b8c1e-9a4d-4c3e-8f1a-2b7d6e5c4a39', 'uuid'],
+    ['work_id', 'snake_case'],
+    // Hashes
+    ['5f7eb2fe9c563e4d355aa64a527e0aef754116c1', 'long_hex'],
+    ['sha256:4f9c1234', 'sha256'],
+    // Protocol fields and operation names
+    ['request_id', 'snake_case'],
+    ['client_id', 'snake_case'],
+    ['business_role_presets', 'snake_case'],
+    ['delivery.finalize', 'operation_name'],
+    // Raw status codes and error classes
+    ['waiting_user', 'snake_case'],
+    ['ready_for_review', 'snake_case'],
+    ['not_measured', 'snake_case'],
+    ['not measured', 'not_measured'],
+    ['ReadTimeoutError', 'error_class'],
+    // Remaining engineering vocabulary stays forbidden
+    ['claim', 'engineering_word'],
+    ['lease', 'engineering_word'],
+    ['digest', 'engineering_word'],
+    ['checkpoint', 'engineering_word'],
+    ['fence', 'engineering_word'],
+    ['epoch', 'engineering_word'],
+    ['payload', 'engineering_word'],
+    ['cursor', 'engineering_word'],
+    ['OAuth', 'engineering_word'],
+    ['snapshot', 'engineering_word'],
+    ['切片', 'engineering_copy'],
+    ['占位', 'engineering_copy'],
+    ['合同', 'engineering_copy'],
+    ['回执', 'engineering_copy'],
+    ['轮号', 'engineering_copy'],
+    ['未测量', 'engineering_copy'],
+    ['快照', 'engineering_copy'],
+  ])('still flags internal token %s as %s', (text, expectedRule) => {
+    expect(findForbiddenVisibleText(text).map((violation) => violation.id)).toContain(expectedRule);
+    const root = document.createElement('div');
+    const paragraph = document.createElement('p');
+    paragraph.textContent = text;
+    root.append(paragraph);
+    expect(findHumanLanguageViolations(root).map((violation) => violation.id)).toContain(expectedRule);
+  });
+
+  it.each(['CursorExpired', 'SessionExpired', 'Forbidden', 'Unauthenticated', 'client-obs-657'])(
+    'still flags raw status and error code %s in rendered product text', (code) => {
+      const root = document.createElement('div');
+      const paragraph = document.createElement('p');
+      paragraph.textContent = code;
+      root.append(paragraph);
+      expect(findHumanLanguageViolations(root).map((violation) => violation.id)).toContain('diagnostic_content');
+    },
+  );
+});
+
+describe('prototype static copy fixture', () => {
+  const EXPECTED_PAGES = [
+    'shell', 'home', 'projects', 'projectOverview', 'projectPlan', 'projectDeps',
+    'projectDelivery', 'projectKnowledge', 'task', 'person', 'goal', 'doc', 'update',
+    'inbox', 'lessons', 'members', 'activity', 'settings', 'takeover',
+  ];
+
+  it('covers every prototype product page verbatim and passes both text and DOM scans', () => {
+    const pages = PROTOTYPE_STATIC_COPY.pages as Record<string, string[]>;
+    expect(Object.keys(pages).sort()).toEqual([...EXPECTED_PAGES].sort());
+    expect(pages.settings).toContain('绑定到代码版本');
+    expect(pages.settings).toContain('测试结果');
+
+    for (const [pageName, phrases] of Object.entries(pages)) {
+      expect(phrases.length, `${pageName} has static copy`).toBeGreaterThan(0);
+      const root = document.createElement('section');
+      for (const phrase of phrases) {
+        expect(findForbiddenVisibleText(phrase), `${pageName}: ${phrase}`).toEqual([]);
+        const item = document.createElement('p');
+        item.textContent = phrase;
+        item.setAttribute('title', phrase);
+        item.setAttribute('aria-label', phrase);
+        root.append(item);
+      }
+      expect(findHumanLanguageViolations(root), `${pageName} DOM violations`).toEqual([]);
+    }
+  });
+
+  it('still catches real internal tokens when mixed into prototype static copy', () => {
+    const root = document.createElement('section');
+    for (const phrase of PROTOTYPE_STATIC_COPY.pages.settings) {
+      const item = document.createElement('p');
+      item.textContent = phrase;
+      root.append(item);
+    }
+    const leaked = document.createElement('p');
+    leaked.textContent = 'selected_completion_id · current_binding · sha256:4f9c1234 · waiting_user · CursorExpired';
+    root.append(leaked);
+    const ids = new Set(findHumanLanguageViolations(root).map((violation) => violation.id));
+    expect(ids.has('snake_case')).toBe(true);
+    expect(ids.has('sha256')).toBe(true);
+    expect(ids.has('diagnostic_content')).toBe(true);
+  });
 });

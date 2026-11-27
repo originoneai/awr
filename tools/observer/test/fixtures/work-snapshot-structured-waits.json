@@ -35,8 +35,8 @@
       "automatic_resume": false,
       "checkpoint": {
         "contract_matches_current": true,
-        "created_at_unix_ms": 1795417584738,
-        "id": "01M83KMD31SZ2NX0Z01JQKJGGE",
+        "created_at_unix_ms": 1795790101874,
+        "id": "01M8EPWQBHPGQREP8CRWQ0S6JH",
         "next_action": "Resume export mapper after partner confirmation",
         "open_loops": [
           "Confirm export schema"
@@ -97,11 +97,11 @@
         "recheck_on": "responsibility, blocker, dependency, candidate, evidence, review, effect, source or permission changes",
         "when": "a current blocker or user wait remains"
       },
-      "last_activity_at_unix_ms": 1795417584739,
+      "last_activity_at_unix_ms": 1795790101879,
       "last_participation": {
         "actor_id": "agent",
         "actor_name": "Worker",
-        "at_unix_ms": 1795417584739,
+        "at_unix_ms": 1795790101879,
         "basis": "latest_recorded_session_activity",
         "client_id": "cli-a",
         "recorded_project_revision": "4",
@@ -115,12 +115,12 @@
       },
       "model": null,
       "observation_scope": "current_work_ownership",
-      "observed_at_unix_ms": 1795417584812,
+      "observed_at_unix_ms": 1795790102023,
       "pr_deliveries": [],
       "progress": {
         "artifacts": [],
         "blockers": [],
-        "checkpoint_id": "01M83KMD31SZ2NX0Z01JQKJGGE",
+        "checkpoint_id": "01M8EPWQBHPGQREP8CRWQ0S6JH",
         "client_observed_at_unix_ms": null,
         "completed": [],
         "contract_matches_current": true,
@@ -135,40 +135,11 @@
         "provenance": "caller_declared",
         "recorded_project_revision": "3",
         "report_order_basis": "recorded_project_revision",
-        "reported_at_unix_ms": 1795417584738,
+        "reported_at_unix_ms": 1795790101874,
         "reported_contract_hash": "167ab92502cfebdac1d2529b9a167836e63d0407ea92d1f65f3059436fa58327",
         "stale": false,
         "summary": "Waiting on partner column list and security allowlist.",
-        "tests": [],
-        "waits": [
-          {
-            "release_condition": "Signed column list returned by Partner Billing Desk.",
-            "since_unix_ms": 1731542400000,
-            "waiting_on": {
-              "kind": "external_party",
-              "name": "Partner Billing Desk"
-            },
-            "what": "Confirm settlement export field format."
-          },
-          {
-            "release_condition": "Timeout bounds recorded on the open decision.",
-            "since_unix_ms": 1731628800000,
-            "waiting_on": {
-              "kind": "person",
-              "name": "Morgan Chen"
-            },
-            "what": "Review retry timeout policy."
-          },
-          {
-            "release_condition": "Allowlist change marked approved.",
-            "since_unix_ms": 1731715200000,
-            "waiting_on": {
-              "kind": "group",
-              "name": "Platform Security"
-            },
-            "what": "Approve outbound allowlist entry."
-          }
-        ]
+        "tests": []
       },
       "reporting": {
         "billing_collected": false,
@@ -219,7 +190,7 @@
       },
       "session_execution": null,
       "structured_waits": {
-        "checkpoint_id": "01M83KMD31SZ2NX0Z01JQKJGGE",
+        "checkpoint_id": "01M8EPWQBHPGQREP8CRWQ0S6JH",
         "contract_matches_current": true,
         "grants_authority": false,
         "items": [
@@ -252,7 +223,7 @@
           }
         ],
         "provenance": "caller_declared",
-        "reported_at_unix_ms": 1795417584738,
+        "reported_at_unix_ms": 1795790101874,
         "status": "provided"
       },
       "usage": null,
@@ -309,8 +280,8 @@
       "consistency": "repeatable_read",
       "coordinator_epoch": "epoch-a",
       "project_revision": "5",
-      "queried_at_unix_ms": 1795417584812,
-      "source_snapshot_id": "01M83KMCXN0A5R86759ERZ8B5S",
+      "queried_at_unix_ms": 1795790102023,
+      "source_snapshot_id": "01M8EPWPXBVR75R1E3PT071VGT",
       "version": 1
     },
     "title": "a",
@@ -343,6 +314,6 @@
   "protocol_version": 1,
   "scope_id": "main",
   "selection_basis": "work",
-  "source_snapshot_id": "01M83KMCXN0A5R86759ERZ8B5S",
+  "source_snapshot_id": "01M8EPWPXBVR75R1E3PT071VGT",
   "workstream_id": "00000000000000000000000001"
 }

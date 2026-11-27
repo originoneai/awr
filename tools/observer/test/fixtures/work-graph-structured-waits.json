@@ -15,12 +15,12 @@
           "ship"
         ],
         "historical_responsibility": null,
-        "last_event_at": 1795417584739,
+        "last_event_at": 1795790101879,
         "owner": null,
         "required_dependencies": [],
         "state": "planned",
         "structured_waits": {
-          "checkpoint_id": "01M83KMD31SZ2NX0Z01JQKJGGE",
+          "checkpoint_id": "01M8EPWQBHPGQREP8CRWQ0S6JH",
           "contract_matches_current": true,
           "grants_authority": false,
           "items": [
@@ -53,7 +53,7 @@
             }
           ],
           "provenance": "caller_declared",
-          "reported_at_unix_ms": 1795417584738,
+          "reported_at_unix_ms": 1795790101874,
           "status": "provided"
         },
         "title": "a",
@@ -70,17 +70,17 @@
           "ship"
         ],
         "historical_responsibility": null,
-        "last_event_at": 1795417584798,
+        "last_event_at": 1795790101996,
         "owner": null,
         "required_dependencies": [],
         "state": "planned",
         "structured_waits": {
-          "checkpoint_id": "01M83KMD4XJ6ZTDN0GV6BT9NST",
+          "checkpoint_id": "01M8EPWQFAD6TZWXPXGWP7MPPZ",
           "contract_matches_current": true,
           "grants_authority": false,
           "items": null,
           "provenance": "caller_declared",
-          "reported_at_unix_ms": 1795417584797,
+          "reported_at_unix_ms": 1795790101995,
           "status": "not_provided"
         },
         "title": "c",
@@ -88,7 +88,7 @@
       }
     ],
     "next_cursor": null,
-    "queried_at_unix_ms": 1795417584854,
+    "queried_at_unix_ms": 1795790102112,
     "total": 2
   },
   "project_revision": "5",
@@ -96,6 +96,6 @@
   "protocol_version": 1,
   "scope_id": "main",
   "selection_basis": "explicit",
-  "source_snapshot_id": "01M83KMCXN0A5R86759ERZ8B5S",
+  "source_snapshot_id": "01M8EPWPXBVR75R1E3PT071VGT",
   "workstream_id": "00000000000000000000000001"
 }

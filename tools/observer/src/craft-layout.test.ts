@@ -2,12 +2,13 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 describe('craft layout rhythm', () => {
-  it('uses the prototype master/detail outcome layout with a dominant status and evidence region', () => {
+  it('uses the prototype delivery table layout with preserved evidence detail on project acceptance', () => {
     const source = readFileSync('src/pages/ProjectAcceptance.tsx', 'utf8');
+    expect(source).toContain('className="acceptance-lead"');
+    expect(source).toContain('className="acceptance-table"');
+    expect(source).toContain('projectAcceptance.independentNote');
     expect(source).toContain('<DeliverySteps');
     expect(source).toContain('testId="acceptance-evidence-chain"');
-    expect(source).toContain('lg={7}');
-    expect(source).toContain('lg={17}');
     expect(source).toContain('acceptance.verificationTitle');
     expect(source).toContain('acceptance.reviewChanges');
     expect(source).toContain('acceptance.requiredWork');
@@ -24,10 +25,12 @@ describe('craft layout rhythm', () => {
     expect(connect).toContain('lg={10}');
   });
 
-  it('keeps workline progress and recent activity as the main overview blocks', () => {
+  it('uses the prototype instrument card and asymmetric two-column layout on project overview', () => {
     const overview = readFileSync('src/pages/ProjectOverview.tsx', 'utf8');
-    expect(overview).toContain('<Col xs={24} lg={16} style={{ minWidth: 0 }}>');
-    expect(overview).toContain('<RecentActivity query={activity} project={project} />');
+    expect(overview).toContain('className="project-inst"');
+    expect(overview).toContain('className="project-inst-body"');
+    expect(overview).toContain('className="project-overview-cols"');
+    expect(overview).toContain('data-testid="project-activity"');
   });
 });
 

@@ -23,6 +23,8 @@ export { RowList } from './RowList';
 export type { RowListItem, RowListProps } from './RowList';
 export { Section } from './Section';
 export type { SectionProps } from './Section';
+export { SegmentedControl } from './SegmentedControl';
+export type { SegmentedControlProps } from './SegmentedControl';
 export { HealthTag, StatusLamp, TaskStatusTag, healthLampState, taskLampState } from './StatusTag';
 export type { HealthStatus, TaskLampState } from './StatusTag';
 export { Timeline } from './Timeline';

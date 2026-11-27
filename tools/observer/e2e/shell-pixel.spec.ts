@@ -9,6 +9,8 @@ import { expect, test } from '@playwright/test';
 const root = process.cwd();
 let server: ChildProcess | undefined;
 let baseUrl = '';
+let canonicalServer: ChildProcess | undefined;
+let canonicalBaseUrl = '';
 
 const THEME = {
   light: {
@@ -31,15 +33,15 @@ const THEME = {
   },
 } as const;
 
-test.beforeAll(async () => {
-  server = spawn(process.execPath, ['server.js', '--demo', '--demo-variant', 'full', '--port', '0'], {
+async function startDemo(variant: 'full' | 'canonical') {
+  const child = spawn(process.execPath, ['server.js', '--demo', '--demo-variant', variant, '--port', '0'], {
     cwd: root,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let output = '';
-  baseUrl = await new Promise<string>((resolve, reject) => {
+  const url = await new Promise<string>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error(`Observer did not start: ${output}`)), 10_000);
-    server?.stdout?.on('data', (chunk) => {
+    child.stdout?.on('data', (chunk) => {
       output += String(chunk);
       const match = output.match(/URL\s+(http:\/\/127\.0\.0\.1:\d+)/);
       if (match) {
@@ -47,19 +49,32 @@ test.beforeAll(async () => {
         resolve(match[1]);
       }
     });
-    server?.stderr?.on('data', (chunk) => { output += String(chunk); });
-    server?.once('exit', (code) => {
+    child.stderr?.on('data', (chunk) => { output += String(chunk); });
+    child.once('exit', (code) => {
       clearTimeout(timeout);
       reject(new Error(`Observer exited (${code}): ${output}`));
     });
   });
+  return { server: child, url };
+}
+
+test.beforeAll(async () => {
+  const full = await startDemo('full');
+  server = full.server;
+  baseUrl = full.url;
+  // The canonical organization supplies all four authorized perspectives and department chains.
+  const canonical = await startDemo('canonical');
+  canonicalServer = canonical.server;
+  canonicalBaseUrl = canonical.url;
 });
 
 test.afterAll(async () => {
-  if (!server || server.killed) return;
-  const stopped = new Promise((resolve) => server?.once('exit', resolve));
-  server.kill('SIGTERM');
-  await stopped;
+  for (const child of [server, canonicalServer]) {
+    if (!child || child.killed) continue;
+    const stopped = new Promise((resolve) => child.once('exit', resolve));
+    child.kill('SIGTERM');
+    await stopped;
+  }
 });
 
 test.beforeEach(async ({ page }, testInfo) => {
@@ -485,3 +500,60 @@ test('the native mobile selector and theme button keep keyboard focus order', as
   await expect(theme).toBeFocused();
   // Selection and direct navigation stay covered by shell-responsive.test.tsx's native-select cases.
 });
+
+for (const surface of [
+  { name: 'perspective', path: '/activity?project=P-001', label: '视角', roving: true },
+  { name: 'activity project', path: '/activity?project=P-001', label: '项目', roving: false },
+  { name: 'activity category', path: '/activity?project=P-001', label: '类别', roving: false },
+  { name: 'personal chain', path: '/workbench?scope=P-001&perspective=me', label: '链路', roving: false },
+  { name: 'department chain', path: '/workbench?perspective=dept', label: '链路', roving: false },
+]) {
+  test(`shared segmented control preserves ${surface.name} focus and activation`, async ({ page }) => {
+    await page.goto(`${canonicalBaseUrl}${surface.path}`);
+    const group = page.getByRole('group', { name: surface.label, exact: true });
+    await expect(group).toHaveClass(/obs-segmented-control/);
+    const buttons = group.getByRole('button');
+    await expect.poll(() => buttons.count()).toBeGreaterThan(1);
+    const count = await buttons.count();
+    const selected = group.locator('[aria-pressed="true"]');
+    await expect(selected).toHaveCount(1);
+    const selectedText = await selected.innerText();
+    await buttons.first().focus();
+    await page.keyboard.press('End');
+    await expect(buttons.last()).toBeFocused();
+    await expect(selected).toHaveText(selectedText);
+
+    // Keyboard focus is visible in both palettes, independent of text width/platform.
+    const focus = await buttons.last().evaluate((button) => {
+      const css = getComputedStyle(button);
+      const probe = document.createElement('span');
+      probe.style.color = 'var(--craft-color-accent)';
+      button.append(probe);
+      const accent = getComputedStyle(probe).color;
+      probe.remove();
+      return { visible: button.matches(':focus-visible'), width: css.outlineWidth, style: css.outlineStyle, color: css.outlineColor, accent };
+    });
+    expect(focus).toMatchObject({ visible: true, width: '2px', style: 'solid' });
+    expect(focus.color).toBe(focus.accent);
+    await page.keyboard.press('Tab');
+    await expect(buttons.last()).not.toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(buttons.last()).toBeFocused();
+    await page.keyboard.press('ArrowRight');
+    await expect(buttons.first()).toBeFocused();
+    await page.keyboard.press('ArrowLeft');
+    await expect(buttons.last()).toBeFocused();
+    await page.keyboard.press('Home');
+    await expect(buttons.first()).toBeFocused();
+    expect(await buttons.evaluateAll((items) => items.map((item) => item.tabIndex)))
+      .toEqual(surface.roving ? [0, ...Array(count - 1).fill(-1)] : Array(count).fill(0));
+    await page.keyboard.press('ArrowRight');
+    await expect(buttons.nth(1)).toBeFocused();
+    await page.keyboard.press('Space');
+    await expect(buttons.nth(1)).toHaveAttribute('aria-pressed', 'true');
+    await expect(buttons.first()).toHaveAttribute('aria-pressed', 'false');
+    await page.keyboard.press('Home');
+    await page.keyboard.press('Enter');
+    await expect(buttons.first()).toHaveAttribute('aria-pressed', 'true');
+  });
+}

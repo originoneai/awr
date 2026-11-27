@@ -403,9 +403,12 @@ export function AppShell({ children, perspectiveFacts: suppliedPerspectiveFacts 
     crumbs = [{ label: t(`nav.${current.label}`) }];
   }
 
+  const perspectiveLoading = !revoked && suppliedPerspectiveFacts === undefined && shell.isPending;
+
   return (
     <PerspectiveProvider
       facts={perspectiveFacts}
+      loading={perspectiveLoading}
       requestedPerspective={requestedPerspective}
       onChange={changePerspective}
     >

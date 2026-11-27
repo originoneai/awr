@@ -1319,6 +1319,9 @@
     "color",
     "font-size"
    ]
-  ]
+  ],
+  ["shared segmented container", ".why-head .seg", ".obs-workbench-chain-switch", ["BOX", "PAINT"]],
+  ["shared segmented unselected", ".why-head .seg button:not([aria-pressed=\"true\"])", ".obs-workbench-chain-switch button[aria-pressed=\"false\"]", ["BOX", "TEXT", "PAINT", "height", "padding-right"]],
+  ["shared segmented selected", ".why-head .seg button[aria-pressed=\"true\"]", ".obs-workbench-chain-switch button[aria-pressed=\"true\"]", ["BOX", "TEXT", "PAINT", "height", "padding-right"]]
  ]
 }
