@@ -188,6 +188,8 @@ test('only official read commands are used, each exactly as the shared definitio
   assert.throws(() => commands.argvFor('workAssess', { key: 'W1;rm' }), /key/);
   assert.deepEqual(commands.argvFor('workShow', { key: 'W1' }), ['work', 'show', 'W1']);
   assert.throws(() => commands.argvFor('workShow', { key: 'W1;rm' }), /key/);
+  assert.deepEqual(commands.argvFor('statusAction', {}), ['status', '--view', 'action']);
+  assert.deepEqual(commands.argvFor('statusAction', { cached: true }), ['status', '--view', 'action', '--cached']);
   assert.throws(() => commands.argvFor('workGraph', { limit: 16385 }), /limit/);
   assert.throws(() => commands.argvFor('reindex', {}), /unknown project-map command/);
 });

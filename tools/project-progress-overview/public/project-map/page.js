@@ -1,5 +1,5 @@
 /**
- * Project-map page assembly: the three SVG views, the data table and the notes, both as parts for the Project Progress Overview page and
+ * Project-map page assembly: the daily action board, the three SVG views, the data table and the notes, both as parts for the Project Progress Overview page and
  * as one self-contained HTML document for the static export.
  *
  * `renderProjectMap(snapshot, config, {t, lang, interactive, runtime})` is a pure function: the same arguments always give
@@ -40,8 +40,23 @@ h1{font-size:20px;line-height:1.25;margin:0}
 .tabs>input:checked+label{background:var(--accent);border-color:var(--accent);color:#fff}
 .tabs>input:focus-visible+label{outline:2px solid var(--accent);outline-offset:2px}
 .view{display:none}
-#v-overview:checked~.views #s-overview,#v-mainline:checked~.views #s-mainline,#v-explore:checked~.views #s-explore{display:block}
+#v-overview:checked~.views #s-overview,#v-mainline:checked~.views #s-mainline,#v-explore:checked~.views #s-explore,#v-action:checked~.views #s-action{display:block}
 .scroll{overflow-x:auto;max-width:100%;border-radius:18px;background:var(--scroll);box-shadow:var(--shadow);border:1px solid var(--line)}
+.pm-action-slot{padding:18px 0 8px;min-height:120px}
+.pm-action-board{padding:4px 0 16px}
+.pm-action-head h2{margin:0 0 8px;font-size:16px}
+.pm-action-cols{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:14px}
+.pm-action-queue{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;min-width:0}
+.pm-action-queue h3{margin:0 0 8px;font-size:13px}
+.pm-action-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.pm-action-item{display:grid;gap:4px;width:100%;text-align:left;border:1px solid var(--line);border-radius:10px;background:var(--chip);padding:10px 12px;cursor:pointer;color:inherit;font:inherit}
+.pm-action-item:hover,.pm-action-item:focus-visible{border-color:var(--accent);outline:2px solid var(--accent);outline-offset:2px}
+.pm-action-key{font-size:11px;color:var(--muted)}
+.pm-action-title{font-weight:600;overflow-wrap:anywhere}
+.pm-action-next{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.pm-action-more{margin:8px 0 0;font-size:12px;color:var(--faint)}
+@media (max-width:900px){.pm-action-cols{grid-template-columns:1fr 1fr}}
+@media (max-width:640px){.pm-action-cols{grid-template-columns:1fr}}
 .scroll svg{display:block;margin:0 auto}
 .table,.notes{margin:18px max(16px,3vw)}
 .table summary{cursor:pointer;font-weight:600;padding:8px 0}
@@ -124,7 +139,7 @@ td.k{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-spac
   .stats b { font-size: 16px; }
   .stats span { font-size: 10.5px; }
   .tabs { padding: 6px max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left)); }
-  .tabs > label { display: inline-flex; align-items: center; justify-content: center; vertical-align: top; width: calc((100% - 24px) / 3); min-height: 48px; margin: 0 8px 12px 0; padding: 8px 4px; border-radius: 12px; font-size: 12px; text-align: center; }
+  .tabs > label { display: inline-flex; align-items: center; justify-content: center; vertical-align: top; width: calc((100% - 16px) / 2); min-height: 48px; margin: 0 8px 12px 0; padding: 8px 4px; border-radius: 12px; font-size: 12px; text-align: center; }
   .view > .scroll { max-height: 65svh; overflow: auto; overscroll-behavior: contain; touch-action: pan-x pan-y pinch-zoom; }
   .table, .notes { margin-left: max(12px, env(safe-area-inset-left)); margin-right: max(12px, env(safe-area-inset-right)); }
 }
@@ -192,7 +207,7 @@ td.k{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-spac
     return `<script type="application/json" id="pm-data">${data}${end}\n<script>\n${runtime.sources.join('\n')}\n${BOOT}\n${end}`;
   }
 
-  function renderProjectMap(snapshot, userConfig, { t, lang = 'en', interactive = false, runtime = null, productOnly = false }) {
+  function renderProjectMap(snapshot, userConfig, { t, lang = 'en', interactive = false, runtime = null, productOnly = false, defaultView = 'overview' } = {}) {
     const live = interactive || Boolean(runtime);
     const model = modelLib.loadModel(snapshot, userConfig);
     const { nodes, meta, cfg } = model;
@@ -249,8 +264,11 @@ td.k{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-spac
     const header = `<header class="top"><div class="brand"><span class="badge" aria-hidden="true">A</span><div><h1>${esc(title)}</h1><p class="sub">${sub}</p></div></div>`
       + `<ul class="stats">${stats.map(([n, label]) => `<li><b>${n}</b><span>${esc(label)}</span></li>`).join('')}</ul></header>`;
 
-    const inputs = parts.map((p, i) => `<input type="radio" name="view" id="v-${p.id}"${i === 0 ? ' checked' : ''}><label for="v-${p.id}">${esc(p.name)}</label>`).join('');
-    const main = parts.map((p) => `<section class="view" id="s-${p.id}" aria-label="${esc(p.name)}"><div class="scroll">${p.svg}</div></section>`).join('');
+    const actionFirst = defaultView === 'action';
+    const actionInput = `<input type="radio" name="view" id="v-action"${actionFirst ? ' checked' : ''}><label for="v-action">${esc(t('map.view.action'))}</label>`;
+    const actionMain = `<section class="view" id="s-action" aria-label="${esc(t('map.view.action_label'))}"><div class="pm-action-slot" data-pm-action-slot><p class="pm-d-none">${esc(t(live ? 'map.action.loading' : 'map.action.export'))}</p></div></section>`;
+    const inputs = `${actionInput}${parts.map((p, i) => `<input type="radio" name="view" id="v-${p.id}"${!actionFirst && i === 0 ? ' checked' : ''}><label for="v-${p.id}">${esc(p.name)}</label>`).join('')}`;
+    const main = `${actionMain}${parts.map((p) => `<section class="view" id="s-${p.id}" aria-label="${esc(p.name)}"><div class="scroll">${p.svg}</div></section>`).join('')}`;
     // Places for the toolbar and the details panel. They are empty and hidden: the interaction layer fills them, so a viewer
     // without script sees the same page as before.
     const toolbar = live ? '<div class="pm-toolbar" hidden></div>' : '';

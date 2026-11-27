@@ -23,8 +23,23 @@ h1{font-size:20px;line-height:1.25;margin:0}
 .tabs>input:checked+label{background:var(--accent);border-color:var(--accent);color:#fff}
 .tabs>input:focus-visible+label{outline:2px solid var(--accent);outline-offset:2px}
 .view{display:none}
-#v-overview:checked~.views #s-overview,#v-mainline:checked~.views #s-mainline,#v-explore:checked~.views #s-explore{display:block}
+#v-overview:checked~.views #s-overview,#v-mainline:checked~.views #s-mainline,#v-explore:checked~.views #s-explore,#v-action:checked~.views #s-action{display:block}
 .scroll{overflow-x:auto;max-width:100%;border-radius:18px;background:var(--scroll);box-shadow:var(--shadow);border:1px solid var(--line)}
+.pm-action-slot{padding:18px 0 8px;min-height:120px}
+.pm-action-board{padding:4px 0 16px}
+.pm-action-head h2{margin:0 0 8px;font-size:16px}
+.pm-action-cols{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:14px}
+.pm-action-queue{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;min-width:0}
+.pm-action-queue h3{margin:0 0 8px;font-size:13px}
+.pm-action-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.pm-action-item{display:grid;gap:4px;width:100%;text-align:left;border:1px solid var(--line);border-radius:10px;background:var(--chip);padding:10px 12px;cursor:pointer;color:inherit;font:inherit}
+.pm-action-item:hover,.pm-action-item:focus-visible{border-color:var(--accent);outline:2px solid var(--accent);outline-offset:2px}
+.pm-action-key{font-size:11px;color:var(--muted)}
+.pm-action-title{font-weight:600;overflow-wrap:anywhere}
+.pm-action-next{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.pm-action-more{margin:8px 0 0;font-size:12px;color:var(--faint)}
+@media (max-width:900px){.pm-action-cols{grid-template-columns:1fr 1fr}}
+@media (max-width:640px){.pm-action-cols{grid-template-columns:1fr}}
 .scroll svg{display:block;margin:0 auto}
 .table,.notes{margin:18px max(16px,3vw)}
 .table summary{cursor:pointer;font-weight:600;padding:8px 0}
@@ -107,7 +122,7 @@ td.k{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-spac
   .stats b { font-size: 16px; }
   .stats span { font-size: 10.5px; }
   .tabs { padding: 6px max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left)); }
-  .tabs > label { display: inline-flex; align-items: center; justify-content: center; vertical-align: top; width: calc((100% - 24px) / 3); min-height: 48px; margin: 0 8px 12px 0; padding: 8px 4px; border-radius: 12px; font-size: 12px; text-align: center; }
+  .tabs > label { display: inline-flex; align-items: center; justify-content: center; vertical-align: top; width: calc((100% - 16px) / 2); min-height: 48px; margin: 0 8px 12px 0; padding: 8px 4px; border-radius: 12px; font-size: 12px; text-align: center; }
   .view > .scroll { max-height: 65svh; overflow: auto; overscroll-behavior: contain; touch-action: pan-x pan-y pinch-zoom; }
   .table, .notes { margin-left: max(12px, env(safe-area-inset-left)); margin-right: max(12px, env(safe-area-inset-right)); }
 }
@@ -119,7 +134,7 @@ td.k{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-spac
 </head>
 <body>
 <header class="top"><div class="brand"><span class="badge" aria-hidden="true">A</span><div><h1>Demo Project · Project Progress Overview</h1><p class="sub">revision 100 · snapshot f267c97480f9 · generated 2026-01-15 00:00 UTC</p></div></div><ul class="stats"><li><b>1</b><span>Work items</span></li><li><b>0</b><span>Dependencies</span></li><li><b>0</b><span>Stalled</span></li><li><b>0</b><span>Blocked</span></li><li><b>0</b><span>Active sessions</span></li></ul></header>
-<main><div class="tabs"><input type="radio" name="view" id="v-overview" checked><label for="v-overview">Project node graph</label><input type="radio" name="view" id="v-mainline"><label for="v-mainline">Main dependency graph</label><input type="radio" name="view" id="v-explore"><label for="v-explore">Lane dependency graph</label><div class="views"><section class="view" id="s-overview" aria-label="Project node graph"><div class="scroll"><svg xmlns="http://www.w3.org/2000/svg" width="1100" height="825" viewBox="0 0 1100 825" font-family="-apple-system,BlinkMacSystemFont,&#x27;SF Pro Display&#x27;,&#x27;Avenir Next&#x27;,&#x27;Segoe UI&#x27;,&#x27;PingFang SC&#x27;,&#x27;Microsoft YaHei&#x27;,sans-serif" role="img" aria-label="Project node graph: 1 work items, 0 dependencies, grouped by lane">
+<main><div class="tabs"><input type="radio" name="view" id="v-action"><label for="v-action">Today</label><input type="radio" name="view" id="v-overview" checked><label for="v-overview">Project node graph</label><input type="radio" name="view" id="v-mainline"><label for="v-mainline">Main dependency graph</label><input type="radio" name="view" id="v-explore"><label for="v-explore">Lane dependency graph</label><div class="views"><section class="view" id="s-action" aria-label="Daily queues from status --view action: continue, claimable, waiting and blocked. Navigation only, not authorization."><div class="pm-action-slot" data-pm-action-slot><p class="pm-d-none">Daily queues are a live read of status --view action. This export keeps the snapshot graphs only.</p></div></section><section class="view" id="s-overview" aria-label="Project node graph"><div class="scroll"><svg xmlns="http://www.w3.org/2000/svg" width="1100" height="825" viewBox="0 0 1100 825" font-family="-apple-system,BlinkMacSystemFont,&#x27;SF Pro Display&#x27;,&#x27;Avenir Next&#x27;,&#x27;Segoe UI&#x27;,&#x27;PingFang SC&#x27;,&#x27;Microsoft YaHei&#x27;,sans-serif" role="img" aria-label="Project node graph: 1 work items, 0 dependencies, grouped by lane">
 <defs>
 <radialGradient id="overview-gBg" cx="50%" cy="-12%" r="95%"><stop offset="0" stop-color="#ffffff"/><stop offset=".52" stop-color="#edf1f9"/><stop offset="1" stop-color="#e0e9f6"/></radialGradient>
 <linearGradient id="overview-gPanel" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f8faff"/><stop offset="1" stop-color="#eef3fc"/></linearGradient>

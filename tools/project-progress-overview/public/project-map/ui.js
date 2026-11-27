@@ -151,6 +151,12 @@
             workShow: state.demo
               ? (key) => L.demo.workShow(key)
               : (key) => callApi(`/api/map/show?key=${encodeURIComponent(key)}`),
+            status: state.demo
+              ? () => L.demo.statusAction(t)
+              : () => {
+                  const cached = Boolean(el('mapCachedToggle') && el('mapCachedToggle').checked);
+                  return callApi(`/api/map/status${cached ? '?cached=1' : ''}`);
+                },
           });
         }
       }

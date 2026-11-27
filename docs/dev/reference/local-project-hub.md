@@ -26,7 +26,7 @@ responsive layouts do not make it remotely accessible.
 The landing page lists local projects as cards, ordered by the latest AWR use.
 Search matches project names and directory paths. Each card shows its name,
 directory and connection state. Discovery time is distinguished from actual use.
-Select a connected card to open the project's three progress views, then use
+Select a connected card to open the project's daily queues and three progress graphs, then use
 **Back to projects** to return. Pending or attention-required cards provide a
 short instruction to give your agent and the current inspection details.
 

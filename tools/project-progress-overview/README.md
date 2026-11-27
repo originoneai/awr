@@ -2,7 +2,7 @@
 
 A local project hub and viewer for AWR project progress and dependencies.
 
-The AWR 0.8.0 native CLI embeds the hub and the three views. Open `awr overview`
+The AWR 0.8.0 native CLI embeds the hub, daily action queues and the three graphs. Open `awr overview`
 to search this user's registered projects, select a card, and return to the list
 from its overview. Projects are ordered by their latest AWR use. The native
 service and assets ship together in the npm and Python payloads built from this
@@ -13,6 +13,7 @@ registration, automatic single-instance startup, recovery and state locations.
 
 | View | What it shows |
 | --- | --- |
+| Today | Live `status --view action` queues: continue, claimable, waiting and blocked. Navigation only, not authorization |
 | Project nodes | Work grouped by display lanes, with status, blockers and claim summaries |
 | Mainline dependencies | Dependencies within configured panels and their critical paths |
 | Collaboration swimlanes | Unfinished work and cross-lane dependencies grouped by recorded milestones or mainlines |
@@ -62,7 +63,7 @@ For Team project observation and browser login, use the [Observer workspace](../
 
 ## Explore and share
 
-- Select a card or table row to inspect recorded status, ownership, claims, blockers and dependencies. The live viewer then runs read-only `awr work prepare --response-view action` for that item and shows `when` / `basis` / `next_action` / `recheck`, read-only `awr work assess` for intensity, admission gaps and required actions, and read-only `awr work show` to overlay that item's recorded priority. Those are a bounded next instruction and management classification, not a claim, permission or completion. The snapshot does not collect priority in bulk and is not rewritten. Query parameters cannot add `--explain`, `--session`, `--cached`, `--source-sha` or `--branch`, or run `work manage`. Offline HTML exports keep the snapshot only.
+- The live viewer opens on Today, a read-only `awr status --view action` board of continue / claimable / waiting / blocked samples. Selecting a queue item, card or table row inspects recorded status, ownership, claims, blockers and dependencies. The live viewer then runs read-only `awr work prepare --response-view action` for that item and shows `when` / `basis` / `next_action` / `recheck`, read-only `awr work assess` for intensity, admission gaps and required actions, and read-only `awr work show` to overlay that item's recorded priority. Those are a bounded next instruction and management classification, not a claim, permission or completion. The snapshot does not collect the action queues or priority in bulk and is not rewritten. Query parameters cannot add `--explain`, `--session`, `--cached`, `--source-sha`, `--branch` or `--queue`, or run `work manage`. Offline HTML exports keep the snapshot graphs only.
 - Hover or focus a card to highlight its dependency chain. Follow predecessor and successor buttons in the detail panel.
 - Fold lanes and groups, search, filter by status, zoom or pan. Refresh retains those view choices.
 - Filter all seven table columns together and select a column heading to cycle through ascending, descending and default order. Text searches are case-insensitive, labels and keys sort naturally, and idle days support numeric ranges. Empty values have their own filter and sort last. Table filters also respect the graph search and status selection. Table choices are retained per project across refreshes when browser storage is available, including in interactive HTML exports.
@@ -70,7 +71,7 @@ For Team project observation and browser login, use the [Observer workspace](../
 - Download snapshot JSON to retain the exact data and its fingerprint. Offline exports show the state at their generation time.
 - English and Simplified Chinese are available from the language selector. Query parameter `lang=en` or `lang=zh-CN` takes precedence.
 
-The work-item table and graph detail panel support the three views. All interactions support keyboard use.
+The work-item table and graph detail panel support the graph views. Queue items open the same detail panel. All interactions support keyboard use.
 
 ## Data and display configuration
 

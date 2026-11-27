@@ -305,14 +305,29 @@ test('with the interaction layer the page mounts it on the drawn map, exactly as
   const { dom, container } = interactivePage();
   const map = controller(dom, callApiFor(bridge), { interact: interactLib });
   await map.refresh();
+  await map.mounted.statusWait;
   assert.ok(map.mounted, 'the layer is running');
   assert.equal(container.querySelector('.pm-toolbar').hidden, false);
   assert.ok(container.querySelectorAll('.pm-card').every((card) => card.getAttribute('tabindex') === '0'));
+  assert.ok(container.querySelector('[data-pm-action-board]'), 'the live page fills Today from status --view action');
+  assert.equal(container.querySelector('#v-action').checked, true);
 
   const { snapshot, result } = await exported('en', { interactive: true });
   const twin = miniDom.createPage(result.body);
-  interactLib.mount({ container: twin.container, snapshot, config, t: h.tFor('en'), model: result.model });
-  assert.equal(container.innerHTML, twin.container.innerHTML, 'the page and a mount on the export body are the same DOM');
+  const exportedApp = interactLib.mount({ container: twin.container, snapshot, config, t: h.tFor('en'), model: result.model });
+  await exportedApp.statusWait;
+  assert.match(twin.container.querySelector('[data-pm-action-slot]').textContent, /This export keeps the snapshot graphs only/);
+  assert.equal(twin.container.querySelector('#v-overview').checked, true);
+
+  map.mounted.setView('overview');
+  exportedApp.setView('overview');
+  const wipeSlot = (root) => {
+    const slot = root.querySelector('[data-pm-action-slot]');
+    if (slot) slot.innerHTML = '';
+  };
+  wipeSlot(container);
+  wipeSlot(twin.container);
+  assert.equal(container.innerHTML, twin.container.innerHTML, 'graphs, table and toolbar match the export body');
 
   // and it works: a click on a card opens the details, which come from the same snapshot
   miniDom.fire(container.querySelector('#s-overview .pm-card[data-key="DEMO-A-004"] text'), 'click');
@@ -324,6 +339,8 @@ test('refreshing the map keeps what the reader had folded, zoomed and searched, 
   const { dom, container } = interactivePage();
   const map = controller(dom, callApiFor(bridge), { interact: interactLib });
   await map.refresh();
+  await map.mounted.statusWait;
+  map.mounted.setView('overview');
   miniDom.fire(container.querySelector('#s-overview [data-lane="BETA"] text'), 'click');
   miniDom.fire(container.querySelector('[data-pm-action="zoom-in"]'), 'click');
   const input = container.querySelector('[data-pm-search]');
@@ -352,7 +369,9 @@ test('refreshing the map keeps what the reader had folded, zoomed and searched, 
 test('the interactive page speaks the page language', async () => {
   await withLocale('zh-CN', async () => {
     const { dom, container } = interactivePage();
-    await controller(dom, callApiFor(bridge), { interact: interactLib }).refresh();
+    const map = controller(dom, callApiFor(bridge), { interact: interactLib });
+    await map.refresh();
+    await map.mounted.statusWait;
     assert.match(container.querySelector('.pm-toolbar').textContent, /全部折叠/);
     miniDom.fire(container.querySelector('#s-overview .pm-card[data-key="DEMO-A-004"] text'), 'click');
     assert.match(container.querySelector('.pm-drawer-body').textContent, /概要/);
@@ -366,6 +385,9 @@ test('downloading the interactive page gives the same bytes as the export comman
       const { dom } = interactivePage();
       const map = controller(dom, callApiFor(bridge), { interact: interactLib });
       await map.refresh();
+      assert.equal(map.state.error, null, map.state.error && (map.state.error.stack || map.state.error.message));
+      assert.ok(map.state.last, `refresh left no snapshot: ${dom.els.mapStatus.textContent}`);
+      await map.mounted.statusWait;
       await dom.els.mapDownloadBtn.click();
       const { result } = await exported(lang, { runtime: exportMap.loadRuntime(lang) });
       const file = saves.at(-1);
@@ -381,6 +403,9 @@ test('when the module files cannot be read the download falls back to the static
   const { dom } = interactivePage();
   const map = controller(dom, callApiFor(bridge), { interact: interactLib, fetchSource: async () => { throw new Error('offline'); } });
   await map.refresh();
+  assert.equal(map.state.error, null, map.state.error && (map.state.error.stack || map.state.error.message));
+  assert.ok(map.state.last, `refresh left no snapshot: ${dom.els.mapStatus.textContent}`);
+  await map.mounted.statusWait;
   await dom.els.mapDownloadBtn.click();
   const { result } = await exported('en');
   assert.equal(saves.at(-1).text, result.document);
