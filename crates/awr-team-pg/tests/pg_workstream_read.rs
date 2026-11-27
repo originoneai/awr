@@ -1446,9 +1446,15 @@ async fn work_snapshot_preserves_context_hash_scope_and_total_byte_budget() {
         data["snapshot"]["queried_at_unix_ms"],
         data["observation"]["observed_at_unix_ms"]
     );
+    assert_eq!(data["acceptance_evidence"]["status"], "not_provided");
+    assert!(data["acceptance_evidence"]["items"].is_null());
     let mut original = data.clone();
     original.as_object_mut().unwrap().remove("snapshot");
     original.as_object_mut().unwrap().remove("observation");
+    original
+        .as_object_mut()
+        .unwrap()
+        .remove("acceptance_evidence");
     assert_eq!(original, prepared["data"]);
     assert!(!snapshot.to_string().contains("PRIVATE"));
     let caps = store

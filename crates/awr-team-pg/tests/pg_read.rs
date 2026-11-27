@@ -56,6 +56,7 @@ fn contract_json_full(rule: &str) -> Vec<u8> {
     let contract = WorkContract {
         dependency_acceptance: Default::default(),
         execution_settlement: None,
+        examples: None,
         codec: WorkContract::CODEC.into(),
         work_id: WorkId::new("work-a").unwrap(),
         external_key: "W".into(),

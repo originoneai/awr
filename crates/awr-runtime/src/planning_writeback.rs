@@ -505,6 +505,7 @@ mod tests {
             hard_rules: None,
             verification_requirements: None,
             execution_settlement: None,
+            examples: None,
             definition_state: DraftDefinitionState::Enabled,
             workstream: None,
             split_from: None,

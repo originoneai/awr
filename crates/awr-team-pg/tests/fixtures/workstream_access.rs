@@ -166,6 +166,7 @@ async fn setup_inner(
             contract: WorkContract {
                 dependency_acceptance: Default::default(),
                 execution_settlement: None,
+                examples: None,
                 codec: WorkContract::CODEC.into(),
                 work_id: WorkId::new(id).unwrap(),
                 external_key: work_external_key

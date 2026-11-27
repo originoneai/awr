@@ -1,9 +1,114 @@
 use crate::canonical::{canonical_json, contract_hash};
 use crate::error::{TeamError, TeamResult};
 use crate::ids::WorkId;
+use awr_core::ExampleKind;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+pub const MAX_CONTRACT_EXAMPLES: usize = 64;
+const MAX_EXAMPLE_TEXT: usize = 4096;
+const MAX_CHECK_ID: usize = 128;
+
+/// One acceptance example linking an exact criterion to an optional Team check identifier.
+/// Mirrors personal-edition `awr_core::Example` (`id`, `criterion`, `kind`, `given`, `when`,
+/// `then`), binding `check_id` to candidate-scoped `VerificationRun.check` results.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContractExample {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    pub criterion: String,
+    pub kind: ExampleKind,
+    pub given: String,
+    pub when: String,
+    pub then: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_id: Option<String>,
+}
+
+fn valid_example_text(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value.len() <= MAX_EXAMPLE_TEXT
+        && !value
+            .chars()
+            .any(|c| c.is_control() && !matches!(c, '\n' | '\t'))
+}
+
+fn valid_example_id(value: &str) -> bool {
+    let alphanumeric = |b: u8| b.is_ascii_lowercase() || b.is_ascii_digit();
+    (1..=32).contains(&value.len())
+        && value.bytes().next().is_some_and(alphanumeric)
+        && value.bytes().all(|b| alphanumeric(b) || b == b'-')
+}
+
+fn valid_check_id(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value == value.trim()
+        && value.len() <= MAX_CHECK_ID
+        && !value.chars().any(char::is_control)
+}
+
+pub(crate) fn validate_examples(
+    examples: &[ContractExample],
+    acceptance: &[String],
+) -> TeamResult<()> {
+    if examples.len() > MAX_CONTRACT_EXAMPLES {
+        return Err(TeamError::InvalidContract(
+            "examples hold at most 64 entries".into(),
+        ));
+    }
+    let criteria: BTreeSet<&str> = acceptance.iter().map(String::as_str).collect();
+    let mut ids = BTreeSet::new();
+    for (index, example) in examples.iter().enumerate() {
+        if let Some(id) = &example.id {
+            if !valid_example_id(id) {
+                return Err(TeamError::InvalidContract(format!(
+                    "examples[{index}].id must match [a-z0-9][a-z0-9-]{{0,31}}"
+                )));
+            }
+            if !ids.insert(id.as_str()) {
+                return Err(TeamError::InvalidContract(format!(
+                    "examples[{index}].id repeats an identifier in this contract"
+                )));
+            }
+        }
+        if !valid_example_text(&example.criterion)
+            || !valid_example_text(&example.given)
+            || !valid_example_text(&example.when)
+            || !valid_example_text(&example.then)
+        {
+            return Err(TeamError::InvalidContract(format!(
+                "examples[{index}] requires nonblank bounded criterion, given, when and then text"
+            )));
+        }
+        if !criteria.contains(example.criterion.as_str()) {
+            return Err(TeamError::InvalidContract(format!(
+                "examples[{index}].criterion must match an acceptance criterion of the work"
+            )));
+        }
+        if let Some(check_id) = &example.check_id {
+            if example.id.is_none() {
+                return Err(TeamError::InvalidContract(format!(
+                    "examples[{index}].id is required when check_id is set"
+                )));
+            }
+            if !valid_check_id(check_id) {
+                return Err(TeamError::InvalidContract(format!(
+                    "examples[{index}].check_id must be a trimmed nonblank string of 1..=128 bytes without control characters"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn present_examples<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<Vec<ContractExample>>, D::Error> {
+    // A present null is invalid, not an omitted legacy field.
+    Vec::<ContractExample>::deserialize(d).map(Some)
+}
 
 /// A consumer explicitly selects this assurance basis for one required input.
 /// Omission preserves the legacy policy; this never claims human acceptance.
@@ -107,6 +212,9 @@ pub struct WorkContract {
     pub dependency_acceptance: BTreeMap<String, DependencyAcceptanceMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_settlement: Option<ExecutionSettlementPolicy>,
+    /// V7 onward: acceptance examples linking criteria to Team check identifiers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub examples: Option<Vec<ContractExample>>,
 }
 
 // V1 remains a closed wire contract, including rejection of an empty V2 field.
@@ -127,6 +235,8 @@ struct WireContract {
     dependency_acceptance: Option<BTreeMap<String, DependencyAcceptanceMode>>,
     #[serde(default, deserialize_with = "present_settlement")]
     execution_settlement: Option<ExecutionSettlementPolicy>,
+    #[serde(default, deserialize_with = "present_examples")]
+    examples: Option<Vec<ContractExample>>,
 }
 
 fn present_settlement<'de, D: serde::Deserializer<'de>>(
@@ -175,11 +285,16 @@ impl TryFrom<WireContract> for WorkContract {
         }
         if !matches!(
             wire.codec.as_str(),
-            Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5 | Self::CODEC_V6
+            Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5 | Self::CODEC_V6 | Self::CODEC_V7
         ) && wire.execution_settlement.is_some()
         {
             return Err(TeamError::InvalidContract(
-                "execution_settlement requires contract V3/V4/V5/V6".into(),
+                "execution_settlement requires contract V3/V4/V5/V6/V7".into(),
+            ));
+        }
+        if wire.codec != Self::CODEC_V7 && wire.examples.is_some() {
+            return Err(TeamError::InvalidContract(
+                "examples requires contract V7".into(),
             ));
         }
         let dependency_acceptance = wire.dependency_acceptance.unwrap_or_default();
@@ -196,6 +311,7 @@ impl TryFrom<WireContract> for WorkContract {
             verification_requirements: wire.verification_requirements,
             dependency_acceptance,
             execution_settlement: wire.execution_settlement,
+            examples: wire.examples,
         };
         contract.validate()?;
         Ok(contract)
@@ -209,6 +325,7 @@ impl WorkContract {
     pub const CODEC_V4: &'static str = "awr-team-contract-v4";
     pub const CODEC_V5: &'static str = "awr-team-contract-v5";
     pub const CODEC_V6: &'static str = "awr-team-contract-v6";
+    pub const CODEC_V7: &'static str = "awr-team-contract-v7";
 
     pub fn validate(&self) -> TeamResult<()> {
         if !matches!(
@@ -219,16 +336,27 @@ impl WorkContract {
                 | Self::CODEC_V4
                 | Self::CODEC_V5
                 | Self::CODEC_V6
+                | Self::CODEC_V7
         ) {
             return Err(TeamError::InvalidContract(
                 "unsupported contract codec".into(),
+            ));
+        }
+        if (self.codec == Self::CODEC_V7) != self.examples.is_some() {
+            return Err(TeamError::InvalidContract(
+                "examples requires contract V7; V7 requires an explicit examples list".into(),
             ));
         }
         if (self.codec == Self::CODEC && !self.dependency_acceptance.is_empty())
             || (self.codec == Self::CODEC_V2 && self.dependency_acceptance.is_empty())
             || (matches!(
                 self.codec.as_str(),
-                Self::CODEC_V2 | Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5 | Self::CODEC_V6
+                Self::CODEC_V2
+                    | Self::CODEC_V3
+                    | Self::CODEC_V4
+                    | Self::CODEC_V5
+                    | Self::CODEC_V6
+                    | Self::CODEC_V7
             ) && self
                 .required_dependencies
                 .iter()
@@ -240,7 +368,7 @@ impl WorkContract {
             })
         {
             return Err(TeamError::InvalidContract(
-                "dependency_acceptance requires V2/V3/V4/V5/V6 and unique existing required predecessors; V2 requires a nonempty map".into(),
+                "dependency_acceptance requires V2/V3/V4/V5/V6/V7 and unique existing required predecessors; V2 requires a nonempty map".into(),
             ));
         }
         let simulated_dependency = self
@@ -251,12 +379,15 @@ impl WorkContract {
             .dependency_acceptance
             .values()
             .any(|mode| matches!(mode, DependencyAcceptanceMode::CrossWorkstream(_)));
-        if cross_stream_dependency != (self.codec == Self::CODEC_V6) {
+        if self.codec != Self::CODEC_V7 && cross_stream_dependency != (self.codec == Self::CODEC_V6)
+        {
             return Err(TeamError::InvalidContract(
-                "cross_workstream dependencies require V6; V6 requires at least one explicit cross-stream predecessor".into(),
+                "cross_workstream dependencies require V6/V7; V6 requires at least one explicit cross-stream predecessor".into(),
             ));
         }
-        if self.codec != Self::CODEC_V6 && simulated_dependency != (self.codec == Self::CODEC_V5) {
+        if !matches!(self.codec.as_str(), Self::CODEC_V6 | Self::CODEC_V7)
+            && simulated_dependency != (self.codec == Self::CODEC_V5)
+        {
             return Err(TeamError::InvalidContract(
                 "simulated_member_independent dependencies require V5; V5 requires at least one explicit simulated predecessor".into(),
             ));
@@ -264,22 +395,25 @@ impl WorkContract {
         if self.completion_policy == ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY
             && !matches!(
                 self.codec.as_str(),
-                Self::CODEC_V4 | Self::CODEC_V5 | Self::CODEC_V6
+                Self::CODEC_V4 | Self::CODEC_V5 | Self::CODEC_V6 | Self::CODEC_V7
             )
         {
             return Err(TeamError::InvalidContract(
-                "simulated member review requires contract V4/V5/V6".into(),
+                "simulated member review requires contract V4/V5/V6/V7".into(),
             ));
         }
         match (&self.execution_settlement, self.codec.as_str()) {
-            (Some(policy), Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5 | Self::CODEC_V6) => {
+            (
+                Some(policy),
+                Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5 | Self::CODEC_V6 | Self::CODEC_V7,
+            ) => {
                 policy.validate()?;
                 let supported_policy = match self.codec.as_str() {
                     Self::CODEC_V4 => {
                         self.completion_policy
                             == ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY
                     }
-                    Self::CODEC_V5 | Self::CODEC_V6 => matches!(
+                    Self::CODEC_V5 | Self::CODEC_V6 | Self::CODEC_V7 => matches!(
                         self.completion_policy.as_str(),
                         ExecutionSettlementPolicy::COMPLETION_POLICY
                             | ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY
@@ -301,12 +435,12 @@ impl WorkContract {
                 }
             }
             (None, Self::CODEC | Self::CODEC_V2) => {}
-            (None, Self::CODEC_V5 | Self::CODEC_V6)
+            (None, Self::CODEC_V5 | Self::CODEC_V6 | Self::CODEC_V7)
                 if self.completion_policy
                     != ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY => {}
             _ => {
                 return Err(TeamError::InvalidContract(
-                    "execution_settlement is required for V3/V4 and simulated completion, forbidden in V1/V2, and otherwise optional in V5/V6".into(),
+                    "execution_settlement is required for V3/V4 and simulated completion, forbidden in V1/V2, and otherwise optional in V5/V6/V7".into(),
                 ));
             }
         }
@@ -315,6 +449,9 @@ impl WorkContract {
         }
         if self.acceptance.is_empty() {
             return Err(TeamError::InvalidContract("acceptance required".into()));
+        }
+        if let Some(examples) = &self.examples {
+            validate_examples(examples, &self.acceptance)?;
         }
         if self.completion_policy.trim().is_empty() {
             return Err(TeamError::InvalidContract(
@@ -356,15 +493,38 @@ impl WorkContract {
         });
         if matches!(
             self.codec.as_str(),
-            Self::CODEC_V2 | Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5 | Self::CODEC_V6
+            Self::CODEC_V2
+                | Self::CODEC_V3
+                | Self::CODEC_V4
+                | Self::CODEC_V5
+                | Self::CODEC_V6
+                | Self::CODEC_V7
         ) {
             value["dependency_acceptance"] = json!(self.dependency_acceptance);
         }
         if matches!(
             self.codec.as_str(),
-            Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5 | Self::CODEC_V6
+            Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5 | Self::CODEC_V6 | Self::CODEC_V7
         ) {
             value["execution_settlement"] = json!(self.execution_settlement);
+        }
+        if self.codec == Self::CODEC_V7 {
+            let mut examples = self.examples.clone().unwrap_or_default();
+            examples.sort_by(|a, b| {
+                let kind_rank = |k: ExampleKind| match k {
+                    ExampleKind::Positive => 0u8,
+                    ExampleKind::Negative => 1u8,
+                };
+                a.criterion
+                    .cmp(&b.criterion)
+                    .then_with(|| kind_rank(a.kind).cmp(&kind_rank(b.kind)))
+                    .then_with(|| a.id.cmp(&b.id))
+                    .then_with(|| a.check_id.cmp(&b.check_id))
+                    .then_with(|| a.given.cmp(&b.given))
+                    .then_with(|| a.when.cmp(&b.when))
+                    .then_with(|| a.then.cmp(&b.then))
+            });
+            value["examples"] = json!(examples);
         }
         let _ = canonical_json(&value)?;
         Ok(value)

@@ -49,6 +49,7 @@ fn diff(
         "completion_policy",
         "hard_rules",
         "verification_requirements",
+        "examples",
     ] {
         let before = current
             .and_then(|c| c.get(field))

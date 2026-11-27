@@ -253,6 +253,7 @@ when the identities differ. YAML rows without `work_id` use `id` for both. See
 | `dependency_acceptance` | Map from required predecessors to acceptance modes | Retains source policy | Rejected |
 | `hard_rules`, `verification_requirements` | Arrays of strings | Retains source constraints | Rejected |
 | `execution_settlement` | Closed workspace policy object | Retains source declaration | Rejected |
+| `examples` | Array of acceptance example objects (`criterion`, `kind`, `given`, `when`, `then`, optional `id`, optional `check_id`; selects V7) | Retains source examples | Rejected |
 | `workstream`, `split_from` | String | Existing optional behavior | Accepted |
 | `split_children` | Array of strings | Empty default | Rejected |
 

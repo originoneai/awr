@@ -186,6 +186,7 @@ fn contract(work: Work, delivery: bool) -> WorkContract {
             mode: ExecutionSettlementMode::IndependentWorkspaceV1,
             workspace_id: work.workspace.into(),
         }),
+        examples: None,
         codec: if delivery {
             WorkContract::CODEC_V4
         } else {

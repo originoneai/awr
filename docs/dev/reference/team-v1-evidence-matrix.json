@@ -287,7 +287,7 @@
           "key_assertion": "占用任务合同变化拒绝",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "dcbf0371c09101e0b213049421ccacf5a832b02e4b27f0551fa195931755df5f"
+          "test_file_sha256": "fefd2417b4c8b0a1a8511869e6b639c7065200e8d4d5726e81dbebc2d5abd8ed"
         }
       ],
       "real_postgresql": true,
@@ -361,7 +361,7 @@
           "key_assertion": "循环依赖拒绝且无残留边",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "dcbf0371c09101e0b213049421ccacf5a832b02e4b27f0551fa195931755df5f"
+          "test_file_sha256": "fefd2417b4c8b0a1a8511869e6b639c7065200e8d4d5726e81dbebc2d5abd8ed"
         }
       ],
       "real_postgresql": true,
@@ -859,7 +859,7 @@
           "key_assertion": "投影提交前失败保留旧源",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "cd550fd235392807414c086fe4fcc0439324bf19181ba4847c8368719845cdef"
+          "test_file_sha256": "e9db41329a0c6fcd9ea7a25affaec6958fe1e92eeb102e8fc8e190ea3bf95012"
         }
       ],
       "real_postgresql": true,
@@ -891,7 +891,7 @@
           "key_assertion": "并发提交返回有序project revision",
           "reviewed_source_sha": "4508bd7066554d7e647b9a4040781f7ba22e8b54",
           "last_run": null,
-          "test_file_sha256": "6349383e00161b9df39b931cd0b305b07b8f69dfecab14c47276590498dd172e"
+          "test_file_sha256": "25d82edd97f541965a46e7e06844cee96d01d70234e244630920b27ed9813d1d"
         }
       ],
       "real_postgresql": true,
@@ -923,7 +923,7 @@
           "key_assertion": "单条分页覆盖同revision的三个event_index",
           "reviewed_source_sha": "4508bd7066554d7e647b9a4040781f7ba22e8b54",
           "last_run": null,
-          "test_file_sha256": "6349383e00161b9df39b931cd0b305b07b8f69dfecab14c47276590498dd172e"
+          "test_file_sha256": "25d82edd97f541965a46e7e06844cee96d01d70234e244630920b27ed9813d1d"
         }
       ],
       "real_postgresql": true,
@@ -1066,7 +1066,7 @@
           "key_assertion": "缺goals返回incomplete和missing_goals",
           "reviewed_source_sha": "4508bd7066554d7e647b9a4040781f7ba22e8b54",
           "last_run": null,
-          "test_file_sha256": "6349383e00161b9df39b931cd0b305b07b8f69dfecab14c47276590498dd172e"
+          "test_file_sha256": "25d82edd97f541965a46e7e06844cee96d01d70234e244630920b27ed9813d1d"
         }
       ],
       "real_postgresql": true,
@@ -1271,7 +1271,7 @@
           "key_assertion": "路径安全纯规则；完整包攻击矩阵待补",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "cd550fd235392807414c086fe4fcc0439324bf19181ba4847c8368719845cdef"
+          "test_file_sha256": "e9db41329a0c6fcd9ea7a25affaec6958fe1e92eeb102e8fc8e190ea3bf95012"
         }
       ],
       "real_postgresql": false,
@@ -1472,7 +1472,7 @@
           "key_assertion": "同语义忽略输入顺序得到稳定hash；版本转换另需证据",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "96729faea7f9956a8c5890e8c29bd3a464ead7e340c1ecc65495d36dc5c07d1b"
+          "test_file_sha256": "bc4e4147e3c6017278f3cd390d04a69abd846c938f5e7618d6d4be01dca4ce40"
         }
       ],
       "real_postgresql": false,
@@ -1544,7 +1544,7 @@
           "key_assertion": "路径段冲突拒绝且相似前缀允许",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "dcbf0371c09101e0b213049421ccacf5a832b02e4b27f0551fa195931755df5f"
+          "test_file_sha256": "fefd2417b4c8b0a1a8511869e6b639c7065200e8d4d5726e81dbebc2d5abd8ed"
         }
       ],
       "real_postgresql": true,
@@ -1581,7 +1581,7 @@
           "key_assertion": "不支持scope明确报错",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "dcbf0371c09101e0b213049421ccacf5a832b02e4b27f0551fa195931755df5f"
+          "test_file_sha256": "fefd2417b4c8b0a1a8511869e6b639c7065200e8d4d5726e81dbebc2d5abd8ed"
         }
       ],
       "real_postgresql": true,
@@ -1618,7 +1618,7 @@
           "key_assertion": "单候选事务失败不半生效；批量发布待补",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "cd550fd235392807414c086fe4fcc0439324bf19181ba4847c8368719845cdef"
+          "test_file_sha256": "e9db41329a0c6fcd9ea7a25affaec6958fe1e92eeb102e8fc8e190ea3bf95012"
         }
       ],
       "real_postgresql": true,
@@ -1714,7 +1714,7 @@
           "key_assertion": "图预算超限拒绝；发布预算另需覆盖",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "dcbf0371c09101e0b213049421ccacf5a832b02e4b27f0551fa195931755df5f"
+          "test_file_sha256": "fefd2417b4c8b0a1a8511869e6b639c7065200e8d4d5726e81dbebc2d5abd8ed"
         }
       ],
       "real_postgresql": true,
@@ -1825,7 +1825,7 @@
           "key_assertion": "子项完成不能替代父级证据",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "dcbf0371c09101e0b213049421ccacf5a832b02e4b27f0551fa195931755df5f"
+          "test_file_sha256": "fefd2417b4c8b0a1a8511869e6b639c7065200e8d4d5726e81dbebc2d5abd8ed"
         }
       ],
       "real_postgresql": true,
@@ -2104,7 +2104,7 @@
           "key_assertion": "仅事件分页；缺快照边界与增量衔接断言",
           "reviewed_source_sha": "4508bd7066554d7e647b9a4040781f7ba22e8b54",
           "last_run": null,
-          "test_file_sha256": "6349383e00161b9df39b931cd0b305b07b8f69dfecab14c47276590498dd172e"
+          "test_file_sha256": "25d82edd97f541965a46e7e06844cee96d01d70234e244630920b27ed9813d1d"
         }
       ],
       "real_postgresql": true,
@@ -2136,7 +2136,7 @@
           "key_assertion": "解析器升级不改变已激活合同",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "cd550fd235392807414c086fe4fcc0439324bf19181ba4847c8368719845cdef"
+          "test_file_sha256": "e9db41329a0c6fcd9ea7a25affaec6958fe1e92eeb102e8fc8e190ea3bf95012"
         }
       ],
       "real_postgresql": true,
@@ -2168,7 +2168,7 @@
           "key_assertion": "上游合同变化使依赖绑定失效",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "dcbf0371c09101e0b213049421ccacf5a832b02e4b27f0551fa195931755df5f"
+          "test_file_sha256": "fefd2417b4c8b0a1a8511869e6b639c7065200e8d4d5726e81dbebc2d5abd8ed"
         }
       ],
       "real_postgresql": true,

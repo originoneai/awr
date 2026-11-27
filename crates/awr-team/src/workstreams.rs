@@ -28,6 +28,7 @@ impl WorkstreamBundle {
     pub const CODEC_V4: &'static str = "awr-team-workstreams-v4";
     pub const CODEC_V5: &'static str = "awr-team-workstreams-v5";
     pub const CODEC_V6: &'static str = "awr-team-workstreams-v6";
+    pub const CODEC_V7: &'static str = "awr-team-workstreams-v7";
 
     pub fn validate(&self, project_id: &str) -> TeamResult<()> {
         if !matches!(
@@ -38,6 +39,7 @@ impl WorkstreamBundle {
                 | Self::CODEC_V4
                 | Self::CODEC_V5
                 | Self::CODEC_V6
+                | Self::CODEC_V7
         ) || self.catalog.project_id != project_id
         {
             return Err(TeamError::InvalidContract(
@@ -64,18 +66,27 @@ impl WorkstreamBundle {
                         | WorkContract::CODEC_V4
                         | WorkContract::CODEC_V5
                         | WorkContract::CODEC_V6
+                        | WorkContract::CODEC_V7
                 ))
                 || (self.codec == Self::CODEC_V3
                     && matches!(
                         entry.contract.codec.as_str(),
-                        WorkContract::CODEC_V4 | WorkContract::CODEC_V5 | WorkContract::CODEC_V6
+                        WorkContract::CODEC_V4
+                            | WorkContract::CODEC_V5
+                            | WorkContract::CODEC_V6
+                            | WorkContract::CODEC_V7
                     ))
                 || (self.codec == Self::CODEC_V4
                     && matches!(
                         entry.contract.codec.as_str(),
-                        WorkContract::CODEC_V5 | WorkContract::CODEC_V6
+                        WorkContract::CODEC_V5 | WorkContract::CODEC_V6 | WorkContract::CODEC_V7
                     ))
-                || (self.codec == Self::CODEC_V5 && entry.contract.codec == WorkContract::CODEC_V6)
+                || (self.codec == Self::CODEC_V5
+                    && matches!(
+                        entry.contract.codec.as_str(),
+                        WorkContract::CODEC_V6 | WorkContract::CODEC_V7
+                    ))
+                || (self.codec == Self::CODEC_V6 && entry.contract.codec == WorkContract::CODEC_V7)
             {
                 return Err(TeamError::InvalidContract(
                     "contract codec is newer than the workstream codec".into(),
@@ -88,10 +99,11 @@ impl WorkstreamBundle {
                     .find(|provider| provider.contract.work_id.as_str() == upstream)
                     .ok_or_else(|| TeamError::InvalidContract("Agent dependency acceptance requires an existing predecessor in the same workstream; cross-stream adoption is unsupported".into()))?;
                 if matches!(mode, DependencyAcceptanceMode::CrossWorkstream(_)) {
-                    if self.codec != Self::CODEC_V6 || provider.workstream_id == entry.workstream_id
+                    if !matches!(self.codec.as_str(), Self::CODEC_V6 | Self::CODEC_V7)
+                        || provider.workstream_id == entry.workstream_id
                     {
                         return Err(TeamError::InvalidContract(
-                            "cross_workstream requires V6 and different source-owned workstreams"
+                            "cross_workstream requires V6/V7 and different source-owned workstreams"
                                 .into(),
                         ));
                     }
@@ -121,6 +133,30 @@ impl WorkstreamBundle {
             .map_err(|e| TeamError::InvalidContract(e.to_string()))?;
         if self.codec == Self::CODEC_V6 {
             self.validate_v6_dependencies()?;
+        } else if self.codec == Self::CODEC_V7 {
+            self.validate_v7_bundle()?;
+        }
+        Ok(())
+    }
+
+    fn validate_v7_bundle(&self) -> TeamResult<()> {
+        if !self
+            .contracts
+            .iter()
+            .any(|e| e.contract.codec == WorkContract::CODEC_V7)
+        {
+            return Err(TeamError::InvalidContract(
+                "V7 bundle requires at least one V7 contract with examples".into(),
+            ));
+        }
+        let has_cross = self.contracts.iter().any(|e| {
+            e.contract
+                .dependency_acceptance
+                .values()
+                .any(|mode| matches!(mode, DependencyAcceptanceMode::CrossWorkstream(_)))
+        });
+        if has_cross {
+            self.validate_cross_stream_graph()?;
         }
         Ok(())
     }
@@ -135,6 +171,10 @@ impl WorkstreamBundle {
                 "V6 bundle requires an explicit V6 cross-stream contract".into(),
             ));
         }
+        self.validate_cross_stream_graph()
+    }
+
+    fn validate_cross_stream_graph(&self) -> TeamResult<()> {
         let by_id = self
             .contracts
             .iter()

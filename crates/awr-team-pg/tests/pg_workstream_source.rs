@@ -61,6 +61,7 @@ fn bundle() -> WorkstreamBundle {
         contract: WorkContract {
             dependency_acceptance: Default::default(),
             execution_settlement: None,
+            examples: None,
             codec: WorkContract::CODEC.into(),
             work_id: WorkId::new(key).unwrap(),
             external_key: key.into(),

@@ -293,6 +293,9 @@ function validReadResponse(reply, op) {
     return Array.isArray(data.delivery.dependencies) && data.delivery.dependencies.every((item) =>
       validDependency(item, data.delivery.work_id) && !('work_title' in item) && !('dependency_position' in item));
   }
+  if (op === 'work.snapshot' && data.acceptance_evidence !== undefined) {
+    return mapAcceptanceEvidence(data.acceptance_evidence) !== null;
+  }
   return true;
 }
 
@@ -1404,6 +1407,120 @@ function validInboxPage(reply, cursor) {
       && typeof item.guidance.code === 'string' && typeof item.guidance.when === 'string'
       && Array.isArray(item.guidance.because) && item.guidance.because.every(v => typeof v === 'string')
       && typeof item.guidance.recheck_on === 'string');
+}
+
+const ACCEPTANCE_EVIDENCE_STATUSES = new Set([
+  'supported', 'failed', 'waiting', 'no_bound_check', 'not_started',
+]);
+const ACCEPTANCE_EVIDENCE_REASONS_BY_STATUS = {
+  supported: new Set(['bound_checks_passed_and_review_approved']),
+  failed: new Set(['bound_check_failed', 'review_returned']),
+  waiting: new Set([
+    'awaiting_current_candidate',
+    'facts_truncated',
+    'awaiting_review_approval',
+    'awaiting_bound_checks',
+  ]),
+  no_bound_check: new Set(['no_bound_check']),
+  not_started: new Set(['work_not_started', 'work_inactive']),
+};
+const ACCEPTANCE_CHECK_OUTCOMES = new Set(['passed', 'failed', 'running', 'unknown', 'not_recorded']);
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function mapAcceptanceEvidence(value) {
+  if (value === undefined) {
+    return {
+      status: 'not_provided',
+      basis: 'upstream_omitted',
+      candidate_digest: null,
+      candidate_current: false,
+      review_state: null,
+      review_current_candidate: false,
+      items: null,
+    };
+  }
+  if (!isPlainObject(value)) return null;
+  if ((value.candidate_digest !== null
+      && (typeof value.candidate_digest !== 'string' || value.candidate_digest.length === 0))
+    || typeof value.candidate_current !== 'boolean'
+    || (value.review_state !== null
+      && (typeof value.review_state !== 'string' || value.review_state.length === 0))
+    || typeof value.review_current_candidate !== 'boolean') {
+    return null;
+  }
+  if (value.status === 'not_provided') {
+    if (value.items !== null
+      || value.basis !== 'contract_examples_absent'
+      || (value.facts_truncated !== undefined && typeof value.facts_truncated !== 'boolean')) {
+      return null;
+    }
+    return {
+      status: 'not_provided',
+      basis: value.basis,
+      candidate_digest: value.candidate_digest,
+      candidate_current: value.candidate_current,
+      review_state: value.review_state,
+      review_current_candidate: value.review_current_candidate,
+      items: null,
+    };
+  }
+  if (value.status !== 'provided'
+    || value.basis !== 'contract_examples_and_current_candidate'
+    || typeof value.facts_truncated !== 'boolean'
+    || !Array.isArray(value.items)) {
+    return null;
+  }
+  const items = [];
+  for (const raw of value.items) {
+    if (!isPlainObject(raw)
+      || typeof raw.criterion !== 'string' || raw.criterion.length === 0
+      || !ACCEPTANCE_EVIDENCE_STATUSES.has(raw.status)
+      || typeof raw.reason !== 'string'
+      || !ACCEPTANCE_EVIDENCE_REASONS_BY_STATUS[raw.status].has(raw.reason)
+      || !Array.isArray(raw.bound_checks)
+      || !raw.bound_checks.every((c) => typeof c === 'string' && c.length > 0)
+      || !Array.isArray(raw.checks)
+      || !Number.isSafeInteger(raw.examples_count) || raw.examples_count < 0
+      || !Number.isSafeInteger(raw.positive_examples) || raw.positive_examples < 0
+      || !Number.isSafeInteger(raw.negative_examples) || raw.negative_examples < 0
+      || raw.positive_examples + raw.negative_examples !== raw.examples_count) {
+      return null;
+    }
+    const checks = [];
+    for (const rawCheck of raw.checks) {
+      if (!isPlainObject(rawCheck)
+        || typeof rawCheck.check !== 'string' || rawCheck.check.length === 0
+        || !ACCEPTANCE_CHECK_OUTCOMES.has(rawCheck.outcome)
+        || (rawCheck.run_id !== null
+          && (typeof rawCheck.run_id !== 'string' || rawCheck.run_id.length === 0))) {
+        return null;
+      }
+      checks.push({ check: rawCheck.check, outcome: rawCheck.outcome, run_id: rawCheck.run_id });
+    }
+    items.push({
+      criterion: raw.criterion,
+      status: raw.status,
+      reason: raw.reason,
+      bound_checks: raw.bound_checks.slice(),
+      checks,
+      examples_count: raw.examples_count,
+      positive_examples: raw.positive_examples,
+      negative_examples: raw.negative_examples,
+    });
+  }
+  return {
+    status: 'provided',
+    basis: value.basis,
+    candidate_digest: value.candidate_digest,
+    candidate_current: value.candidate_current,
+    review_state: value.review_state,
+    review_current_candidate: value.review_current_candidate,
+    facts_truncated: value.facts_truncated,
+    items,
+  };
 }
 
 function asObject(body) {
@@ -3007,6 +3124,10 @@ function createTeamBridge(opts) {
         : { code: 'restore_context', action: { op: 'work.prepare', note: data.next_step || null } };
       progress.next_step = progress.guidance.action?.note || null;
     }
+    const acceptance_evidence = mapAcceptanceEvidence(data.acceptance_evidence);
+    if (!acceptance_evidence) {
+      return { ok: false, error: { code: 'BadGateway', message: 'Invalid acceptance evidence in Team snapshot' } };
+    }
     // Three clocks side by side (AWR-OBS-002): the caller's report receipt,
     // the service's own measurement and this page read — never substituted.
     const freshness = readFreshness(
@@ -3018,6 +3139,7 @@ function createTeamBridge(opts) {
       runtime_available: Boolean(data.runtime),
       recovery_blocked: Boolean(data.runtime && data.runtime.recovery_blocked),
       acceptance: data.visible_contract.acceptance || [],
+      acceptance_evidence,
       goals: data.visible_contract.goals || [],
       depends_on: (data.visible_contract.required_dependencies || []).map((key) => ({ key, visible: true })),
       dependency_export_unavailable: data.dependency_export_unavailable === true,
