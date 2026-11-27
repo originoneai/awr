@@ -878,6 +878,8 @@ describe('AcceptanceList', () => {
           { key: 'lookup', title: '按编号和手机号都能查到', evidence: '测试 9 条通过', status: 'supported' },
           { key: 'repeat', title: '重复提交不会重复下单', evidence: '复核时发现没有验证', status: 'failed' },
           { key: 'keep', title: '提交失败时保留已填内容', evidence: '要等接口第 3 版', status: 'waiting' },
+          { key: 'unbound', title: '导出列顺序与模板一致', evidence: '未绑定检查，尚无逐条依据', status: 'noBoundCheck' },
+          { key: 'trunc', title: '回放记录覆盖全部错误码', evidence: '读取不完整：交付记录没有读全，暂时无法确认这一条', status: 'incomplete' },
           { key: 'scenes', title: '走完 8 个场景', status: 'notStarted' },
         ]}
       />,
@@ -886,13 +888,16 @@ describe('AcceptanceList', () => {
       supported: '有依据',
       failed: '没通过',
       waiting: '在等',
+      noBoundCheck: '没有绑定检查',
+      incomplete: '读取不完整',
       notStarted: '还没有开始',
     };
-    // Review R8: one distinct lucide glyph per criterion status.
     const icons: Record<string, string> = {
       supported: 'lucide-circle-check',
       failed: 'lucide-circle-x',
       waiting: 'lucide-clock',
+      noBoundCheck: 'lucide-circle',
+      incomplete: 'lucide-info',
       notStarted: 'lucide-circle',
     };
     for (const [status, word] of Object.entries(words)) {

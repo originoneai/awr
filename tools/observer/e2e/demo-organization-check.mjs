@@ -24,6 +24,7 @@ export const registeredPageModules = [
   'inbox',
   'projects',
   'members',
+  'task',
 ];
 
 export const fullRoutes = [
@@ -45,7 +46,7 @@ export const fullRoutes = [
   { name: 'agent-connect', path: '/agent-connect?scope=P-001' },
   { name: 'lessons-pending', path: '/lessons', pending: true },
   { name: 'settings', path: '/settings?scope=P-001' },
-  { name: 'task-pending', path: '/tasks/T-101', pending: true },
+  { name: 'task', path: '/tasks/T-101' },
   { name: 'goal-pending', path: '/goals/GOAL-001', pending: true },
   { name: 'document-pending', path: '/documents/DOC-001', pending: true },
   { name: 'update-pending', path: '/updates/U-001', pending: true },

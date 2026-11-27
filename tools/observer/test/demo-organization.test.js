@@ -1259,3 +1259,140 @@ test('the shell read is refused when the deployment is neither live nor a demo',
   assert.deepEqual(await bridge.call('GET /api/team/shell', '/api/team/shell'),
     { ok: false, error: { code: 'DemoDisabled', message: 'fixtures require demo mode' } });
 });
+
+test('canonical work.snapshot acceptance_evidence and structured_waits obey real PPD-040 and PPD-050 rules for every task', () => {
+  const demo = createDemoOrganization({ variant: 'canonical', timestampShiftMs: 0 });
+  const byId = new Map();
+
+  for (const work of demo.data.tasks) {
+    const reply = demo.query(work.project_id, {
+      protocol_version: 1,
+      op: 'work.snapshot',
+      work_id: work.work_id,
+      workstream_id: work.workstream_id,
+    });
+    const snap = reply.data;
+    byId.set(work.work_id, snap);
+
+    const obs = snap.observation;
+    const collab = obs.collaboration;
+    const candidateCurrent = collab.candidate?.current === true;
+    const reviewCurrent = candidateCurrent && collab.review?.current_candidate === true;
+    const activeReviewState = reviewCurrent ? collab.review?.state ?? null : null;
+    const factsTruncated = collab.facts_truncated === true;
+    const runtimeState = obs.runtime?.state ?? null;
+    const workStarted = candidateCurrent
+      || obs.execution?.contract_matches_current === true
+      || obs.progress?.contract_matches_current === true
+      || (runtimeState !== null && !['unclaimed', 'cancelled', 'archived'].includes(runtimeState));
+
+    const verificationByCheck = new Map();
+    if (candidateCurrent) {
+      for (const run of collab.verification ?? []) {
+        verificationByCheck.set(run.check, run);
+      }
+    }
+
+    const ev = snap.acceptance_evidence;
+    assert.ok(ev && typeof ev === 'object', `${work.work_id}: acceptance_evidence present in canonical`);
+    assert.equal(ev.status, 'provided', `${work.work_id}: acceptance_evidence status`);
+    assert.equal(ev.candidate_current, candidateCurrent, `${work.work_id}: candidate_current matches observation`);
+    assert.equal(ev.review_state, collab.review?.state ?? null, `${work.work_id}: review_state matches observation`);
+    assert.equal(ev.review_current_candidate, reviewCurrent, `${work.work_id}: review_current_candidate matches observation`);
+    assert.equal(ev.items.length, work.acceptance.length, `${work.work_id}: one item per criterion`);
+
+    for (const item of ev.items) {
+      if (item.bound_checks.length === 0) {
+        assert.equal(item.status, 'no_bound_check', `${work.work_id}: unbound criterion must be no_bound_check`);
+        assert.equal(item.reason, 'no_bound_check');
+        assert.deepEqual(item.checks, []);
+        continue;
+      }
+      if (!candidateCurrent) {
+        assert.notEqual(item.status, 'supported', `${work.work_id}: cannot be supported without current candidate`);
+        assert.notEqual(item.reason, 'awaiting_bound_checks', `${work.work_id}: cannot be awaiting_bound_checks without current candidate`);
+        if (workStarted) {
+          assert.equal(item.status, 'waiting', `${work.work_id}: started work without candidate waits for candidate`);
+          assert.equal(item.reason, 'awaiting_current_candidate');
+        } else {
+          assert.equal(item.status, 'not_started', `${work.work_id}: unstarted work without candidate is not_started`);
+          assert.equal(item.reason, 'work_not_started');
+        }
+        for (const check of item.checks) {
+          assert.equal(check.outcome, 'not_recorded', `${work.work_id}: no check outcome without current candidate`);
+          assert.equal(check.run_id, null);
+        }
+        continue;
+      }
+
+      const anyFailed = item.bound_checks.some((c) => verificationByCheck.get(c)?.outcome === 'failed');
+      const allPassed = !factsTruncated && item.bound_checks.every((c) => verificationByCheck.get(c)?.outcome === 'passed');
+      if (anyFailed) {
+        assert.equal(item.status, 'failed');
+        assert.equal(item.reason, 'bound_check_failed');
+      } else if (activeReviewState === 'rejected') {
+        assert.equal(item.status, 'failed', `${work.work_id}: rejected review cannot sit beside supported`);
+        assert.equal(item.reason, 'review_returned');
+      } else if (factsTruncated) {
+        assert.equal(item.status, 'waiting');
+        assert.equal(item.reason, 'facts_truncated');
+      } else if (allPassed && activeReviewState === 'approved') {
+        assert.equal(item.status, 'supported');
+        assert.equal(item.reason, 'bound_checks_passed_and_review_approved');
+      } else if (allPassed) {
+        assert.equal(item.status, 'waiting', `${work.work_id}: open review with passing checks must wait for review approval`);
+        assert.equal(item.reason, 'awaiting_review_approval');
+      } else {
+        assert.equal(item.status, 'waiting');
+        assert.equal(item.reason, 'awaiting_bound_checks');
+      }
+    }
+
+    // PPD-050 structured_waits invariant: status === 'provided' only when backed by a progress report & checkpoint.
+    const sw = obs.structured_waits;
+    assert.ok(sw && (sw.status === 'provided' || sw.status === 'not_provided'), `${work.work_id}: valid structured_waits status`);
+    if (sw.status === 'provided') {
+      assert.ok(Array.isArray(sw.items) && sw.items.length > 0, `${work.work_id}: provided structured_waits has items`);
+      assert.ok(obs.progress && typeof obs.progress === 'object', `${work.work_id}: provided structured_waits requires progress report`);
+      assert.ok(obs.checkpoint && typeof obs.checkpoint === 'object', `${work.work_id}: provided structured_waits requires checkpoint`);
+      assert.equal(typeof sw.checkpoint_id, 'string', `${work.work_id}: non-null checkpoint_id`);
+      assert.equal(sw.checkpoint_id, obs.progress.checkpoint_id, `${work.work_id}: checkpoint_id matches progress`);
+      assert.equal(sw.checkpoint_id, obs.checkpoint.id, `${work.work_id}: checkpoint_id matches checkpoint`);
+      assert.equal(typeof sw.reported_at_unix_ms, 'number', `${work.work_id}: numeric reported_at_unix_ms`);
+      assert.equal(sw.reported_at_unix_ms, obs.progress.reported_at_unix_ms, `${work.work_id}: reported_at_unix_ms matches progress`);
+      assert.equal(typeof sw.contract_matches_current, 'boolean', `${work.work_id}: boolean contract_matches_current`);
+      assert.equal(obs.missing.progress, null, `${work.work_id}: missing.progress is null when progress report exists`);
+    }
+  }
+
+  // Spot-check the specific previously invalid demo combinations called out by supervisor review.
+  assert.deepEqual(byId.get('T-102').acceptance_evidence.items.map((i) => [i.status, i.reason]), [
+    ['waiting', 'awaiting_review_approval'],
+    ['waiting', 'awaiting_review_approval'],
+    ['waiting', 'awaiting_review_approval'],
+  ]);
+  assert.deepEqual(byId.get('T-109').acceptance_evidence.items.map((i) => [i.status, i.reason]), [
+    ['waiting', 'awaiting_review_approval'],
+  ]);
+  assert.deepEqual(byId.get('T-110').acceptance_evidence.items.map((i) => [i.status, i.reason]), [
+    ['waiting', 'awaiting_review_approval'],
+  ]);
+  assert.deepEqual(byId.get('T-105').acceptance_evidence.items.map((i) => [i.status, i.reason]), [
+    ['failed', 'review_returned'],
+    ['failed', 'review_returned'],
+    ['failed', 'review_returned'],
+  ]);
+  assert.ok(byId.get('T-103').acceptance_evidence.items.every((i) => i.status !== 'supported'));
+  assert.ok(byId.get('T-104').acceptance_evidence.items.every((i) => i.status !== 'supported'));
+  assert.ok(byId.get('T-206').acceptance_evidence.items.every((i) => i.reason !== 'awaiting_bound_checks'));
+  assert.deepEqual(byId.get('T-101').acceptance_evidence.items.map((i) => i.status), [
+    'supported', 'supported', 'supported',
+  ]);
+  // T-111 structured_waits now carries real checkpoint_id, reported_at_unix_ms, contract_matches_current, and progress.
+  const t111 = byId.get('T-111').observation;
+  assert.equal(t111.structured_waits.status, 'provided');
+  assert.equal(t111.structured_waits.checkpoint_id, 'checkpoint-t-111');
+  assert.equal(typeof t111.structured_waits.reported_at_unix_ms, 'number');
+  assert.equal(t111.structured_waits.contract_matches_current, true);
+  assert.ok(t111.progress && t111.checkpoint);
+});

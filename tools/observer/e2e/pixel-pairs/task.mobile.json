@@ -1,0 +1,30 @@
+{
+  "page": "task-mobile",
+  "proto": "#p=task&id=T-102",
+  "app": "/tasks/T-102?scope=P-001",
+  "ready": "[data-testid=\"task-section-lessons\"]",
+  "protoReady": ".cols2 .block",
+  "notes": {
+    "geometryExclusions": [
+      "Probe coordinates are anchored at the task title (.hero h1 / [data-testid=\"task-title\"]), canceling shell-level offsets.",
+      "lessons block height (__h) is skipped because the prototype appends a collapsed <details class=\"tech\"> (技术细节) inside the fifth right-column block, whereas AWR-OBS-042 omits it.",
+      "No style properties are skipped anywhere in this table."
+    ]
+  },
+  "pairs": [
+    ["task title", ".hero h1", "[data-testid=\"task-title\"]", ["TEXT", "margin-top", "margin-bottom"]],
+    ["back button", ".back", "[data-testid=\"task-back\"]", ["BOX", "TEXT", "margin-top"]],
+    ["hero summary", ".hero .sum", "[data-testid=\"task-summary\"]", ["TEXT", "margin-top"]],
+    ["hero meta", ".hero .meta", "[data-testid=\"task-meta\"]", ["BOX", "TEXT", "margin-top"]],
+    ["two-column stacked", ".cols2", ".task-cols", ["BOX"], {"skip": ["__h"]}],
+    ["acceptance block", ".cols2 > .stackv:first-child .block:nth-child(1)", "[data-testid=\"task-section-acceptance\"] .obs-section", ["BOX", "PAINT"]],
+    ["report block", ".cols2 > .stackv:first-child .block:nth-child(2)", "[data-testid=\"task-section-report\"] .obs-section", ["BOX", "PAINT"]],
+    ["delivery block", ".cols2 > .stackv:first-child .block:nth-child(3)", "[data-testid=\"task-section-delivery\"] .obs-section", ["BOX", "PAINT"]],
+    ["timeline block", ".cols2 > .stackv:first-child .block:nth-child(4)", "[data-testid=\"task-section-timeline\"] .obs-section", ["BOX", "PAINT"]],
+    ["blocker block", ".cols2 > .stackv:last-child .block:nth-child(1)", "[data-testid=\"task-section-blocker\"] .obs-section", ["BOX", "PAINT"]],
+    ["why block", ".cols2 > .stackv:last-child .block:nth-child(2)", "[data-testid=\"task-section-why\"] .obs-section", ["BOX", "PAINT"]],
+    ["deps block", ".cols2 > .stackv:last-child .block:nth-child(3)", "[data-testid=\"task-section-deps\"] .obs-section", ["BOX", "PAINT"]],
+    ["docs block", ".cols2 > .stackv:last-child .block:nth-child(4)", "[data-testid=\"task-section-docs\"] .obs-section", ["BOX", "PAINT"]],
+    ["lessons block", ".cols2 > .stackv:last-child .block:nth-child(5)", "[data-testid=\"task-section-lessons\"] .obs-section", ["BOX", "PAINT"], {"skip": ["__h"]}]
+  ]
+}

@@ -650,6 +650,120 @@ export interface ProjectDocumentsData {
   as_of: { at_unix_ms: number; source_snapshot_id: string; project_revision: string };
 }
 
+export type AcceptanceEvidenceStatus =
+  | 'supported'
+  | 'failed'
+  | 'waiting'
+  | 'no_bound_check'
+  | 'not_started';
+
+export type AcceptanceEvidenceCheckOutcome =
+  | 'passed'
+  | 'failed'
+  | 'running'
+  | 'unknown'
+  | 'not_recorded';
+
+export interface AcceptanceEvidenceCheck {
+  check: string;
+  outcome: AcceptanceEvidenceCheckOutcome;
+  run_id: string | null;
+}
+
+/** Verbatim AWR-PPD-040 per-criterion evidence item from work.snapshot. */
+export interface AcceptanceEvidenceItem {
+  criterion: string;
+  status: AcceptanceEvidenceStatus;
+  reason: string | null;
+  bound_checks: string[];
+  checks: AcceptanceEvidenceCheck[];
+  examples_count: number;
+  positive_examples: number;
+  negative_examples: number;
+}
+
+/** Verbatim AWR-PPD-040 work.snapshot.data.acceptance_evidence shape. */
+export type WorkSnapshotAcceptanceEvidence =
+  | {
+    status: 'provided';
+    basis: string;
+    candidate_digest: string | null;
+    candidate_current: boolean;
+    review_state: string | null;
+    review_current_candidate: boolean;
+    facts_truncated?: boolean;
+    items: AcceptanceEvidenceItem[];
+  }
+  | {
+    status: 'not_provided';
+    basis: string;
+    candidate_digest?: string | null;
+    candidate_current?: boolean;
+    review_state?: string | null;
+    review_current_candidate?: boolean;
+    items: null;
+  };
+
+/** Verbatim AWR-PPD-050 structured wait party kind. */
+export type StructuredWaitPartyKind = 'person' | 'group' | 'external_party';
+
+/** Verbatim AWR-PPD-050 structured wait entry from work.snapshot.data.observation.structured_waits. */
+export interface StructuredWaitItem {
+  waiting_on: {
+    kind: StructuredWaitPartyKind;
+    name: string;
+  };
+  what: string;
+  since_unix_ms: number;
+  release_condition: string;
+}
+
+/** Verbatim AWR-PPD-050 work.snapshot.data.observation.structured_waits shape. */
+export interface StructuredWaitsObservation {
+  status: 'provided' | 'not_provided';
+  items: StructuredWaitItem[] | null;
+  provenance?: 'caller_declared';
+  grants_authority?: false;
+  checkpoint_id?: string | null;
+  reported_at_unix_ms?: number | null;
+  contract_matches_current?: boolean | null;
+}
+
+export interface ProjectGoalRecord {
+  goal_id: string;
+  project_id: string;
+  title: string;
+  status?: string | null;
+  health?: string | null;
+  summary?: string | null;
+}
+
+export interface ProjectGoalsData {
+  items: ProjectGoalRecord[];
+  total: number;
+  next_cursor: string | null;
+  truncated?: boolean;
+  as_of?: { at_unix_ms: number };
+}
+
+export interface ProjectLessonRecord {
+  lesson_id: string;
+  project_id: string;
+  title: string;
+  stage: 'candidate' | 'project' | 'group' | string;
+  state?: string | null;
+  author?: { person_id?: string | null; display_name?: string | null } | null;
+  tasks?: string[] | null;
+}
+
+export interface ProjectLessonsData {
+  items: ProjectLessonRecord[];
+  total: number;
+  next_cursor: string | null;
+  truncated?: boolean;
+  as_of?: { at_unix_ms: number };
+}
+
 export interface WorkSnapshotData {
   context_complete?: boolean;
   work_id?: string;
@@ -661,13 +775,15 @@ export interface WorkSnapshotData {
     observed_at_unix_ms?: number | null;
     progress?: Record<string, unknown> | null;
     reporting?: { client_reported_at_unix_ms?: number | null } & Record<string, unknown>;
-    client?: { actor_id?: string; actor_name?: string; client_id?: string; capabilities?: Record<string, unknown> };
+    client?: { product?: string | null; actor_id?: string; actor_name?: string; client_id?: string; capabilities?: Record<string, unknown> };
     runtime?: { state?: string; work_version?: string; selected_completion_id?: string | null };
     responsibility?: Record<string, unknown>;
     session?: Record<string, unknown> | null;
     claim?: Record<string, unknown> | null;
     execution?: { claim_id?: string; execution_id?: string };
     collaboration?: WorkCollaboration | null;
+    /** Verbatim AWR-PPD-050 caller-declared structured waits; absent on older services. */
+    structured_waits?: StructuredWaitsObservation | null;
   };
   visible_contract?: WorkContract | null;
   published_contract?: WorkContract | null;
@@ -691,6 +807,8 @@ export interface WorkSnapshotData {
     action?: { op?: string; note?: string };
   } | null;
   next_step?: string | null;
+  /** Verbatim AWR-PPD-040 per-criterion evidence evaluation; absent on older services. */
+  acceptance_evidence?: WorkSnapshotAcceptanceEvidence | null;
 }
 
 export interface ReviewDecision {
