@@ -205,6 +205,14 @@ pub(crate) fn acquire(
     event.payload["expired_claim_ids"] = serde_json::json!(expired);
     event.payload["agent_id"] = serde_json::json!(session.agent_id);
     event.payload["expires_at"] = serde_json::json!(expires_at);
+    // Snapshot the work's goal section fingerprints at claim time. Completion and
+    // reopening compare against this map; re-claiming refreshes it, which is the
+    // lightweight re-confirmation path after a goal drift rejection.
+    event.payload["goal_fingerprints"] = serde_json::json!(crate::work::goal_fingerprints(
+        conn,
+        session.project_id,
+        &key
+    )?);
     Ok(claim)
 }
 

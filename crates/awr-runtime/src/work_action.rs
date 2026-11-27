@@ -122,6 +122,13 @@ pub fn perform_work_action(
     let target = store.mutation_target(project.id, EntityKind::WorkItem, &request.target)?;
     let work: WorkItem = serde_json::from_value(target.item)?;
     let (binding, changes) = request.input.plan(&work)?;
+    // Reopening a delivered work re-enters execution under its goals; a goal section
+    // that drifted while the work was closed forces a re-confirmation first. Other
+    // actions (progress, block, unblock, cancel) stay undisturbed.
+    if request.input.action == WorkAction::Reopen {
+        let branch = store.session(project.id, request.session_id)?.branch_id;
+        store.check_goal_currency(project.id, &work.meta.external_key, branch)?;
+    }
     let patch = MutationPatch {
         version: 1,
         target: MutationTarget {
