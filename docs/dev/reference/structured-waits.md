@@ -30,10 +30,10 @@ Include `progress.waits` in `session.checkpoint` whenever work is waiting on a p
 | --- | --- |
 | `progress.waits` | Optional list of at most 8 entries; stored inside `awr_team.checkpoints.progress_json`. |
 | `waiting_on.kind` | Exactly one of `person`, `group`, or `external_party`. |
-| `waiting_on.name` | Required single-line text, 1 through 80 Unicode characters, free of control characters. |
-| `what` | Required single-line text, 1 through 200 Unicode characters, free of control characters. |
-| `since_unix_ms` | Required positive integer timestamp in Unix milliseconds within the JavaScript safe integer range (`1` through `9007199254740991`). |
-| `release_condition` | Required single-line text, 1 through 200 Unicode characters, free of control characters. |
+| `waiting_on.name` | Required single-line text, 1 through 80 Unicode characters, non-blank (excluding whitespace, `U+FEFF`, `U+200B`), free of control characters and line separators (`U+2028`, `U+2029`). |
+| `what` | Required single-line text, 1 through 200 Unicode characters, non-blank, free of control characters and line separators. |
+| `since_unix_ms` | Required positive integer timestamp in Unix milliseconds (`1` through `4102444800000`, and within 5 minutes of server clock on write). |
+| `release_condition` | Required single-line text, 1 through 200 Unicode characters, non-blank, free of control characters and line separators. |
 
 All wait text passes the same public-data screening as other progress fields so credentials and private tokens stay out of recorded summaries.
 
@@ -52,10 +52,12 @@ An `external_party` entry requires zero project membership records. Its `name` i
 | Legacy progress report omits `waits` (or sends `null`) | `"not_provided"` | `null` | Recorded checkpoint metadata |
 | Work item has no progress report under current ownership | `"not_provided"` | `null` | `null` |
 
-An ordinary follow-up `session.checkpoint` that omits `progress` preserves the previous progress report and its `structured_waits`. `work.prepare` excludes observations from `context_hash`, so adding or updating `progress.waits` leaves `context_hash` intact.
+Each new progress report replaces the previous wait list: sending `waits: []` clears waits (`status: "provided"`, `items: []`), and sending a newer progress report that omits `waits` reports `status: "not_provided"` (`items: null`). An ordinary follow-up `session.checkpoint` that omits `progress` preserves the previous progress report and its `structured_waits`. `work.prepare` excludes observations from `context_hash`, so adding or updating `progress.waits` leaves `context_hash` intact.
+
+Projected `progress` observations omit the raw `waits` key so `structured_waits` remains the single read surface.
 
 ## Discovery and bridge validation
 
 `capabilities.session_feedback.structured_waits` publishes the field path (`progress.waits`), allowed `party_kinds`, character and item bounds, supported reads (`work.snapshot`, `work.observe`, `work.graph`), `legacy_status: "not_provided"`, `external_party_requires_membership: false`, and `grants_authority: false`.
 
-The Observer bridge (`tools/observer/server/team-progress.js` and `tools/observer/server/team-bridge.js`) validates `structured_waits` on `work.snapshot`, `work.observe`, and `work.graph`, forwarding bounded fields while rejecting malformed shapes with `BadGateway`.
+The Observer bridge (`tools/observer/server/team-progress.js` and `tools/observer/server/team-bridge.js`) validates `structured_waits` on `work.snapshot`, `work.observe`, and `work.graph` using the same blank-text and timestamp bounds as the server, forwarding bounded fields while rejecting malformed shapes with `BadGateway` and mapping an omitted upstream field to `status: "unknown"`.

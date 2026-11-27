@@ -8,6 +8,7 @@ pub(crate) const STALE_AFTER_MS: i64 = 15 * 60 * 1000;
 pub(crate) const MAX_STRUCTURED_WAITS: usize = 8;
 pub(crate) const MAX_WAIT_PARTY_NAME_CHARS: usize = 80;
 pub(crate) const MAX_WAIT_TEXT_CHARS: usize = 200;
+pub(crate) const MAX_WAIT_SINCE_UNIX_MS: i64 = 4_102_444_800_000;
 pub(crate) const WAIT_PARTY_KINDS: &[&str] = &["person", "group", "external_party"];
 pub(crate) const PROGRESS_PHASES: &[&str] = &[
     "starting",
@@ -186,8 +187,16 @@ fn text(s: &str, max: usize) -> bool {
         && s.len() <= max
         && !s.chars().any(|c| c.is_control() && c != '\n' && c != '\t')
 }
+fn is_forbidden_wait_char(c: char) -> bool {
+    c.is_control() || matches!(c, '\u{2028}' | '\u{2029}')
+}
+fn is_blank_wait_char(c: char) -> bool {
+    c.is_whitespace() || matches!(c, '\u{FEFF}' | '\u{200B}')
+}
 fn bounded_chars(s: &str, max_chars: usize) -> bool {
-    !s.trim().is_empty() && s.chars().count() <= max_chars && !s.chars().any(char::is_control)
+    !s.chars().all(is_blank_wait_char)
+        && s.chars().count() <= max_chars
+        && !s.chars().any(is_forbidden_wait_char)
 }
 fn public<T: Serialize>(v: &T) -> PgResult<()> {
     awr_core::ensure_public_data(v).map_err(|_| {
@@ -215,7 +224,7 @@ impl StructuredWait {
         bounded_chars(&self.waiting_on.name, MAX_WAIT_PARTY_NAME_CHARS)
             && bounded_chars(&self.what, MAX_WAIT_TEXT_CHARS)
             && self.since_unix_ms > 0
-            && self.since_unix_ms <= 9_007_199_254_740_991
+            && self.since_unix_ms <= MAX_WAIT_SINCE_UNIX_MS
             && bounded_chars(&self.release_condition, MAX_WAIT_TEXT_CHARS)
     }
 }
@@ -241,6 +250,26 @@ impl Progress {
             return Err(invalid());
         }
         public(self)
+    }
+
+    pub(crate) async fn check_wait_timestamps(&self, tx: &Transaction<'_>) -> PgResult<()> {
+        let Some(waits) = &self.waits else {
+            return Ok(());
+        };
+        if waits.is_empty() {
+            return Ok(());
+        }
+        let now: i64 = tx
+            .query_one(
+                "SELECT (extract(epoch FROM clock_timestamp())*1000)::bigint",
+                &[],
+            )
+            .await?
+            .get(0);
+        if waits.iter().any(|w| w.since_unix_ms > now + 300_000) {
+            return Err(invalid());
+        }
+        Ok(())
     }
 }
 impl Usage {
@@ -429,9 +458,49 @@ pub(crate) fn report_value(row: &Row, field: &str, contract: &str, observed: i64
         "actor_id":row.get::<_,String>(7),"client_id":row.get::<_,String>(8),
         "actor_name":row.get::<_,Option<String>>(9)});
     if field == "progress" {
+        if let Some(map) = value.as_object_mut() {
+            map.remove("waits");
+        }
         value["next_action"] = json!(row.get::<_, String>(3));
     }
     value
+}
+
+/// Select only the latest progress checkpoint's waits metadata per work item
+/// for `work.graph`, without joining actors or loading full progress bodies.
+pub(crate) async fn latest_structured_waits_rows(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    stream: &str,
+    works: &[(String, i64)],
+) -> PgResult<Vec<Row>> {
+    let bindings = json!(
+        works
+            .iter()
+            .map(|(work, ownership)| json!({"work_id":work,"ownership_version":ownership}))
+            .collect::<Vec<_>>()
+    );
+    tx.query(
+        "SELECT DISTINCT ON (s.work_id)
+            c.id,
+            c.progress_json->'waits',
+            c.contract_hash,
+            (extract(epoch FROM c.created_at)*1000)::bigint,
+            s.work_id
+        FROM awr_team.checkpoints c
+        JOIN awr_team.sessions s
+          ON (s.tenant_id,s.project_id,s.id)=(c.tenant_id,c.project_id,c.session_id)
+        JOIN jsonb_to_recordset($4) AS b(work_id text,ownership_version bigint)
+          ON b.work_id=s.work_id AND b.ownership_version=s.ownership_version
+        WHERE s.tenant_id=$1 AND s.project_id=$2 AND s.scope_id='main'
+          AND s.workstream_id=$3
+          AND c.progress_json IS NOT NULL
+        ORDER BY s.work_id,c.observed_revision DESC,c.created_at DESC,c.id DESC",
+        &[&tenant, &project, &stream, &bindings],
+    )
+    .await
+    .map_err(Into::into)
 }
 
 pub(crate) fn structured_waits_not_provided() -> Value {
@@ -446,13 +515,13 @@ pub(crate) fn structured_waits_not_provided() -> Value {
     })
 }
 
-pub(crate) fn structured_waits_from_progress_json(
-    progress: &Value,
+pub(crate) fn structured_waits_from_waits_value(
+    waits: Option<&Value>,
     checkpoint_id: &str,
     reported_at_unix_ms: i64,
     contract_matches_current: bool,
 ) -> Value {
-    let items = match progress.get("waits") {
+    let items = match waits {
         Some(Value::Array(raw)) => {
             serde_json::from_value::<Vec<StructuredWait>>(Value::Array(raw.clone()))
                 .ok()
@@ -485,6 +554,20 @@ pub(crate) fn structured_waits_from_progress_json(
     }
 }
 
+pub(crate) fn structured_waits_from_progress_json(
+    progress: &Value,
+    checkpoint_id: &str,
+    reported_at_unix_ms: i64,
+    contract_matches_current: bool,
+) -> Value {
+    structured_waits_from_waits_value(
+        progress.get("waits"),
+        checkpoint_id,
+        reported_at_unix_ms,
+        contract_matches_current,
+    )
+}
+
 pub(crate) fn structured_waits_from_row(row: &Row, contract: &str) -> Value {
     let checkpoint_id: String = row.get(0);
     let progress: Value = row.get(1);
@@ -492,6 +575,19 @@ pub(crate) fn structured_waits_from_row(row: &Row, contract: &str) -> Value {
     let reported_at_unix_ms: i64 = row.get(4);
     structured_waits_from_progress_json(
         &progress,
+        &checkpoint_id,
+        reported_at_unix_ms,
+        reported_contract == contract,
+    )
+}
+
+pub(crate) fn structured_waits_from_graph_row(row: &Row, contract: &str) -> Value {
+    let checkpoint_id: String = row.get(0);
+    let waits: Option<Value> = row.get(1);
+    let reported_contract: String = row.get(2);
+    let reported_at_unix_ms: i64 = row.get(3);
+    structured_waits_from_waits_value(
+        waits.as_ref(),
         &checkpoint_id,
         reported_at_unix_ms,
         reported_contract == contract,
@@ -638,6 +734,10 @@ mod tests {
             json!([wait("external_party", "Vendor", &desc_201, 1000, "Release")]),
             json!([wait("external_party", "Vendor", "What", 1000, &desc_201)]),
             json!([wait("person", "   ", "What", 1000, "Release")]),
+            json!([wait("person", "\u{FEFF}", "What", 1000, "Release")]),
+            json!([wait("person", "\u{200B}", "What", 1000, "Release")]),
+            json!([wait("person", "\u{2028}", "What", 1000, "Release")]),
+            json!([wait("person", "Alex\u{2028}Next", "What", 1000, "Release")]),
             json!([wait("group", "Ops", "   ", 1000, "Release")]),
             json!([wait("group", "Ops", "What", 1000, "   ")]),
             json!([wait("person", "Alex\nNext", "What", 1000, "Release")]),
@@ -649,7 +749,7 @@ mod tests {
                 "person",
                 "Alex",
                 "What",
-                9_007_199_254_740_992,
+                MAX_WAIT_SINCE_UNIX_MS + 1,
                 "Release"
             )]),
             json!([wait(

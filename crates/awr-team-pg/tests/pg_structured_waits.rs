@@ -100,24 +100,25 @@ async fn structured_waits_round_trip_consistently_across_snapshot_observe_and_gr
         assert_eq!(view["grants_authority"], false);
     }
 
-    // Write structured waits covering all three party kinds, including a non-member external_party.
+    // Write structured waits covering all three party kinds in non-monotonic
+    // timestamp/name order to verify caller order is preserved verbatim.
     let waits = json!([
         {
             "waiting_on": { "kind": "external_party", "name": "Partner Billing Desk" },
             "what": "Confirm settlement export field format.",
-            "since_unix_ms": 1_731_542_400_000_i64,
+            "since_unix_ms": 1_731_715_200_000_i64,
             "release_condition": "Partner Billing Desk confirms the column list in writing."
         },
         {
             "waiting_on": { "kind": "person", "name": "Morgan Chen" },
             "what": "Clarify retry backoff window for webhook delivery.",
-            "since_unix_ms": 1_731_628_800_000_i64,
+            "since_unix_ms": 1_731_542_400_000_i64,
             "release_condition": "Backoff bounds confirmed on the decision record."
         },
         {
             "waiting_on": { "kind": "group", "name": "Platform Security" },
             "what": "Approve outbound IP allowlist range.",
-            "since_unix_ms": 1_731_715_200_000_i64,
+            "since_unix_ms": 1_731_628_800_000_i64,
             "release_condition": "Allowlist ticket marked approved."
         }
     ]);
@@ -184,6 +185,17 @@ async fn structured_waits_round_trip_consistently_across_snapshot_observe_and_gr
     assert_eq!(snap_waits["contract_matches_current"], true);
     assert_eq!(snap_waits["provenance"], "caller_declared");
     assert_eq!(snap_waits["grants_authority"], false);
+    // Projected progress observations must not duplicate raw waits.
+    assert!(
+        snap["data"]["observation"]["progress"]
+            .get("waits")
+            .is_none(),
+        "snapshot progress must omit duplicate raw waits"
+    );
+    assert!(
+        obs["data"]["progress"].get("waits").is_none(),
+        "observe progress must omit duplicate raw waits"
+    );
 
     // Unrelated work "c" in the same stream still reports not_provided.
     let c_graph = &graph_item(&graph, "c")["structured_waits"];
@@ -238,6 +250,80 @@ async fn structured_waits_round_trip_consistently_across_snapshot_observe_and_gr
         assert_eq!(view["items"], json!([]));
         assert_eq!(view["checkpoint_id"], cleared_cp);
         assert_eq!(view["grants_authority"], false);
+    }
+
+    // A newer progress report omitting `waits` replaces prior waits with `not_provided`.
+    let replaced = checkpoint_cmd(
+        &store,
+        "replace-without-waits-4",
+        "4",
+        Some(json!({
+            "phase": "testing",
+            "summary": "New progress report omitting waits replaces prior list."
+        })),
+    )
+    .await;
+    let replaced_res = store
+        .commands()
+        .execute(TENANT, PROJECT, A, replaced)
+        .await
+        .unwrap();
+    let replaced_cp = replaced_res["receipt"]["data"]["checkpoint_id"]
+        .as_str()
+        .unwrap();
+    let replaced_snap = read_snapshot(&store, A, "a").await;
+    let replaced_obs = read_observe(&store, A, "a").await;
+    let replaced_graph = read_graph(&store, A).await;
+    for view in [
+        &replaced_snap["data"]["observation"]["structured_waits"],
+        &replaced_obs["data"]["structured_waits"],
+        &graph_item(&replaced_graph, "a")["structured_waits"],
+    ] {
+        assert_eq!(view["status"], "not_provided");
+        assert!(view["items"].is_null());
+        assert_eq!(view["checkpoint_id"], replaced_cp);
+    }
+
+    // Changing the contract marks contract_matches_current=false in snapshot, observe, and graph.
+    let re_wait = checkpoint_cmd(
+        &store,
+        "re-wait-5",
+        "5",
+        Some(json!({
+            "phase": "blocked",
+            "summary": "Waiting again before contract edit.",
+            "waits": [{
+                "waiting_on": { "kind": "person", "name": "Morgan Chen" },
+                "what": "Confirm updated contract scope.",
+                "since_unix_ms": 1_731_542_400_000_i64,
+                "release_condition": "Scope confirmed."
+            }]
+        })),
+    )
+    .await;
+    store
+        .commands()
+        .execute(TENANT, PROJECT, A, re_wait)
+        .await
+        .unwrap();
+    admin
+        .execute(
+            "UPDATE awr_team.checkpoints SET contract_hash=$1
+             WHERE tenant_id=$2 AND project_id=$3 AND session_id='session-a'",
+            &[&"f".repeat(64), &TENANT, &PROJECT],
+        )
+        .await
+        .unwrap();
+    let drifted_snap = read_snapshot(&store, A, "a").await;
+    let drifted_obs = read_observe(&store, A, "a").await;
+    let drifted_graph = read_graph(&store, A).await;
+    for view in [
+        &drifted_snap["data"]["observation"]["structured_waits"],
+        &drifted_obs["data"]["structured_waits"],
+        &graph_item(&drifted_graph, "a")["structured_waits"],
+    ] {
+        assert_eq!(view["status"], "provided");
+        assert_eq!(view["contract_matches_current"], false);
     }
 }
 
@@ -352,9 +438,27 @@ async fn structured_wait_boundary_values_and_invalid_kinds_are_rejected_without_
             "since_unix_ms": 1_731_542_400_000_i64,
             "release_condition": "Short release"
         }]),
-        // Blank name
+        // Blank name (spaces, BOM, ZWSP, line separator)
         json!([{
             "waiting_on": { "kind": "external_party", "name": "   " },
+            "what": "Short what",
+            "since_unix_ms": 1_731_542_400_000_i64,
+            "release_condition": "Short release"
+        }]),
+        json!([{
+            "waiting_on": { "kind": "external_party", "name": "\u{FEFF}" },
+            "what": "Short what",
+            "since_unix_ms": 1_731_542_400_000_i64,
+            "release_condition": "Short release"
+        }]),
+        json!([{
+            "waiting_on": { "kind": "external_party", "name": "\u{200B}" },
+            "what": "Short what",
+            "since_unix_ms": 1_731_542_400_000_i64,
+            "release_condition": "Short release"
+        }]),
+        json!([{
+            "waiting_on": { "kind": "external_party", "name": "\u{2028}" },
             "what": "Short what",
             "since_unix_ms": 1_731_542_400_000_i64,
             "release_condition": "Short release"
@@ -366,11 +470,17 @@ async fn structured_wait_boundary_values_and_invalid_kinds_are_rejected_without_
             "since_unix_ms": 1_731_542_400_000_i64,
             "release_condition": "Line 1\nLine 2"
         }]),
-        // Non-positive timestamp
+        // Non-positive or far-future timestamp
         json!([{
             "waiting_on": { "kind": "external_party", "name": "Vendor" },
             "what": "Short what",
             "since_unix_ms": 0,
+            "release_condition": "Short release"
+        }]),
+        json!([{
+            "waiting_on": { "kind": "external_party", "name": "Vendor" },
+            "what": "Short what",
+            "since_unix_ms": 4_102_444_800_000_i64,
             "release_condition": "Short release"
         }]),
         // More than 8 wait items
@@ -499,7 +609,24 @@ async fn structured_waits_never_leak_across_projects_workstreams_or_ownership() 
         .await
         .unwrap();
 
-    // Reader A in PROJECT sees neither the foreign project's wait nor stream 2's wait.
+    // Also put a session on the SAME work ("a") under workstream 2 with the same
+    // ownership_version=1 to verify workstream isolation on the same work_id.
+    let other_stream_same_work_sentinel = "OTHER_WORKSTREAM_SAME_WORK_SENTINEL";
+    admin
+        .batch_execute(&format!(
+            "INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state,workstream_id,ownership_version)
+                VALUES('{TENANT}','{PROJECT}','session-a-stream2','main','a','agent','cli-b','conv-a2','active','00000000000000000000000002',1);
+             INSERT INTO awr_team.checkpoints(tenant_id,project_id,id,session_id,context_hash,contract_hash,observed_revision,next_action,open_loops_json,progress_json)
+                VALUES('{TENANT}','{PROJECT}','cp-a-stream2','session-a-stream2','{}','{}',600,'Other stream next','[]'::jsonb,
+                '{{\"phase\":\"blocked\",\"summary\":\"Other stream wait\",\"waits\":[{{\"waiting_on\":{{\"kind\":\"external_party\",\"name\":\"{other_stream_same_work_sentinel}\"}},\"what\":\"Other stream wait\",\"since_unix_ms\":1731542400000,\"release_condition\":\"Other stream release\"}}]}}'::jsonb);",
+            "e".repeat(64),
+            "f".repeat(64),
+        ))
+        .await
+        .unwrap();
+
+    // Reader A in PROJECT sees neither the foreign project's wait, stream 2's wait,
+    // nor another workstream's session on the same work_id.
     let snap = read_snapshot(&store, A, "a").await;
     let obs = read_observe(&store, A, "a").await;
     let graph = read_graph(&store, A).await;
@@ -512,6 +639,10 @@ async fn structured_waits_never_leak_across_projects_workstreams_or_ownership() 
         assert!(
             !text.contains(stream2_sentinel),
             "cross-workstream wait leaked: {text}"
+        );
+        assert!(
+            !text.contains(other_stream_same_work_sentinel),
+            "another workstream's session on the same work leaked: {text}"
         );
     }
     assert_eq!(

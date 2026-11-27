@@ -88,6 +88,14 @@ test('verbatim work.snapshot sample maps provided structured waits and legacy no
   assert.equal(provided.work.structured_waits.status, 'provided');
   assert.equal(provided.work.structured_waits.grants_authority, false);
   assert.equal(provided.work.structured_waits.provenance, 'caller_declared');
+  assert.equal(
+    provided.work.structured_waits.contract_matches_current,
+    SNAPSHOT_PROVIDED.data.observation.structured_waits.contract_matches_current,
+  );
+  assert.equal(
+    provided.work.structured_waits.reported_at_unix_ms,
+    SNAPSHOT_PROVIDED.data.observation.structured_waits.reported_at_unix_ms,
+  );
   assert.deepEqual(
     provided.work.structured_waits.items,
     SNAPSHOT_PROVIDED.data.observation.structured_waits.items,
@@ -153,22 +161,59 @@ test('verbatim work.graph sample preserves provided waits and legacy not_provide
   assert.equal(workA.structured_waits.status, 'provided');
   assert.equal(workA.structured_waits.items.length, 3);
   assert.equal(workA.structured_waits.items[0].waiting_on.kind, 'external_party');
+  assert.equal(
+    workA.structured_waits.contract_matches_current,
+    GRAPH_SAMPLE.data.items.find((i) => i.work_id === 'a').structured_waits.contract_matches_current,
+  );
+  assert.equal(
+    workA.structured_waits.reported_at_unix_ms,
+    GRAPH_SAMPLE.data.items.find((i) => i.work_id === 'a').structured_waits.reported_at_unix_ms,
+  );
   assert.equal(workC.structured_waits.status, 'not_provided');
   assert.equal(workC.structured_waits.items, null);
+  assert.equal(
+    workC.structured_waits.reported_at_unix_ms,
+    GRAPH_SAMPLE.data.items.find((i) => i.work_id === 'c').structured_waits.reported_at_unix_ms,
+  );
 });
 
 test('malformed structured waits fail closed in mapObservation and bridge routes', async (t) => {
-  // Missing structured_waits on a legacy server maps to not_provided with null items (never []).
+  // Missing structured_waits on an older upstream maps to unknown (never not_provided or []).
   const absent = mapObservation({});
-  assert.equal(absent.structured_waits.status, 'not_provided');
-  assert.equal(absent.structured_waits.items, null);
+  assert.deepEqual(absent.structured_waits, { status: 'unknown', items: null });
 
   const validProvided = SNAPSHOT_PROVIDED.data.observation.structured_waits;
   assert.equal(validStructuredWaits(validProvided), true);
+  // contract_matches_current: false passes through unchanged.
+  const drifted = mapStructuredWaits({ ...validProvided, contract_matches_current: false });
+  assert.equal(drifted.contract_matches_current, false);
+  assert.equal(drifted.reported_at_unix_ms, validProvided.reported_at_unix_ms);
 
   const badCases = [
     // Legacy not_provided falsely carrying empty array instead of null
     { ...SNAPSHOT_LEGACY.data.observation.structured_waits, items: [] },
+    // Shared blank-text and line-separator rules (U+FEFF, U+200B, U+2028)
+    {
+      ...validProvided,
+      items: [{ ...validProvided.items[0], waiting_on: { kind: 'external_party', name: '\uFEFF' } }],
+    },
+    {
+      ...validProvided,
+      items: [{ ...validProvided.items[0], waiting_on: { kind: 'external_party', name: '\u200B' } }],
+    },
+    {
+      ...validProvided,
+      items: [{ ...validProvided.items[0], waiting_on: { kind: 'external_party', name: '\u2028' } }],
+    },
+    {
+      ...validProvided,
+      items: [{ ...validProvided.items[0], what: 'line1\u2028line2' }],
+    },
+    // Timestamp above upper bound
+    {
+      ...validProvided,
+      items: [{ ...validProvided.items[0], since_unix_ms: 4_102_444_800_001 }],
+    },
     // Unknown party kind
     {
       ...validProvided,

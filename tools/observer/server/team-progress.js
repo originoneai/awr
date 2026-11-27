@@ -82,11 +82,13 @@ const WAIT_PARTY_KINDS = new Set(['person', 'group', 'external_party']);
 const MAX_STRUCTURED_WAITS = 8;
 const MAX_WAIT_PARTY_NAME_CHARS = 80;
 const MAX_WAIT_TEXT_CHARS = 200;
+const MAX_WAIT_SINCE_UNIX_MS = 4_102_444_800_000;
 
 function isBoundedWaitText(value, maxChars) {
-  return typeof value === 'string' && value.trim().length > 0
-    && Array.from(value).length <= maxChars
-    && !/[\x00-\x1f\x7f-\x9f]/.test(value);
+  if (typeof value !== 'string') return false;
+  if (/[\x00-\x1f\x7f-\x9f\u2028\u2029]/.test(value)) return false;
+  if (value.replace(/[\s\uFEFF\u200B]+/g, '').length === 0) return false;
+  return Array.from(value).length <= maxChars;
 }
 
 function isBoundedCheckpointId(value) {
@@ -111,7 +113,9 @@ function validStructuredWaitItem(item) {
   return WAIT_PARTY_KINDS.has(party.kind)
     && isBoundedWaitText(party.name, MAX_WAIT_PARTY_NAME_CHARS)
     && isBoundedWaitText(item.what, MAX_WAIT_TEXT_CHARS)
-    && Number.isSafeInteger(item.since_unix_ms) && item.since_unix_ms >= 1
+    && Number.isSafeInteger(item.since_unix_ms)
+    && item.since_unix_ms >= 1
+    && item.since_unix_ms <= MAX_WAIT_SINCE_UNIX_MS
     && isBoundedWaitText(item.release_condition, MAX_WAIT_TEXT_CHARS);
 }
 
@@ -135,18 +139,7 @@ function validStructuredWaits(value) {
 }
 
 function mapStructuredWaits(value) {
-  if (value === undefined) {
-    return {
-      status: 'not_provided',
-      items: null,
-      provenance: 'caller_declared',
-      grants_authority: false,
-      checkpoint_id: null,
-      reported_at_unix_ms: null,
-      contract_matches_current: null,
-    };
-  }
-  if (!validStructuredWaits(value)) {
+  if (value === undefined || !validStructuredWaits(value)) {
     return { status: 'unknown', items: null };
   }
   return {

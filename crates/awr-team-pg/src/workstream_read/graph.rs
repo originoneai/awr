@@ -120,10 +120,10 @@ pub(super) async fn read(
         .collect();
     let work_ids: Vec<String> = bindings.iter().map(|(id, _)| id.clone()).collect();
     let mut progress_reports: BTreeMap<String, _> =
-        crate::feedback::report_rows(tx, tenant, project, stream, &bindings, None, "progress")
+        crate::feedback::latest_structured_waits_rows(tx, tenant, project, stream, &bindings)
             .await?
             .into_iter()
-            .map(|r| (r.get::<_, String>(10), r))
+            .map(|r| (r.get::<_, String>(4), r))
             .collect();
     let mut historical = retained::owners(tx, tenant, project, &work_ids).await?;
     let goal_ids = contracts
@@ -184,7 +184,7 @@ pub(super) async fn read(
             .filter(|id| visible.contains(*id)).cloned().collect();
         let structured_waits = progress_reports
             .remove(&id)
-            .map(|report| crate::feedback::structured_waits_from_row(&report, &contract_hash))
+            .map(|report| crate::feedback::structured_waits_from_graph_row(&report, &contract_hash))
             .unwrap_or_else(crate::feedback::structured_waits_not_provided);
         json!({"work_id":id, "external_key":contract.external_key, "title":row.get::<_,String>(1),
             "contract_hash":contract_hash, "definition_state":definition, "state":state,

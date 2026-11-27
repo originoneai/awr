@@ -1376,7 +1376,7 @@ fn catalog() -> Vec<Tool> {
                     "kind":{"enum":["person","group","external_party"]},
                     "name":{"type":"string","minLength":1,"maxLength":80}}},
                 "what":{"type":"string","minLength":1,"maxLength":200},
-                "since_unix_ms":{"type":"integer","minimum":1,"maximum":9007199254740991u64},
+                "since_unix_ms":{"type":"integer","minimum":1,"maximum":4102444800000u64},
                 "release_condition":{"type":"string","minLength":1,"maxLength":200}}}
     });
     command["properties"]["args"]["properties"]["output_digest"] = json!({"type":["string","null"],"pattern":"^[0-9a-f]{64}$",
