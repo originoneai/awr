@@ -418,6 +418,10 @@ impl Store {
             if id != e.value.client_id
                 || !bounded(&id, 128)
                 || !bounded(&e.value.client_name, 120)
+                || e.value
+                    .reported_client_name
+                    .as_ref()
+                    .is_some_and(|name| !bounded(name, 120) || name != &e.value.client_name)
                 || e.value.redirect_uris.is_empty()
                 || e.value.redirect_uris.len() > 8
                 || e.value.redirect_uris.iter().any(|u| !valid_redirect(u))

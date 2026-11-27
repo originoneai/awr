@@ -13,7 +13,18 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
 fn null_actor() -> Value {
-    json!({"person_id":null,"display_name":null})
+    json!({"person_id":null,"display_name":null,"kind":null})
+}
+
+/// The disclosed identity: the person's name where one resolved, and the actor's
+/// recorded kind either way.
+fn actor(person_id: &str, display_name: &str, kind: &str) -> Value {
+    json!({"person_id":person_id,"display_name":display_name,"kind":kind})
+}
+
+/// A resolved kind with no person to name (conflicting, stopped or unregistered).
+fn kind_only(kind: &str) -> Value {
+    json!({"person_id":null,"display_name":null,"kind":kind})
 }
 
 fn null_client() -> Value {
@@ -93,6 +104,7 @@ async fn both_audit_reads_use_only_unambiguous_active_recorded_relationships() {
         ("request-unbound", "unbound-person"),
         ("request-missing", "human-without-person"),
         ("request-departed-human", "departed-human"),
+        ("request-unknown-actor", "no-such-actor"),
     ] {
         seed_request(&admin, id, actor).await;
     }
@@ -117,22 +129,33 @@ async fn both_audit_reads_use_only_unambiguous_active_recorded_relationships() {
         .unwrap();
     assert_eq!(
         activity_item(&requests, "request-agent")["actor"],
-        json!({"person_id":"person-one","display_name":"Agent Owner"})
+        actor("person-one", "Agent Owner", "agent")
     );
     assert_eq!(
         activity_item(&requests, "request-human")["actor"],
-        json!({"person_id":"reviewer","display_name":"Human Reviewer"})
+        actor("reviewer", "Human Reviewer", "human")
     );
-    for id in [
-        "request-ambiguous",
-        "request-disabled",
-        "request-inactive",
-        "request-unbound",
-        "request-missing",
-        "request-departed-human",
+    // An actor that resolves to nobody still discloses its recorded kind to a reader
+    // who passed the gate; the kind is a property of the actor row, not of the person.
+    for (id, kind) in [
+        ("request-ambiguous", "agent"),
+        ("request-disabled", "agent"),
+        ("request-inactive", "agent"),
+        ("request-unbound", "agent"),
+        ("request-missing", "human"),
+        ("request-departed-human", "human"),
     ] {
-        assert_eq!(activity_item(&requests, id)["actor"], null_actor(), "{id}");
+        assert_eq!(
+            activity_item(&requests, id)["actor"],
+            kind_only(kind),
+            "{id}"
+        );
     }
+    // No recorded actor: nothing to say, not even a kind.
+    assert_eq!(
+        activity_item(&requests, "request-unknown-actor")["actor"],
+        null_actor()
+    );
     for item in requests["data"]["items"].as_array().unwrap() {
         assert_eq!(item["client"], null_client());
     }
@@ -152,11 +175,11 @@ async fn both_audit_reads_use_only_unambiguous_active_recorded_relationships() {
         .unwrap();
     assert_eq!(
         activity_item(&development, "development-agent")["actor"],
-        json!({"person_id":"person-one","display_name":"Agent Owner"})
+        actor("person-one", "Agent Owner", "agent")
     );
     assert_eq!(
         activity_item(&development, "development-human")["actor"],
-        json!({"person_id":"reviewer","display_name":"Human Reviewer"})
+        actor("reviewer", "Human Reviewer", "human")
     );
     for item in development["data"]["items"].as_array().unwrap() {
         assert_eq!(item["client"], null_client());
@@ -200,7 +223,7 @@ async fn missing_directory_authority_redacts_names_without_rejecting_project_or_
         .unwrap();
     assert_eq!(
         activity_item(&disclosed, "request-reader")["actor"],
-        json!({"person_id":"agent","display_name":"Directory Name"})
+        actor("agent", "Directory Name", "human")
     );
 
     admin
@@ -218,7 +241,7 @@ async fn missing_directory_authority_redacts_names_without_rejecting_project_or_
     assert_eq!(own["data"]["scope"], "self");
     assert_eq!(
         activity_item(&own, "request-reader")["actor"],
-        json!({"person_id":"agent","display_name":"Directory Name"})
+        actor("agent", "Directory Name", "human")
     );
 
     admin
@@ -292,6 +315,21 @@ async fn agent_name_disclosure_requires_a_live_project_scoped_read_delegation() 
         .await
         .unwrap();
     seed_request(&admin, "agent-own-request", "agent").await;
+    // A client name follows exactly the same gate as the actor identity.
+    store
+        .connections()
+        .record_client_name(TENANT, PROJECT, B, "Delegated Client")
+        .await
+        .unwrap();
+    admin
+        .execute(
+            "INSERT INTO awr_team.request_audit(tenant_id,project_id,id,actor_id,client_id,
+             credential_id,action,result)
+             VALUES($1,$2,'agent-named-request','agent','cli-b','reader-b','work.prepare','succeeded')",
+            &[&TENANT, &PROJECT],
+        )
+        .await
+        .unwrap();
     grant_agent_read(
         &db,
         "stream-read",
@@ -312,6 +350,10 @@ async fn agent_name_disclosure_requires_a_live_project_scoped_read_delegation() 
         activity_item(&stream_scoped, "agent-own-request")["actor"],
         null_actor()
     );
+    assert_eq!(
+        activity_item(&stream_scoped, "agent-named-request")["client"],
+        null_client()
+    );
 
     grant_agent_read(
         &db,
@@ -329,7 +371,11 @@ async fn agent_name_disclosure_requires_a_live_project_scoped_read_delegation() 
     assert_eq!(project_scoped["data"]["scope"], "self");
     assert_eq!(
         activity_item(&project_scoped, "agent-own-request")["actor"],
-        json!({"person_id":"reader-person","display_name":"Project Reader"})
+        actor("reader-person", "Project Reader", "agent")
+    );
+    assert_eq!(
+        activity_item(&project_scoped, "agent-named-request")["client"],
+        json!({"display_name":"Delegated Client"})
     );
 }
 

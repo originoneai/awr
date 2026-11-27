@@ -166,19 +166,26 @@ pub(super) async fn read(
     } else {
         std::collections::BTreeMap::new()
     };
+    // Client names are the self-reported registration names stored with the credential
+    // (AWR-PPD-062). They pass the same gate as actor names and resolve in one statement.
+    let client_names = if disclose_names {
+        client_names(tx, tenant, project, &q.op, &page).await?
+    } else {
+        vec![None; page.len()]
+    };
     let items: Vec<_> = page
         .into_iter()
-        .map(|r| {
+        .zip(client_names)
+        .map(|(r, client_name)| {
             let actor_id = r.get::<_, String>("actor_id");
-            let (person_id, display_name) = people
-                .get(&actor_id)
+            let person = people.get(&actor_id);
+            let (person_id, display_name) = person
                 .and_then(|person| person.active_person())
                 .map_or((None, None), |(id, name)| (Some(id), Some(name)));
             json!({"id":r.get::<_,String>("id"),
         "actor_id":actor_id,"client_id":r.get::<_,Option<String>>("client_id"),
-        "actor":{"person_id":person_id,"display_name":display_name},
-        // ConnectionStore has no registered per-client display-name source.
-        "client":{"display_name":Value::Null},
+        "actor":{"person_id":person_id,"display_name":display_name,"kind":person.map(|person| person.kind())},
+        "client":{"display_name":client_name},
         "action":r.get::<_,String>("action"),"work_id":r.get::<_,Option<String>>("work_id"),
         "result":r.get::<_,String>("result"),"created_at_unix_ms":r.get::<_,i64>("time_us")/1000,
         "credential_id":r.get::<_,Option<String>>("credential_id")})
@@ -197,4 +204,106 @@ pub(super) async fn read(
         "development_source":"committed_events_with_operation_attribution; historical client may be unavailable",
         "chat_text_collected":false,"tool_io_collected":false}}),
     )
+}
+
+/// The self-reported client name recorded with the credential behind each audit row
+/// (AWR-PPD-062), in page order and in one statement. Callers decide disclosure
+/// first; this only reads what a credential recorded when a connection was approved.
+///
+/// A request row names its credential exactly: the credential id, actor and client id
+/// it records must all be that credential's own. A development row carries no
+/// credential: an operation attributes its events to one actor and one client id, so a
+/// name is read only when every credential of that actor and client id recorded the
+/// same name. A credential that never approved a connection, two different names or a
+/// row without attribution stay null.
+async fn client_names(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    op: &str,
+    page: &[&tokio_postgres::Row],
+) -> PgResult<Vec<Option<String>>> {
+    if page.is_empty() {
+        return Ok(Vec::new());
+    }
+    if op == "audit.requests" {
+        let ids = page
+            .iter()
+            .map(|row| row.get::<_, String>("credential_id"))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let names = tx
+            .query(
+                "SELECT id,actor_id,client_id,client_name FROM awr_team.credentials
+                 WHERE tenant_id=$1 AND id=ANY($2) AND client_name IS NOT NULL
+                   AND (project_id IS NULL OR project_id=$3)",
+                &[&tenant, &ids, &project],
+            )
+            .await?
+            .into_iter()
+            .map(|row| {
+                (
+                    row.get::<_, String>(0),
+                    (
+                        row.get::<_, String>(1),
+                        row.get::<_, String>(2),
+                        row.get::<_, String>(3),
+                    ),
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        return Ok(page
+            .iter()
+            .map(|row| {
+                names
+                    .get(&row.get::<_, String>("credential_id"))
+                    .filter(|(actor, client, _)| {
+                        *actor == row.get::<_, String>("actor_id")
+                            && *client == row.get::<_, String>("client_id")
+                    })
+                    .map(|(_, _, name)| name.clone())
+            })
+            .collect());
+    }
+    let pairs = page
+        .iter()
+        .filter_map(|row| {
+            row.get::<_, Option<String>>("client_id")
+                .map(|client_id| (row.get::<_, String>("actor_id"), client_id))
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    let (actors, clients): (Vec<String>, Vec<String>) = pairs.into_iter().unzip();
+    let names = tx
+        .query(
+            "SELECT c.actor_id,c.client_id,
+                    CASE WHEN count(*)=count(c.client_name) AND count(DISTINCT c.client_name)=1
+                         THEN min(c.client_name) END
+             FROM awr_team.credentials c
+             JOIN unnest($2::text[],$3::text[]) AS p(actor_id,client_id)
+               ON p.actor_id=c.actor_id AND p.client_id=c.client_id
+             WHERE c.tenant_id=$1 AND (c.project_id IS NULL OR c.project_id=$4)
+             GROUP BY c.actor_id,c.client_id",
+            &[&tenant, &actors, &clients, &project],
+        )
+        .await?
+        .into_iter()
+        .map(|row| {
+            // An unnamed credential is also ambiguous: this event may have used it.
+            let name: Option<String> = row.get(2);
+            ((row.get::<_, String>(0), row.get::<_, String>(1)), name)
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    Ok(page
+        .iter()
+        .map(|row| {
+            row.get::<_, Option<String>>("client_id")
+                .and_then(|client_id| {
+                    names
+                        .get(&(row.get::<_, String>("actor_id"), client_id))
+                        .cloned()
+                        .flatten()
+                })
+        })
+        .collect())
 }

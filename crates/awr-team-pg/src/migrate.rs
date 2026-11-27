@@ -1,7 +1,7 @@
 use crate::error::{PgError, PgResult};
 use tokio_postgres::Client;
 
-pub const EXPECTED_SCHEMA_VERSION: i32 = 67;
+pub const EXPECTED_SCHEMA_VERSION: i32 = 68;
 const MIGRATIONS: &[(&str, i32)] = &[
     (include_str!("../migrations/20260917000001_init.sql"), 1),
     (
@@ -265,6 +265,10 @@ const MIGRATIONS: &[(&str, i32)] = &[
         66,
     ),
     (include_str!("../migrations/20261122000067_lessons.sql"), 67),
+    (
+        include_str!("../migrations/20261122000068_credential_client_name.sql"),
+        68,
+    ),
 ];
 
 pub async fn migrate(client: &Client) -> PgResult<()> {

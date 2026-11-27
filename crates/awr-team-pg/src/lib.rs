@@ -46,7 +46,9 @@ mod workstream_read;
 
 pub use agent_authorization::AuthorizationStore;
 pub use bootstrap::Bootstrap;
-pub use connections::{ConnectionScope, ConnectionStore, ConnectionSubject};
+pub use connections::{
+    ConnectionScope, ConnectionStore, ConnectionSubject, MAX_CLIENT_NAME_CHARS, client_display_name,
+};
 pub use delegation_auth::{
     actor_requires_explicit_delegation, intersect_delegation_with_template,
     tmcp_actions_for_authorized, tmcp_actions_for_authorized_set,
@@ -165,6 +167,6 @@ mod tests {
     #[test]
     fn schema_contract_is_stable() {
         assert_eq!(SCHEMA, "awr_team");
-        assert_eq!(EXPECTED_SCHEMA_VERSION, 67);
+        assert_eq!(EXPECTED_SCHEMA_VERSION, 68);
     }
 }
