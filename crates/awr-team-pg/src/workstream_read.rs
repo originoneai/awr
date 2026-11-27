@@ -1745,6 +1745,17 @@ fn capabilities_response(auth: &ReaderAuthority) -> Value {
             "non_repudiation": "not_claimed_against_db_owner"
         }
     });
+    caps["session_feedback"]["structured_waits"] = json!({
+        "field":"progress.waits",
+        "party_kinds":crate::feedback::WAIT_PARTY_KINDS,
+        "max_items":crate::feedback::MAX_STRUCTURED_WAITS,
+        "max_name_chars":crate::feedback::MAX_WAIT_PARTY_NAME_CHARS,
+        "max_text_chars":crate::feedback::MAX_WAIT_TEXT_CHARS,
+        "reads":["work.snapshot","work.observe","work.graph"],
+        "legacy_status":"not_provided",
+        "external_party_requires_membership":false,
+        "grants_authority":false
+    });
     caps["semantic_layers"] = crate::semantic_layers::report();
     caps["work_inbox"] = json!({"version":1,"query":"work.inbox","basis":"current_persistent_facts",
             "deduplication":"semantic_item_key","handled_items":"disappear_on_refresh",

@@ -38,6 +38,7 @@ function mapObservation(data) {
     model: typeof data.model === 'string' ? data.model : data.model?.id || null,
     model_info: data.model || null, usage: data.usage || null, session_id: session.id || null,
     progress_report: data.progress || null, reporting: data.reporting || null,
+    structured_waits: mapStructuredWaits(data.structured_waits),
     checkpoint, claim, execution: execution ? {
       state: execution.state, id: execution.execution_id,
       origin: execution.origin || null,
@@ -75,6 +76,88 @@ function mapObservation(data) {
 
 function booleanOrUnknown(value) {
   return typeof value === 'boolean' ? value : null;
+}
+
+const WAIT_PARTY_KINDS = new Set(['person', 'group', 'external_party']);
+const MAX_STRUCTURED_WAITS = 8;
+const MAX_WAIT_PARTY_NAME_CHARS = 80;
+const MAX_WAIT_TEXT_CHARS = 200;
+const MAX_WAIT_SINCE_UNIX_MS = 4_102_444_800_000;
+
+function isBoundedWaitText(value, maxChars) {
+  if (typeof value !== 'string') return false;
+  if (/[\x00-\x1f\x7f-\x9f\u2028\u2029]/.test(value)) return false;
+  if (value.replace(/[\s\uFEFF\u200B]+/g, '').length === 0) return false;
+  return Array.from(value).length <= maxChars;
+}
+
+function isBoundedCheckpointId(value) {
+  return value === null || (typeof value === 'string' && value.length > 0
+    && value.length <= 128 && !/[\x00-\x1f\x7f]/.test(value));
+}
+
+function isOptionalTimestampMs(value) {
+  return value === null || (Number.isSafeInteger(value) && value >= 0);
+}
+
+function validStructuredWaitItem(item) {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+  const keys = Object.keys(item);
+  if (keys.length !== 4 || !keys.every((k) => ['waiting_on', 'what', 'since_unix_ms', 'release_condition'].includes(k))) {
+    return false;
+  }
+  const party = item.waiting_on;
+  if (!party || typeof party !== 'object' || Array.isArray(party)) return false;
+  const partyKeys = Object.keys(party);
+  if (partyKeys.length !== 2 || !partyKeys.every((k) => ['kind', 'name'].includes(k))) return false;
+  return WAIT_PARTY_KINDS.has(party.kind)
+    && isBoundedWaitText(party.name, MAX_WAIT_PARTY_NAME_CHARS)
+    && isBoundedWaitText(item.what, MAX_WAIT_TEXT_CHARS)
+    && Number.isSafeInteger(item.since_unix_ms)
+    && item.since_unix_ms >= 1
+    && item.since_unix_ms <= MAX_WAIT_SINCE_UNIX_MS
+    && isBoundedWaitText(item.release_condition, MAX_WAIT_TEXT_CHARS);
+}
+
+function validStructuredWaits(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const allowed = new Set([
+    'status', 'items', 'provenance', 'grants_authority',
+    'checkpoint_id', 'reported_at_unix_ms', 'contract_matches_current',
+  ]);
+  const keys = Object.keys(value);
+  if (keys.length !== allowed.size || !keys.every((k) => allowed.has(k))) return false;
+  if (value.provenance !== 'caller_declared' || value.grants_authority !== false) return false;
+  if (!isBoundedCheckpointId(value.checkpoint_id) || !isOptionalTimestampMs(value.reported_at_unix_ms)) return false;
+  if (value.contract_matches_current !== null && typeof value.contract_matches_current !== 'boolean') return false;
+  if (value.status === 'not_provided') return value.items === null;
+  if (value.status === 'provided') {
+    return Array.isArray(value.items) && value.items.length <= MAX_STRUCTURED_WAITS
+      && value.items.every(validStructuredWaitItem);
+  }
+  return false;
+}
+
+function mapStructuredWaits(value) {
+  if (value === undefined || !validStructuredWaits(value)) {
+    return { status: 'unknown', items: null };
+  }
+  return {
+    status: value.status,
+    items: value.status === 'provided'
+      ? value.items.map((item) => ({
+        waiting_on: { kind: item.waiting_on.kind, name: item.waiting_on.name },
+        what: item.what,
+        since_unix_ms: item.since_unix_ms,
+        release_condition: item.release_condition,
+      }))
+      : null,
+    provenance: 'caller_declared',
+    grants_authority: false,
+    checkpoint_id: value.checkpoint_id,
+    reported_at_unix_ms: value.reported_at_unix_ms,
+    contract_matches_current: value.contract_matches_current,
+  };
 }
 
 function mapReconciliationCoverage(value) {
@@ -178,4 +261,4 @@ function createGithubObserver(fetchImpl = fetch, now = Date.now) {
   return observe;
 }
 
-module.exports = { mapObservation, pullRequestReference, createGithubObserver };
+module.exports = { mapObservation, mapStructuredWaits, validStructuredWaits, pullRequestReference, createGithubObserver };

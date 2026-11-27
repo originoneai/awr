@@ -1002,6 +1002,9 @@ async fn apply(
                 a.usage.is_some(),
             )
             .await?;
+            if let Some(progress) = &a.progress {
+                progress.check_wait_timestamps(tx).await?;
+            }
             if let Some(usage) = &a.usage {
                 usage
                     .check_order(tx, tenant, project, &a.session_id)

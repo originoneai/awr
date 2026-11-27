@@ -1,0 +1,319 @@
+{
+  "authority_version": "1",
+  "coordinator_epoch": "epoch-a",
+  "data": {
+    "adopted_dependencies": [],
+    "authorized_readable_refs": [],
+    "completeness_reasons": [],
+    "context_complete": true,
+    "context_hash": "ad30e300205b946617061bc4b60036ae1ca300f2535dac300422e9e71209c85b",
+    "context_hash_protocol": "awr-team-workstream-context-v1",
+    "contract_hash": "167ab92502cfebdac1d2529b9a167836e63d0407ea92d1f65f3059436fa58327",
+    "definition_state": "enabled",
+    "dependency_export_unavailable": false,
+    "execution_admission": "not_evaluated",
+    "guidance": {
+      "action": {
+        "note": "Inspect the recorded blocker; refresh after its authorized resolution or a required fact changes.",
+        "op": "work.observe",
+        "query": {
+          "op": "work.observe",
+          "protocol_version": 1,
+          "work_id": "a",
+          "workstream_id": "00000000000000000000000001"
+        }
+      },
+      "because": [
+        "current work or structured feedback records the wait"
+      ],
+      "code": "blocked",
+      "recheck_on": "responsibility, blocker, dependency, candidate, evidence, review, effect, source or permission changes",
+      "when": "a current blocker or user wait remains"
+    },
+    "next_step": null,
+    "observation": {
+      "automatic_resume": false,
+      "checkpoint": {
+        "contract_matches_current": true,
+        "created_at_unix_ms": 1795790101874,
+        "id": "01M8EPWQBHPGQREP8CRWQ0S6JH",
+        "next_action": "Resume export mapper after partner confirmation",
+        "open_loops": [
+          "Confirm export schema"
+        ]
+      },
+      "claim": null,
+      "client": null,
+      "collaboration": {
+        "acceptance_inferred": false,
+        "candidate": null,
+        "claim_present": false,
+        "delivery_channel": null,
+        "delivery_required": false,
+        "facts_truncated": false,
+        "integration": null,
+        "integration_required": false,
+        "publication": null,
+        "recovery": {
+          "claim_binding_changed": false,
+          "expired_claim": false,
+          "unknown_resource": false,
+          "unsettled_execution": false
+        },
+        "repository_integration_policy": false,
+        "review": null,
+        "source_state": {
+          "basis": "current_physical_source",
+          "observation": "not_measured",
+          "query": {
+            "op": "delivery.source.status",
+            "protocol_version": 1,
+            "work_id": "a"
+          }
+        },
+        "source_synchronized": null,
+        "verification": []
+      },
+      "contract_hash": "167ab92502cfebdac1d2529b9a167836e63d0407ea92d1f65f3059436fa58327",
+      "definition_state": "enabled",
+      "dependencies_ready_advisory": true,
+      "execution": null,
+      "execution_authorized": false,
+      "guidance": {
+        "action": {
+          "note": "Inspect the recorded blocker; refresh after its authorized resolution or a required fact changes.",
+          "op": "work.observe",
+          "query": {
+            "op": "work.observe",
+            "protocol_version": 1,
+            "work_id": "a",
+            "workstream_id": "00000000000000000000000001"
+          }
+        },
+        "because": [
+          "current work or structured feedback records the wait"
+        ],
+        "code": "blocked",
+        "recheck_on": "responsibility, blocker, dependency, candidate, evidence, review, effect, source or permission changes",
+        "when": "a current blocker or user wait remains"
+      },
+      "last_activity_at_unix_ms": 1795790101879,
+      "last_participation": {
+        "actor_id": "agent",
+        "actor_name": "Worker",
+        "at_unix_ms": 1795790101879,
+        "basis": "latest_recorded_session_activity",
+        "client_id": "cli-a",
+        "recorded_project_revision": "4",
+        "session_id": "session-a",
+        "state": "active"
+      },
+      "missing": {
+        "model": "client_capability_unknown",
+        "progress": null,
+        "usage": "client_capability_unknown"
+      },
+      "model": null,
+      "observation_scope": "current_work_ownership",
+      "observed_at_unix_ms": 1795790102023,
+      "pr_deliveries": [],
+      "progress": {
+        "artifacts": [],
+        "blockers": [],
+        "checkpoint_id": "01M8EPWQBHPGQREP8CRWQ0S6JH",
+        "client_observed_at_unix_ms": null,
+        "completed": [],
+        "contract_matches_current": true,
+        "next_action": "Resume export mapper after partner confirmation",
+        "origin": {
+          "actor_id": "agent",
+          "actor_name": "Worker",
+          "client_id": "cli-a",
+          "session_id": "session-a"
+        },
+        "phase": "blocked",
+        "provenance": "caller_declared",
+        "recorded_project_revision": "3",
+        "report_order_basis": "recorded_project_revision",
+        "reported_at_unix_ms": 1795790101874,
+        "reported_contract_hash": "167ab92502cfebdac1d2529b9a167836e63d0407ea92d1f65f3059436fa58327",
+        "stale": false,
+        "summary": "Waiting on partner column list and security allowlist.",
+        "tests": []
+      },
+      "reporting": {
+        "billing_collected": false,
+        "client_origin": {
+          "actor_id": "agent",
+          "actor_name": "Worker",
+          "client_id": "cli-a",
+          "session_id": "session-a"
+        },
+        "client_reported_at_unix_ms": null,
+        "client_stale": false,
+        "model_basis": "latest_session_declaration; not execution-time attribution",
+        "provenance": "caller_declared",
+        "stale_after_ms": 900000,
+        "usage_aggregation": "none",
+        "version": 1
+      },
+      "responsibility": {
+        "collaborators": [],
+        "coordination_allowed_advisory": true,
+        "coordination_delegation_id": null,
+        "current_executor": null,
+        "current_executor_matches_client": true,
+        "executor_agent_id": null,
+        "executor_agent_name": null,
+        "executor_person_name": null,
+        "historical": null,
+        "independent_reviewer": null,
+        "member_person_id": "agent",
+        "owner": null,
+        "owner_name": null,
+        "owner_person_id": null,
+        "pending": null,
+        "pending_name": null,
+        "personal_mode_default": false,
+        "project_id": "reader-project",
+        "relation": "pool",
+        "version": "0",
+        "work_item_id": "a"
+      },
+      "runtime": null,
+      "session": {
+        "actor_id": "agent",
+        "actor_name": "Worker",
+        "client_id": "cli-a",
+        "id": "session-a",
+        "state": "active"
+      },
+      "session_execution": null,
+      "structured_waits": {
+        "checkpoint_id": "01M8EPWQBHPGQREP8CRWQ0S6JH",
+        "contract_matches_current": true,
+        "grants_authority": false,
+        "items": [
+          {
+            "release_condition": "Signed column list returned by Partner Billing Desk.",
+            "since_unix_ms": 1731542400000,
+            "waiting_on": {
+              "kind": "external_party",
+              "name": "Partner Billing Desk"
+            },
+            "what": "Confirm settlement export field format."
+          },
+          {
+            "release_condition": "Timeout bounds recorded on the open decision.",
+            "since_unix_ms": 1731628800000,
+            "waiting_on": {
+              "kind": "person",
+              "name": "Morgan Chen"
+            },
+            "what": "Review retry timeout policy."
+          },
+          {
+            "release_condition": "Allowlist change marked approved.",
+            "since_unix_ms": 1731715200000,
+            "waiting_on": {
+              "kind": "group",
+              "name": "Platform Security"
+            },
+            "what": "Approve outbound allowlist entry."
+          }
+        ],
+        "provenance": "caller_declared",
+        "reported_at_unix_ms": 1795790101874,
+        "status": "provided"
+      },
+      "usage": null,
+      "waiting_user": false,
+      "work_id": "a",
+      "workstream_id": "00000000000000000000000001"
+    },
+    "ordinary_decisions": {
+      "items": [],
+      "truncated": false
+    },
+    "ownership_version": "1",
+    "published_contract": {
+      "acceptance": [
+        "verified"
+      ],
+      "codec": "awr-team-contract-v1",
+      "completion_policy": "review",
+      "external_key": "a",
+      "goals": [
+        "ship"
+      ],
+      "hard_rules": [
+        "preserve compatibility"
+      ],
+      "required_dependencies": [],
+      "scope_paths": [
+        "src"
+      ],
+      "verification_requirements": [
+        "report"
+      ],
+      "work_id": "a"
+    },
+    "required_specs": [],
+    "responsibility": {
+      "collaborators": [],
+      "coordination_allowed_advisory": true,
+      "coordination_delegation_id": null,
+      "current_executor": null,
+      "current_executor_matches_client": true,
+      "independent_reviewer": null,
+      "member_person_id": "agent",
+      "owner": null,
+      "pending": null,
+      "personal_mode_default": false,
+      "project_id": "reader-project",
+      "relation": "pool",
+      "version": "0",
+      "work_item_id": "a"
+    },
+    "runtime": null,
+    "snapshot": {
+      "consistency": "repeatable_read",
+      "coordinator_epoch": "epoch-a",
+      "project_revision": "5",
+      "queried_at_unix_ms": 1795790102023,
+      "source_snapshot_id": "01M8EPWPXBVR75R1E3PT071VGT",
+      "version": 1
+    },
+    "title": "a",
+    "visible_contract": {
+      "acceptance": [
+        "verified"
+      ],
+      "codec": "awr-team-contract-v1",
+      "completion_policy": "review",
+      "external_key": "a",
+      "goals": [
+        "ship"
+      ],
+      "hard_rules": [
+        "preserve compatibility"
+      ],
+      "required_dependencies": [],
+      "scope_paths": [
+        "src"
+      ],
+      "verification_requirements": [
+        "report"
+      ],
+      "work_id": "a"
+    },
+    "work_id": "a"
+  },
+  "project_revision": "5",
+  "project_status": "active",
+  "protocol_version": 1,
+  "scope_id": "main",
+  "selection_basis": "work",
+  "source_snapshot_id": "01M8EPWPXBVR75R1E3PT071VGT",
+  "workstream_id": "00000000000000000000000001"
+}

@@ -39,7 +39,7 @@ pub(super) async fn read(
         .query(
             "WITH page AS MATERIALIZED (
            SELECT c.work_id,c.title,c.contract_json,c.contract_hash,c.definition_state,
-             c.tenant_id,c.project_id,c.scope_id
+             c.tenant_id,c.project_id,c.scope_id,o.ownership_version
            FROM awr_team.work_contracts c
            JOIN awr_team.workstream_snapshot_ownership o
              USING(tenant_id,project_id,snapshot_id,scope_id,work_id)
@@ -49,7 +49,8 @@ pub(super) async fn read(
          SELECT c.work_id,c.title,c.contract_json,c.contract_hash,c.definition_state,
            r.state,p.display_name,
            (SELECT (extract(epoch FROM max(e.created_at))*1000)::bigint FROM awr_team.events e
-             WHERE e.tenant_id=c.tenant_id AND e.project_id=c.project_id AND e.work_id=c.work_id)
+             WHERE e.tenant_id=c.tenant_id AND e.project_id=c.project_id AND e.work_id=c.work_id),
+           c.ownership_version
          FROM page c
          LEFT JOIN awr_team.work_runtime r USING(tenant_id,project_id,scope_id,work_id)
          LEFT JOIN awr_team.task_responsibilities t
@@ -112,7 +113,18 @@ pub(super) async fn read(
         .into_iter()
         .map(|r| r.get(0))
         .collect();
-    let work_ids: Vec<String> = rows.iter().take(limit as usize).map(|r| r.get(0)).collect();
+    let bindings: Vec<(String, i64)> = rows
+        .iter()
+        .take(limit as usize)
+        .map(|r| (r.get(0), r.get(8)))
+        .collect();
+    let work_ids: Vec<String> = bindings.iter().map(|(id, _)| id.clone()).collect();
+    let mut progress_reports: BTreeMap<String, _> =
+        crate::feedback::latest_structured_waits_rows(tx, tenant, project, stream, &bindings)
+            .await?
+            .into_iter()
+            .map(|r| (r.get::<_, String>(4), r))
+            .collect();
     let mut historical = retained::owners(tx, tenant, project, &work_ids).await?;
     let goal_ids = contracts
         .iter()
@@ -161,6 +173,7 @@ pub(super) async fn read(
     }
     let items: Vec<_> = rows.iter().zip(contracts).map(|(row, contract)| {
         let id: String = row.get(0);
+        let contract_hash: String = row.get(3);
         let definition: String = row.get(4);
         let state = row.get::<_,Option<String>>(5).unwrap_or_else(|| match definition.as_str() {
             "draft" => "draft".into(),
@@ -169,15 +182,20 @@ pub(super) async fn read(
         });
         let dependencies: Vec<_> = contract.required_dependencies.iter()
             .filter(|id| visible.contains(*id)).cloned().collect();
+        let structured_waits = progress_reports
+            .remove(&id)
+            .map(|report| crate::feedback::structured_waits_from_graph_row(&report, &contract_hash))
+            .unwrap_or_else(crate::feedback::structured_waits_not_provided);
         json!({"work_id":id, "external_key":contract.external_key, "title":row.get::<_,String>(1),
-            "contract_hash":row.get::<_,String>(3), "definition_state":definition, "state":state,
+            "contract_hash":contract_hash, "definition_state":definition, "state":state,
             "dependencies_complete":dependencies.len()==contract.required_dependencies.len(),
             "required_dependencies":dependencies, "goals":contract.goals,
             "goal_titles":contract.goals.iter().filter_map(|id|goal_titles.get(id)
                 .map(|title|json!({"id":id,"title":title}))).collect::<Vec<_>>(),
             "historical_responsibility":historical.remove(&id),
             "owner":row.get::<_,Option<String>>(6), "last_event_at":row.get::<_,Option<i64>>(7),
-            "claims":claims_by_work.remove(&id).unwrap_or_default()})
+            "claims":claims_by_work.remove(&id).unwrap_or_default(),
+            "structured_waits":structured_waits})
     }).collect();
     let next = if rows.len() > limit as usize {
         next_cursor(

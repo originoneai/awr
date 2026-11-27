@@ -120,7 +120,7 @@ pub(super) async fn read_for_prepare(
         "runtime":runtime,"responsibility":responsibility,"session":null,"checkpoint":null,"claim":null,
         "execution":null,"session_execution":null,"last_participation":null,
         "observation_scope":if requested_session.is_some(){"requested_session"}else{"current_work_ownership"},
-        "pr_deliveries":[],"client":null,"progress":null,"model":null,"usage":null,
+        "pr_deliveries":[],"client":null,"progress":null,"structured_waits":crate::feedback::structured_waits_not_provided(),"model":null,"usage":null,
         "missing":{"model":"no_session","usage":"no_session","progress":"no_session"},
         "execution_authorized":false,"automatic_resume":false});
     if let Some(s) = session {

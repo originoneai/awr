@@ -1,0 +1,101 @@
+{
+  "authority_version": "1",
+  "coordinator_epoch": "epoch-a",
+  "data": {
+    "execution_authorized": false,
+    "items": [
+      {
+        "claims": [],
+        "contract_hash": "167ab92502cfebdac1d2529b9a167836e63d0407ea92d1f65f3059436fa58327",
+        "definition_state": "enabled",
+        "dependencies_complete": true,
+        "external_key": "a",
+        "goal_titles": [],
+        "goals": [
+          "ship"
+        ],
+        "historical_responsibility": null,
+        "last_event_at": 1795790101879,
+        "owner": null,
+        "required_dependencies": [],
+        "state": "planned",
+        "structured_waits": {
+          "checkpoint_id": "01M8EPWQBHPGQREP8CRWQ0S6JH",
+          "contract_matches_current": true,
+          "grants_authority": false,
+          "items": [
+            {
+              "release_condition": "Signed column list returned by Partner Billing Desk.",
+              "since_unix_ms": 1731542400000,
+              "waiting_on": {
+                "kind": "external_party",
+                "name": "Partner Billing Desk"
+              },
+              "what": "Confirm settlement export field format."
+            },
+            {
+              "release_condition": "Timeout bounds recorded on the open decision.",
+              "since_unix_ms": 1731628800000,
+              "waiting_on": {
+                "kind": "person",
+                "name": "Morgan Chen"
+              },
+              "what": "Review retry timeout policy."
+            },
+            {
+              "release_condition": "Allowlist change marked approved.",
+              "since_unix_ms": 1731715200000,
+              "waiting_on": {
+                "kind": "group",
+                "name": "Platform Security"
+              },
+              "what": "Approve outbound allowlist entry."
+            }
+          ],
+          "provenance": "caller_declared",
+          "reported_at_unix_ms": 1795790101874,
+          "status": "provided"
+        },
+        "title": "a",
+        "work_id": "a"
+      },
+      {
+        "claims": [],
+        "contract_hash": "bbe65a8738832a473a7c8191291eea8af0c9a821291ae94751f381bb0344aa51",
+        "definition_state": "enabled",
+        "dependencies_complete": false,
+        "external_key": "c",
+        "goal_titles": [],
+        "goals": [
+          "ship"
+        ],
+        "historical_responsibility": null,
+        "last_event_at": 1795790101996,
+        "owner": null,
+        "required_dependencies": [],
+        "state": "planned",
+        "structured_waits": {
+          "checkpoint_id": "01M8EPWQFAD6TZWXPXGWP7MPPZ",
+          "contract_matches_current": true,
+          "grants_authority": false,
+          "items": null,
+          "provenance": "caller_declared",
+          "reported_at_unix_ms": 1795790101995,
+          "status": "not_provided"
+        },
+        "title": "c",
+        "work_id": "c"
+      }
+    ],
+    "next_cursor": null,
+    "queried_at_unix_ms": 1795790102112,
+    "total": 2
+  },
+  "project_revision": "5",
+  "project_status": "active",
+  "protocol_version": 1,
+  "scope_id": "main",
+  "selection_basis": "explicit",
+  "source_snapshot_id": "01M8EPWPXBVR75R1E3PT071VGT",
+  "workstream_id": "00000000000000000000000001"
+}
