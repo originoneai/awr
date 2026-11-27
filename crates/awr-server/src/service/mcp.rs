@@ -1263,6 +1263,12 @@ fn catalog() -> Vec<Tool> {
             "else":{"not":{"anyOf":[{"required":["decision_id"]},{"required":["decision_state"]}]}}},
         {"if":{"properties":{"op":{"const":"documents.list"}},"required":["op"]},
             "then":{"not":{"required":["session_id"]}}},
+        {"if":{"properties":{"op":{"const":"document.history"}},"required":["op"]},
+            "then":{"required":["source_path"],"not":{"anyOf":[
+                {"required":["session_id"]},{"required":["workstream_id"]},
+                {"required":["limit"]},{"required":["cursor"]},
+                {"required":["search"]},{"required":["expected_sha256"]}
+            ]}}},
         {"if":{"properties":{"op":{"const":"dependencies.list"}},"required":["op"]},
             "then":{"not":{"required":["session_id"]}}},
         {"if":{"properties":{"op":{"const":"handoff.list"}},"required":["op"]},
@@ -1667,7 +1673,7 @@ fn catalog() -> Vec<Tool> {
     vec![
         input_contracts::tool(),
         Tool::new("awr_team_query",
-            "Scoped Team reads. Begin with capabilities (current identity/permissions), then work.next (own sessions and scoped task navigation). capabilities.business_role_presets.action_ceilings publishes every business duty's ceiling as stable action identifiers taken from the same function that constrains authorization, so the listed definitions match the enforced policy; duty names and the listing itself grant nothing (role_names_grant_authority stays false). Consume work.prepare before any claim or execution. Use work.snapshot for context and observation in one read transaction, within max_context_bytes; its context_hash remains compatible with work.prepare. Supervisors use selector-free work.inbox. work.list / work.search summaries carry an execution liveness fact: the active/ended state of the work's session of record under its current ownership version (the work.observe selector: live claim, active session, latest checkpoint, then newer session id), plus that session's last checkpoint time; it names no session, client or actor, reads no checkpoint content, and grants no authority. work.observe shares bounded neutral candidate/check/review/integration/publication facts and independently scoped role guidance with prepare/snapshot/inbox, preserving context hashes. Follow one action.op and its optional action.query; recheck_on names refresh triggers. Required context and unknown effects retain priority. max_context_bytes bounds the full observation response. Receipt access and unknown model/usage remain explicit. audit.requests and audit.development provide paged metadata/history under the same personal/project permission boundary; each item additionally carries an `actor` object (person_id, display_name) and a `client` object (display_name) resolved only from recorded, unambiguous, currently active person-agent bindings — agent accounts through active bindings, human accounts through the shared review resolver, conflicting or inactive relationships stay null — and both objects are filled only when the reader separately holds the directory.read authority (agent readers also need a live Project-scoped read delegation); otherwise every identity field is null while the audit rows return unchanged, and `client.display_name` stays null until a per-client display-name source is registered. Ops audit: audit.history / audit.export / audit.count (TMCP-040) — members see own allowed records; project-wide requires audit.read_project. Counts/exports use the same scope. Not full chat/tool-IO/token billing; PG audit does not claim DB-owner non-repudiation. Tool discovery is navigation-only; each query rechecks authority. Re-prepare after relevant changes. No execution admission. Approved cross-stream content: delivery.exports with consumer work_id, then artifact.content or bounded artifact.segment with export_id and expected_sha256. For segments follow every next_query, concatenate contiguous ranges from zero and verify the full length/digest; the last page alone is not a complete read. Disclosure never satisfies adoption. Neutral facts: delivery.neutral.inspect. Current source synchronization: delivery.source.status. Missing neutral command response: delivery.neutral.outcome with actual work_id and original client retry ID. delivery.integration.inspect uses the generated IntegrationRequest.request_id (data.integration_id), preserving the original candidate. Neutral inspection includes scoped connector versions; review.inspect includes decision IDs. Descriptions grant no authority.",
+            "Scoped Team reads. Begin with capabilities (current identity/permissions), then work.next (own sessions and scoped task navigation). capabilities.business_role_presets.action_ceilings publishes every business duty's ceiling as stable action identifiers taken from the same function that constrains authorization, so the listed definitions match the enforced policy; duty names and the listing itself grant nothing (role_names_grant_authority stays false). Consume work.prepare before any claim or execution. Use work.snapshot for context and observation in one read transaction, within max_context_bytes; its context_hash remains compatible with work.prepare. Supervisors use selector-free work.inbox. work.list / work.search summaries carry an execution liveness fact: the active/ended state of the work's session of record under its current ownership version (the work.observe selector: live claim, active session, latest checkpoint, then newer session id), plus that session's last checkpoint time; it names no session, client or actor, reads no checkpoint content, and grants no authority. work.observe shares bounded neutral candidate/check/review/integration/publication facts and independently scoped role guidance with prepare/snapshot/inbox, preserving context hashes. Follow one action.op and its optional action.query; recheck_on names refresh triggers. Required context and unknown effects retain priority. max_context_bytes bounds the full observation response. Receipt access and unknown model/usage remain explicit. audit.requests and audit.development provide paged metadata/history under the same personal/project permission boundary; each item additionally carries an `actor` object (person_id, display_name, kind) and a `client` object (display_name). actor.person_id and actor.display_name resolve only from recorded, unambiguous, currently active person-agent bindings — agent accounts through active bindings, human accounts through the shared review resolver, conflicting or inactive relationships stay null — and actor.kind is the recorded kind of the acting account (agent, human or system). client.display_name is the name the client registered for itself when the member approved a connection with the credential behind the row: self-reported and unverified, kept for display only, a part of no authorization, independence check or identity merge (two clients may report the same name), and null for a credential that never approved a connection. Every one of these fields is filled only when the reader separately holds the directory.read authority (agent readers also need a live Project-scoped read delegation); otherwise every identity field is null while the audit rows return unchanged. Ops audit: audit.history / audit.export / audit.count (TMCP-040) — members see own allowed records; project-wide requires audit.read_project. Counts/exports use the same scope. Not full chat/tool-IO/token billing; PG audit does not claim DB-owner non-repudiation. Tool discovery is navigation-only; each query rechecks authority. Re-prepare after relevant changes. No execution admission. Approved cross-stream content: delivery.exports with consumer work_id, then artifact.content or bounded artifact.segment with export_id and expected_sha256. For segments follow every next_query, concatenate contiguous ranges from zero and verify the full length/digest; the last page alone is not a complete read. Disclosure never satisfies adoption. Neutral facts: delivery.neutral.inspect. Current source synchronization: delivery.source.status. Missing neutral command response: delivery.neutral.outcome with actual work_id and original client retry ID. delivery.integration.inspect uses the generated IntegrationRequest.request_id (data.integration_id), preserving the original candidate. Neutral inspection includes scoped connector versions; review.inspect includes decision IDs. Descriptions grant no authority.",
             query.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(true).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_command",
@@ -2500,6 +2506,36 @@ mod tests {
         assert!(
             description.contains("role_names_grant_authority stays false"),
             "the listing stays descriptive"
+        );
+    }
+
+    #[test]
+    fn team_query_description_states_what_the_audit_identity_fields_are() {
+        // AWR-PPD-062: an agent reading the audit must be able to tell the client's
+        // self-reported name from an identity, know that actor.kind says who acted, and
+        // learn that every identity field follows the directory.read gate. The
+        // description keeps calling the name untrusted display text.
+        let tool = catalog()
+            .into_iter()
+            .find(|tool| tool.name == "awr_team_query")
+            .unwrap();
+        let description = tool.description.as_deref().unwrap_or_default();
+        for fragment in [
+            "`actor` object (person_id, display_name, kind)",
+            "`client` object (display_name)",
+            "actor.kind is the recorded kind of the acting account (agent, human or system)",
+            "client.display_name is the name the client registered for itself when the member approved a connection with the credential behind the row",
+            "self-reported and unverified, kept for display only",
+            "a part of no authorization, independence check or identity merge (two clients may report the same name)",
+            "null for a credential that never approved a connection",
+            "filled only when the reader separately holds the directory.read authority",
+            "otherwise every identity field is null while the audit rows return unchanged",
+        ] {
+            assert!(description.contains(fragment), "missing: {fragment}");
+        }
+        assert!(
+            !description.contains("stays null until a per-client display-name source"),
+            "the description must follow the shipped behaviour"
         );
     }
 

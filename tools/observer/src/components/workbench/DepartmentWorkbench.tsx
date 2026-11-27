@@ -28,6 +28,7 @@ import {
   Notice,
   PageHeader,
   RowList,
+  SegmentedControl,
   StatusLamp,
   TodoRail,
   healthLampState,
@@ -639,18 +640,13 @@ export function DepartmentWorkbench({ model, freshness, referenceUnixMs, state }
                   <span className="obs-tag">{t('workbench.home.chainCount', { count: model.chains.length })}</span>
                 ) : null}
                 {model.chains.length > 0 ? (
-                  <div className="obs-workbench-chain-switch" role="group" aria-label={t('workbench.home.chainGroup')}>
-                    {model.chains.map((chain, index) => (
-                      <button
-                        key={chain.id}
-                        type="button"
-                        aria-pressed={index === activeChainIndex}
-                        onClick={() => updateParams({ chain: String(index) })}
-                      >
-                        {chain.tab}
-                      </button>
-                    ))}
-                  </div>
+                  <SegmentedControl
+                    className="obs-workbench-chain-switch"
+                    label={t('workbench.home.chainGroup')}
+                    value={String(activeChainIndex)}
+                    options={model.chains.map((chain, index) => ({ value: String(index), label: chain.tab }))}
+                    onChange={(chain) => updateParams({ chain })}
+                  />
                 ) : null}
               </div>
             )}

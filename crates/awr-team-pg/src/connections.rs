@@ -4,12 +4,32 @@
 use crate::{
     PgError, PgResult,
     pool::PgPool,
-    workstream_auth::{authenticate, authenticate_writer, workstream_credential_hash},
+    workstream_auth::{
+        authenticate, authenticate_writer, credential_reference, workstream_credential_hash,
+    },
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, sync::Arc};
+
+/// The longest client name a credential keeps. The server bounds a client's
+/// registration to the same 120 characters.
+pub const MAX_CLIENT_NAME_CHARS: usize = 120;
+
+/// The name a client registered for itself, reduced to display text: control
+/// characters are dropped, surrounding whitespace is trimmed and at most
+/// [`MAX_CLIENT_NAME_CHARS`] characters are kept. Blank input yields no name.
+/// The result is self-reported text for display only; it identifies nothing.
+pub fn client_display_name(raw: &str) -> Option<String> {
+    let trimmed = raw
+        .chars()
+        .filter(|character| !character.is_control())
+        .collect::<String>()
+        .trim()
+        .to_owned();
+    (!trimmed.is_empty()).then(|| trimmed.chars().take(MAX_CLIENT_NAME_CHARS).collect())
+}
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -59,6 +79,49 @@ pub struct ConnectionStore {
 impl ConnectionStore {
     pub(crate) fn from_pool(pool: Arc<PgPool>) -> Self {
         Self { pool }
+    }
+
+    /// Record the name a client registered for itself when the member approved a
+    /// connection made with `bearer` (AWR-PPD-062). The name reaches the credential
+    /// through [`client_display_name`] first. Only a live credential that the caller
+    /// holds the secret of, usable for `project`, can be named.
+    ///
+    /// The first approved connection names a credential and later connections
+    /// through it keep that name, so recorded history is never relabelled. The name is
+    /// self-reported display text: it grants nothing, and two credentials may carry
+    /// the same name without being merged.
+    pub async fn record_client_name(
+        &self,
+        tenant: &str,
+        project: &str,
+        bearer: &str,
+        raw_name: &str,
+    ) -> PgResult<()> {
+        let Some(name) = client_display_name(raw_name) else {
+            return Ok(());
+        };
+        let reference = credential_reference(bearer)?;
+        let mut client = self.pool.get().await?;
+        crate::check_schema(&client).await?;
+        let tx = client.transaction().await?;
+        crate::tx::bind_workstream_scope(&tx, tenant, project).await?;
+        tx.execute(
+            "UPDATE awr_team.credentials SET client_name=$4
+             WHERE tenant_id=$1 AND id=$2 AND secret_hash=$3
+               AND (project_id IS NULL OR project_id=$5)
+               AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp())
+               AND client_name IS NULL",
+            &[
+                &tenant,
+                &reference.credential_id,
+                &reference.secret_hash,
+                &name,
+                &project,
+            ],
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(())
     }
 
     pub async fn operate(
@@ -196,5 +259,86 @@ impl ConnectionStore {
         };
         tx.commit().await?;
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn every_character_is_kept(raw: &str, expected: &str) {
+        assert_eq!(client_display_name(raw).as_deref(), Some(expected));
+    }
+
+    // A registered name passes through unchanged.
+    #[test]
+    fn a_plain_name_is_kept_as_registered() {
+        every_character_is_kept("Synthetic Native Client", "Synthetic Native Client");
+        every_character_is_kept("客户端 one-two.three", "客户端 one-two.three");
+    }
+
+    // Control characters (Unicode Cc, including DEL and the C1 range) are dropped before
+    // the name can be stored; everything else stays in order.
+    #[test]
+    fn control_characters_are_dropped_and_the_rest_keeps_its_order() {
+        every_character_is_kept("Bad\u{7f}Name", "BadName");
+        every_character_is_kept(
+            "two\nlines\tand\u{0}a\u{85}c1\u{9f}end",
+            "twolinesandac1end",
+        );
+        every_character_is_kept("\u{1f}\u{1e}edged\u{b}", "edged");
+    }
+
+    // Only surrounding whitespace is trimmed; a name that is blank afterwards is no name.
+    #[test]
+    fn surrounding_whitespace_is_trimmed_and_a_blank_name_is_no_name() {
+        every_character_is_kept("  Synthetic Client  ", "Synthetic Client");
+        every_character_is_kept("\n\t Synth \u{3000}", "Synth");
+        for blank in ["", "   ", "\t\n\u{0}", "\u{3000}\u{a0}"] {
+            assert_eq!(client_display_name(blank), None, "{blank:?}");
+        }
+    }
+
+    // The stored name holds at most 120 characters, cut on a character boundary.
+    #[test]
+    fn a_long_name_is_cut_to_the_registered_bound_on_a_character_boundary() {
+        let exact: String = "n".repeat(MAX_CLIENT_NAME_CHARS);
+        assert_eq!(client_display_name(&exact).as_deref(), Some(exact.as_str()));
+        let cut = client_display_name(&format!("{exact}overflow")).unwrap();
+        assert_eq!(cut, exact);
+        let wide = client_display_name(&"客".repeat(400)).unwrap();
+        assert_eq!(wide.chars().count(), MAX_CLIENT_NAME_CHARS);
+        assert!(wide.chars().all(|character| character == '客'));
+        let mixed = client_display_name(&format!("a{}", "é".repeat(500))).unwrap();
+        assert_eq!(mixed.chars().count(), MAX_CLIENT_NAME_CHARS);
+        assert!(mixed.starts_with('a') && mixed.chars().skip(1).all(|c| c == 'é'));
+    }
+
+    // Whatever arrives, the result always satisfies the column's own bound: 1..=120
+    // characters and no control character. The reduction and the database agree.
+    #[test]
+    fn every_output_satisfies_the_column_bound() {
+        let sources = [
+            String::new(),
+            "x".repeat(10_000),
+            "\u{7f}".repeat(300),
+            format!("{}{}", "a\u{a}".repeat(200), " tail"),
+            "客".repeat(130),
+            format!("{}{}", "\u{2028}".repeat(50), "z".repeat(130)),
+            "line\u{2028}separator name".to_owned(),
+        ];
+        for raw in &sources {
+            if let Some(name) = client_display_name(raw) {
+                assert!(
+                    (1..=MAX_CLIENT_NAME_CHARS).contains(&name.chars().count()),
+                    "{name:?}"
+                );
+                assert!(
+                    name.chars().all(|character| !character.is_control()),
+                    "{name:?}"
+                );
+                assert_eq!(client_display_name(&name).as_deref(), Some(name.as_str()));
+            }
+        }
     }
 }

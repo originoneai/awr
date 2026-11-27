@@ -320,6 +320,145 @@ pub(super) async fn read(
     Ok(result)
 }
 
+pub(super) async fn history(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    auth: &ReaderAuthority,
+    directory_auth: Option<&ReaderAuthority>,
+    q: &WorkstreamQuery,
+) -> PgResult<Value> {
+    let path = q
+        .source_path
+        .as_deref()
+        .ok_or_else(|| PgError::query_field("source_path", "required"))?;
+    safe_relative_source_path(path)?;
+    let bound_workstream = if let Some(work) = q.work_id.as_deref() {
+        let (binding, _) = work_binding(tx, tenant, project, auth, work).await?;
+        Some(binding.workstream_id)
+    } else {
+        None
+    };
+    let (required_streams, registered) = document_history_workstreams(auth, path)?;
+    for id in &required_streams {
+        auth.access
+            .authorize(&auth.catalog, *id, WorkstreamAction::Read)
+            .map_err(|_| PgError::Forbidden)?;
+    }
+    if let Some(stream_id) = bound_workstream {
+        if registered && !required_streams.contains(&stream_id) {
+            return Err(PgError::Forbidden);
+        }
+    }
+    if !registered {
+        return Err(PgError::query_field("source_path", "source_unavailable"));
+    }
+    let slice =
+        crate::source::document_snapshot_history(tx, tenant, project, &auth.snapshot, path).await?;
+    if slice.items.is_empty() {
+        return Err(PgError::query_field("source_path", "source_unavailable"));
+    }
+    let actor_ids: Vec<String> = slice
+        .items
+        .iter()
+        .filter_map(|change| change.submitter_actor_id.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    // Gate person identity disclosure on the reader's pre-narrowing authority
+    // so directory.read stays the single source of truth for naming members.
+    let disclose_names = if actor_ids.is_empty() {
+        false
+    } else {
+        match directory_auth {
+            Some(authority) => {
+                let mut gate = authority.clone();
+                match crate::directory::authorize_read(tx, &mut gate, project).await {
+                    Ok(()) => true,
+                    Err(PgError::Forbidden) => false,
+                    Err(error) => return Err(error),
+                }
+            }
+            None => false,
+        }
+    };
+    let people = if disclose_names {
+        crate::review::resolve_person_ids(tx, tenant, project, &actor_ids).await?
+    } else {
+        BTreeMap::new()
+    };
+    let items: Vec<Value> = slice
+        .items
+        .into_iter()
+        .map(|change| {
+            let submitted_by = change
+                .submitter_actor_id
+                .as_deref()
+                .and_then(|actor_id| people.get(actor_id))
+                .and_then(|person| person.active_person())
+                .map(|(person_id, display_name)| {
+                    json!({
+                        "person_id": person_id,
+                        "display_name": display_name
+                    })
+                });
+            json!({
+                "source_snapshot_id": change.snapshot_id,
+                "recorded_at_unix_ms": change.recorded_at_unix_ms,
+                "digest_prefix": change.digest_prefix,
+                "submitted_by": submitted_by
+            })
+        })
+        .collect();
+    let observed_at: i64 = tx
+        .query_one(
+            "SELECT (extract(epoch FROM clock_timestamp())*1000)::bigint",
+            &[],
+        )
+        .await?
+        .get(0);
+    let mut result = json!({
+        "protocol_version": 1,
+        "scope_id": "main",
+        "selection_basis": if bound_workstream.is_some() { "work" } else { "project" },
+        "source_snapshot_id": auth.snapshot,
+        "coordinator_epoch": auth.epoch,
+        "project_revision": auth.revision.to_string(),
+        "project_status": auth.project_status,
+        "data": {
+            "path": path,
+            "work_id": q.work_id,
+            "items": items,
+            "total": slice.total,
+            "limit": crate::source::DOCUMENT_HISTORY_LIMIT,
+            "truncated": slice.truncated,
+            "order": "newest_first",
+            "source_kind": "registered_source_snapshots",
+            "attribution_basis": "snapshot_submitter",
+            "read_only": true,
+            "execution_authorized": false,
+            "as_of": {
+                "at_unix_ms": observed_at,
+                "source_snapshot_id": auth.snapshot,
+                "project_revision": auth.revision.to_string()
+            }
+        }
+    });
+    if let Some(id) = bound_workstream {
+        let stream = auth.catalog.get(id)?;
+        result["workstream_id"] = json!(id.to_string());
+        result["authority_version"] = json!(stream.authority_version.to_string());
+    }
+    if serde_json::to_vec(&result)
+        .map_err(|_| PgError::SourceDivergence)?
+        .len()
+        > q.max_context_bytes.unwrap_or(262144)
+    {
+        return Err(PgError::ResponseTooLarge);
+    }
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

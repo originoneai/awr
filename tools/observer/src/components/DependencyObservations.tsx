@@ -9,9 +9,10 @@ import { dependenciesQueryOptions } from '../lib/collaboration';
 import { useRevocation } from '../lib/revocation';
 import type { DependencyObservation, DependencyVersion } from '../lib/types';
 import { RecordedTime } from './RecordedTime';
+import { FreshnessBadge } from './FreshnessBadge';
 import { ObservationForbidden } from './states';
 
-function sameDelivery(left: DependencyVersion | null, right: DependencyVersion | null) {
+export function sameDelivery(left: DependencyVersion | null, right: DependencyVersion | null) {
   return Boolean(left?.receipt_id && right?.receipt_id
     && left.receipt_id === right.receipt_id && left.contract_hash === right.contract_hash);
 }
@@ -113,6 +114,7 @@ export function DependencyObservations({ project, workId = null }: { project: st
         <Col xs={24} xl={12}>{current ? <DependencyDetails item={current} project={project} /> : null}</Col>
       </Row>}
       <Typography.Text type="secondary">{t('collaboration.readAt')} <RecordedTime value={data.as_of.at_unix_ms} /></Typography.Text>
+      {query.data?.freshness ? <FreshnessBadge freshness={query.data.freshness} /> : null}
     </> : null}
     <Space wrap>
       {cursors.length > 1 ? <Button onClick={() => setCursors(cursors.slice(0, -1))}>{t('plan.observation.previous')}</Button> : null}

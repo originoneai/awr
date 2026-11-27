@@ -590,7 +590,10 @@ receive `continue`, `decision`, `reason` and `context`; their existing
    and JSON on stdin: `session_id`, `cwd`, `hook_event_name` and optional `turn_id`.
    Events are `SessionStart`, `PostCompact`, `PreCompact`, `Stop`, `SessionEnd`,
    `Interrupt`. Start/PostCompact return context; the others persist a checkpoint
-   for bound work. Without `--work`, the receiver recovers the existing binding;
+   for bound work while that session is active. If the conversation is already
+   bound to a session that is no longer active, these hooks exit successfully and
+   report that continuity was not recorded. They leave the binding pinned and do
+   not create a successor. Without `--work`, the receiver recovers the existing binding;
    an unbound start receives up to 1536 bytes of the action view and a binding command.
    Stable repeated callbacks deduplicate against source state and saved progress.
    Changed progress/source facts can legitimately produce a new checkpoint even with
@@ -603,7 +606,9 @@ receive `continue`, `decision`, `reason` and `context`; their existing
    preserve nonzero diagnostics. Investigate unfinished writes and unknown effects.
 6. Explicitly continue with `session resume` at the current project revision, or
    bind a new native conversation with `client bind --from-session <old-id>`.
-   Continuation refreshes sources and compiles new context before work proceeds;
+   That command belongs to the new conversation. The conversation already pinned
+   to the inactive session cannot run it, and its lifecycle hooks do not fail
+   after the session ends. Continuation refreshes sources and compiles new context before work proceeds;
    stale checkpoints do not authorize replay. Repeating a binding keeps its session.
    A raw resume that already created a successor must be inspected, not retried as a
    new continuation. Native resumption remains a separate, client-supported host action.

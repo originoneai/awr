@@ -68,6 +68,9 @@
     ["completion summary", ".panel table.t tbody tr:first-child .seg4 + .sm", ".obs-detail-panel .obs-data-table tbody tr:first-child .obs-completion-summary", ["TEXT", "margin-top"], {"skip": ["__x", "__y", "__w"]}],
     ["update time late", ".panel table.t tbody tr:nth-child(3) td:nth-child(5) .num", ".obs-detail-panel .obs-data-table tbody tr:nth-child(3) .obs-workbench-unit-time", ["TEXT"], {"skip": ["__x", "__y", "__w"]}],
     ["update late note", ".panel table.t tbody tr:nth-child(3) td:nth-child(5) .sm", ".obs-detail-panel .obs-data-table tbody tr:nth-child(3) .obs-workbench-unit-late", ["TEXT"], {"skip": ["__x", "__y", "__w"]}],
-    ["panel footer note", ".panel .pnote", ".obs-detail-footer", ["BOX", "TEXT", "border-top-color"], {"skip": ["__y", "__w", "__h"]}]
-  ]
+    ["panel footer note", ".panel .pnote", ".obs-detail-footer", ["BOX", "TEXT", "border-top-color"], {"skip": ["__y", "__w", "__h"]}],
+  ["shared segmented container", ".why-head .seg", ".obs-workbench-chain-switch", ["BOX", "PAINT"]],
+  ["shared segmented unselected", ".why-head .seg button:not([aria-pressed=\"true\"])", ".obs-workbench-chain-switch button[aria-pressed=\"false\"]", ["BOX", "TEXT", "PAINT", "height", "padding-right"]],
+  ["shared segmented selected", ".why-head .seg button[aria-pressed=\"true\"]", ".obs-workbench-chain-switch button[aria-pressed=\"true\"]", ["BOX", "TEXT", "PAINT", "height", "padding-right"]]
+ ]
 }

@@ -113,6 +113,7 @@ describe('ProjectShell', () => {
   it('renders all three shared maps and opens readable work details from the dependencies tab', async () => {
     const user = userEvent.setup();
     const { queryClient } = setup('/projects/demo?tab=deps');
+    await user.click(await screen.findByTestId('project-deps-view-map'));
     const body = await screen.findByTestId('project-map-drawing');
     await waitFor(() => expect(body.querySelectorAll('svg').length).toBe(3));
     const query = queryClient.getQueryCache().find({ queryKey: ['team', 'graph', 'demo'] })!;

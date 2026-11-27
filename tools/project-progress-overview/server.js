@@ -127,6 +127,7 @@ const COMMANDS = {
   mapDoctor: ['doctor'],
   workPrepare: ['work', 'prepare'],
   workAssess: ['work', 'assess'],
+  workShow: ['work', 'show'],
 };
 
 function asKey(value) {
@@ -338,6 +339,12 @@ const routes = {
     const key = asKey(url.searchParams.get('key'));
     if (!key) return { ok: false, error: { code: 'BadRequest', message: 'key must be a valid work key' } };
     return runCommand('workAssess', [key]);
+  },
+
+  'GET /api/map/show': async (url) => {
+    const key = asKey(url.searchParams.get('key'));
+    if (!key) return { ok: false, error: { code: 'BadRequest', message: 'key must be a valid work key' } };
+    return runCommand('workShow', [key]);
   },
 
 };

@@ -577,7 +577,9 @@ pub(crate) async fn resolve_agent_read_delegation(
     request: &crate::WorkstreamQuery,
     now_ms: i64,
 ) -> PgResult<()> {
-    if request.op == "source.content" && actor_requires_explicit_delegation(&auth.actor_kind) {
+    if matches!(request.op.as_str(), "source.content" | "document.history")
+        && actor_requires_explicit_delegation(&auth.actor_kind)
+    {
         return resolve_source_read_delegation(tx, auth, project, request, now_ms).await;
     }
     if actor_requires_explicit_delegation(&auth.actor_kind)
@@ -779,8 +781,15 @@ async fn resolve_source_read_delegation(
     request: &crate::WorkstreamQuery,
     now_ms: i64,
 ) -> PgResult<()> {
+    if request.op == "document.history" {
+        request.validate()?;
+    }
     let path = request.source_path.as_deref().ok_or(PgError::Forbidden)?;
-    let required = crate::workstream_read::source_file_workstreams(auth, path)?;
+    let required = if request.op == "document.history" {
+        crate::workstream_read::document_history_workstreams(auth, path)?.0
+    } else {
+        crate::workstream_read::source_file_workstreams(auth, path)?
+    };
     let task_stream = if let Some(work) = request.work_id.as_deref() {
         crate::tx::bind_workstream_scope(tx, &auth.tenant_id, project).await?;
         let row = tx

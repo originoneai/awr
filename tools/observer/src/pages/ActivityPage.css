@@ -13,43 +13,10 @@
 }
 
 .activity-segment {
-  display: inline-flex;
-  gap: var(--craft-perspective-gap);
   min-width: 0;
   max-width: 100%;
-  padding: var(--craft-perspective-padding);
   overflow-x: auto;
-  border-radius: var(--craft-radius-control);
-  background: var(--craft-color-raised);
   white-space: nowrap;
-}
-
-.activity-segment-option {
-  appearance: none;
-  flex: 0 0 auto;
-  height: var(--craft-perspective-height);
-  margin: 0;
-  padding: 0 var(--craft-perspective-option-padding-inline);
-  border: 0;
-  border-radius: var(--craft-perspective-radius);
-  background: transparent;
-  color: var(--craft-color-secondary);
-  cursor: pointer;
-  font: inherit;
-  /* Prototype .seg button: the body's 20px leading, not antd's button metric (20.43px). */
-  line-height: var(--craft-leading-body);
-  font-size: var(--craft-text-small);
-  white-space: nowrap;
-  transition:
-    background-color var(--craft-motion-feedback) var(--craft-motion-easing),
-    color var(--craft-motion-feedback) var(--craft-motion-easing);
-}
-
-.activity-segment-option[aria-pressed="true"] {
-  background: var(--craft-color-surface);
-  color: var(--craft-color-ink);
-  box-shadow: var(--craft-perspective-selected-shadow);
-  font-weight: var(--ant-font-weight-strong);
 }
 
 .activity-state {

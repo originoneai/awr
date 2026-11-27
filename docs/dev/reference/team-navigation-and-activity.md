@@ -87,8 +87,17 @@ same way when every identity field is null.
 | Field | Definition | Source | Why it does not leak |
 | --- | --- | --- | --- |
 | `actor.person_id` | Person behind the operation, or null | Agent actors resolve through an active `person_agent_bindings` row; human actors reuse the shared review resolver's person rule. Conflicting active bindings to different people, a stopped binding or a non-active person resolve to null | Only already-recorded relationships are joined; nothing is guessed, matched by name or string equality, or created during the read |
-| `actor.display_name` | That person's `display_name`, or null | The same active persons row as `actor.person_id` | Filled only when the reader separately passes the exact `directory.read` gate (membership covering `work.read` on every directory workstream; agent readers additionally need a live Project-scoped read delegation). Without it both `actor` fields are null and the audit rows still return |
-| `client.display_name` | Display name of the connected client, or null | No per-client display name is registered today — `credentials` stores no name and connection reads return actor names — so this is null until such a source exists | Absent data discloses nothing; the object keeps a stable shape for clients |
+| `actor.display_name` | That person's `display_name`, or null | The same active persons row as `actor.person_id` | Filled only when the reader separately passes the exact `directory.read` gate (membership covering `work.read` on every directory workstream; agent readers additionally need a live Project-scoped read delegation). Without it every `actor` field is null and the audit rows still return |
+| `actor.kind` | The recorded kind of the acting account: `agent`, `human` or `system`; null for an actor id with no account row | The `actors` row of the item's `actor_id`, read in the same batch as the person. It belongs to the account, so a conflicting or stopped relationship still has a kind while its person stays null | Filled under the same `directory.read` gate as the two fields above |
+| `client.display_name` | The name the client registered for itself (OAuth dynamic registration `client_name`) when the member approved a connection with the credential behind the item; otherwise null | `credentials.client_name` (schema 68). Consent approval writes it for the credential the member entered, after dropping control characters and cutting the name to 120 characters. The first approved connection names a credential and later connections through it keep that name, so recorded history keeps its label. A request item reads its exact credential (id, actor and client id must all agree). A development item records only an actor and a client id, so it is named only when every credential of that pair usable in this project holds the same non-null name | Self-reported (客户端自报) and unverified display text: it takes part in no authorization, independence check or identity merge, and two clients may report the same name. Filled under the same `directory.read` gate. A credential that never approved a connection, one issued before schema 68, or a reader without the gate reads null |
+
+Use `actor.kind` to tell an Agent's run from a person acting through a client:
+every request records a `client_id`, so the presence of that id says nothing about
+who acted. Omitted registration names and legacy OAuth snapshots keep the credential name null.
+The consent page's fallback label stays presentation text.
+
+A development item without an operation attribution carries a null
+`client_id` and no client name.
 
 Keyset cursors bind the caller, filters and grants. Use `next_cursor`; changing
 filters requires a fresh first page. A page does not provide an immutable export:
@@ -96,6 +105,7 @@ request outcomes can settle and old request metadata can expire between pages.
 Existing `audit.history/export/count` retain their permission, planning and
 delivery semantics.
 
-Schema 33 adds only request metadata storage. Reapply the documented app-role
-grants after migration. Business development history is read from existing
-committed events and receipts; it is not reconstructed from browser activity.
+Schema 33 adds only request metadata storage, and schema 68 one nullable column on
+`credentials`. Reapply the documented app-role grants after migration. Business
+development history is read from existing committed events and receipts; it is not
+reconstructed from browser activity.
