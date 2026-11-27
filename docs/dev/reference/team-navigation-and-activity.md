@@ -64,6 +64,24 @@ authority; inspect unknown outcomes before retrying. The connected Agent perform
 this loop. AWR does not start arbitrary Agent applications or wake a stopped
 client.
 
+## Viewer person identity
+
+`capabilities.identity` and `work.next.data.identity` carry the same person
+fields for the authenticated viewer. Self-disclosure uses the existing project
+entry authorization and needs no additional directory permission.
+
+| Field | Type | Recorded source | Unknown cases |
+| --- | --- | --- | --- |
+| `person_id` | String or null | An agent account resolves through `person_agent_bindings`; a human account uses the person-id rule shared with review attribution. Every relationship join is scoped by tenant and project. | Conflicting active bindings to different people, disabled or missing bindings, an inactive person, and missing directory rows produce null. An agent account with a matching person-id string remains unresolved without a binding. |
+| `person_display_name` | String or null | `persons.display_name` from the same active person as `person_id` | It is null whenever `person_id` is null. |
+
+One active person and one unambiguous relationship fill both fields together.
+Multiple active bindings to the same person still identify that person. The
+read-only resolver shares its rules with audit attribution and creates no
+person rows. Name similarity and bare string equality play no role in
+resolution. Existing project, workstream and delegation checks continue to
+guard both reads.
+
 ## Activity queries
 
 `audit.requests` lists authenticated HTTP/Web/MCP operation metadata: actor,

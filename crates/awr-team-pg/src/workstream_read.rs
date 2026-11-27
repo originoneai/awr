@@ -1624,7 +1624,8 @@ fn read_unscoped_op<'a>(
             return activity::read(tx, tenant, project, auth, directory_auth, q).await;
         }
         if q.op == "capabilities" {
-            return Ok(capabilities_response(auth));
+            let identity = navigation::identity_with_person(tx, tenant, project, auth).await?;
+            return Ok(capabilities_response(identity));
         }
         if q.op == "workstreams.list" {
             let visible: Vec<_> = auth
@@ -1687,7 +1688,7 @@ fn read_unscoped_op<'a>(
 }
 
 #[inline(never)]
-fn capabilities_response(auth: &ReaderAuthority) -> Value {
+fn capabilities_response(identity: Value) -> Value {
     let mut caps = json!({
         "protocol":"awr-team-workstream","protocol_version":1,"queries":QUERIES,
         "commands":crate::workstream_command::COMMANDS,
@@ -1848,7 +1849,7 @@ fn capabilities_response(auth: &ReaderAuthority) -> Value {
             "default_raw_bytes":2048,"max_raw_bytes":WorkstreamQuery::MAX_ARTIFACT_SEGMENT_BYTES,
             "max_mcp_result_bytes":WorkstreamQuery::MAX_ARTIFACT_SEGMENT_WIRE_BYTES,
             "encoding":"base64","complete_read":"Follow next_query until end_of_artifact; concatenate contiguous ranges from 0 and verify the full length and sha256."});
-    caps["identity"] = navigation::identity(auth);
+    caps["identity"] = identity;
     caps["ordinary_decisions"] = json!({"version":1,"query":"decisions.list",
             "commands":["decision.request","decision.respond","decision.cancel"],
             "request_authority":"current_owned_live_claim","response_authority":"selected_current_member_and_owned_session",

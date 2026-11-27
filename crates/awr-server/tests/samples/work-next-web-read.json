@@ -1,0 +1,96 @@
+{
+  "data": {
+    "execution_authorized": false,
+    "identity": {
+      "actor_id": "mcp-human",
+      "business_roles": [
+        "observer"
+      ],
+      "can_manage_members": false,
+      "can_read_project_audit": false,
+      "client_id": "mcp-cli",
+      "membership_action_ceiling": [
+        "work.read"
+      ],
+      "person_display_name": "MCP member",
+      "person_id": "mcp-human",
+      "role": "developer"
+    },
+    "items": [
+      {
+        "definition_state": "enabled",
+        "navigation": "observe",
+        "next_query": {
+          "op": "work.observe",
+          "protocol_version": 1,
+          "work_id": "a",
+          "workstream_id": "00000000000000000000000001"
+        },
+        "responsibility": {
+          "collaborators": [],
+          "coordination_allowed_advisory": false,
+          "coordination_delegation_id": null,
+          "current_executor": null,
+          "current_executor_matches_client": true,
+          "independent_reviewer": null,
+          "member_person_id": "mcp-human",
+          "owner": null,
+          "pending": null,
+          "personal_mode_default": false,
+          "project_id": "reader-project",
+          "relation": "pool",
+          "version": "0",
+          "work_item_id": "a"
+        },
+        "state": null,
+        "title": "a",
+        "work_id": "a",
+        "workstream_id": "00000000000000000000000001"
+      },
+      {
+        "definition_state": "enabled",
+        "navigation": "waiting_dependency",
+        "next_query": {
+          "op": "work.prepare",
+          "protocol_version": 1,
+          "work_id": "c",
+          "workstream_id": "00000000000000000000000001"
+        },
+        "responsibility": {
+          "collaborators": [],
+          "coordination_allowed_advisory": false,
+          "coordination_delegation_id": null,
+          "current_executor": null,
+          "current_executor_matches_client": true,
+          "independent_reviewer": null,
+          "member_person_id": "mcp-human",
+          "owner": null,
+          "pending": null,
+          "personal_mode_default": false,
+          "project_id": "reader-project",
+          "relation": "pool",
+          "version": "0",
+          "work_item_id": "c"
+        },
+        "state": null,
+        "title": "c",
+        "work_id": "c",
+        "workstream_id": "00000000000000000000000001"
+      }
+    ],
+    "next_action": "Follow current guidance for the listed own sessions first; otherwise follow the selected item's next_query. Stop automatic navigation on inspect_only until recheck_on changes. Candidates have enabled definitions; consume work.prepare before session/claim/execution admission. Navigation is advisory, not a reservation or dependency acceptance.",
+    "next_cursor": null,
+    "recheck_on": [
+      "progress",
+      "wait_resolved",
+      "claim_conflict",
+      "source_change",
+      "permission_change",
+      "unknown_outcome"
+    ],
+    "resume": [],
+    "resume_truncated": false
+  },
+  "project_revision": "4",
+  "protocol_version": 1
+}

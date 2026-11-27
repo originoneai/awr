@@ -11,6 +11,7 @@ const REAL_OVERVIEW = require('../src/test-fixtures/overview/overview-works-run0
 const REAL_REPORTS = require('../src/test-fixtures/work-state/progress-reports-run09.json');
 const REAL_SNAPSHOTS = require('../src/test-fixtures/work-state/snapshots-run09.json');
 const REAL_ACTIVITY = require('../src/test-fixtures/activity/service-audit-development-run09.json');
+const CAPABILITIES_SAMPLE = require('./fixtures/capabilities-web-read.json');
 const COOKIE = 'awr_web_session=synthetic-overview-reader';
 const AT = Date.now();
 const STREAM = REAL_OVERVIEW.workstreams[0].id;
@@ -95,6 +96,12 @@ function defaultReply(query, state) {
     project_id: 'portal', configured: false, version: '0', updated_at_ms: null,
     plan: { organization: null, departments: [], project_department_ids: [], members: [] }, members: [],
   } } };
+  if (query.op === 'capabilities') {
+    const body = { ...CAPABILITIES_SAMPLE, identity: { ...CAPABILITIES_SAMPLE.identity } };
+    delete body.identity.person_id;
+    delete body.identity.person_display_name;
+    return { body };
+  }
   if (query.op === 'workstreams.list') return { body: {
     items: REAL_OVERVIEW.workstreams.map(({ id, external_key, title }) => ({ id, external_key, title })), total: 1, next_cursor: null,
   } };
@@ -212,9 +219,31 @@ test('overview-model composes canonical facts from real extracts without inventi
   assert.equal(result.coverage.approvals.status, 'unread');
   assert.equal(result.coverage.approvals.reason, 'not-read');
   const ops = new Set(state.calls.map((call) => call.op));
-  assert.deepEqual(ops, new Set(['session', 'workstreams.list', 'work.list', 'decisions.list',
+  assert.deepEqual(ops, new Set(['session', 'capabilities', 'workstreams.list', 'work.list', 'decisions.list',
     'dependencies.list', 'handoff.list', 'audit.development', 'directory.read', 'review.rounds']));
   assert.equal(ops.has('work.snapshot'), false);
+});
+
+test('overview-model takes views.me only from the capabilities person identity', async (t) => {
+  const { call, state } = await modelFixture(t, (query) => query.op === 'capabilities'
+    ? { body: CAPABILITIES_SAMPLE } : undefined);
+  const result = await call();
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(result.input.options.views, {
+    me: { personId: CAPABILITIES_SAMPLE.identity.person_id, projectId: 'portal' },
+  });
+  assert.equal(Object.hasOwn(result.input.options.views.me, 'displayName'), false);
+  assert.equal(state.calls.filter((query) => query.op === 'capabilities').length, 1);
+});
+
+test('overview-model leaves views.me unknown when capabilities returns null person fields', async (t) => {
+  const body = structuredClone(CAPABILITIES_SAMPLE);
+  body.identity.person_id = null;
+  body.identity.person_display_name = null;
+  const { call } = await modelFixture(t, (query) => query.op === 'capabilities' ? { body } : undefined);
+  const result = await call();
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(Object.hasOwn(result.input.options, 'views'), false);
 });
 
 test('overview-model treats the real self-scoped activity reply as restricted, not project-complete', async (t) => {
@@ -300,7 +329,7 @@ test('overview-model shares one in-flight composition between overlapping calls'
   assert.equal(left.ok, true, JSON.stringify(left));
   assert.equal(right.ok, true, JSON.stringify(right));
   assert.equal(left.read_at_unix_ms, right.read_at_unix_ms);
-  assert.equal(nonSession(state).length, 10);
+  assert.equal(nonSession(state).length, 11);
   assert.equal(state.calls.filter((query) => query.op === 'session').length, 2);
 });
 
@@ -356,8 +385,8 @@ test('overview-model never shares a composition between different cookie session
   assert.equal(right.input.tasks.items[0].id, 'work-b');
   assert.equal(left.input.tasks.items[0].title, 'Session A task');
   assert.equal(right.input.tasks.items[0].title, 'Session B task');
-  assert.equal(nonSession(state).filter((query) => query.cookie === sessionA).length, 8);
-  assert.equal(nonSession(state).filter((query) => query.cookie === sessionB).length, 8);
+  assert.equal(nonSession(state).filter((query) => query.cookie === sessionA).length, 9);
+  assert.equal(nonSession(state).filter((query) => query.cookie === sessionB).length, 9);
 });
 
 test('overview-model fails closed instead of joining an older-generation flight', async (t) => {
@@ -406,7 +435,7 @@ test('overview-model cleans a rejected flight so the next call recomputes succes
   globalThis.structuredClone = originalClone;
   const recovered = await call();
   assert.equal(recovered.ok, true, JSON.stringify(recovered));
-  assert.equal(nonSession(state).length, 16, 'both the rejected and recovered calls must compose');
+  assert.equal(nonSession(state).length, 18, 'both the rejected and recovered calls must compose');
 });
 
 test('overview-model skips review reads only for no_runtime, not other null runtime reasons', async (t) => {
@@ -429,7 +458,7 @@ test('overview-model spends the 50-work two-stream cap in deterministic list ord
   const { call, state } = await modelFixture(t, respondFor(project), { readTimeoutMs: 1000, overviewDeadlineMs: 5000 });
   const result = await call();
   assert.equal(result.ok, true, JSON.stringify(result));
-  assert.equal(nonSession(state).length, 47);
+  assert.equal(nonSession(state).length, 48);
   const reads = reviewIds(state);
   assert.equal(reads.length, 39);
   assert.equal(reads[0], 'w-1-024', 'the delivered result must be read first');
@@ -447,7 +476,7 @@ test('overview-model gives no-runtime works known empty rounds without spending 
   const { call, state } = await modelFixture(t, respondFor(project), { readTimeoutMs: 1000, overviewDeadlineMs: 5000 });
   const result = await call();
   assert.equal(result.ok, true, JSON.stringify(result));
-  assert.equal(nonSession(state).length, 37);
+  assert.equal(nonSession(state).length, 38);
   const reads = reviewIds(state);
   assert.equal(reads.length, 30);
   assert.ok(reads.every((id) => Number(id.split('-')[2]) % 2 === 0));
@@ -460,7 +489,7 @@ test('overview-model gives no-runtime works known empty rounds without spending 
   assert.equal(result.freshness.authoritative.status, 'measured');
 });
 
-test('overview-model caps a 100-work three-stream composition at 47 non-session reads', async (t) => {
+test('overview-model caps a 100-work three-stream composition at 48 non-session reads', async (t) => {
   const project = bigProject(3, 34, 0);
   project.items['stream-1'] = project.items['stream-1'].slice(0, 33);
   project.items['stream-2'] = project.items['stream-2'].slice(0, 33);
@@ -470,8 +499,8 @@ test('overview-model caps a 100-work three-stream composition at 47 non-session 
   const result = await call();
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.equal(result.input.tasks.items.length, 100);
-  assert.ok(nonSession(state).length <= 47);
-  assert.equal(nonSession(state).length, 47);
+  assert.ok(nonSession(state).length <= 48);
+  assert.equal(nonSession(state).length, 48);
   assert.equal(reviewIds(state).length, 38);
   assert.equal(result.input.reviewRounds.reason, 'truncated');
 });
@@ -489,7 +518,7 @@ test('overview-model makes only session reads during twelve polls inside the cac
   const pollingCalls = state.calls.slice(afterWarm);
   assert.equal(pollingCalls.length, 12);
   assert.ok(pollingCalls.every((query) => query.op === 'session'));
-  assert.equal(nonSession(state).length, 8);
+  assert.equal(nonSession(state).length, 9);
 });
 
 test('overview-model revocation clears the cached model and later reads return no restricted input', async (t) => {

@@ -17,6 +17,28 @@ pub(super) fn identity(auth: &ReaderAuthority) -> Value {
     identity
 }
 
+/// Resolve only the authenticated viewer's own recorded person relationship.
+/// This is the same read-only resolver used by audit attribution; no directory
+/// permission is added and no person row is created for an unknown human.
+pub(super) async fn identity_with_person(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    auth: &ReaderAuthority,
+) -> PgResult<Value> {
+    let actor_ids = [auth.actor_id.clone()];
+    let people = crate::review::resolve_person_ids(tx, tenant, project, &actor_ids).await?;
+    let (person_id, person_display_name) = people
+        .get(&auth.actor_id)
+        .and_then(|person| person.active_person())
+        .map(|(id, name)| (json!(id), json!(name)))
+        .unwrap_or((Value::Null, Value::Null));
+    let mut identity = identity(auth);
+    identity["person_id"] = person_id;
+    identity["person_display_name"] = person_display_name;
+    Ok(identity)
+}
+
 pub(super) fn visible_streams(auth: &ReaderAuthority) -> Vec<String> {
     auth.catalog
         .workstreams
@@ -272,9 +294,10 @@ pub(super) async fn next(
     } else {
         Value::Null
     };
+    let identity = identity_with_person(tx, tenant, project, auth).await?;
     Ok(
         json!({"protocol_version":1,"project_revision":auth.revision.to_string(),"data":{
-        "identity":identity(auth),"resume":resume,"resume_truncated":resume_truncated,"items":items,"next_cursor":next,
+        "identity":identity,"resume":resume,"resume_truncated":resume_truncated,"items":items,"next_cursor":next,
         "execution_authorized":false,"next_action":"Follow current guidance for the listed own sessions first; otherwise follow the selected item's next_query. Stop automatic navigation on inspect_only until recheck_on changes. Candidates have enabled definitions; consume work.prepare before session/claim/execution admission. Navigation is advisory, not a reservation or dependency acceptance.",
         "recheck_on":["progress","wait_resolved","claim_conflict","source_change","permission_change","unknown_outcome"]}}),
     )

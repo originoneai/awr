@@ -1147,10 +1147,10 @@ function compositionFailedFreshness(errorCode, readAtMs) {
 
 /**
  * A single visible tab can poll every five seconds. One composition may use at
- * most 47 non-session reads; with twelve revocation checks that leaves a hard
- * ceiling of 59 upstream calls per minute, including pagination and failures.
+ * most 48 non-session reads; with twelve revocation checks that leaves a hard
+ * ceiling of 60 upstream calls per minute, including pagination and failures.
  */
-const OVERVIEW_MODEL_READ_BUDGET = 47;
+const OVERVIEW_MODEL_READ_BUDGET = 48;
 const OVERVIEW_MODEL_READ_CONCURRENCY = 8;
 const OVERVIEW_MODEL_STALLED_AFTER_DAYS = 3;
 
@@ -1161,6 +1161,12 @@ function hasField(value, field) {
 
 function copyOverviewField(target, targetField, source, sourceField = targetField) {
   if (hasField(source, sourceField)) target[targetField] = source[sourceField];
+}
+
+/** The viewer comes only from capabilities; actor ids and fixture data are not fallbacks. */
+function overviewViewerMe(identity, projectId) {
+  if (typeof identity?.person_id !== 'string' || identity.person_id.length === 0) return null;
+  return { personId: identity.person_id, projectId };
 }
 
 /** Map only facts carried by work.list; unknown is not a measured absence. */
@@ -1644,7 +1650,7 @@ function createTeamBridge(opts) {
     return { ...session, readAt: now() };
   }
 
-  async function readOverviewCapabilities(project, req, signal) {
+  async function readOverviewCapabilities(project, req, signal, { cache = true } = {}) {
     const cached = cachedOverviewValue(req, 'capabilities', project);
     if (cached) return { status: 200, json: cached.value, setCookie: [], readAt: cached.readAt };
     const capabilities = await proxyTeam(`/v1/web/projects/${encodeURIComponent(project)}/query`, req,
@@ -1653,7 +1659,7 @@ function createTeamBridge(opts) {
       clearOverviewCache(req);
       return capabilities;
     }
-    storeOverviewValue(req, 'capabilities', project, capabilities.json);
+    if (cache) storeOverviewValue(req, 'capabilities', project, capabilities.json);
     return { ...capabilities, readAt: now() };
   }
 
@@ -1906,6 +1912,20 @@ function createTeamBridge(opts) {
       return { op: 'directory.read', items: data.members, truncated: false, next_cursor: null, as_of: null, readAt: now() };
     };
 
+    readBudget.remaining -= 1;
+    let capabilities;
+    try {
+      capabilities = await readOverviewCapabilities(project, req,
+        AbortSignal.timeout(Math.max(1, Math.min(readTimeoutMs, deadlineAt - now()))), { cache: false });
+    } catch {
+      return { authError: { code: 'ReadTimeout', message: 'Capabilities read exceeded the composition deadline' } };
+    }
+    if (!capabilities || capabilities.status >= 400) {
+      return { authError: liveError(capabilities).error };
+    }
+    const identity = capabilities.json && (capabilities.json.data || capabilities.json).identity;
+    const viewerMe = overviewViewerMe(identity, project);
+
     const streams = await readList({ op: 'workstreams.list' });
     if (streams.error && READ_AUTH_FAILURES.has(streams.error.code)) return { authError: streams.error };
     const workReads = [];
@@ -1985,7 +2005,8 @@ function createTeamBridge(opts) {
     const triples = measuredReads.map((read) => read.as_of);
     const common = complete && triples.length > 0 && triples.every((triple) => triple)
       && new Set(triples.map((triple) => JSON.stringify(triple))).size === 1 ? triples[0] : null;
-    const readAt = Math.min(session.readAt ?? now(), ...allReads.map((read) => read.readAt ?? now()));
+    const readAt = Math.min(session.readAt ?? now(), capabilities.readAt ?? now(),
+      ...allReads.map((read) => read.readAt ?? now()));
     const measuredTimes = measuredReads.map((read) => read.observed_at_unix_ms);
     const commonAt = common && measuredTimes.every((time) => Number.isFinite(time)) ? Math.min(...measuredTimes) : null;
     // Demo clock decoupling (the #709 review decision): the demo's as-of timestamps ride
@@ -2017,9 +2038,7 @@ function createTeamBridge(opts) {
           options: {
             nowUnixMs: demoOrganization?.data.now_unix_ms ?? readAt,
             stalledAfterDays: OVERVIEW_MODEL_STALLED_AFTER_DAYS,
-            ...(demoOrganization ? { views: { me: {
-              personId: demoOrganization.data.viewer.person_id, projectId: project,
-            } } } : {}),
+            ...(viewerMe ? { views: { me: viewerMe } } : {}),
           },
         },
         coverage: Object.fromEntries(Object.entries(parts).map(([part, value]) => [part, value.detail])),
@@ -2061,6 +2080,11 @@ function createTeamBridge(opts) {
         : whole.approvals.items.filter((item) => item.projectId === project),
     };
     const periods = whole.options.views;
+    const viewerProject = organization ? periods.me.projectId : project;
+    const capabilities = demo.data.projects.some((entry) => entry.project_id === viewerProject)
+      ? demo.query(viewerProject, { protocol_version: 1, op: 'capabilities' })
+      : null;
+    const viewerMe = overviewViewerMe(capabilities?.identity, viewerProject);
     // The demo clock decoupling (the #709 review decision) applies here too: read times
     // and every freshness measurement report the moment this server answered, while the
     // derivation clock below stays on the whole-week fixture time.
@@ -2082,8 +2106,7 @@ function createTeamBridge(opts) {
           // relabel it running and the derived statuses would drift off the prototype's.
           stalledAfterDays: whole.options.stalledAfterDays,
           views: {
-            me: { personId: demo.data.viewer.person_id,
-              projectId: organization ? whole.options.views.me.projectId : project },
+            ...(viewerMe ? { me: viewerMe } : {}),
             currentWeek: periods.currentWeek,
             previousWeek: periods.previousWeek,
             currentMonth: periods.currentMonth,
