@@ -1449,37 +1449,37 @@ pub(crate) async fn read(
     // TMCP-011: every query shares the work.read decision; invisible streams stay filtered above.
     authorize_query(auth, None, q.work_id.as_deref(), &q.op)?;
     if q.op == "work.next" {
-        return navigation::next(tx, tenant, project, auth, q).await;
+        return Box::pin(navigation::next(tx, tenant, project, auth, q)).await;
     }
     if q.op == "work.inbox" {
-        return inbox::read(tx, tenant, project, auth, q).await;
+        return Box::pin(inbox::read(tx, tenant, project, auth, q)).await;
     }
     if q.op == "planning.candidates" {
-        return planning::read(tx, tenant, project, auth, q).await;
+        return Box::pin(planning::read(tx, tenant, project, auth, q)).await;
     }
     if q.op == "sources.inspect" {
-        return sources::read(tx, tenant, project, auth, q).await;
+        return Box::pin(sources::read(tx, tenant, project, auth, q)).await;
     }
     if q.op == "documents.list" {
-        return documents::read(tx, tenant, project, auth, q).await;
+        return Box::pin(documents::read(tx, tenant, project, auth, q)).await;
     }
     if q.op == "lessons.list" {
         return Box::pin(lessons::read(tx, tenant, project, auth, q)).await;
     }
     if q.op == "decisions.list" {
-        return decisions::read(tx, tenant, project, auth, q).await;
+        return Box::pin(decisions::read(tx, tenant, project, auth, q)).await;
     }
     if matches!(q.op.as_str(), "updates.list" | "update.inspect") {
-        return updates::read(tx, tenant, project, auth, q).await;
+        return Box::pin(updates::read(tx, tenant, project, auth, q)).await;
     }
     if q.op == "dependencies.list" {
-        return dependencies::read(tx, tenant, project, auth, q).await;
+        return Box::pin(dependencies::read(tx, tenant, project, auth, q)).await;
     }
     if q.op == "handoff.list" {
-        return handoffs::read(tx, tenant, project, auth, q).await;
+        return Box::pin(handoffs::read(tx, tenant, project, auth, q)).await;
     }
     if matches!(q.op.as_str(), "audit.requests" | "audit.development") {
-        return activity::read(tx, tenant, project, auth, directory_auth, q).await;
+        return Box::pin(activity::read(tx, tenant, project, auth, directory_auth, q)).await;
     }
     if q.op == "capabilities" {
         let mut caps = json!({

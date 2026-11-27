@@ -732,10 +732,13 @@ impl WorkstreamCommandStore {
                 unreachable!("neutral dispatch precedes the generic transaction")
             }
             Action::Intake(a) => {
-                task_intake::apply(&tx, tenant, project, &auth, &command, ownership, a).await?
+                Box::pin(task_intake::apply(
+                    &tx, tenant, project, &auth, &command, ownership, a,
+                ))
+                .await?
             }
             Action::Admission(a) => {
-                admission::apply(&tx, tenant, project, &auth, &command, a).await?
+                Box::pin(admission::apply(&tx, tenant, project, &auth, &command, a)).await?
             }
             Action::Lesson(a) => {
                 Box::pin(lessons::apply(
@@ -744,44 +747,56 @@ impl WorkstreamCommandStore {
                 .await?
             }
             Action::Decision(a) => {
-                decisions::apply(&tx, tenant, project, &auth, &command, ownership, a).await?
+                Box::pin(decisions::apply(
+                    &tx, tenant, project, &auth, &command, ownership, a,
+                ))
+                .await?
             }
             Action::Execution(a) => {
                 if command.op == "execution.prepare"
                     && contract.dependency_acceptance.values().any(|mode| {
                         matches!(mode, awr_team::DependencyAcceptanceMode::CrossWorkstream(_))
                     })
-                    && !task_intake::dependencies_ready(
+                    && !Box::pin(task_intake::dependencies_ready(
                         &tx,
                         tenant,
                         project,
                         &auth,
                         &command.work_id,
                         &command.workstream_id.to_string(),
-                    )
+                    ))
                     .await?
                 {
                     return Err(PgError::MissingDependency);
                 }
-                executions::apply(
+                Box::pin(executions::apply(
                     &tx, tenant, project, &auth, &command, ownership, &contract, a,
-                )
+                ))
                 .await?
             }
             Action::Claim(a) => {
-                claims::apply(&tx, tenant, project, &auth, &command, ownership, a).await?
+                Box::pin(claims::apply(
+                    &tx, tenant, project, &auth, &command, ownership, a,
+                ))
+                .await?
             }
             Action::Handoff(a) => {
-                handoffs::apply(&tx, tenant, project, bearer, &auth, &command, ownership, a).await?
+                Box::pin(handoffs::apply(
+                    &tx, tenant, project, bearer, &auth, &command, ownership, a,
+                ))
+                .await?
             }
             Action::Review(a) => {
-                reviews::apply(
+                Box::pin(reviews::apply(
                     &tx, tenant, project, &auth, &command, ownership, &contract, a,
-                )
+                ))
                 .await?
             }
             a => Applied {
-                data: apply(&tx, tenant, project, bearer, &auth, &command, ownership, a).await?,
+                data: Box::pin(apply(
+                    &tx, tenant, project, bearer, &auth, &command, ownership, a,
+                ))
+                .await?,
                 preceding_events: Vec::new(),
             },
         };
