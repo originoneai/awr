@@ -243,10 +243,13 @@ function renderDeptPage(
 }
 
 beforeEach(async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(NOW);
   await i18n.changeLanguage('zh-CN');
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
