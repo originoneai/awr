@@ -143,6 +143,13 @@ function createFakeCli(snapshot, options = {}) {
         next_action: 'repair_required_context_before_execution',
       });
     }
+    if (a === 'work' && b === 'show') {
+      if (['--explain', '--cached', '--source-sha', '--branch'].some((name) => flag(args, name))) {
+        return error('InvalidInput', 'work show does not accept extra flags here');
+      }
+      const key = args[2];
+      return ok({ work: { external_key: key, priority: 'P1' } });
+    }
     return error('InvalidInput', `unrecognized subcommand: ${args.join(' ')}`);
   }
 

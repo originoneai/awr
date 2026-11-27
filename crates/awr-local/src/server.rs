@@ -272,6 +272,14 @@ fn argv(route: &str, query: &HashMap<String, String>) -> Result<Vec<String>> {
                 "work key",
             )?,
         ],
+        "map/show" => vec![
+            "work".into(),
+            "show".into(),
+            bounded_key(
+                query.get("key").map(String::as_str).unwrap_or(""),
+                "work key",
+            )?,
+        ],
         _ => return Err(Error::NotFound("progress route".into())),
     };
     if route == "map/work-graph" && query.get("cached").is_some_and(|v| v == "1") {
@@ -637,6 +645,24 @@ mod tests {
             ["work", "assess", "WORK"]
         );
         assert!(argv("map/assess", &empty).is_err());
+        assert_eq!(
+            argv("map/show", &HashMap::from([("key".into(), "WORK".into())])).unwrap(),
+            ["work", "show", "WORK"]
+        );
+        assert_eq!(
+            argv(
+                "map/show",
+                &HashMap::from([
+                    ("key".into(), "WORK".into()),
+                    ("cached".into(), "1".into()),
+                    ("source_sha".into(), "abc".into()),
+                    ("branch".into(), "main".into()),
+                ])
+            )
+            .unwrap(),
+            ["work", "show", "WORK"]
+        );
+        assert!(argv("map/show", &empty).is_err());
         for invalid in ["", "W1;rm", "not a key", &"x".repeat(201)] {
             assert!(
                 argv(
@@ -652,6 +678,7 @@ mod tests {
                 )
                 .is_err()
             );
+            assert!(argv("map/show", &HashMap::from([("key".into(), invalid.into())])).is_err());
         }
     }
 
