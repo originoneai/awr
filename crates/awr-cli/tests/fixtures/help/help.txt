@@ -23,6 +23,7 @@ Commands:
   ready         List dependency-ready work with explicit reasons for excluded work
   assessment    Offline assessment replay, shadow compare, and advice kill-switch
   work          Read one work item without expanding the full ledger or event history
+  goal          Read-only goal views: coverage, uncovered goals and orphan references
   session       Start, inspect, checkpoint or end an explicitly identified agent session
   evidence      Add evidence records or inspect a specific record and its report reference
   verify        Verify completed work for a commit using local observations or fresh checks

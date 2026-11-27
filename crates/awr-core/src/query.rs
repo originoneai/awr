@@ -22,6 +22,46 @@ pub struct DependencyGraph {
     pub project_revision: Revision,
 }
 
+/// Read-only goal coverage view: every declared goal with the works that
+/// support it, goals that no live work supports and works that reference a
+/// missing or retired goal. Pure aggregation; no judgment is made.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GoalCoverage {
+    pub goals: Vec<GoalCoverageEntry>,
+    /// Goals in an active or confirmed state that no non-cancelled,
+    /// non-archived work references.
+    pub uncovered_goal: Vec<GoalCoverageEntry>,
+    /// Live works whose goal reference points nowhere or to a retired goal.
+    pub orphan_work: Vec<GoalOrphanReference>,
+    pub project_revision: Revision,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GoalCoverageEntry {
+    pub key: String,
+    pub title: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_pointer: Option<String>,
+    pub works: Vec<GoalWorkReference>,
+    pub status_counts: std::collections::BTreeMap<String, usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GoalWorkReference {
+    pub key: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GoalOrphanReference {
+    pub work: String,
+    pub goal: String,
+    /// Why the reference is an orphan: `unknown_goal`, `cancelled_goal` or
+    /// `archived_goal`.
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ReadinessDiagnostic {
     pub code: String,

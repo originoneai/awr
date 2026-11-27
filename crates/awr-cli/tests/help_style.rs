@@ -133,7 +133,7 @@ fn next_step_ac5_definition_example_stays_out_of_first_layer_help() {
 fn gap_hints_ac4_governance_help_is_bounded_and_overview_sizes_are_pinned() {
     let output = help(&["work", "help", "governance"]);
     assert!(output.len() <= 3584, "{} bytes", output.len());
-    for (args, baseline) in [(vec!["--help"], 976), (vec!["work", "--help"], 945)] {
+    for (args, baseline) in [(vec!["--help"], 982), (vec!["work", "--help"], 945)] {
         assert_eq!(help(&args).len(), baseline, "{args:?}");
     }
 }
