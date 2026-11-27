@@ -1799,6 +1799,9 @@ function createDemoOrganization({ variant = 'full',
   //   'Claude 桌面（林悦）'            → actor 林悦, client Claude 桌面, client_id set
   //   '周宁（通过 Claude 桌面）'        → actor 周宁, client Claude 桌面, client_id null
   //   '陈宇的 Agent' / '许宁'          → the recorded attribution, no client named
+  // AWR-PPD-062: who acted is the record's own `actor_kind` (agent | human), the fact the
+  // live audit reports; the phrase keeps agreeing with it — a client-attributed run is an
+  // Agent's, a person acting through a client is a person's.
   function auditIdentity(item) {
     const phrase = typeof item.actor_display_name === 'string' ? item.actor_display_name : '';
     let match = /^(.+?)（通过 (.+?)）$/.exec(phrase);
@@ -1825,6 +1828,7 @@ function createDemoOrganization({ variant = 'full',
           actor: {
             person_id: actor ? (actor[1] ?? actor[0]) : null,
             display_name: identity.person || null,
+            kind: item.actor_kind ?? null,
           },
           client: { display_name: identity.client },
           action: kind === 'development' ? item.action : 'query',

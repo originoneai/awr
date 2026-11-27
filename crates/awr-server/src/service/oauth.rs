@@ -239,16 +239,12 @@ async fn resource_metadata(
 // fetched, and cannot grant identity or expand the advertised flow.
 #[derive(Deserialize)]
 struct Registration {
-    #[serde(default = "default_client_name")]
-    client_name: String,
+    client_name: Option<String>,
     redirect_uris: Vec<String>,
     token_endpoint_auth_method: Option<String>,
     grant_types: Option<Vec<String>>,
     response_types: Option<Vec<String>>,
     scope: Option<String>,
-}
-fn default_client_name() -> String {
-    "MCP client".into()
 }
 fn valid_scope(scope: Option<&str>) -> bool {
     scope.is_none_or(|s| s.len() <= 128 && s.split_ascii_whitespace().eq(["awr.project"]))
@@ -298,7 +294,7 @@ async fn register(
     let oauth = state.oauth.as_ref().expect("enabled OAuth routes");
     match oauth
         .store
-        .register(input.client_name, input.redirect_uris, Instant::now())
+        .register_with_name(input.client_name, input.redirect_uris, Instant::now())
     {
         Ok(client) => response(
             StatusCode::CREATED,
@@ -365,6 +361,7 @@ async fn authorize(State(state): State<Arc<StateData>>, RawQuery(query): RawQuer
         Ok(page) => {
             let view = ConsentView {
                 client_name: page.client_name,
+                reported_client_name: page.reported_client_name,
                 request: page.request,
             };
             let mut res = consent_page(
@@ -558,19 +555,40 @@ async fn consent(State(state): State<Arc<StateData>>, headers: HeaderMap, body: 
             oauth_error(OAuthError::Unavailable)
         };
     }
-    match oauth
+    let code =
+        match oauth
+            .store
+            .approve(&transaction, &cookie, credential.to_owned(), Instant::now())
+        {
+            Ok(code) => code,
+            Err(e) => return oauth_error(e),
+        };
+    // AWR-PPD-062: the name the client registered for itself is recorded with the
+    // credential the member is approving, so audit reads can name that client. It is
+    // self-reported display text and grants nothing; the connection itself keeps
+    // deriving from the live credential on every operation.
+    if state
         .store
-        .approve(&transaction, &cookie, credential.to_owned(), Instant::now())
+        .connections()
+        .record_client_name(
+            &project.tenant_id,
+            &project.project_id,
+            credential,
+            view.reported_client_name.as_deref().unwrap_or_default(),
+        )
+        .await
+        .is_err()
     {
-        Ok(code) => return_to_client(
-            &code.redirect_uri,
-            "code",
-            &code.code,
-            code.state.as_deref(),
-        ),
-        Err(e) => oauth_error(e),
+        return oauth_error(OAuthError::Unavailable);
     }
+    return_to_client(
+        &code.redirect_uri,
+        "code",
+        &code.code,
+        code.state.as_deref(),
+    )
 }
+
 async fn token(State(state): State<Arc<StateData>>, headers: HeaderMap, body: Bytes) -> Response {
     if !content_type(&headers, "application/x-www-form-urlencoded")
         || headers.contains_key(header::AUTHORIZATION)
