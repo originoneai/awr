@@ -1,0 +1,12 @@
+{
+  "action_guidance": {
+    "basis": "The query validator requires the indicated field constraint.",
+    "condition": "This read query was rejected.",
+    "next_action": "Use a registered source reference from work.prepare. For repository delivery files, follow an authorized artifact.content query from the delivery or review manifest; source.content does not read arbitrary repository files.",
+    "recheck": "After correcting the query inputs. Current permission and state checks still apply; this advice does not authorize execution or command replay."
+  },
+  "code": "InvalidInput",
+  "constraint": "registered_source_required",
+  "invalid_field": "/source_path",
+  "message": "query field violates the selected operation's contract"
+}

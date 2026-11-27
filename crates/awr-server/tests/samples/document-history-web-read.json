@@ -1,0 +1,43 @@
+{
+  "coordinator_epoch": "epoch-a",
+  "data": {
+    "as_of": {
+      "at_unix_ms": 1795417648960,
+      "project_revision": "5",
+      "source_snapshot_id": "01M83KPBQDF72XYXVVPW3A13XF"
+    },
+    "attribution_basis": "snapshot_submitter",
+    "execution_authorized": false,
+    "items": [
+      {
+        "digest_prefix": "74e74c1518fb",
+        "recorded_at_unix_ms": 1795417648896,
+        "source_snapshot_id": "01M83KPBQDF72XYXVVPW3A13XF",
+        "submitted_by": null
+      },
+      {
+        "digest_prefix": "9f86c5231c06",
+        "recorded_at_unix_ms": 1795417648821,
+        "source_snapshot_id": "01M83KPBMM3Y20H5BTHR5VP7P1",
+        "submitted_by": {
+          "display_name": "Lin Yue",
+          "person_id": "agent"
+        }
+      }
+    ],
+    "limit": 20,
+    "order": "newest_first",
+    "path": "docs/alpha.md",
+    "read_only": true,
+    "source_kind": "registered_source_snapshots",
+    "total": 2,
+    "truncated": false,
+    "work_id": null
+  },
+  "project_revision": "5",
+  "project_status": "active",
+  "protocol_version": 1,
+  "scope_id": "main",
+  "selection_basis": "project",
+  "source_snapshot_id": "01M83KPBQDF72XYXVVPW3A13XF"
+}
