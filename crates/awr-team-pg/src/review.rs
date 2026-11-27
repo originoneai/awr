@@ -2212,6 +2212,12 @@ impl ResolvedPerson {
         let display_name = self.active_names.get(person_id)?;
         Some((person_id, display_name))
     }
+
+    /// The recorded actor kind: `agent`, `human` or `system`. It is a property of
+    /// the actor row itself, independent of whether a person resolved.
+    pub(crate) fn kind(&self) -> &str {
+        &self.kind
+    }
 }
 
 /// Read-only batch counterpart of `resolve_person_id`. It uses the same actor

@@ -31,6 +31,9 @@
     ["table cell what", ".block table.t tbody td:nth-child(3)", ".activity-table tbody td:nth-child(3)", ["TEXT", "padding-top", "padding-left", "__h"]],
     ["table cell task", ".block table.t tbody td:nth-child(4)", ".activity-table tbody td:nth-child(4)", ["TEXT", "padding-top", "padding-left", "__h"]],
     ["who text weight", ".block table.t tbody td:nth-child(2) span[style*=\"font-weight\"]", ".activity-table tbody td:nth-child(2) .activity-actor", ["TEXT"]],
-    ["note", ".pnote", ".activity-pnote", ["BOX", "TEXT", "border-top-color", "__h"]]
-  ]
+    ["note", ".pnote", ".activity-pnote", ["BOX", "TEXT", "border-top-color", "__h"]],
+  ["shared segmented container", ".filters .seg", ".activity-segment", ["BOX", "PAINT"]],
+  ["shared segmented unselected", ".filters .seg button:not([aria-pressed=\"true\"])", ".activity-segment button[aria-pressed=\"false\"]", ["BOX", "TEXT", "PAINT", "height", "padding-right"]],
+  ["shared segmented selected", ".filters .seg button[aria-pressed=\"true\"]", ".activity-segment button[aria-pressed=\"true\"]", ["BOX", "TEXT", "PAINT", "height", "padding-right"]]
+ ]
 }

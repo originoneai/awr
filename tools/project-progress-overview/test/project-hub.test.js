@@ -444,3 +444,135 @@ test('detail entries and history restoration read current state using uncached p
     assert.equal(request.options.cache, 'no-store');
   }
 });
+
+test('overview project switcher renders sorted localized options, states, disabled unavailable entries and XSS-safe names', async () => {
+  const { createProjectSwitcher } = require('../public/app.js');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const pendingKey = 'd'.repeat(64);
+  const repairKey = 'e'.repeat(64);
+  const catalog = [
+    { ...projects[0], name: '<img src=x onerror=alert(1)>', state: 'connected' },
+    projects[1],
+    { ...projects[2] },
+    { key: pendingKey, name: 'Pending', root: '/work/pending', available: true, last_used_at: 0, registered_at: 40000, state: 'discovered' },
+    { key: repairKey, name: 'Repair', root: '/work/repair', available: true, last_used_at: 25000, state: 'attention' },
+  ];
+  const before = catalog.map((p) => p.key);
+  for (const locale of ['en', 'zh-CN']) {
+    const t = h.tFor(locale);
+    const { doc } = dom.createPage(html);
+    const select = doc.getElementById('mapProjectSelect');
+    assert.equal(select.hidden, true);
+    const switcher = createProjectSwitcher({
+      document: doc, i18n: { t, locale }, currentKey: projects[0].key,
+      load: async () => ({ ok: true, data: { projects: catalog } }), navigate() {},
+    });
+    assert.equal(await switcher.refresh(), true);
+    assert.equal(select.hidden, false);
+    assert.equal(select.value, projects[0].key);
+    assert.equal(select.querySelector('img'), null);
+    const options = select.querySelectorAll('option');
+    assert.equal(options[0].textContent, t('map.project_all', { count: 5 }));
+    assert.deepEqual(options.slice(1).map((o) => o.value), [projects[1].key, repairKey, projects[2].key, projects[0].key, pendingKey]);
+    assert.deepEqual(options.slice(1).map((o) => o.textContent), [
+      t('map.project_option', { name: 'Beta', state: t('map.project_connected') }),
+      t('map.project_option', { name: 'Repair', state: t('hub.attention') }),
+      t('map.project_option', { name: 'Missing', state: t('hub.unavailable') }),
+      t('map.project_option', { name: '<img src=x onerror=alert(1)>', state: t('map.project_connected') }),
+      t('map.project_option', { name: 'Pending', state: t('hub.pending') }),
+    ]);
+    assert.equal(options[3].disabled, true);
+    assert.equal(options[4].disabled, false);
+  }
+  assert.deepEqual(catalog.map((p) => p.key), before);
+});
+
+test('overview project switcher routes selections and guards same-project, unavailable and invalid keys', async () => {
+  const { createProjectSwitcher } = require('../public/app.js');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const pendingKey = 'd'.repeat(64);
+  const repairKey = 'e'.repeat(64);
+  const catalog = [
+    ...projects,
+    { key: pendingKey, name: 'Pending', root: '/work/pending', available: true, last_used_at: 0, state: 'discovered' },
+    { key: repairKey, name: 'Repair', root: '/work/repair', available: true, last_used_at: 25000, state: 'attention' },
+  ];
+  for (const locale of ['en', 'zh-CN']) {
+    const { doc } = dom.createPage(html);
+    const select = doc.getElementById('mapProjectSelect');
+    const navigated = [];
+    const switcher = createProjectSwitcher({
+      document: doc, i18n: { t: h.tFor(locale), locale }, currentKey: projects[0].key,
+      load: async () => ({ ok: true, data: { projects: catalog } }),
+      navigate: (href) => navigated.push(href),
+    });
+    await switcher.refresh();
+    for (const [value, expected] of [
+      [projects[0].key, null],
+      ['', `/?lang=${locale}`],
+      [projects[1].key, `/?project=${projects[1].key}&lang=${locale}`],
+      [pendingKey, `/?project=${pendingKey}&lang=${locale}&intake=1`],
+      [repairKey, `/?project=${repairKey}&lang=${locale}&intake=1`],
+    ]) {
+      const before = navigated.length;
+      select.value = value;
+      dom.fire(select, 'change');
+      assert.equal(navigated.length, expected ? before + 1 : before);
+      if (expected) assert.equal(navigated.at(-1), expected);
+    }
+    const count = navigated.length;
+    for (const blocked of [projects[2].key, '../other', 'javascript:alert(1)']) {
+      select.value = blocked;
+      dom.fire(select, 'change');
+      assert.equal(navigated.length, count);
+      assert.equal(select.value, projects[0].key);
+    }
+  }
+});
+
+test('overview bootstrap skips switcher in standalone mode, hides on empty/bad replies, and refreshes on persisted pageshow', async () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const runApp = async (href, reply) => {
+    const { doc } = dom.createPage(html);
+    const fetches = [];
+    const listeners = {};
+    let mapRefreshes = 0;
+    vm.runInNewContext(source, {
+      URL, location: { href, assign() {} }, document: doc,
+      AWR_I18N: { t: h.tFor('en'), locale: 'en' },
+      AWR_PROJECT_MAP: { ui: { createProjectMap: () => ({ show() {}, refresh() { mapRefreshes += 1; } }) } },
+      addEventListener: (name, fn) => { listeners[name] = fn; },
+      fetch: async (url, options) => { fetches.push({ url, options }); return { json: async () => reply() }; },
+    });
+    await new Promise(setImmediate);
+    return { select: doc.getElementById('mapProjectSelect'), fetches, listeners, get mapRefreshes() { return mapRefreshes; } };
+  };
+
+  const standalone = await runApp('http://127.0.0.1:7381/?demo=1', () => ({ ok: true, data: { projects } }));
+  assert.deepEqual(standalone.fetches, []);
+  assert.equal(standalone.select.hidden, true);
+
+  for (const bad of [
+    () => ({ ok: true, data: { projects: [] } }),
+    () => ({ ok: false }),
+    () => ({ ok: true, data: { projects: [{ ...projects[0], key: '../bad' }] } }),
+    () => { throw new Error('offline'); },
+  ]) {
+    const degraded = await runApp(`http://127.0.0.1:7381/?project=${projects[0].key}`, bad);
+    assert.equal(degraded.select.hidden, true);
+  }
+
+  const live = await runApp(`http://127.0.0.1:7381/?project=${projects[0].key}`, () => ({ ok: true, data: { projects } }));
+  assert.equal(live.fetches.length, 1);
+  assert.equal(live.fetches[0].url, '/api/projects');
+  assert.equal(live.select.hidden, false);
+  live.listeners.pageshow({ persisted: false });
+  await new Promise(setImmediate);
+  assert.equal(live.mapRefreshes, 0);
+  assert.equal(live.fetches.length, 1);
+  live.listeners.pageshow({ persisted: true });
+  await new Promise(setImmediate);
+  assert.equal(live.mapRefreshes, 1);
+  assert.equal(live.fetches.length, 2);
+});

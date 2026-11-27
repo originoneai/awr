@@ -1,6 +1,6 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { App as AntdApp } from 'antd';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { MemoryRouter, Route, Routes, useLocation, type Location } from 'react-router';
@@ -226,6 +226,27 @@ describe('perspective shell integration', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: '部门负责人' }));
     await user.keyboard('{Space}');
     expect(pressed('部门负责人')).toBe('true');
+  });
+
+  it('uses the shared control with Home/End and a single Tab stop', async () => {
+    const user = userEvent.setup();
+    renderShell();
+    const group = screen.getByRole('group', { name: '视角' });
+    expect(group.classList.contains('obs-segmented-control')).toBe(true);
+    const buttons = within(group).getAllByRole('button');
+    buttons[0].focus();
+    await user.keyboard('{End}');
+    expect(document.activeElement).toBe(buttons[3]);
+    expect(buttons.map((button) => button.tabIndex)).toEqual([-1, -1, -1, 0]);
+    expect(buttons[0].getAttribute('aria-pressed')).toBe('true');
+    await user.tab();
+    expect(group.contains(document.activeElement)).toBe(false);
+    await user.tab({ shift: true });
+    expect(document.activeElement).toBe(buttons[3]);
+    await user.keyboard('{Home}{ArrowLeft}');
+    expect(document.activeElement).toBe(buttons[3]);
+    await user.keyboard('{Home}');
+    expect(document.activeElement).toBe(buttons[0]);
   });
 
   it('renders no perspective chrome with one height while the page keeps its resolved title', () => {

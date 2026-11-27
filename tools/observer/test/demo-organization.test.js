@@ -723,36 +723,71 @@ test('demo work.next identity has no person_id and Agent audit records expose th
   const byId = new Map(audit.map((item) => [item.id, item]));
   // Every record carries the AWR-PPD-055 disclosure objects, whatever they hold.
   for (const item of audit) {
-    assert.deepEqual(Object.keys(item.actor).sort(), ['display_name', 'person_id']);
+    assert.deepEqual(Object.keys(item.actor).sort(), ['display_name', 'kind', 'person_id']);
     assert.deepEqual(Object.keys(item.client), ['display_name']);
   }
   // A client-attributed run names the client and resolves the person behind it.
   assert.equal(byId.get('EV-001').client_id, 'M-002-claude');
-  assert.deepEqual(byId.get('EV-001').actor, { person_id: 'M-002', display_name: '林悦' });
+  assert.deepEqual(byId.get('EV-001').actor, { person_id: 'M-002', display_name: '林悦', kind: 'agent' });
   assert.deepEqual(byId.get('EV-001').client, { display_name: 'Claude 桌面' });
   assert.equal(byId.get('EV-009').client_id, 'M-002-codex');
-  assert.deepEqual(byId.get('EV-009').actor, { person_id: 'M-002', display_name: '林悦' });
+  assert.deepEqual(byId.get('EV-009').actor, { person_id: 'M-002', display_name: '林悦', kind: 'agent' });
   assert.deepEqual(byId.get('EV-009').client, { display_name: 'Codex' });
   assert.equal(byId.get('EV-014').client_id, 'M-006-codex');
-  assert.deepEqual(byId.get('EV-014').actor, { person_id: 'M-006', display_name: '赵衡' });
+  assert.deepEqual(byId.get('EV-014').actor, { person_id: 'M-006', display_name: '赵衡', kind: 'agent' });
   for (const item of audit) {
     if (item.client_id != null) assert.match(item.client_id, /^M-\d{3}-(?:claude|codex)$/);
   }
   // A person acting through a client keeps the client unnamed in the attribution.
   assert.equal(byId.get('EV-002').client_id, null);
-  assert.deepEqual(byId.get('EV-002').actor, { person_id: 'M-001', display_name: '周宁' });
+  assert.deepEqual(byId.get('EV-002').actor, { person_id: 'M-001', display_name: '周宁', kind: 'human' });
   assert.deepEqual(byId.get('EV-002').client, { display_name: 'Claude 桌面' });
   assert.deepEqual(byId.get('EV-005').client, { display_name: 'Claude 桌面' });
   // A run with no named client discloses neither a client name nor an attribution.
   assert.equal(byId.get('EV-006').client_id, null);
-  assert.deepEqual(byId.get('EV-006').actor, { person_id: 'M-004', display_name: '许宁' });
+  assert.deepEqual(byId.get('EV-006').actor, { person_id: 'M-004', display_name: '许宁', kind: 'agent' });
   assert.deepEqual(byId.get('EV-006').client, { display_name: null });
 
   const humanDemo = createDemoOrganization({ variant: 'full', timestampShiftMs: 0 });
-  humanDemo.data.activity[0].actor_id = 'M-002';
+  // A person acting through a client: the record says so itself (AWR-PPD-062).
+  Object.assign(humanDemo.data.activity[0], {
+    actor_id: 'M-002', actor_kind: 'human', actor_display_name: '林悦（通过 Claude 桌面）',
+  });
   const human = humanDemo.query('P-001', { protocol_version: 1, op: 'audit.development' }).data.items[0];
-  assert.equal(human.client_id, null, 'a human actor has no Agent client id');
-  assert.deepEqual(human.actor, { person_id: 'M-002', display_name: '林悦' });
+  assert.equal(human.client_id, null, 'a person acting through a client is not attributed to it');
+  assert.deepEqual(human.actor, { person_id: 'M-002', display_name: '林悦', kind: 'human' });
+  assert.deepEqual(human.client, { display_name: 'Claude 桌面' });
+});
+
+// AWR-PPD-062: the page writes "client (person)" for an Agent's run and "person (via client)"
+// for a person's, following the recorded actor kind. Every demo record states who acted, and
+// composing that sentence from the reply gives exactly the prototype's own phrase.
+test('demo audit records state who acted and still compose the prototype phrase', () => {
+  const demo = createDemoOrganization({ variant: 'full', timestampShiftMs: 0 });
+  const records = ['P-001', 'P-002', 'P-003'].flatMap((project) => ['audit.development', 'audit.requests']
+    .flatMap((op) => demo.query(project, { protocol_version: 1, op }).data.items));
+  assert.equal(records.length, fixture.activity.length * 2);
+  for (const item of records) {
+    const record = fixture.activity.find((entry) => entry.id === item.id);
+    assert.ok(['agent', 'human'].includes(record.actor_kind), `${item.id} states who acted`);
+    assert.equal(item.actor.kind, record.actor_kind, item.id);
+    assert.equal(item.client.display_name != null, record.actor_display_name.includes('（'), item.id);
+    if (item.client.display_name != null) {
+      // An Agent's run is attributed to the client; a person's run through a client is not.
+      assert.equal(item.actor.kind === 'agent', item.client_id != null, item.id);
+    }
+    const { display_name: person } = item.actor;
+    const client = item.client.display_name;
+    const sentence = client == null ? person
+      : item.actor.kind === 'agent' ? `${client}（${person}）`
+        : item.actor.kind === 'human' ? `${person}（通过 ${client}）` : person;
+    assert.equal(sentence, record.actor_display_name, item.id);
+    // The sentence the page wrote before AWR-PPD-062, by the presence of the client id,
+    // is the same sentence: switching the rule to the recorded kind changes no row.
+    const before = client == null ? person
+      : item.client_id != null ? `${client}（${person}）` : `${person}（通过 ${client}）`;
+    assert.equal(before, sentence, item.id);
+  }
 });
 
 function numericTimes(value, path = 'root', found = []) {

@@ -915,3 +915,277 @@ async fn durable_restart_keeps_identity_and_live_revocation_without_new_consent(
     server.shutdown().await;
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+/// Register `name`, approve the connection with `credential` and exchange the code.
+async fn connection(server: &Server, credential: &str, name: &str) -> (String, Value) {
+    let pending = begin(server, name).await;
+    let res = consent(server, &pending, "allow", credential)
+        .send()
+        .await
+        .unwrap();
+    let url = completion_callback(res).await;
+    let code = url
+        .query_pairs()
+        .find(|(key, _)| key == "code")
+        .map(|(_, value)| value.into_owned())
+        .unwrap();
+    let res = exchange(
+        server,
+        token_body(&pending.client_id, &code, RESOURCE, VERIFIER),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(res.status(), 200);
+    (pending.client_id, res.json().await.unwrap())
+}
+
+async fn one_recorded_request(server: &Server, access_token: &str) {
+    let client = sdk_client(server, access_token).await;
+    sdk_call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"capabilities"}),
+    )
+    .await;
+    client.cancel().await.unwrap();
+}
+
+async fn recorded_requests(server: &Server, reader: &str) -> Vec<Value> {
+    let client = sdk_client(server, reader).await;
+    let reply = sdk_call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"audit.requests"}),
+    )
+    .await;
+    client.cancel().await.unwrap();
+    reply["data"]["items"].as_array().unwrap().clone()
+}
+
+async fn stored_name(admin: &tokio_postgres::Client, id: &str) -> Option<String> {
+    admin
+        .query_one(
+            "SELECT client_name FROM awr_team.credentials WHERE tenant_id=$1 AND id=$2",
+            &[&TENANT, &id],
+        )
+        .await
+        .unwrap()
+        .get(0)
+}
+
+fn rows_of<'a>(rows: &'a [Value], credential: &str) -> Vec<&'a Value> {
+    rows.iter()
+        .filter(|row| row["credential_id"] == credential)
+        .collect()
+}
+
+// AWR-PPD-062: the name a client registers for itself is recorded with the credential
+// the member approves, and the audit read names that credential for a reader who holds
+// the directory gate. The name is self-reported display text: two clients may share it
+// and stay separate, a later connection keeps the first name, and nothing here changes
+// what the connection may do.
+#[cfg(unix)]
+#[tokio::test]
+async fn an_approved_connection_records_its_registered_name_with_its_credential() {
+    let (_guard, admin, db, store) = setup().await;
+    // The reader holds the directory gate: cli-a reads every workstream cli-b reads.
+    admin
+        .batch_execute(
+            "INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,
+             workstream_id,authority_version,can_read)
+             SELECT tenant_id,project_id,actor_id,'cli-a',workstream_id,authority_version,can_read
+             FROM awr_team.workstream_grants WHERE client_id='cli-b'",
+        )
+        .await
+        .unwrap();
+    let c = format!("awr1.reader-c.{}", "d".repeat(64));
+    let hash = awr_team_pg::workstream_credential_hash(&c).unwrap();
+    admin
+        .execute(
+            "INSERT INTO awr_team.credentials(tenant_id,id,actor_id,client_id,secret_hash)
+             VALUES('reader-tenant','reader-c','agent','cli-c',$1)",
+            &[&hash],
+        )
+        .await
+        .unwrap();
+    admin
+        .execute(
+            "INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,
+             workstream_id,authority_version,can_read)
+             VALUES('reader-tenant','reader-project','agent','cli-c',$1,1,true)",
+            &[&awr_core::Id::from(1).to_string()],
+        )
+        .await
+        .unwrap();
+    let directory = std::env::temp_dir().join(format!("awr-client-name-{}", awr_core::Id::new()));
+    let server = start_with_directory(store, true, Some(directory.clone())).await;
+
+    // Registration still refuses a name that carries a control character or runs past
+    // 120 characters, so only plain bounded text can ever reach a credential.
+    for name in ["Synthetic\nclient".to_owned(), "x".repeat(121)] {
+        let res = server
+            .post("/oauth/register")
+            .json(&json!({"client_name":name,"redirect_uris":[CALLBACK],
+                "grant_types":["authorization_code","refresh_token"],"token_endpoint_auth_method":"none"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 400);
+    }
+    // A name of exactly 120 characters is the longest a registration accepts.
+    let longest = "n".repeat(120);
+    assert_eq!(register(&server, &longest).await["client_name"], longest);
+    assert_eq!(stored_name(&admin, "reader-c").await, None);
+
+    // A successful connection without client_name keeps the presentation fallback
+    // out of the credential and its audit rows, including after durable restore.
+    let unnamed = server
+        .post("/oauth/register")
+        .json(&json!({"redirect_uris":[CALLBACK]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unnamed.status(), 201);
+    let unnamed: Value = unnamed.json().await.unwrap();
+    let pending = begin_registered(&server, &unnamed).await;
+    completion_callback(consent(&server, &pending, "allow", A).send().await.unwrap()).await;
+    assert_eq!(stored_name(&admin, "reader-a").await, None);
+
+    // Two clients register the same name and stay two clients, two connections and two
+    // credentials. A third client connecting through reader-b later changes no name.
+    let (first_client, first) = connection(&server, B, "Synthetic twin client").await;
+    let (second_client, second) = connection(&server, &c, "Synthetic twin client").await;
+    assert_ne!(first_client, second_client);
+    let (_later_client, later) = connection(&server, B, "Synthetic later client").await;
+    for token in [&first, &second, &later] {
+        one_recorded_request(&server, token["access_token"].as_str().unwrap()).await;
+    }
+    assert_eq!(
+        stored_name(&admin, "reader-b").await.as_deref(),
+        Some("Synthetic twin client")
+    );
+    assert_eq!(
+        stored_name(&admin, "reader-c").await.as_deref(),
+        Some("Synthetic twin client")
+    );
+    assert_eq!(stored_name(&admin, "reader-a").await, None);
+    let credentials = admin
+        .query(
+            "SELECT id,client_id FROM awr_team.credentials
+             WHERE tenant_id=$1 AND client_name IS NOT NULL ORDER BY id",
+            &[&TENANT],
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        credentials,
+        vec![
+            ("reader-b".to_owned(), "cli-b".to_owned()),
+            ("reader-c".to_owned(), "cli-c".to_owned())
+        ]
+    );
+
+    // The connection list still reads each connection's own registered name.
+    let own = sdk_client(&server, B).await;
+    let list = sdk_call(
+        &own,
+        "awr_team_connections_list",
+        json!({"protocol_version":1}),
+    )
+    .await;
+    let agents = list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["kind"] == "agent")
+        .collect::<Vec<_>>();
+    let mut references = agents
+        .iter()
+        .map(|item| item["connection_id"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    references.sort();
+    references.dedup();
+    assert_eq!(references.len(), 2, "two connections through reader-b");
+    let mut listed = agents
+        .iter()
+        .map(|item| item["client_name"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    listed.sort();
+    assert_eq!(
+        listed,
+        vec!["Synthetic later client", "Synthetic twin client"]
+    );
+    own.cancel().await.unwrap();
+
+    // The audit names each credential exactly, under the directory gate.
+    let rows = recorded_requests(&server, A).await;
+    let twin = json!({"display_name":"Synthetic twin client"});
+    for credential in ["reader-b", "reader-c"] {
+        let made = rows_of(&rows, credential);
+        assert!(!made.is_empty(), "{credential}: {rows:?}");
+    }
+    assert!(
+        rows_of(&rows, "reader-b")
+            .iter()
+            .all(|row| row["client"] == twin)
+    );
+    assert!(
+        rows_of(&rows, "reader-c")
+            .iter()
+            .all(|row| row["client"] == twin)
+    );
+    // The reader's own credential never approved a connection: its rows stay unnamed.
+    assert!(!rows_of(&rows, "reader-a").is_empty());
+    assert!(
+        rows_of(&rows, "reader-a")
+            .iter()
+            .all(|row| row["client"]["display_name"].is_null())
+    );
+    // Every credential behind these rows belongs to the human `agent` actor.
+    assert!(rows.iter().all(|row| row["actor"]["kind"] == "human"));
+
+    // The name lives with the credential in PostgreSQL: it survives a restart that
+    // restores the connection, and new requests stay named.
+    server.shutdown().await;
+    let store =
+        awr_team_pg::WorkstreamReadStore::from_config(common::with_db(&common::test_config(), &db));
+    let server = start_with_directory(store, true, Some(directory.clone())).await;
+    let pending = begin_registered(&server, &unnamed).await;
+    completion_callback(consent(&server, &pending, "allow", A).send().await.unwrap()).await;
+    assert_eq!(stored_name(&admin, "reader-a").await, None);
+    one_recorded_request(&server, first["access_token"].as_str().unwrap()).await;
+    let rows = recorded_requests(&server, A).await;
+    assert!(
+        rows_of(&rows, "reader-b")
+            .iter()
+            .all(|row| row["client"] == twin)
+    );
+
+    // Without the directory gate the same rows return, with no name on any of them.
+    let other_stream = awr_core::Id::from(2).to_string();
+    admin
+        .execute(
+            "DELETE FROM awr_team.workstream_grants
+             WHERE tenant_id=$1 AND project_id=$2 AND client_id='cli-a' AND workstream_id=$3",
+            &[&TENANT, &PROJECT, &other_stream],
+        )
+        .await
+        .unwrap();
+    let rows = recorded_requests(&server, A).await;
+    assert!(!rows_of(&rows, "reader-b").is_empty());
+    assert!(
+        rows.iter()
+            .all(|row| row["client"]["display_name"].is_null() && row["actor"]["kind"].is_null())
+    );
+    assert_eq!(
+        stored_name(&admin, "reader-b").await.as_deref(),
+        Some("Synthetic twin client")
+    );
+
+    server.shutdown().await;
+    std::fs::remove_dir_all(directory).unwrap();
+}
