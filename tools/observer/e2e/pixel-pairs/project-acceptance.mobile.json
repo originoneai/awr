@@ -1,0 +1,28 @@
+{
+  "page": "project-acceptance",
+  "proto": "#p=project&id=orders&tab=delivery",
+  "app": "/projects/P-001?tab=acceptance",
+  "ready": "[data-testid=\"acceptance-table\"]",
+  "protoReady": ".block table.t",
+  "notes": {
+    "geometryExclusions": [
+      "Probe coordinates are anchored at the project page title (.hero h1 / [data-testid=\"project-title\"]), excluding the mobile shell offset.",
+      "Zero style skips: every typography, color, border, padding, margin, radius, and shadow property is compared verbatim at 390px width.",
+      "At 390px the integration column hides (matching prototype .hide-s at <=860px) and table cells wrap; content-dependent widths/heights and downstream __y offsets are skipped."
+    ]
+  },
+  "pairs": [
+    ["project title", ".hero h1", "[data-testid=\"project-title\"]", ["TEXT", "margin-top", "margin-bottom"]],
+    ["tabs bar", ".tabs2", ".project-tabs .ant-tabs-nav", ["BOX", "border-bottom-color", "margin-bottom"], {"skip": ["__w", "__y"]}],
+    ["lead sentence", ".lead", "[data-testid=\"acceptance-lead\"]", ["TEXT", "margin-top", "margin-bottom"], {"skip": ["__w", "__h", "__y"]}],
+    ["lead secondary span", ".lead > span", "[data-testid=\"acceptance-lead\"] .acceptance-lead-rest", ["TEXT"], {"skip": ["__x", "__y", "__w", "__h"]}],
+    ["section card", ".block", ".acceptance-section", ["BOX", "PAINT"], {"skip": ["__w", "__h", "__y"]}],
+    ["section head", ".block-head", ".acceptance-section .ant-card-head", ["BOX", "border-bottom-color"], {"skip": ["__w", "__y"]}],
+    ["section title", ".block-head h2", ".acceptance-section .obs-section-title", ["TEXT"], {"skip": ["__w", "__y"]}],
+    ["row 1 task cell", ".block table.t tbody tr:nth-child(1) td:nth-child(1)", ".acceptance-table tbody tr:nth-child(1) td:nth-child(1)", ["BOX", "TEXT", "background-color"], {"skip": ["__y", "__w", "__h"]}],
+    ["row 1 check chip", ".block table.t tbody tr:nth-child(1) .chip:first-child", ".acceptance-table tbody tr:nth-child(1) .acceptance-chip:first-child", ["BOX", "TEXT", "background-color"], {"skip": ["__x", "__y", "__w"]}],
+    ["row 1 review tag ok", ".block table.t tbody tr:nth-child(1) .tag", ".acceptance-table tbody tr:nth-child(1) .obs-tag", ["BOX", "TEXT", "background-color"], {"skip": ["__x", "__y", "__w"]}],
+    ["row 3 rejected highlight", ".block table.t tbody tr:nth-child(3) td:nth-child(1)", ".acceptance-table tbody tr:nth-child(3) td:nth-child(1)", ["BOX", "background-color", "border-top-color"], {"skip": ["__y", "__w", "__h"]}],
+    ["independent review pnote", ".block .pnote", "[data-testid=\"acceptance-independent-note\"]", ["BOX", "TEXT", "border-top-color"], {"skip": ["__y", "__w", "__h"]}]
+  ]
+}

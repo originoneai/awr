@@ -1062,12 +1062,14 @@ function createDemoOrganization({ variant = 'full',
     };
     const docs = documentsForTask(work);
     const report = progress(work);
+    const versionMatch = /^第\s*(\d+)\s*版$/.exec(work.delivery?.version_label ?? '');
+    const selectionVersion = versionMatch ? versionMatch[1] : '1';
     const collaboration = {
       acceptance_inferred: false,
       delivery_required: Boolean(work.delivery),
       candidate: work.delivery && round ? {
         current: true, digest: sha256(`candidate:${round.round_id}`),
-        required_checks: work.delivery.checks.map((check) => check.check), selection_version: '1',
+        required_checks: work.delivery.checks.map((check) => check.check), selection_version: selectionVersion,
       } : null,
       claim_present: Boolean(work.agent_active),
       facts_truncated: false,
