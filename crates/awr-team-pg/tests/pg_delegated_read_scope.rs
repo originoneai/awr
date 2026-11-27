@@ -2373,3 +2373,132 @@ async fn task_document_metadata_matches_the_content_scope_for_shared_sources() {
         ));
     }
 }
+
+#[tokio::test]
+async fn delegated_agent_document_history_respects_scope_non_union_and_directory_gate() {
+    let (_guard, admin, db, store) = setup_with_specs(vec![
+        SourceFile {
+            path: "docs/alpha.md".into(),
+            bytes: b"# Alpha guide".to_vec(),
+        },
+        SourceFile {
+            path: "docs/private-beta.md".into(),
+            bytes: b"# Private beta guide".to_vec(),
+        },
+        SourceFile {
+            path: "docs/shared.md".into(),
+            bytes: b"# Shared guide".to_vec(),
+        },
+    ])
+    .await;
+    // Share docs/shared.md across both streams.
+    let mut catalog: serde_json::Value = admin
+        .query_one("SELECT catalog_json FROM awr_team.workstream_catalogs", &[])
+        .await
+        .unwrap()
+        .get(0);
+    for stream in catalog["workstreams"].as_array_mut().unwrap() {
+        stream["acceptance_contracts"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!("docs/shared.md"));
+    }
+    admin
+        .execute(
+            "UPDATE awr_team.workstream_catalogs SET catalog_json=$1",
+            &[&catalog],
+        )
+        .await
+        .unwrap();
+    // agent_identity binds 'agent' to active person 'alice' ("Alice").
+    agent_identity(&admin).await;
+    // Task-only delegation on work 'a' (stream 1):
+    // - allowed for docs/alpha.md WITH work_id='a'
+    // - directory.read is denied for task-only delegation -> submitted_by stays null
+    // - refused for docs/alpha.md WITHOUT work_id
+    // - refused for docs/shared.md and docs/private-beta.md and docs/never.md
+    grant(
+        &db,
+        AuthorizationScope::Task {
+            project_id: PROJECT.into(),
+            work_item_id: "a".into(),
+        },
+    )
+    .await;
+    let mut q = query("document.history");
+    q.source_path = Some("docs/alpha.md".into());
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, q.clone()).await,
+        Err(PgError::Forbidden)
+    ));
+    q.work_id = Some("a".into());
+    let task_ok = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    assert_eq!(task_ok["selection_basis"], "work");
+    assert_eq!(task_ok["data"]["work_id"], "a");
+    assert_eq!(
+        task_ok["data"]["items"][0]["submitted_by"],
+        serde_json::Value::Null
+    );
+    for blocked in ["docs/private-beta.md", "docs/shared.md", "docs/never.md"] {
+        let mut denied = query("document.history");
+        denied.source_path = Some(blocked.into());
+        denied.work_id = Some("a".into());
+        assert!(
+            matches!(
+                store.query(TENANT, PROJECT, A, denied).await,
+                Err(PgError::Forbidden)
+            ),
+            "task-only delegation must refuse {blocked}"
+        );
+    }
+
+    // Two independent stream grants still cannot union to read docs/shared.md.
+    grant_stream(&db, "stream-1-read", 1, &[AuthorizedAction::Inspect]).await;
+    grant_stream(&db, "stream-2-read", 2, &[AuthorizedAction::Inspect]).await;
+    let mut shared = query("document.history");
+    shared.source_path = Some("docs/shared.md".into());
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, shared.clone()).await,
+        Err(PgError::Forbidden)
+    ));
+    let mut unknown = query("document.history");
+    unknown.source_path = Some("docs/never.md".into());
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, unknown.clone()).await,
+        Err(PgError::Forbidden)
+    ));
+
+    // A single project-wide read delegation covers all workstreams:
+    // - docs/shared.md succeeds and directory.read passes so submitter resolves
+    // - docs/never.md returns typed InvalidInput (registered_source_required)
+    admin
+        .execute(
+            "INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,
+             workstream_id,authority_version,can_read) VALUES($1,$2,'agent','cli-a',$3,1,true)
+             ON CONFLICT DO NOTHING",
+            &[&TENANT, &PROJECT, &Id::from(2).to_string()],
+        )
+        .await
+        .unwrap();
+    grant_scope(
+        &db,
+        "project-read",
+        AuthorizationScope::Project {
+            project_id: PROJECT.into(),
+        },
+        &[AuthorizedAction::Inspect],
+    )
+    .await;
+    let shared_ok = store.query(TENANT, PROJECT, A, shared).await.unwrap();
+    assert_eq!(shared_ok["data"]["items"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        shared_ok["data"]["items"][0]["submitted_by"],
+        json!({"person_id": "alice", "display_name": "Alice"})
+    );
+    let err = store.query(TENANT, PROJECT, A, unknown).await.unwrap_err();
+    let diag = err
+        .query_input_diagnostic()
+        .expect("project-wide reader gets InvalidInput for unregistered path");
+    assert_eq!(diag["code"], "InvalidInput");
+    assert_eq!(diag["constraint"], "registered_source_required");
+}

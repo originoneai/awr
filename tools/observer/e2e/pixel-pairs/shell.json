@@ -47,6 +47,9 @@
   ["avatar initial", ".top .av", "[data-testid=\"current-member-avatar\"]", ["TEXT"], {"noPosition": true}],
   ["content wrapper", ".wrap", ".shell-content", ["padding-top", "padding-left", "padding-right", "__ax", "__ay", "__w"], {"noPosition": true}],
   ["page header", ".head", ".obs-page-header", ["__ax", "__ay", "padding-top", "__h"], {"noPosition": true}],
-  ["perspective selected", ".top .as .seg button[aria-pressed=\"true\"]", ".shell-perspective-option[aria-pressed=\"true\"]", ["box-shadow", "background-color", "color", "font-weight"], {"noPosition": true}]
+  ["perspective selected", ".top .as .seg button[aria-pressed=\"true\"]", ".shell-perspective-option[aria-pressed=\"true\"]", ["box-shadow", "background-color", "color", "font-weight"], {"noPosition": true}],
+  ["shared segmented container", ".top .as .seg", ".shell-perspective-segment", ["BOX", "PAINT"]],
+  ["shared segmented unselected", ".top .as .seg button:not([aria-pressed=\"true\"])", ".shell-perspective-segment button[aria-pressed=\"false\"]", ["BOX", "TEXT", "PAINT", "height", "padding-right"]],
+  ["shared segmented selected", ".top .as .seg button[aria-pressed=\"true\"]", ".shell-perspective-segment button[aria-pressed=\"true\"]", ["BOX", "TEXT", "PAINT", "height", "padding-right"]]
  ]
 }
