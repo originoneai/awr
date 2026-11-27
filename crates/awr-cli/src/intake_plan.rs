@@ -213,6 +213,13 @@ pub fn preview(
             issues.push(issue.clone());
         }
     }
+    // Lint advisories travel in their own array. They must never enter
+    // `issues`: the blocking check below treats a non-empty array as a hard
+    // stop, and an advisory must not stop `init` or `source configure`.
+    let advisories = semantic["source_advisories"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     if !issues.is_empty() {
         semantic["can_apply"] = json!(false);
         semantic["can_execute"] = json!(false);
@@ -221,6 +228,7 @@ pub fn preview(
         "version":1, "operation":if configure {"source.configure"} else {"init"},
         "project_root":root, "authority_mapping":manifest, "writes":writes,
         "source_snapshots":snapshots, "source_issues":issues,
+        "source_advisories":advisories,
         "can_apply":semantic["can_apply"], "semantic":semantic,
         "runtime_effects":runtime_effects,
         "source_write_performed":false, "runtime_write_performed":false,
@@ -261,6 +269,19 @@ fn semantic_preview(
             "error":{"code":issue.code,"message":issue.message,"details":issue.details}})
         })
         .collect::<Vec<_>>();
+    // Lint advisories are reported beside the issues, never inside them:
+    // consumers treat a non-empty `issues` array as a blocking failure.
+    let advisories = report
+        .advisories
+        .iter()
+        .map(|issue| {
+            let spec = manifest.sources.iter().find(|s| {
+                awr_source::source_configuration(s, false)["mapping_key"] == issue.mapping
+            });
+            json!({"domain":spec.map(|s|s.domain.as_str()).unwrap_or("project"),"source":spec,"locator":issue.locator,
+            "error":{"code":issue.code,"message":issue.message,"details":issue.details}})
+        })
+        .collect::<Vec<_>>();
     let project = store.project(report.project_id)?;
     let readiness = store.ready_work(project.id, None, awr_core::now_millis()?)?;
     let organization = awr_runtime::inspect_organization(
@@ -279,7 +300,7 @@ fn semantic_preview(
     let work = organization["executable_work"].clone();
     Ok(
         json!({"version":1,"can_apply":report.ok,"can_execute":organization["business_execution_ready"],
-        "source_basis":basis,"issues":issues,"sensitive_warnings":report.sensitive_warnings,
+        "source_basis":basis,"issues":issues,"source_advisories":advisories,"sensitive_warnings":report.sensitive_warnings,
         "organization_state":organization["state"],
         "gap_total":organization["gap_total"],"gaps":gaps,"truncated":organization["truncated"],
         "executable_work":work,"executable_work_total":organization["executable_work_total"],
