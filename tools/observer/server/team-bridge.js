@@ -48,7 +48,7 @@ const READ_PAGED = new Set(['workstreams.list', 'work.list', 'work.graph', 'work
   'work.next', 'work.inbox', 'task.assignees', 'delivery.exports', 'planning.candidates', 'sources.inspect', 'documents.list', 'decisions.list', 'updates.list', 'review.rounds', 'handoff.list', 'dependencies.list', 'goals.list', 'goal.inspect']);
 const READ_CONTEXT_BUDGET = new Set(['work.prepare', 'work.snapshot', 'work.observe', 'work.inbox',
   'source.content', 'artifact.content', 'artifact.segment', 'review.inspect',
-  'delivery.neutral.inspect', 'delivery.submission.describe', 'planning.candidates', 'sources.inspect', 'documents.list', 'decisions.list', 'updates.list', 'review.rounds', 'handoff.list', 'dependencies.list', 'goals.list', 'goal.inspect']);
+  'delivery.neutral.inspect', 'delivery.submission.describe', 'planning.candidates', 'sources.inspect', 'documents.list', 'document.history', 'decisions.list', 'updates.list', 'review.rounds', 'handoff.list', 'dependencies.list', 'goals.list', 'goal.inspect']);
 const READ_REQUIRED_SELECTOR = {
   'command.inspect': 'request_id',
   'planning.outcome': 'request_id',
@@ -60,6 +60,7 @@ const READ_REQUIRED_SELECTOR = {
   'evidence.inspect': 'evidence_id',
   'review.inspect': 'review_round_id',
   'source.content': 'source_path',
+  'document.history': 'source_path',
   'session.inspect': 'session_id',
   'goal.inspect': 'goal_id',
   'update.inspect': 'update_id',
@@ -94,6 +95,10 @@ const READ_ECHOES = {
   'work.observe': [{ path: ['work_id'], selector: 'work_id' }],
   'sources.inspect': [{ path: ['work_id'], selector: 'work_id' }],
   'documents.list': [{ path: ['work_id'], selector: 'work_id' }],
+  'document.history': [
+    { path: ['path'], selector: 'source_path' },
+    { path: ['work_id'], selector: 'work_id' },
+  ],
   'review.rounds': [{ path: ['work_id'], selector: 'work_id' }],
   'handoff.list': [{ path: ['work_id'], selector: 'work_id' }],
   'dependencies.list': [{ path: ['work_id'], selector: 'work_id' }],
@@ -167,6 +172,8 @@ function validateReadQuery(query, additionalOps = null) {
     allowIds('workstream_id');
   } else if (op === 'sources.inspect' || op === 'documents.list' || op === 'dependencies.list') {
     allowIds('work_id', 'workstream_id');
+  } else if (op === 'document.history') {
+    allowIds('work_id');
   } else if (op === 'decisions.list') {
     allowIds('work_id', 'workstream_id', 'decision_id');
     allowed.add('decision_state');
@@ -336,6 +343,7 @@ function validReadResponse(reply, op, demoFuture = false) {
       || data.next_cursor.length > 4096)) return false;
   if (op === 'sources.inspect') return validRequiredSources(reply);
   if (op === 'documents.list') return validDocuments(reply);
+  if (op === 'document.history') return validDocumentHistory(reply);
   if (!demoFuture && (op === 'goals.list' || op === 'goal.inspect')) return validGoals(reply, op);
   if (op === 'decisions.list') return validDecisions(reply);
   if (op === 'updates.list') return validUpdatesList(reply);
@@ -425,6 +433,56 @@ function validDocuments(reply) {
       && item.name === null && item.summary === null && item.sha256 === null && item.byte_length === null
       && (item.status !== 'restricted' || item.path === null && item.reason === 'permission_restricted'
         && !('content_work_id' in item));
+  });
+}
+
+function validDocumentHistory(reply) {
+  const data = reply.data;
+  const asOf = asObject(data.as_of);
+  const dataFields = new Set([
+    'path', 'work_id', 'items', 'total', 'limit', 'truncated', 'order',
+    'source_kind', 'attribution_basis', 'read_only', 'execution_authorized', 'as_of',
+  ]);
+  const itemFields = new Set([
+    'source_snapshot_id', 'recorded_at_unix_ms', 'digest_prefix', 'submitted_by',
+  ]);
+  const boundedName = (value) => typeof value === 'string' && value.length > 0
+    && Array.from(value).length <= 128;
+  if (!Object.keys(data).every((key) => dataFields.has(key))
+    || !isControlledSourcePath(data.path)
+    || !(data.work_id === null || isBoundedId(data.work_id))
+    || !Array.isArray(data.items) || data.items.length < 1 || data.items.length > 20
+    || data.limit !== 20
+    || !Number.isSafeInteger(data.total) || data.total < data.items.length
+    || typeof data.truncated !== 'boolean'
+    || data.truncated !== (data.total > data.limit)
+    || (data.truncated ? data.items.length !== data.limit : data.items.length !== data.total)
+    || data.order !== 'newest_first'
+    || data.source_kind !== 'registered_source_snapshots'
+    || data.attribution_basis !== 'snapshot_submitter'
+    || data.read_only !== true || data.execution_authorized !== false
+    || !asOf || Object.keys(asOf).length !== 3
+    || !Number.isSafeInteger(asOf.at_unix_ms) || asOf.at_unix_ms < 0
+    || asOf.source_snapshot_id !== reply.source_snapshot_id
+    || asOf.project_revision !== reply.project_revision) return false;
+  const seenSnapshots = new Set();
+  return data.items.every((item) => {
+    if (!asObject(item)
+      || Object.keys(item).length !== itemFields.size
+      || Object.keys(item).some((key) => !itemFields.has(key))
+      || !isBoundedId(item.source_snapshot_id)
+      || seenSnapshots.has(item.source_snapshot_id)
+      || !Number.isSafeInteger(item.recorded_at_unix_ms) || item.recorded_at_unix_ms < 0
+      || typeof item.digest_prefix !== 'string' || !/^[0-9a-f]{12}$/.test(item.digest_prefix)) {
+      return false;
+    }
+    seenSnapshots.add(item.source_snapshot_id);
+    if (item.submitted_by === null) return true;
+    const submitter = asObject(item.submitted_by);
+    return Boolean(submitter
+      && Object.keys(submitter).length === 2
+      && isBoundedId(submitter.person_id)
+      && boundedName(submitter.display_name));
   });
 }
 
@@ -978,6 +1036,14 @@ function readAttributionError(query, result, { strictWorkstream, project, demoFu
     || (query.work_id ? data.scope !== 'work' : !['authorized_workstreams', 'authorized_works'].includes(data.scope))
     || query.work_id && data.items.some((item) => item.content_work_id && item.content_work_id !== query.work_id))) {
     return { code: 'BadGateway', message: 'Documents are not attributable to the requested scope' };
+  }
+  if (query.op === 'document.history' && (
+    data.path !== query.source_path
+    || data.work_id !== (query.work_id ?? null)
+    || result.selection_basis !== (query.work_id ? 'work' : 'project')
+    || (query.work_id && (!isBoundedId(result.workstream_id)
+      || typeof result.authority_version !== 'string' || !/^[1-9]\d*$/.test(result.authority_version))))) {
+    return { code: 'BadGateway', message: 'Document history is not attributable to the requested scope' };
   }
   if (query.op === 'decisions.list' && (
     data.items.length > (query.limit ?? 20)
@@ -2788,6 +2854,23 @@ function createTeamBridge(opts) {
           const value = url.searchParams.get(key);
           query[key] = /^[1-9]\d*$/.test(value) ? Number(value) : null;
         }
+      }
+      return routes['POST /api/team/read'](url, { project: url.searchParams.get('project'), query }, req, res);
+    },
+
+    'GET /api/team/document-history': async (url, _body, req, res) => {
+      const allowed = new Set(['project', 'source_path', 'work_id', 'max_context_bytes']);
+      if ([...url.searchParams.keys()].some((key) => !allowed.has(key) || url.searchParams.getAll(key).length !== 1)) {
+        return { ok: false, error: { code: 'InvalidInput', message: 'One bounded document history read required' },
+          freshness: unmeasuredFreshness(Date.now()) };
+      }
+      const query = { protocol_version: 1, op: 'document.history' };
+      for (const key of ['source_path', 'work_id']) {
+        if (url.searchParams.has(key)) query[key] = url.searchParams.get(key);
+      }
+      if (url.searchParams.has('max_context_bytes')) {
+        const value = url.searchParams.get('max_context_bytes');
+        query.max_context_bytes = /^[1-9]\d*$/.test(value) ? Number(value) : null;
       }
       return routes['POST /api/team/read'](url, { project: url.searchParams.get('project'), query }, req, res);
     },

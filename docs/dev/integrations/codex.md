@@ -179,7 +179,10 @@ Use that `client bind --client codex` command to select work. Bound conversation
 receive their work's recovery context.
 `SessionStart` and `PostCompact` return recovery context.
 `Stop`, `PreCompact`, `SessionEnd` and `Interrupt` checkpoint the persisted next
-action, open loops and observed AWR event/source delta. Shutdown hooks are
+action, open loops and observed AWR event/source delta while the bound session
+is active. If that session is no longer active, those hooks, `SessionStart` and
+`PostCompact` exit successfully, leave the conversation pinned, and report that
+continuity was skipped. Continue from a new Codex conversation. Shutdown hooks are
 advisory: they do not end the AWR session, release claims or kill processes.
 Explicit session end and handoff keep those responsibilities. When the work is finished, complete it
 with `awr work complete ... --end-session` (or end the session as the `close_out` instruction of the

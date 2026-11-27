@@ -42,6 +42,38 @@ pub struct SoleSourceBinding {
 pub const SOURCE_BINDING_FILE: &str = "source_binding.json";
 pub const SOURCE_PROVENANCE_FILE: &str = "source_provenance.json";
 pub const WORKSTREAMS_FILE: &str = "workstreams.json";
+pub const DOCUMENT_HISTORY_LIMIT: usize = 20;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DocumentSnapshotFile {
+    pub(crate) sha256: Option<String>,
+    pub(crate) text: Option<String>,
+    pub(crate) bytes: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DocumentSnapshotObservation {
+    pub(crate) snapshot_id: String,
+    pub(crate) recorded_at_unix_ms: i64,
+    pub(crate) submitter_actor_id: Option<String>,
+    pub(crate) has_files: bool,
+    pub(crate) file: Option<DocumentSnapshotFile>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DocumentChangeRecord {
+    pub(crate) snapshot_id: String,
+    pub(crate) recorded_at_unix_ms: i64,
+    pub(crate) digest_prefix: String,
+    pub(crate) submitter_actor_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DocumentHistorySlice {
+    pub(crate) items: Vec<DocumentChangeRecord>,
+    pub(crate) total: usize,
+    pub(crate) truncated: bool,
+}
 
 /// Decode goal facts from the byte-verified, explicitly registered ledger.
 /// The shared adapter preserves source vocabulary and redacts sensitive values.
@@ -1027,6 +1059,163 @@ pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
+fn is_valid_sha256_hex(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+pub(crate) fn collect_document_history(
+    path: &str,
+    observations: Vec<DocumentSnapshotObservation>,
+    limit: usize,
+) -> PgResult<DocumentHistorySlice> {
+    let mut changes = Vec::new();
+    let mut last_digest: Option<String> = None;
+    for observation in observations {
+        if !observation.has_files {
+            continue;
+        }
+        let Some(file) = observation.file else {
+            last_digest = None;
+            continue;
+        };
+        let Some(sha) = file.sha256.as_deref().filter(|s| is_valid_sha256_hex(s)) else {
+            return Err(PgError::SnapshotDrift(path.into()));
+        };
+        if let Some(text) = file.text.as_deref() {
+            if sha256_hex(text.as_bytes()) != sha {
+                return Err(PgError::SnapshotDrift(path.into()));
+            }
+            if let Some(expected_bytes) = file.bytes {
+                if expected_bytes != text.len() as u64 {
+                    return Err(PgError::SnapshotDrift(path.into()));
+                }
+            }
+        }
+        if last_digest.as_deref() == Some(sha) {
+            continue;
+        }
+        let submitter_actor_id = observation
+            .submitter_actor_id
+            .map(|actor| actor.trim().to_string())
+            .filter(|actor| !actor.is_empty());
+        changes.push(DocumentChangeRecord {
+            snapshot_id: observation.snapshot_id,
+            recorded_at_unix_ms: observation.recorded_at_unix_ms,
+            digest_prefix: sha[..12].to_string(),
+            submitter_actor_id,
+        });
+        last_digest = Some(sha.to_string());
+    }
+    changes.reverse();
+    let total = changes.len();
+    let truncated = total > limit;
+    changes.truncate(limit);
+    Ok(DocumentHistorySlice {
+        items: changes,
+        total,
+        truncated,
+    })
+}
+
+pub(crate) async fn document_snapshot_history(
+    tx: &tokio_postgres::Transaction<'_>,
+    tenant_id: &str,
+    project_id: &str,
+    active_snapshot_id: &str,
+    path: &str,
+) -> PgResult<DocumentHistorySlice> {
+    let rows = tx
+        .query(
+            "SELECT
+                 s.id,
+                 (extract(epoch FROM COALESCE(e.created_at, s.created_at)) * 1000)::bigint AS recorded_at_unix_ms,
+                 COALESCE(NULLIF(btrim(p.author_actor_id), ''), NULLIF(btrim(s.created_by), '')) AS submitter_actor_id,
+                 (jsonb_typeof(s.source_ref_json->'files') = 'array') AS has_files,
+                 (f.value IS NOT NULL) AS has_match,
+                 f.value->>'sha256' AS file_sha256,
+                 f.value->>'text' AS file_text,
+                 f.value->>'bytes' AS file_bytes
+             FROM awr_team.source_snapshots s
+             LEFT JOIN LATERAL (
+                 SELECT ev.project_revision, ev.event_index, ev.created_at, ev.id
+                 FROM awr_team.events ev
+                 WHERE ev.tenant_id = s.tenant_id
+                   AND ev.project_id = s.project_id
+                   AND ev.event_type = 'source.activated'
+                   AND ev.payload_json->>'snapshot_id' = s.id
+                 ORDER BY ev.project_revision ASC, ev.event_index ASC, ev.created_at ASC, ev.id ASC
+                 LIMIT 1
+             ) e ON TRUE
+             LEFT JOIN LATERAL (
+                 SELECT sp.author_actor_id, sp.state
+                 FROM awr_team.source_proposals sp
+                 WHERE sp.tenant_id = s.tenant_id
+                   AND sp.project_id = s.project_id
+                   AND sp.candidate_snapshot_id = s.id
+                 ORDER BY (sp.state = 'activated') DESC, sp.id ASC
+                 LIMIT 1
+             ) p ON TRUE
+             LEFT JOIN LATERAL (
+                 SELECT elem AS value
+                 FROM jsonb_array_elements(
+                     CASE
+                         WHEN jsonb_typeof(s.source_ref_json->'files') = 'array'
+                             THEN s.source_ref_json->'files'
+                         ELSE '[]'::jsonb
+                     END
+                 ) AS elem
+                 WHERE elem->>'path' = $3
+                 LIMIT 1
+             ) f ON TRUE
+             WHERE s.tenant_id = $1
+               AND s.project_id = $2
+               AND (
+                   e.project_revision IS NOT NULL
+                   OR p.state = 'activated'
+                   OR s.id = $4
+               )
+             ORDER BY
+                 COALESCE(e.project_revision, 0) ASC,
+                 COALESCE(e.event_index, 0) ASC,
+                 COALESCE(e.created_at, s.created_at) ASC,
+                 s.created_at ASC,
+                 s.id ASC",
+            &[&tenant_id, &project_id, &path, &active_snapshot_id],
+        )
+        .await?;
+    let mut observations = Vec::with_capacity(rows.len());
+    for row in rows {
+        let has_match: bool = row.get("has_match");
+        let file = if has_match {
+            let bytes = row
+                .get::<_, Option<String>>("file_bytes")
+                .map(|raw| {
+                    raw.parse::<u64>()
+                        .map_err(|_| PgError::SnapshotDrift(path.into()))
+                })
+                .transpose()?;
+            Some(DocumentSnapshotFile {
+                sha256: row.get("file_sha256"),
+                text: row.get("file_text"),
+                bytes,
+            })
+        } else {
+            None
+        };
+        observations.push(DocumentSnapshotObservation {
+            snapshot_id: row.get("id"),
+            recorded_at_unix_ms: row.get("recorded_at_unix_ms"),
+            submitter_actor_id: row.get("submitter_actor_id"),
+            has_files: row.get("has_files"),
+            file,
+        });
+    }
+    collect_document_history(path, observations, DOCUMENT_HISTORY_LIMIT)
+}
+
 pub(crate) fn build_manifest(parser_version: &str, files: &[(String, Vec<u8>)]) -> PgResult<Value> {
     Ok(json!({
         "schema_version": 1,
@@ -1316,5 +1505,108 @@ mod publish_prep_tests {
         ])
         .unwrap_err();
         assert!(err.to_string().contains("source_version_digest"), "{err}");
+    }
+
+    fn obs(
+        snapshot_id: &str,
+        at: i64,
+        submitter: Option<&str>,
+        text: Option<&str>,
+    ) -> DocumentSnapshotObservation {
+        DocumentSnapshotObservation {
+            snapshot_id: snapshot_id.into(),
+            recorded_at_unix_ms: at,
+            submitter_actor_id: submitter.map(str::to_owned),
+            has_files: true,
+            file: text.map(|body| DocumentSnapshotFile {
+                sha256: Some(sha256_hex(body.as_bytes())),
+                text: Some(body.into()),
+                bytes: Some(body.len() as u64),
+            }),
+        }
+    }
+
+    #[test]
+    fn document_history_deduplicates_unchanged_snapshots_orders_newest_first_and_keeps_reverts() {
+        let observations = vec![
+            obs("snap-1", 1000, Some("alice"), Some("v1")),
+            obs("snap-2", 2000, Some("bob"), Some("v1")),
+            DocumentSnapshotObservation {
+                snapshot_id: "snap-import".into(),
+                recorded_at_unix_ms: 2500,
+                submitter_actor_id: Some("system".into()),
+                has_files: false,
+                file: None,
+            },
+            obs("snap-3", 3000, Some("carol"), Some("v2")),
+            obs("snap-4", 4000, Some("  "), Some("v2")),
+            obs("snap-5", 5000, None, Some("v1")),
+        ];
+        let slice = collect_document_history("docs/guide.md", observations, DOCUMENT_HISTORY_LIMIT)
+            .unwrap();
+        assert_eq!(slice.total, 3);
+        assert!(!slice.truncated);
+        assert_eq!(slice.items.len(), 3);
+        assert_eq!(slice.items[0].snapshot_id, "snap-5");
+        assert_eq!(slice.items[0].recorded_at_unix_ms, 5000);
+        assert_eq!(slice.items[0].digest_prefix, sha256_hex(b"v1")[..12]);
+        assert_eq!(slice.items[0].submitter_actor_id, None);
+
+        assert_eq!(slice.items[1].snapshot_id, "snap-3");
+        assert_eq!(slice.items[1].recorded_at_unix_ms, 3000);
+        assert_eq!(slice.items[1].digest_prefix, sha256_hex(b"v2")[..12]);
+        assert_eq!(slice.items[1].submitter_actor_id.as_deref(), Some("carol"));
+
+        assert_eq!(slice.items[2].snapshot_id, "snap-1");
+        assert_eq!(slice.items[2].recorded_at_unix_ms, 1000);
+        assert_eq!(slice.items[2].digest_prefix, sha256_hex(b"v1")[..12]);
+        assert_eq!(slice.items[2].submitter_actor_id.as_deref(), Some("alice"));
+    }
+
+    #[test]
+    fn document_history_truncates_to_twenty_most_recent_changes() {
+        let mut observations = Vec::new();
+        for index in 1..=25 {
+            let body = format!("version-{index}");
+            observations.push(obs(
+                &format!("snap-{index:02}"),
+                index * 1000,
+                Some("alice"),
+                Some(&body),
+            ));
+            // Duplicate unchanged snapshot right after each change.
+            observations.push(obs(
+                &format!("snap-{index:02}-dup"),
+                index * 1000 + 500,
+                Some("bob"),
+                Some(&body),
+            ));
+        }
+        let slice = collect_document_history("docs/guide.md", observations, DOCUMENT_HISTORY_LIMIT)
+            .unwrap();
+        assert_eq!(slice.total, 25);
+        assert!(slice.truncated);
+        assert_eq!(slice.items.len(), 20);
+        assert_eq!(slice.items.first().unwrap().snapshot_id, "snap-25");
+        assert_eq!(slice.items.last().unwrap().snapshot_id, "snap-06");
+    }
+
+    #[test]
+    fn document_history_rejects_drifted_or_missing_digest() {
+        let bad_digest = DocumentSnapshotObservation {
+            snapshot_id: "snap-bad".into(),
+            recorded_at_unix_ms: 1000,
+            submitter_actor_id: None,
+            has_files: true,
+            file: Some(DocumentSnapshotFile {
+                sha256: Some(sha256_hex(b"expected")),
+                text: Some("tampered".into()),
+                bytes: Some(8),
+            }),
+        };
+        assert!(matches!(
+            collect_document_history("docs/guide.md", vec![bad_digest], DOCUMENT_HISTORY_LIMIT),
+            Err(PgError::SnapshotDrift(_))
+        ));
     }
 }

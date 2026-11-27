@@ -9,6 +9,8 @@
 }
 
 #view-map .map-controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; }
+#view-map .map-project-select { font-weight: 600; min-width: 0; max-width: 280px; text-overflow: ellipsis; cursor: pointer; }
+#view-map .map-project-select:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
 #view-map .map-toggle { display: inline-flex; gap: 6px; align-items: center; color: var(--ink-2); font-size: 13px; }
 #view-map .map-status { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; color: var(--ink-2); font-size: 13px; border-top: 1px solid var(--line-soft); }
 #view-map .map-status[data-kind="error"] { color: var(--crit); }
@@ -106,6 +108,7 @@
 
 @media (max-width: 768px) {
   #view-map .map-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  #view-map .map-project-select { grid-column: 1 / -1; width: 100%; max-width: 100%; }
   #view-map .map-controls .btn { min-width: 0; padding: 8px; white-space: normal; }
   #view-map .map-toggle { grid-column: 1 / -1; min-height: 44px; }
   #view-map .map-status { font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }

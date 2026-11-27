@@ -262,7 +262,8 @@ Select either `--session` or `--from-session`. Use `--client generic` and the sa
 An existing local binding stays pinned to its original AWR session after a
 resume. Use a new native conversation when attaching continuity to a successor;
 if the native conversation stays the same, use explicit successor session
-operations. MCP's ability to reuse a conversation for a successor does not move
+operations. After that session ends, lifecycle hooks on the pinned conversation
+exit successfully and report that continuity was skipped. MCP's ability to reuse a conversation for a successor does not move
 the old local continuity binding.
 
 ### End

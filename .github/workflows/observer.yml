@@ -38,7 +38,7 @@ jobs:
       - name: Server syntax check
         run: node --check server.js
       - name: Server tests
-        run: node --test test/*.test.js e2e/pixel-pairs.guard.test.js
+        run: node --test test/*.test.js e2e/pixel-pairs.guard.test.js e2e/geometry.test.mjs
       - name: No external asset loads
         run: |
           # This local tool must not load external resources: the CSP allows
@@ -74,8 +74,8 @@ jobs:
         run: npx vite build
       - name: Prepare text output
         run: ': > "$RUNNER_TEMP/observer-pixel-specs.log"'
-      - name: Pixel-pair skip guard
-        run: node --test e2e/pixel-pairs.guard.test.js 2>&1 | tee -a "$RUNNER_TEMP/observer-pixel-specs.log"
+      - name: Pixel-pair skip guard and geometry module tests
+        run: node --test e2e/pixel-pairs.guard.test.js e2e/geometry.test.mjs 2>&1 | tee -a "$RUNNER_TEMP/observer-pixel-specs.log"
       - name: Shell metrics
         if: ${{ !cancelled() }}
         run: npx playwright test -c e2e/shell-pixel.playwright.config.ts 2>&1 | tee -a "$RUNNER_TEMP/observer-pixel-specs.log"
