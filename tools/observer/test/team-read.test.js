@@ -96,6 +96,7 @@ const VALID_QUERIES = {
   'planning.candidates': { workstream_id: 'stream', limit: 5, max_context_bytes: 65536 },
   'sources.inspect': { work_id: 'WORK', workstream_id: 'stream', limit: 5, max_context_bytes: 65536 },
   'documents.list': { work_id: 'WORK', workstream_id: 'stream', search: 'guide', limit: 5, max_context_bytes: 65536 },
+  'document.history': { source_path: 'docs/GOALS.md', work_id: 'WORK', max_context_bytes: 65536 },
   'decisions.list': { work_id: 'WORK', workstream_id: 'stream', decision_id: 'question', decision_state: 'all', limit: 5, max_context_bytes: 65536 },
   'usage.summary': { work_id: 'WORK', workstream_id: 'stream', max_context_bytes: 65536 },
   'review.rounds': { work_id: 'WORK', workstream_id: 'stream', limit: 5, max_context_bytes: 65536 },
@@ -171,6 +172,26 @@ test('read adapter forwards every registered read op with its exact selectors, u
           as_of: { at_unix_ms: 1793534400000, source_snapshot_id: ENVELOPE.source_snapshot_id,
             project_revision: ENVELOPE.project_revision },
         } }));
+        return;
+      }
+      if (parsed.op === 'document.history') {
+        response.end(JSON.stringify({ ...ENVELOPE,
+          selection_basis: parsed.work_id ? 'work' : 'project',
+          ...(parsed.work_id ? { workstream_id: 'stream', authority_version: '1' } : {}),
+          data: {
+            path: parsed.source_path, work_id: parsed.work_id ?? null,
+            items: [{
+              source_snapshot_id: ENVELOPE.source_snapshot_id,
+              recorded_at_unix_ms: 1793534400000,
+              digest_prefix: 'a'.repeat(12),
+              submitted_by: null,
+            }],
+            total: 1, limit: 20, truncated: false, order: 'newest_first',
+            source_kind: 'registered_source_snapshots', attribution_basis: 'snapshot_submitter',
+            read_only: true, execution_authorized: false,
+            as_of: { at_unix_ms: 1793534400000, source_snapshot_id: ENVELOPE.source_snapshot_id,
+              project_revision: ENVELOPE.project_revision },
+          } }));
         return;
       }
       if (parsed.op === 'decisions.list') {
@@ -568,7 +589,7 @@ test('read adapter registry stays in sync with the service query list (drift gua
   const serviceOps = [...match[1].matchAll(/"([a-z_.]+)"/g)].map((m) => m[1]);
   assert.ok(serviceOps.length > 30, `expected the full service query list, got ${serviceOps.length}`);
   assert.deepEqual([...READ_DEFERRED_OPS].sort(),
-    ['audit.count', 'audit.export', 'audit.history', 'delivery.routes', 'update.inspect', 'updates.list']);
+    ['audit.count', 'audit.export', 'audit.history', 'delivery.routes']);
   for (const op of serviceOps) {
     assert.ok(READ_OPS.has(op) || READ_DEFERRED_OPS.has(op),
       `service query ${op} is neither exposed by the read adapter nor explicitly deferred`);

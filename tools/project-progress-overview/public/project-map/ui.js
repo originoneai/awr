@@ -148,6 +148,9 @@
             assess: state.demo
               ? (key) => L.demo.workAssess(key, t)
               : (key) => callApi(`/api/map/assess?key=${encodeURIComponent(key)}`),
+            workShow: state.demo
+              ? (key) => L.demo.workShow(key)
+              : (key) => callApi(`/api/map/show?key=${encodeURIComponent(key)}`),
           });
         }
       }
