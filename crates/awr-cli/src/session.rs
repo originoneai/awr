@@ -282,17 +282,100 @@ impl RuntimeProject {
         Ok(())
     }
     fn selected(&self, selection: &Selection, work: Option<&str>) -> Result<Session> {
-        let work = work
+        self.selected_for(selection, work, false)
+    }
+    fn selected_for_claim(&self, selection: &Selection, work: &str) -> Result<Session> {
+        self.selected_for(selection, Some(work), true)
+    }
+    fn selected_for(
+        &self,
+        selection: &Selection,
+        work: Option<&str>,
+        claim: bool,
+    ) -> Result<Session> {
+        let work_id = work
             .map(|key| self.store.work_identity(self.project.id, key))
             .transpose()?;
-        self.store.select_active_session(
+        match self.store.select_active_session(
             self.project.id,
             selection.session,
-            work,
+            work_id,
             selection.agent.as_deref(),
             self.project.current_branch_id,
-        )
+        ) {
+            Ok(session) => Ok(session),
+            Err(Error::NotFound(_)) => {
+                Err(self.missing_session_error(selection, work, work_id, claim)?)
+            }
+            Err(error) => Err(error),
+        }
     }
+    fn missing_session_error(
+        &self,
+        selection: &Selection,
+        work: Option<&str>,
+        work_id: Option<Id>,
+        claim: bool,
+    ) -> Result<Error> {
+        let has_active_sessions = !self.store.sessions(self.project.id, true, 1)?.is_empty();
+        let message = if !has_active_sessions {
+            "active session (this project has no active sessions)"
+        } else if selection.session.is_some() || selection.agent.is_some() {
+            "active session matching the supplied identity"
+        } else if work.is_some() {
+            "active session for the requested work"
+        } else {
+            "active session on the current branch"
+        };
+        let next_action = if has_active_sessions && (!claim || selection.session.is_some()) {
+            awr_core::cli_next_action(&["awr", "session", "list", "--active"])
+        } else {
+            start_session_next_action(
+                work,
+                work_id,
+                selection.agent.as_deref(),
+                self.project.project_revision,
+                claim,
+            )
+        };
+        Ok(Error::NotFound(message.into()).with_details(json!({"next_action": next_action})))
+    }
+}
+
+fn start_session_next_action(
+    work: Option<&str>,
+    work_id: Option<Id>,
+    agent: Option<&str>,
+    revision: Revision,
+    claim: bool,
+) -> String {
+    let rev = revision.to_string();
+    let build = |work_arg: Option<&str>, agent_arg: &str| {
+        let mut args = vec!["awr", "session", "start"];
+        if let Some(key) = work_arg {
+            args.extend(["--work", key]);
+        }
+        if claim {
+            args.push("--claim");
+        }
+        args.extend([
+            "--agent",
+            agent_arg,
+            "--provider",
+            "<PROVIDER>",
+            "--model",
+            "<MODEL>",
+            "--expected-revision",
+            &rev,
+        ]);
+        awr_core::cli_next_action(&args)
+    };
+    let command = build(work, agent.unwrap_or("<AGENT>"));
+    if command.len() <= 300 && !command.chars().any(char::is_control) {
+        return command;
+    }
+    let fallback_work = work_id.map(|id| id.to_string());
+    build(fallback_work.as_deref(), "<AGENT>")
 }
 
 pub(crate) fn event_brief(event: &Event) -> Value {
@@ -665,7 +748,7 @@ pub fn work(root: &Path, command: &WorkCommand, json_output: bool) -> Result<()>
     let project = db.project.id;
     match command {
         WorkCommand::Claim(args) => {
-            let session = db.selected(&args.selection, Some(&args.work))?;
+            let session = db.selected_for_claim(&args.selection, &args.work)?;
             let ttl_ms = claim_ttl(&db.project.root, args.ttl_ms, args.no_expiry)?;
             let (claim, event) = Runtime::attach(&mut db.store, project)?.acquire_claim(
                 args.expected_revision,

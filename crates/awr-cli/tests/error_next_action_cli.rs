@@ -2049,4 +2049,145 @@ mod next_action_tests {
         assert!(next.starts_with("awr work activate D --request-key activate-"));
         validate_action(&e);
     }
+
+    #[test]
+    fn work_claim_without_active_session_suggests_session_start_in_text_and_json() {
+        let f = Fixture::new();
+        let rev = f.revision();
+        let error = f.error(
+            &["work", "claim", "W", "--expected-revision", &rev],
+            "NotFound",
+        );
+        let message = error["message"].as_str().unwrap();
+        assert!(
+            message.contains("this project has no active sessions"),
+            "{error}"
+        );
+        let args = validate_action(&error);
+        assert_eq!(
+            args,
+            vec![
+                "awr",
+                "session",
+                "start",
+                "--work",
+                "W",
+                "--claim",
+                "--agent",
+                "<AGENT>",
+                "--provider",
+                "<PROVIDER>",
+                "--model",
+                "<MODEL>",
+                "--expected-revision",
+                rev.as_str(),
+            ]
+        );
+
+        let text_out = guidance_text(&f, &["work", "claim", "W", "--expected-revision", &rev]);
+        assert!(!text_out.status.success());
+        let stderr = String::from_utf8_lossy(&text_out.stderr);
+        assert!(
+            stderr.contains("this project has no active sessions"),
+            "{stderr}"
+        );
+        let next = stderr
+            .lines()
+            .last()
+            .unwrap()
+            .strip_prefix("Next: ")
+            .unwrap();
+        assert_eq!(next, error["details"]["next_action"].as_str().unwrap());
+    }
+
+    #[test]
+    fn missing_session_with_existing_active_session_suggests_session_list() {
+        let f = Fixture::new();
+        let _started = f.session("W", false);
+        let rev = f.revision();
+        let missing_id = Id::new().to_string();
+
+        let claim_err = f.error(
+            &[
+                "work",
+                "claim",
+                "W",
+                "--session",
+                &missing_id,
+                "--expected-revision",
+                &rev,
+            ],
+            "NotFound",
+        );
+        assert!(
+            claim_err["message"]
+                .as_str()
+                .unwrap()
+                .contains("active session matching the supplied identity"),
+            "{claim_err}"
+        );
+        assert_eq!(
+            validate_action(&claim_err),
+            vec!["awr", "session", "list", "--active"]
+        );
+
+        let end_err = f.error(
+            &[
+                "session",
+                "end",
+                "--agent",
+                "other-agent",
+                "--outcome",
+                "ended",
+                "--expected-revision",
+                &rev,
+            ],
+            "NotFound",
+        );
+        assert_eq!(
+            validate_action(&end_err),
+            vec!["awr", "session", "list", "--active"]
+        );
+    }
+
+    #[test]
+    fn session_end_without_active_session_suggests_session_start_without_claim() {
+        let f = Fixture::new();
+        let rev = f.revision();
+        let error = f.error(
+            &[
+                "session",
+                "end",
+                "--outcome",
+                "ended",
+                "--expected-revision",
+                &rev,
+            ],
+            "NotFound",
+        );
+        assert!(
+            error["message"]
+                .as_str()
+                .unwrap()
+                .contains("this project has no active sessions"),
+            "{error}"
+        );
+        let args = validate_action(&error);
+        assert_eq!(
+            args,
+            vec![
+                "awr",
+                "session",
+                "start",
+                "--agent",
+                "<AGENT>",
+                "--provider",
+                "<PROVIDER>",
+                "--model",
+                "<MODEL>",
+                "--expected-revision",
+                rev.as_str(),
+            ]
+        );
+    }
 }
