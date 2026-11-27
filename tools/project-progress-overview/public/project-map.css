@@ -36,7 +36,8 @@
 #view-map .view { display: none; }
 #v-overview:checked ~ .views #s-overview,
 #v-mainline:checked ~ .views #s-mainline,
-#v-explore:checked ~ .views #s-explore { display: block; }
+#v-explore:checked ~ .views #s-explore,
+#v-action:checked ~ .views #s-action { display: block; }
 #view-map .scroll { overflow-x: auto; max-width: 100%; border-radius: 14px; background: var(--surface-2); box-shadow: var(--shadow-1); border: 1px solid var(--line); }
 #view-map .scroll svg { display: block; margin: 0 auto; }
 
@@ -120,6 +121,6 @@
   #view-map .stats li { min-width: 0; padding: 7px 3px; border-radius: 10px; }
   #view-map .stats b { font-size: 16px; }
   #view-map .stats span { font-size: 10.5px; }
-  #view-map .tabs > label { display: inline-flex; align-items: center; justify-content: center; vertical-align: top; width: calc((100% - 24px) / 3); min-height: 48px; margin: 0 8px 12px 0; padding: 8px 4px; border-radius: 12px; font-size: 12px; text-align: center; }
+  #view-map .tabs > label { display: inline-flex; align-items: center; justify-content: center; vertical-align: top; width: calc((100% - 16px) / 2); min-height: 48px; margin: 0 8px 12px 0; padding: 8px 4px; border-radius: 12px; font-size: 12px; text-align: center; }
   #view-map .view > .scroll { max-height: 65svh; overflow: auto; overscroll-behavior: contain; touch-action: pan-x pan-y pinch-zoom; }
 }

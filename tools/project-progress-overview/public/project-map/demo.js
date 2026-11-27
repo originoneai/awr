@@ -148,7 +148,40 @@
     };
   }
 
-  const api = { buildDemo, workPrepare, workAssess, workShow, GENERATED_AT };
+  /** Demo daily queues: the live viewer does not call the CLI in demonstration mode. */
+  function statusAction(t) {
+    const item = (key, name, next) => ({ key, title: t(`map.demo.${name}`), next_action: next, codes: [] });
+    const current = [item('DEMO-A-004', 'a004', 'Prepare the selected work; continue only with its owned session or explicitly resume it')];
+    const ready = [item('DEMO-B-004', 'b004', 'Prepare required context, then acquire an owned session before execution')];
+    const waiting = [item('DEMO-A-005', 'a005', 'Continue the unfinished prerequisite; recheck its source state')];
+    const blocked = [item('DEMO-A-008', 'a008', 'Inspect the cited current gap or selected completed work and its original evidence')];
+    return {
+      ok: true,
+      command: 'awr status --view action',
+      data: {
+        view: 'action',
+        schema_version: 1,
+        current_total: 1,
+        ready_count: 1,
+        waiting_count: 1,
+        blocked_count: 1,
+        current,
+        ready,
+        waiting,
+        blocked,
+        omissions: { current: 0, ready: 0, waiting: 0, blocked: 0 },
+        guidance: {
+          when: 'Current work can be continued',
+          basis: 'Source structure, dependencies and recorded claims',
+          next_action: 'Prepare the selected work; continue only with its owned session or explicitly resume it',
+          recheck: 'Source, ownership, wait or execution outcome changes',
+        },
+        count_basis: 'source status; queue buckets are navigation, not execution authorization or completion proof',
+      },
+    };
+  }
+
+  const api = { buildDemo, workPrepare, workAssess, workShow, statusAction, GENERATED_AT };
   if (commonJS) module.exports = api;
   else {
     root.AWR_PROJECT_MAP = root.AWR_PROJECT_MAP || {};

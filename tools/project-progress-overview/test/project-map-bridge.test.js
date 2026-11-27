@@ -70,6 +70,9 @@ test('each map route runs exactly the command the export would run', async () =>
     ['/api/map/assess?key=WORK&explain=1', 'workAssess', { key: 'WORK' }],
     ['/api/map/show?key=WORK', 'workShow', { key: 'WORK' }],
     ['/api/map/show?key=WORK&cached=1&source_sha=abc&branch=main', 'workShow', { key: 'WORK' }],
+    ['/api/map/status', 'statusAction', {}],
+    ['/api/map/status?cached=1', 'statusAction', { cached: true }],
+    ['/api/map/status?view=full&branch=main&source_sha=abc&queue=ready&explain=1&work=WORK', 'statusAction', {}],
   ];
   for (const [route, name, params] of cases) {
     const { envelope, argvs } = await ran(bridge, route);
@@ -79,7 +82,7 @@ test('each map route runs exactly the command the export would run', async () =>
 });
 
 test('every command is read-only: none of the map routes can start, claim, append, reindex or complete anything', async () => {
-  for (const route of ['/api/map/work-graph?limit=5', '/api/map/nav?milestone=M1', '/api/map/goals', '/api/map/events', '/api/map/sessions', '/api/map/doctor', '/api/map/prepare?key=W1', '/api/map/assess?key=W1', '/api/map/show?key=W1']) {
+  for (const route of ['/api/map/work-graph?limit=5', '/api/map/nav?milestone=M1', '/api/map/goals', '/api/map/events', '/api/map/sessions', '/api/map/doctor', '/api/map/prepare?key=W1', '/api/map/assess?key=W1', '/api/map/show?key=W1', '/api/map/status']) {
     const { argvs } = await ran(bridge, route);
     for (const argv of argvs) assert.ok(!argv.some((a) => ['reindex', 'complete', 'claim', 'append', 'start', 'end', 'progress', 'block', 'cancel', 'create'].includes(a)), argv.join(' '));
   }

@@ -1,6 +1,7 @@
 /**
  * Interaction layer of the project map: what makes the cards and lanes of the diagrams alive.
  *
+ *  - the Today board lists live `status --view action` queues; click an item to open the same details panel;
  *  - click or Enter/Space on a card (or a row of the table) opens its details in a panel, with jumpable prerequisites and
  *    dependents; the panel also offers "show in graph", copy key and copy the awr command;
  *  - hovering, focusing or selecting a card highlights its whole dependency chain (upstream and downstream, through every
@@ -31,7 +32,7 @@
   const STATUS_ORDER = ['done', 'developing', 'stalled', 'blocked', 'ready', 'draft', 'waiting', 'cancelled', 'unknown'];
   const FOLD_ATTRS = ['data-lane', 'data-panel', 'data-xlane', 'data-done-lane', 'data-group', 'data-panel-done'];
   const FOLDABLE = FOLD_ATTRS.map((a) => `[${a}]`).join(',');
-  const ACTIVATABLE = '.pm-card,.pm-fold,.pm-btn,.pm-agent,tr[data-key],[data-pm-table-sort],[data-pm-table-reset]';
+  const ACTIVATABLE = '.pm-card,.pm-fold,.pm-btn,.pm-agent,tr[data-key],[data-pm-table-sort],[data-pm-table-reset],[data-pm-queue-key]';
   const TABLE_COLUMNS = ['key', 'title', 'status', 'lane', 'milestone', 'owner', 'idle'];
   const TABLE_FILTERS = [...TABLE_COLUMNS, 'idle_min', 'idle_max'];
   const PAN_THRESHOLD = 4;
@@ -150,13 +151,14 @@
    * below; default none), `copy(text)` (clipboard; injectable), `timers` and `win` (the window: resize, scrollBy and the
    * clipboard; injectable for tests). `prepare(key)` is the optional live `work prepare --response-view action`
    * read; `assess(key)` is the optional live `work assess` read; `workShow(key)` overlays recorded `priority`
-   * from `work show`. Exported HTML omits these and keeps the snapshot panel only. Query parameters cannot
+   * from `work show`. `status()` is the optional live `status --view action` read for the Today board.
+   * Exported HTML omits these and keeps the snapshot panel only. Query parameters cannot
    * add `--explain`, `--session`, `--cached`, `--source-sha` or `--branch`, or run work manage.
    * The snapshot is not rewritten.
    */
   function mount({
     container, snapshot, config, t, model: given, restore, offsetTop, copy, win = root, timers = { set: (fn, ms) => setTimeout(fn, ms), clear: (id) => clearTimeout(id) },
-    prepare, assess, workShow, commandFor = detailLib.commandFor, productOnly = false,
+    prepare, assess, workShow, status, commandFor = detailLib.commandFor, productOnly = false,
   }) {
     const model = given || modelLib.loadModel(snapshot, config);
     const views = viewsLib.createViews(t, { productOnly });
@@ -181,6 +183,8 @@
     let assessWait = Promise.resolve();
     let showSeq = 0;
     let showWait = Promise.resolve();
+    let statusSeq = 0;
+    let statusWait = Promise.resolve();
     let matchCursor = -1;
     let pan = null;
     let suppressClick = false;
@@ -190,7 +194,9 @@
     let tableEmpty = null;
     const tableStorageKey = `awr:progress-table:${model.meta.project.id}`;
 
-    const section = (id) => container.querySelector(`#s-${id} .scroll`);
+    const section = (id) => (id === 'action'
+      ? container.querySelector('#s-action')
+      : container.querySelector(`#s-${id} .scroll`));
     const attr = (el, name) => el.getAttribute(name);
     const on = (target, type, fn, options) => {
       target.addEventListener(type, fn, options);
@@ -210,6 +216,7 @@
 
     /** Draw view `id` for the current fold state and make its parts reachable. */
     function draw(id) {
+      if (id === 'action') return;
       const target = section(id);
       if (!target) return;
       const render = id === 'overview' ? views.renderOverview : id === 'mainline' ? views.renderMainline : views.renderExplore;
@@ -426,12 +433,14 @@
 
     /** Whether the active view has anything for the fold buttons to act on. */
     function foldableNow() {
+      if (state.view === 'action') return { folds: false, done: false };
       if (state.view === 'overview') return { folds: targets.overviewLanes.length > 0, done: targets.overviewDone.length > 0 };
       if (state.view === 'mainline') return { folds: targets.mainlinePanels.length > 0, done: targets.mainlineDone.length > 0 };
       return { folds: targets.exploreLanes.length > 0, done: targets.exploreDone };
     }
 
     function doneIsOpen() {
+      if (state.view === 'action') return false;
       const f = state.fold;
       if (state.view === 'overview') return targets.overviewDone.length > 0 && targets.overviewDone.every((l) => f.overview.doneOpen.has(l));
       if (state.view === 'mainline') return targets.mainlineDone.length > 0 && targets.mainlineDone.every((l) => f.mainline.showDone.has(l));
@@ -455,8 +464,12 @@
       const clear = bar.querySelector('[data-pm-action="clear"]');
       if (clear) clear.hidden = !(state.selected || state.search || state.filters.size);
       const can = foldableNow();
+      const graphs = state.view !== 'action';
       setDisabled(bar.querySelector('[data-pm-action="collapse-all"]'), !can.folds);
       setDisabled(bar.querySelector('[data-pm-action="expand-all"]'), !can.folds);
+      for (const name of ['zoom-in', 'zoom-out', 'zoom-fit', 'zoom-100']) {
+        setDisabled(bar.querySelector(`[data-pm-action="${name}"]`), !graphs);
+      }
       const done = bar.querySelector('[data-pm-done-toggle]');
       if (done) {
         const open = doneIsOpen();
@@ -536,7 +549,7 @@
     // ------------------------------------------------------------------ actions
 
     function setView(id) {
-      if (!VIEW_IDS.includes(id)) return;
+      if (id !== 'action' && !VIEW_IDS.includes(id)) return;
       state.view = id;
       const input = container.querySelector(`#v-${id}`);
       if (input) input.checked = true;
@@ -595,6 +608,7 @@
 
     /** Scroll the card of `key` into view in the active view (unfolding what hides it) and pulse it. */
     function reveal(key) {
+      if (state.view === 'action') setView('overview');
       const line = container.querySelector('[data-pm-status-line]');
       if (!ensureVisible(key)) {
         if (line) line.textContent = t('map.detail.not_drawn');
@@ -612,6 +626,7 @@
     function runAction(name) {
       const f = state.fold;
       const view = state.view;
+      if (view === 'action' && ['zoom-in', 'zoom-out', 'zoom-100', 'zoom-fit', 'collapse-all', 'expand-all', 'toggle-done'].includes(name)) return;
       switch (name) {
         case 'zoom-in': setZoom(view, stepZoom(state.zoom[view], 1)); return;
         case 'zoom-out': setZoom(view, stepZoom(state.zoom[view], -1)); return;
@@ -747,6 +762,25 @@
       slot.innerHTML = detailLib.renderPriority(envelope, t);
     }
 
+    async function loadStatus() {
+      const host = container.querySelector('[data-pm-action-slot]');
+      if (!host) return;
+      if (typeof status !== 'function') {
+        host.innerHTML = `<p class="pm-d-none">${esc(t('map.action.export'))}</p>`;
+        return;
+      }
+      const seq = ++statusSeq;
+      host.innerHTML = `<p class="pm-d-none">${esc(t('map.action.loading'))}</p>`;
+      let envelope;
+      try {
+        envelope = await status();
+      } catch (error) {
+        envelope = { ok: false, error: { code: 'BridgeError', message: String(error && error.message || error) } };
+      }
+      if (seq !== statusSeq) return;
+      host.innerHTML = detailLib.renderActionBoard(envelope, t);
+    }
+
     function closeDetails() {
       const box = drawer();
       if (!box || !state.drawer) return false;
@@ -795,6 +829,11 @@
         const key = attr(jump, 'data-pm-jump');
         openDetails(key);
         reveal(key);
+        return true;
+      }
+      const queued = el.closest('[data-pm-queue-key]');
+      if (queued) {
+        openDetails(attr(queued, 'data-pm-queue-key'));
         return true;
       }
       const action = el.closest('[data-pm-action]');
@@ -858,6 +897,7 @@
         if (input && input.focus) { event.preventDefault(); input.focus(); }
         return;
       }
+      if (state.view === 'action') return;
       if (event.key === '+' || event.key === '=') runAction('zoom-in');
       else if (event.key === '-') runAction('zoom-out');
       else if (event.key === '0') runAction('zoom-100');
@@ -960,6 +1000,8 @@
       const target = section(id);
       if (target) target.classList.add('pm-live');
     }
+    const actionSection = section('action');
+    if (actionSection) actionSection.classList.add('pm-live');
 
     if (restore) {
       // continue from an earlier mount: the folds, zoom, filters and search survive a refresh of the map
@@ -969,7 +1011,7 @@
       Object.assign(state.zoom, restore.zoom);
       state.filters = new Set(restore.filters);
       state.search = restore.search || '';
-      if (VIEW_IDS.includes(restore.view)) setView(restore.view);
+      if (restore.view === 'action' || VIEW_IDS.includes(restore.view)) setView(restore.view);
       const input = container.querySelector('[data-pm-search]');
       if (input) input.value = state.search;
       for (const id of VIEW_IDS) draw(id);
@@ -977,6 +1019,9 @@
       for (const id of VIEW_IDS) decorate(id);
     }
     setupTable();
+    applyEmphasis();
+    statusWait = loadStatus();
+    if (!restore && typeof status === 'function') setView('action');
 
     function destroy() {
       endPan();
@@ -993,6 +1038,7 @@
       get prepareWait() { return prepareWait; },
       get assessWait() { return assessWait; },
       get showWait() { return showWait; },
+      get statusWait() { return statusWait; },
     };
   }
 

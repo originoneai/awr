@@ -85,7 +85,7 @@ version-bound evidence, a [shared HTTP MCP service](docs/dev/reference/mcp-servi
 for multiple clients/projects, and Personal Workspace file exchange.
 
 This release adds **a bundled local Project Hub and Project Progress Overview**,
-with searchable project cards, three progress views, table filters and sorting,
+with searchable project cards, daily action queues, three progress graphs, table filters and sorting,
 offline exports, and one recoverable background service. Optional work definitions
 and governance help keep decomposition, admission and rework tied to the goal.
 Team surfaces are compiled in but **off by default**; see the

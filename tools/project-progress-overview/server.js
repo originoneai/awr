@@ -128,6 +128,7 @@ const COMMANDS = {
   workPrepare: ['work', 'prepare'],
   workAssess: ['work', 'assess'],
   workShow: ['work', 'show'],
+  statusAction: ['status', '--view', 'action'],
 };
 
 function asKey(value) {
@@ -345,6 +346,11 @@ const routes = {
     const key = asKey(url.searchParams.get('key'));
     if (!key) return { ok: false, error: { code: 'BadRequest', message: 'key must be a valid work key' } };
     return runCommand('workShow', [key]);
+  },
+
+  'GET /api/map/status': async (url) => {
+    const extra = url.searchParams.get('cached') === '1' ? ['--cached'] : [];
+    return runCommand('statusAction', extra);
   },
 
 };

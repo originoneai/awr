@@ -150,6 +150,49 @@ function createFakeCli(snapshot, options = {}) {
       const key = args[2];
       return ok({ work: { external_key: key, priority: 'P1' } });
     }
+    if (a === 'status') {
+      if (['--explain', '--session', '--branch', '--source-sha', '--queue', '--work', '--goal', '--milestone'].some((name) => flag(args, name))) {
+        return error('InvalidInput', 'status does not accept extra flags here');
+      }
+      if (option(args, '--view') !== 'action') return error('InvalidInput', 'status needs --view action');
+      const current = [];
+      const ready = [];
+      const waiting = [];
+      const blocked = [];
+      for (const n of snapshot.nodes) {
+        if (n.archived || n.status === 'completed' || n.status === 'cancelled') continue;
+        const item = { key: n.key, title: n.title, next_action: n.next_action || 'Inspect this work', codes: [] };
+        if (n.status === 'in_progress' || n.status === 'claimed' || (n.claims && n.claims.length)) current.push(item);
+        else if (n.status === 'blocked' || n.status === 'unknown') blocked.push(item);
+        else if (n.ready) ready.push(item);
+        else waiting.push(item);
+      }
+      return ok({
+        view: 'action',
+        schema_version: 1,
+        current_total: current.length,
+        ready_count: ready.length,
+        waiting_count: waiting.length,
+        blocked_count: blocked.length,
+        current: current.slice(0, 5),
+        ready: ready.slice(0, 5),
+        waiting: waiting.slice(0, 5),
+        blocked: blocked.slice(0, 5),
+        omissions: {
+          current: Math.max(0, current.length - 5),
+          ready: Math.max(0, ready.length - 5),
+          waiting: Math.max(0, waiting.length - 5),
+          blocked: Math.max(0, blocked.length - 5),
+        },
+        guidance: {
+          when: 'Current work can be continued',
+          basis: 'Source structure, dependencies and recorded claims',
+          next_action: 'Prepare the selected work; continue only with its owned session or explicitly resume it',
+          recheck: 'Source, ownership, wait or execution outcome changes',
+        },
+        count_basis: 'source status; queue buckets are navigation, not execution authorization or completion proof',
+      });
+    }
     return error('InvalidInput', `unrecognized subcommand: ${args.join(' ')}`);
   }
 

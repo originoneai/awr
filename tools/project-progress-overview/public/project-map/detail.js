@@ -294,7 +294,67 @@
     return `<section class="pm-d-sec" data-pm-priority-card>${parts.join('')}</section>`;
   }
 
-  const api = { dependencyIndex, neighborhood, detailData, renderDetail, renderPrepare, renderAssess, renderPriority, commandFor };
+  const ACTION_QUEUES = [
+    ['current', 'map.action.queue_current', 'current_total'],
+    ['ready', 'map.action.queue_ready', 'ready_count'],
+    ['waiting', 'map.action.queue_waiting', 'waiting_count'],
+    ['blocked', 'map.action.queue_blocked', 'blocked_count'],
+  ];
+
+  /**
+   * Live `status --view action` board. Snapshot graphs stay in the other tabs.
+   * Queue buckets are navigation, not authorization, completion or a live process probe.
+   * Query parameters cannot add `--branch`, `--source-sha`, `--queue` or `--explain`, or run work manage.
+   */
+  function renderActionBoard(envelope, t) {
+    const data = envelope && envelope.data && typeof envelope.data === 'object' && !Array.isArray(envelope.data)
+      ? envelope.data : null;
+    const parts = [
+      `<header class="pm-action-head"><h2>${esc(t('map.action.title'))}</h2>`,
+      `<p class="pm-d-note">${esc(t('map.action.not_authorization'))}</p>`,
+    ];
+    const g = guidanceFrom(data);
+    if (g) {
+      parts.push(`<dl class="pm-d-grid">${[
+        field(t('map.action.when'), g.when, t),
+        field(t('map.action.basis'), g.basis, t),
+        field(t('map.action.next'), g.next_action, t),
+        field(t('map.action.recheck'), g.recheck, t),
+      ].join('')}</dl>`);
+    } else if (envelope && envelope.error && envelope.error.code) {
+      parts.push(`<p class="pm-d-none">${esc(String(envelope.error.code))}</p>`);
+    } else if (!data) {
+      parts.push(`<p class="pm-d-none">${esc(t('map.action.missing'))}</p>`);
+    }
+    parts.push('</header>');
+    if (data) {
+      const omitted = data.omissions && typeof data.omissions === 'object' && !Array.isArray(data.omissions)
+        ? data.omissions : {};
+      parts.push('<div class="pm-action-cols">');
+      for (const [queue, label, totalKey] of ACTION_QUEUES) {
+        const items = Array.isArray(data[queue]) ? data[queue] : [];
+        const total = Number(data[totalKey]);
+        const shown = Number.isFinite(total) ? total : items.length;
+        const extra = Number(omitted[queue]) || 0;
+        const list = items.map((item) => {
+          if (!item || typeof item !== 'object' || Array.isArray(item)) return '';
+          const key = typeof item.key === 'string' ? item.key : '';
+          if (!/^[A-Za-z0-9_.:#/-]{1,200}$/.test(key)) return '';
+          const title = typeof item.title === 'string' ? item.title : '';
+          const next = typeof item.next_action === 'string' ? item.next_action : '';
+          return `<li><button type="button" class="pm-action-item" data-pm-queue-key="${esc(key)}" tabindex="0"><span class="pm-action-key"><code>${esc(key)}</code></span><span class="pm-action-title">${esc(title)}</span><span class="pm-action-next">${esc(next)}</span></button></li>`;
+        }).filter(Boolean).join('');
+        parts.push(`<section class="pm-action-queue" data-queue="${queue}"><h3>${esc(t(label, { count: String(shown) }))}</h3>`
+          + (list ? `<ul class="pm-action-list">${list}</ul>` : `<p class="pm-d-none">${esc(t('map.action.empty'))}</p>`)
+          + (extra > 0 ? `<p class="pm-action-more">${esc(t('map.action.more', { count: String(extra) }))}</p>` : '')
+          + '</section>');
+      }
+      parts.push('</div>');
+    }
+    return `<section class="pm-action-board" data-pm-action-board>${parts.join('')}</section>`;
+  }
+
+  const api = { dependencyIndex, neighborhood, detailData, renderDetail, renderPrepare, renderAssess, renderPriority, renderActionBoard, commandFor };
   if (commonJS) module.exports = api;
   else {
     root.AWR_PROJECT_MAP = root.AWR_PROJECT_MAP || {};
